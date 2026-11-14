@@ -6,6 +6,7 @@
 use super::*;
 use dockspace::runtime::PaintedSurfaceOutput;
 
+mod schedules;
 mod window_change;
 
 use window_change::WindowChange;
