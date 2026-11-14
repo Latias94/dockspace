@@ -194,6 +194,23 @@ impl NativeViewportRosterRecord {
         self.observations.capacity()
     }
 
+    /// Reuses prepaid storage after every physical lifetime has ended.
+    pub(super) fn capture_empty(&mut self, backend: NativeWindowingBackend) {
+        self.observations.clear();
+        if let Ok(FrozenWorkAreaRoster::Exact(storage)) =
+            std::mem::replace(&mut self.work_areas, Ok(FrozenWorkAreaRoster::Unknown))
+        {
+            self.work_area_spare = storage;
+        }
+        self.work_area_spare.clear();
+        self.work_area_capacity_exceeded = false;
+        self.backend = backend;
+        #[cfg(test)]
+        {
+            self.compiled_override = None;
+        }
+    }
+
     /// Fixed payload plus owned vector capacities, not allocator metadata or RSS.
     pub(super) fn owned_payload_capacity_bytes(&self) -> usize {
         let active_work_area_capacity = match &self.work_areas {

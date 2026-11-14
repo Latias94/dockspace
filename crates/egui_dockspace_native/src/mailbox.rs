@@ -76,6 +76,7 @@ mod preparation_output_tests;
 mod roster;
 #[cfg(test)]
 mod shared_command_tests;
+mod shutdown_roster;
 mod terminal_roster;
 mod window_resource;
 #[cfg(test)]

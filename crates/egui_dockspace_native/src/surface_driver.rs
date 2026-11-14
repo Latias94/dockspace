@@ -422,7 +422,26 @@ impl<P: PaneView> NativeRuntimeState<P> {
             return Ok(NativeHostWake::ServiceAfterCurrent);
         }
         if self.shutdown.is_some() {
-            return Ok(NativeHostWake::RepaintRootAfterCurrent);
+            let mut budget = self.coordinator.dispatch_bridge().service_budget();
+            let advance = self
+                .coordinator
+                .advance_shutdown_boundary_with_close_policy(
+                    context,
+                    self.close_policy,
+                    self.root_surface,
+                    &mut budget,
+                );
+            let (progress, errors) = self.apply_shutdown_advance(context, advance);
+            for error in errors {
+                self.record_cleanup_error(error);
+            }
+            return Ok(
+                if !self.is_shutdown_drained() && (progress || budget.is_exhausted()) {
+                    NativeHostWake::ServiceAfterCurrent
+                } else {
+                    NativeHostWake::Wait
+                },
+            );
         }
         let mut budget = self.coordinator.dispatch_bridge().service_budget();
         Ok(

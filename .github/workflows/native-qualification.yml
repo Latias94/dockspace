@@ -123,6 +123,13 @@ jobs:
             python3 integration/egui-native-smoke/close_x11.py \
             integration/egui-fork-workspace/target/debug/egui-native-smoke \
             2>&1 | tee "$QUALIFICATION_LOG_DIR/close.log"
+      - name: Exercise fatal teardown and fresh native host recovery
+        run: |
+          xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+            python3 integration/egui-native-smoke/with_openbox.py --timeout 90 -- \
+            integration/egui-fork-workspace/target/debug/egui-native-recovery-smoke \
+            2>&1 | tee "$QUALIFICATION_LOG_DIR/recovery.log"
+          grep -Fq 'recovery-smoke: PASS;' "$QUALIFICATION_LOG_DIR/recovery.log"
       - name: Exercise physical drag-out and redock
         env:
           EGUI_INSPECTION: "127.0.0.1:5719"

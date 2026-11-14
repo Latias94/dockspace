@@ -85,6 +85,48 @@ fn fixture(
     (session, bridge, bindings)
 }
 
+#[test]
+fn complete_window_inventory_waits_for_every_physical_destroyed_commit() {
+    let (_, bridge, bindings) = fixture(4);
+    bridge.enter_quarantine();
+    for index in 0..2 {
+        let ordinal = index as u64 + 100;
+        bridge.push_record(HostRecord::WindowEvent(NativeWindowEventRecord::for_test(
+            ordinal,
+            windows()[index],
+            Some(viewports()[index]),
+            Some(bindings[index]),
+            WindowEvent::Destroyed,
+        )));
+        assert_eq!(
+            bridge.retirement_observe_destroyed(
+                viewports()[index],
+                bindings[index],
+                windows()[index],
+                ordinal
+            ),
+            DestroyedObservation::Recorded
+        );
+        assert!(bridge.acknowledge_event(ordinal));
+        {
+            let records = bridge.lock();
+            assert!(
+                !records
+                    .viewports
+                    .all_window_lifetimes_destroyed(&records.retirements)
+            );
+        }
+        bridge.commit_frame_boundary(false);
+        let records = bridge.lock();
+        assert_eq!(
+            records
+                .viewports
+                .all_window_lifetimes_destroyed(&records.retirements),
+            index == 1
+        );
+    }
+}
+
 fn swapping_frame(
     session: &mut DockspaceSession,
     predecessors: [NativeSurfaceBinding; 2],

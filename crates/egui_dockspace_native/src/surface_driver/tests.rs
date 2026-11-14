@@ -2,6 +2,7 @@ mod focus_idle;
 mod output_backpressure;
 mod owned_update;
 mod retirement_backpressure;
+mod shutdown_service;
 use std::error::Error as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

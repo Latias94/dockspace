@@ -137,6 +137,30 @@ impl NativeViewportMap {
         self.viewports.iter().map(|route| route.binding)
     }
 
+    /// Shared placements consult the same physical lifetime's retained receipt.
+    pub(crate) fn all_window_lifetimes_destroyed(
+        &self,
+        retired: &crate::retirement::NativeRetirementState,
+    ) -> bool {
+        self.viewports.iter().all(|route| {
+            route
+                .create
+                .as_ref()
+                .is_none_or(NativeCreateReceipt::is_committed)
+                && route
+                    .terminal
+                    .as_ref()
+                    .is_none_or(NativeWindowReceipt::destroyed_committed)
+                && route.window.is_none_or(|window| {
+                    route.terminal.as_ref().is_some_and(|receipt| {
+                        receipt.window() == window
+                            && receipt.binding().same_window_lifetime(route.binding)
+                            && receipt.destroyed_committed()
+                    }) || retired.window_destroyed_committed(window, route.binding)
+                })
+        })
+    }
+
     /// Retains a semantic repaint only on an existing viewport route.
     /// Reblocking a ready route revokes its previous claim eligibility.
     /// Returns whether the route exists, including an already blocked route.

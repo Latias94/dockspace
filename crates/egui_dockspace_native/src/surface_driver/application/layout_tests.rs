@@ -1215,17 +1215,33 @@ mod persistence {
                     .service_pending_prefixes(&context, None, SURFACE, &mut budget)
                     .unwrap()
             );
-            if fatal {
-                assert_eq!(
-                    state.service_native_events(&context).unwrap(),
-                    NativeHostWake::RepaintRootAfterCurrent
-                );
-            }
             assert_eq!(budget.remaining_records(), 256);
             assert_eq!(state.coordinator.session().version(), before);
             assert!(state.coordinator.deferred_viewport_specs().is_empty());
             assert!(state.coordinator.session().has_pending_native_create());
             assert!(!state.coordinator.dispatch_bridge().accepts_new_work());
+            if fatal {
+                let cause = format!("{:?}", state.error().unwrap());
+                let mut idle = false;
+                for _ in 0..32 {
+                    let wake = state.service_native_events(&context).unwrap();
+                    assert!(state.coordinator.deferred_viewport_specs().is_empty());
+                    for item in [FIRST, SECOND] {
+                        assert!(state.view().item(item).is_some());
+                    }
+                    if wake == NativeHostWake::Wait {
+                        idle = true;
+                        break;
+                    }
+                }
+                assert!(
+                    idle,
+                    "cleanup must stop waking while awaiting external facts"
+                );
+                assert!(!state.coordinator.session().has_pending_native_create());
+                assert_eq!(format!("{:?}", state.error().unwrap()), cause);
+                state.with_errors(|_, cleanup| assert!(cleanup.is_empty(), "{cleanup:?}"));
+            }
         }
     }
 

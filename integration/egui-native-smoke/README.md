@@ -77,6 +77,36 @@ the release evidence. A success line is printed only after both drivers pass.
 These are X11 reference-backend results; other platforms require their own
 physical-input qualification.
 
+## Fatal teardown and fresh-host recovery
+
+The separate `egui-native-recovery-smoke` binary runs two native hosts in one
+process. The first creates two Child windows, changes Root client size and egui
+zoom, and deliberately supplies an invalid composition roster. It waits for the
+specific fatal diagnostic, closes the windows programmatically, and services
+late destruction callbacks after the event loop returns. Before replacement it
+requires drained cleanup, zero output backlog, no cleanup errors and preserved
+application documents.
+
+The application copies the logical checkpoint, explicitly brings orphaned
+surfaces into Root, and creates a new runtime and handler. The new host must
+reject an old prepared action, create two fresh Child windows, and dock their
+contents back with successful terminal results. All four documents must remain
+in Root's tabs. The old diagnostic must remain intact. Each journey has a
+25-second deadline and the process has a separate 60-second watchdog.
+
+Run on a native graphical desktop:
+
+```text
+cargo run --manifest-path integration/egui-fork-workspace/Cargo.toml --package egui-native-smoke --bin egui-native-recovery-smoke --locked
+```
+
+The deliberate `InvalidWindowSnapshot` error is expected; success ends with
+`recovery-smoke: PASS;`. The journey uses actual framework output and window
+lifecycle callbacks with public application commands. It does not qualify
+physical mouse delivery, OS close-button requests, cross-monitor DPI changes or
+automatic restoration of OS window placement. The checkpoint is logical state;
+the caller still owns documents and the policy for restoring native hosting.
+
 ## CI integration
 
 The default [CI workflow](../../.github/workflows/ci.yml) runs native workspace
@@ -94,6 +124,7 @@ the applications once in the native workspace's target directory and runs:
   recreation through `solar_system --smoke`; OS close-button delivery is separate.
 - Both editor input drivers with persistence and Root continuity enabled.
 - Programmatic native redock and all three native close policies.
+- Fatal multiwindow teardown followed by a new host and fresh docking commands.
 - Physical X11/XTest drag-out and redock.
 
 The workflow uploads run logs with the source revision and toolchain as an

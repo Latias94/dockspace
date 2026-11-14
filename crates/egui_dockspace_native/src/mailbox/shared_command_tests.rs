@@ -75,6 +75,50 @@ fn fixture() -> (
 }
 
 #[test]
+fn committed_destruction_covers_shared_placements_but_not_a_reused_window_id() {
+    let (bridge, original, [updated, sibling]) = fixture();
+    let (_, foreign, _) = fixture();
+    let window = WindowId::from(71);
+    bridge.enter_quarantine();
+    bridge.push_record(HostRecord::WindowEvent(NativeWindowEventRecord::for_test(
+        100,
+        window,
+        Some(ViewportId::ROOT),
+        Some(original),
+        winit::event::WindowEvent::Destroyed,
+    )));
+    assert_eq!(
+        bridge.retirement_observe_destroyed(ViewportId::ROOT, original, window, 100),
+        DestroyedObservation::Recorded
+    );
+    assert!(bridge.acknowledge_event(100));
+    bridge.commit_frame_boundary(false);
+    let records = bridge.lock();
+    assert!(
+        records
+            .viewports
+            .all_window_lifetimes_destroyed(&records.retirements)
+    );
+    for binding in [original, updated, sibling] {
+        assert!(
+            records
+                .retirements
+                .window_destroyed_committed(window, binding)
+        );
+    }
+    assert!(
+        !records
+            .retirements
+            .window_destroyed_committed(window, foreign)
+    );
+    assert!(
+        !records
+            .retirements
+            .window_destroyed_committed(WindowId::from(72), original)
+    );
+}
+
+#[test]
 fn shared_observation_receipt_keeps_the_exact_source_across_placement_tags_and_retirement() {
     let (bridge, original, [updated, sibling]) = fixture();
     let (_, foreign, _) = fixture();

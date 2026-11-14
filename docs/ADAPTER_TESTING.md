@@ -119,6 +119,22 @@ device-removal journeys reject old mouse and scroll tails before completing the
 next docking gesture. These deterministic journeys do not qualify OS event
 delivery or a GPU presentation backend.
 
+Supplement random seeds with bounded producer interleavings. The native pending
+release suite enumerates 25 schedules across source/target changes, six geometry
+or visibility changes and two output results (600 cases). Each producer retains
+its own order; the protected output head follows revocation. Assert the exact
+cancellation boundary, prohibit a tail from bypassing its head, and complete a
+fresh docking gesture after every schedule. Returning to earlier numeric
+geometry must not restore a revoked receiver.
+
+Test fatal recovery beyond the final UI pass. The
+[native recovery smoke](../integration/egui-native-smoke/README.md#fatal-teardown-and-fresh-host-recovery)
+keeps the original handler through late destruction service, requires the old
+runtime to drain, then starts a new host using owned logical state and retained
+documents. Unit tests also require incomplete destruction, uncommitted create
+failures and occupied prepaid roster buffers to retain their obligations. A
+handler detach is not a substitute for destruction evidence.
+
 ## Reusable automatic tests
 
 | Layer | Existing asset | What passing proves |

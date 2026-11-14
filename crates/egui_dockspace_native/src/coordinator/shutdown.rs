@@ -124,7 +124,9 @@ impl NativeCoordinator {
         let output_prefix_pending = self.bridge.has_pending_output_prefix();
         let quiescence_recorded =
             self.try_report_retirement_quiescence_into(|error| errors.push(error));
-        let mut progress = pending_effect_reported
+        let terminal_roster_captured = self.bridge.capture_destroyed_window_roster();
+        let mut progress = terminal_roster_captured
+            || pending_effect_reported
             || capture_dispatched
             || input_enable_cancelled
             || output_prefix_pending

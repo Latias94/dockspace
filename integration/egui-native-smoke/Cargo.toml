@@ -26,6 +26,10 @@ path = "src/bin/physical_x11.rs"
 name = "egui-native-output-pressure"
 path = "src/bin/output_pressure.rs"
 
+[[bin]]
+name = "egui-native-recovery-smoke"
+path = "src/bin/recovery/main.rs"
+
 [lints.rust]
 unsafe_code = "forbid"
 

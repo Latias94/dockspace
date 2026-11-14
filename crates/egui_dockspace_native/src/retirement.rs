@@ -406,6 +406,30 @@ impl NativeRetirementState {
             })
     }
 
+    /// Raw destruction must commit before a complete empty inventory is known.
+    pub(crate) fn all_window_lifetimes_destroyed(&self) -> bool {
+        self.entries.iter().all(|entry| match &entry.kind {
+            RetirementKind::Window(pending) => pending.window.destroyed_committed(),
+            RetirementKind::Unmaterialized(receipt) => receipt.is_committed(),
+            RetirementKind::Quiescing => true,
+        })
+    }
+
+    pub(crate) fn window_destroyed_committed(
+        &self,
+        window: WindowId,
+        binding: NativeSurfaceBinding,
+    ) -> bool {
+        self.entries
+            .iter()
+            .filter_map(RetirementEntry::pending)
+            .any(|pending| {
+                pending.window.window() == window
+                    && pending.window.binding().same_window_lifetime(binding)
+                    && pending.window.destroyed_committed()
+            })
+    }
+
     pub(crate) fn can_begin_release(
         &self,
         viewport: ViewportId,

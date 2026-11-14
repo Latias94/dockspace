@@ -149,6 +149,23 @@ configuration, then create a fresh
 handles and window bindings belong to the old runtime. An in-place restart
 which clears the error would leave those outstanding owners unresolved.
 
+Cleanup also advances through the existing handler's `on_service(&context)`;
+it does not require another UI output. Keep the handler and egui context alive
+long enough to service destruction callbacks queued while `run_native` returns.
+Honor `Wait` when more host facts are required instead of polling indefinitely.
+Once every materialized window has committed its exact destruction, admitted
+creates have terminated and input/output owners have settled, the adapter can
+submit the final empty live-window inventory using the established backend.
+Detaching the handler alone is not evidence of window destruction. This derived
+inventory requires a previously committed backend roster; a failure before that
+baseline can still process an already queued first roster during cleanup, even
+when its geometry only revokes inventory authority. If no backend roster has
+been captured, the host must still supply those facts.
+
+The [real-window recovery smoke](../../integration/egui-native-smoke/README.md#fatal-teardown-and-fresh-host-recovery)
+demonstrates the complete replacement flow and its application-owned document
+and hosting policy.
+
 A logical checkpoint preserves multiple surfaces, but `NativeDockspaceApp::new`
 registers only its designated Root. Supply Root composition placements and
 explicit Child hosting through the existing native APIs. OS-window ownership,

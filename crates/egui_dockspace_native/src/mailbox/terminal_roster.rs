@@ -154,6 +154,16 @@ impl TerminalRosterState {
         self.capture_backing_with(|backing| backing.capture_into(roster, viewports, windows, areas))
     }
 
+    pub(super) fn capture_empty(
+        &mut self,
+        backend: eframe::NativeWindowingBackend,
+    ) -> Option<Arc<NativeViewportRosterRecord>> {
+        self.capture_with(|backing| {
+            backing.capture_empty(backend);
+            true
+        })
+    }
+
     fn capture_with(
         &mut self,
         fill: impl FnOnce(&mut NativeViewportRosterRecord) -> bool,
