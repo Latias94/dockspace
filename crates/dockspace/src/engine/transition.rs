@@ -402,7 +402,7 @@ pub enum SurfaceSceneStateKind {
     Bootstrap,
 }
 
-/// One exact presentation-authority change committed by a reducer tick.
+/// One presentation-authority or transient-visual change committed by a reducer tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SurfaceSceneDelta {
     surface: SurfaceId,
@@ -416,6 +416,7 @@ pub struct SurfaceSceneDelta {
         SurfaceSceneStateKind,
         Option<PresentedSurfaceAuthority>,
     )>,
+    transient_visuals_changed: bool,
 }
 
 impl SurfaceSceneDelta {
@@ -431,11 +432,13 @@ impl SurfaceSceneDelta {
             SurfaceSceneStateKind,
             Option<PresentedSurfaceAuthority>,
         )>,
+        transient_visuals_changed: bool,
     ) -> Self {
         Self {
             surface,
             before,
             after,
+            transient_visuals_changed,
         }
     }
 
@@ -446,6 +449,9 @@ impl SurfaceSceneDelta {
     }
 
     pub(crate) fn requires_repaint(self) -> bool {
+        if self.transient_visuals_changed {
+            return true;
+        }
         let Some((before_stamp, before_kind, Some(before_authority))) = self.before else {
             return true;
         };
@@ -1020,13 +1026,13 @@ impl EngineTransition {
         &self.surface_contributions
     }
 
-    /// Returns every presentation authority changed by this tick in stable surface order.
+    /// Returns scene-authority and transient-visual changes in stable surface order.
     #[must_use]
     pub fn surface_scene_deltas(&self) -> &[SurfaceSceneDelta] {
         &self.surface_scene_deltas
     }
 
-    /// Iterates logical surfaces whose presentation authority changed.
+    /// Iterates logical surfaces whose scene authority or transient visuals changed.
     pub fn affected_surfaces(&self) -> impl ExactSizeIterator<Item = SurfaceId> + '_ {
         self.surface_scene_deltas
             .iter()

@@ -1,5 +1,7 @@
 use super::support;
 
+mod transient_repaint;
+
 use dockspace::engine::surface_recovery::SurfaceRecoveryBootstrap;
 use dockspace::engine::transition::InputOutcome;
 use dockspace::engine::{CoreHostFrame, DockEngine, EngineInput};
@@ -1255,14 +1257,12 @@ fn desktop_native_fixture_from_workspace(
         target_binding,
         work_area_scale,
     );
-    publish_surfaces(
-        &mut engine,
-        &mut host,
-        [
-            (SOURCE_SURFACE, logical_rect(0.0, 0.0, 640.0, 480.0)),
-            (TARGET_SURFACE, logical_rect(0.0, 0.0, 640.0, 480.0)),
-        ],
-    );
+    let surfaces = engine
+        .presentation_requirements()
+        .surfaces()
+        .map(|(surface, _)| (surface, logical_rect(0.0, 0.0, 640.0, 480.0)))
+        .collect::<Vec<_>>();
+    publish_surfaces(&mut engine, &mut host, surfaces);
     let provider = engine
         .create_pointer_provider(
             PointerProviderScope::DesktopGlobal,

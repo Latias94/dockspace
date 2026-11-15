@@ -916,8 +916,7 @@ impl DockEngine {
             || before_close != candidate.close
             || before_viewport != candidate.viewport
             || !focus_delta.is_empty();
-        let surface_scene_deltas =
-            Self::surface_scene_deltas(&before_scene, &candidate.presentation_authority.scene);
+        let surface_scene_deltas = Self::surface_scene_deltas(self, &candidate);
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,

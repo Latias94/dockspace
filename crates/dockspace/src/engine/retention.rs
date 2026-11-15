@@ -281,7 +281,6 @@ impl DockEngine {
         }
 
         let before = self.version;
-        let before_scene = self.presentation_authority.scene.clone();
         let before_viewport = self.viewport.clone();
         let before_viewport_focus = self.viewport_focus.clone();
         let effect_boundary = before_viewport.latest_effect_id();
@@ -350,8 +349,7 @@ impl DockEngine {
             candidate.viewport.effects(),
             &[],
         );
-        let surface_scene_deltas =
-            Self::surface_scene_deltas(&before_scene, &candidate.presentation_authority.scene);
+        let surface_scene_deltas = Self::surface_scene_deltas(self, &candidate);
         // The durable host tombstone always changes published core state, even
         // when the host never emitted a stream and no scene delta is visible.
         let published_state_changed = true;

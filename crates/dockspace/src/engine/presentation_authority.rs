@@ -2408,45 +2408,4 @@ impl DockEngine {
         }
         Ok(())
     }
-
-    pub(super) fn surface_scene_deltas(
-        before: &SurfaceSceneSet,
-        after: &SurfaceSceneSet,
-    ) -> Vec<SurfaceSceneDelta> {
-        let surfaces = before
-            .surfaces()
-            .map(|(surface, _)| *surface)
-            .chain(after.surfaces().map(|(surface, _)| *surface))
-            .collect::<BTreeSet<_>>();
-        surfaces
-            .into_iter()
-            .filter_map(|surface| {
-                let before_authority = before.interaction_authority(surface);
-                let after_authority = after.interaction_authority(surface);
-                let before = before
-                    .surface(surface)
-                    .map(|scene| Self::surface_scene_authority(scene, before_authority));
-                let after = after
-                    .surface(surface)
-                    .map(|scene| Self::surface_scene_authority(scene, after_authority));
-                (before != after).then(|| SurfaceSceneDelta::new(surface, before, after))
-            })
-            .collect()
-    }
-
-    fn surface_scene_authority(
-        scene: &SurfaceScene,
-        interaction: Option<PresentedSurfaceAuthority>,
-    ) -> (
-        SurfaceSceneStamp,
-        SurfaceSceneStateKind,
-        Option<PresentedSurfaceAuthority>,
-    ) {
-        let kind = match scene {
-            SurfaceScene::Ready(_) => SurfaceSceneStateKind::Ready,
-            SurfaceScene::Stale(_) => SurfaceSceneStateKind::Stale,
-            SurfaceScene::Bootstrap(_) => SurfaceSceneStateKind::Bootstrap,
-        };
-        (scene.stamp(), kind, interaction)
-    }
 }

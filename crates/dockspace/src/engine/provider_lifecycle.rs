@@ -418,7 +418,6 @@ impl DockEngine {
         }
 
         let before = self.version;
-        let before_scene = self.presentation_authority.scene.clone();
         let before_viewport = self.viewport.clone();
         let before_viewport_focus = self.viewport_focus.clone();
         let mut candidate = self.candidate();
@@ -512,8 +511,7 @@ impl DockEngine {
             candidate.viewport.effects(),
             &[],
         );
-        let surface_scene_deltas =
-            Self::surface_scene_deltas(&before_scene, &candidate.presentation_authority.scene);
+        let surface_scene_deltas = Self::surface_scene_deltas(self, &candidate);
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,

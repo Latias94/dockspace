@@ -29,6 +29,7 @@ mod pointer_timed;
 mod pointer_touch;
 mod pointer_transaction;
 mod presentation_authority;
+mod presentation_delta;
 mod presentation_identity;
 mod presentation_rehome;
 mod presentation_roster;
