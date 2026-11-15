@@ -154,6 +154,7 @@ impl egui::plugin::Plugin for InputLog {
                     sampled
                 }
                 egui::Event::PointerButton { .. }
+                | egui::Event::PointerCancelled
                 | egui::Event::PointerGone
                 | egui::Event::WindowFocused(_)
                 | egui::Event::ModifiersChanged(_)

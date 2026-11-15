@@ -127,7 +127,7 @@ impl DrainSmoke {
     }
 }
 
-fn text(app: &NativeExampleApp) -> BTreeMap<ItemId, String> {
+pub(super) fn text(app: &NativeExampleApp) -> BTreeMap<ItemId, String> {
     app.dockspace.with_panes(|panes| {
         panes
             .panes

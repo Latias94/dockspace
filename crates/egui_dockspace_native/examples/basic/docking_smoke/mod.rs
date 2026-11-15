@@ -15,6 +15,7 @@ use super::{
     SURFACE,
 };
 
+mod content;
 mod drain;
 mod native;
 
@@ -44,15 +45,19 @@ struct ViewportObservations {
     escape_presses: usize,
     focus_losses: usize,
     releases: usize,
+    cancellations: usize,
+    moves: usize,
+    controls: BTreeMap<content::Control, content::Sample>,
+    center_guides: Vec<egui::Rect>,
 }
 
 struct EditorProbe(Arc<Mutex<EditorObservations>>, egui::ViewportId);
 
 #[derive(Clone)]
-pub(super) struct PreviewProbe(Arc<Mutex<EditorObservations>>);
+pub(super) struct EditorProbeHandle(Arc<Mutex<EditorObservations>>);
 
-impl PreviewProbe {
-    pub(super) fn observe(&self, ui: &egui::Ui, preview: &egui_dockspace::DropPreview) {
+impl EditorProbeHandle {
+    pub(super) fn observe_preview(&self, ui: &egui::Ui, preview: &egui_dockspace::DropPreview) {
         self.0
             .lock()
             .unwrap()
@@ -73,12 +78,16 @@ impl egui::plugin::Plugin for EditorProbe {
         let mut observations = self.0.lock().unwrap();
         let tabs = observations.viewports.entry(input.viewport_id).or_default();
         tabs.preview_tabs = None;
+        tabs.controls.clear();
         tabs.window =
             eframe::current_native_output_token().map(|token| u64::from(token.window_id()));
         if let Some(rect) = input.screen_rect {
             tabs.client_rect = Some(rect);
         }
         for event in &input.events {
+            if matches!(event, egui::Event::PointerMoved(_)) {
+                tabs.moves += 1;
+            }
             match event {
                 egui::Event::PointerButton {
                     button: egui::PointerButton::Primary,
@@ -100,6 +109,7 @@ impl egui::plugin::Plugin for EditorProbe {
                     ..
                 } => tabs.escape_presses += 1,
                 egui::Event::WindowFocused(false) => tabs.focus_losses += 1,
+                egui::Event::PointerCancelled => tabs.cancellations += 1,
                 egui::Event::PointerMoved(point)
                     if tabs.primary_down
                         && tabs.client_rect.is_some_and(|rect| point.y > rect.max.y) =>
@@ -146,6 +156,7 @@ impl egui::plugin::Plugin for EditorProbe {
         tabs.scale = context.pixels_per_point();
         tabs.tabs.clear();
         tabs.splitters.clear();
+        tabs.center_guides.clear();
         for (_, node) in &update.nodes {
             let Some(rect) = node.bounds() else { continue };
             let rect = egui::Rect::from_min_max(
@@ -157,6 +168,11 @@ impl egui::plugin::Plugin for EditorProbe {
                     if let Some(title) = node.label() {
                         tabs.tabs.insert(title.to_owned(), rect);
                     }
+                }
+                egui::accesskit::Role::Label
+                    if node.label() == Some("Dockspace center drop guide") =>
+                {
+                    tabs.center_guides.push(rect);
                 }
                 egui::accesskit::Role::Splitter
                     if !node.is_disabled() && node.label() == Some("Resize panes") =>
@@ -180,6 +196,7 @@ enum Journey {
     Merge(MergeSmoke),
     Drain(drain::DrainSmoke),
     Native(native::NativeSmoke),
+    Content(content::ContentSmoke),
     Complete,
 }
 
@@ -211,6 +228,24 @@ impl DockingSmoke {
                 native::NativeSmoke::new([INSPECTOR, PREVIEW], true)
                     .with_interruption(native::Interruption::Deactivate),
             ),
+            Ok("native-change-resize") => Journey::Native(
+                native::NativeSmoke::new([INSPECTOR, PREVIEW], true)
+                    .with_interruption(native::Interruption::Resize),
+            ),
+            Ok("native-change-zoom") => Journey::Native(
+                native::NativeSmoke::new([INSPECTOR, PREVIEW], true)
+                    .with_interruption(native::Interruption::Zoom),
+            ),
+            Ok("native-cancel-target-close") => Journey::Native(
+                native::NativeSmoke::new([INSPECTOR, PREVIEW], true)
+                    .with_interruption(native::Interruption::TargetClose),
+            ),
+            Ok("content-cancel-deactivate") => Journey::Content(content::ContentSmoke::new(
+                content::Interruption::Deactivate,
+            )),
+            Ok("content-release-outside") => Journey::Content(content::ContentSmoke::new(
+                content::Interruption::OutsideRelease,
+            )),
             Ok(value) => panic!("unknown editor docking case: {value}"),
         };
         Self {
@@ -224,15 +259,16 @@ impl DockingSmoke {
         context.add_plugin(EditorProbe(Arc::clone(&self.tabs), egui::ViewportId::ROOT));
     }
 
-    pub(super) fn preview_probe(&self) -> PreviewProbe {
-        PreviewProbe(Arc::clone(&self.tabs))
+    pub(super) fn probe(&self) -> EditorProbeHandle {
+        EditorProbeHandle(Arc::clone(&self.tabs))
     }
 
     pub(super) fn advance(&mut self, app: &NativeExampleApp, context: &egui::Context) {
         let complete = match &mut self.journey {
             Journey::Merge(smoke) => smoke.advance(app, context, &self.tabs),
             Journey::Drain(smoke) => smoke.advance(app, context, &self.tabs),
-            Journey::Native(smoke) => smoke.advance(app, &self.tabs),
+            Journey::Native(smoke) => smoke.advance(app, context, &self.tabs),
+            Journey::Content(smoke) => smoke.advance(app, &self.tabs),
             Journey::Complete => return,
         };
         if complete {

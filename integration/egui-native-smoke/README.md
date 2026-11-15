@@ -82,9 +82,9 @@ physical-input qualification.
 ## Run docking input on macOS
 
 On a dedicated macOS desktop,
-[`editor_docking_macos.py`](editor_docking_macos.py) provides eleven
+[`editor_docking_macos.py`](editor_docking_macos.py) provides sixteen
 application-observed journeys: the same seven local docking and divider cases,
-plus four real Root/Child docking journeys.
+seven real Root/Child docking journeys and two ordinary-content journeys.
 
 ```text
 python3 integration/egui-native-smoke/editor_docking_macos.py integration/egui-fork-workspace/target/debug/examples/basic
@@ -95,20 +95,24 @@ Accessibility permission in **System Settings → Privacy & Security → Accessi
 This driver uses CoreGraphics mouse/keyboard events and process-scoped
 Accessibility requests for activation and hiding. It needs Python 3.10 or later; no
 additional Python packages are required. Leave the desktop available while it
-owns mouse input, unlock it, and keep egui zoom at its default 1.0. Other UI zoom
-factors are rejected before sending input. It releases the primary button, restores the
+owns mouse input, unlock it, and start with egui zoom at its default 1.0. Only
+the dedicated zoom-change case permits 1.25. It releases the primary button, restores the
 pointer and terminates only its own remaining editor processes during cleanup.
 Console and operation logs are retained in the temporary directory printed at
 startup.
 
-The four native cases require a 1920 × 1080 desktop at native scale 1. They place
+The seven native cases require a 1920 × 1080 desktop at native scale 1. They place
 nonoverlapping windows and verify each input point against the owned OS window
 inventory. Setup creates the Inspector child with the public Move to New Window
 command. All four subsequent docking moves use CoreGraphics mouse input:
 History moves Root → Child → Root, then Inspector and Preview return in both
-orders. The first drag pauses outside both windows until the application observes
-the original primary button held there. The target uses its current selected
-content, including when accumulated labels overflow the tab strip.
+orders. Except in the dedicated geometry cases, the first successful drag pauses
+outside both windows until the application observes the original primary button
+held there. The target uses its current selected content, including when
+accumulated labels overflow the tab strip. Before release, the observer reports
+the actual rendered center guide inside that content. This avoids treating a
+narrow pane's geometric center as the merge button when its guide cluster moves
+around outer targets.
 
 `native-inspector-first` keeps the example's central Inspector area: after the
 last tab leaves, the empty child must remain. A real click on its standard AppKit
@@ -132,10 +136,36 @@ deactivation. Visibility and activation requests use `AXHidden` and `AXFrontmost
 on the owned editor process, with actual hidden/active state observed before
 continuing. Native focus and capture callbacks still drive cancellation.
 
-All eleven journeys have physical qualification. This covers local tab merges,
+`native-change-resize` and `native-change-zoom` change the Root client to
+1100 × 740 or egui zoom to 1.25 while the original cross-window drag is held.
+They observe the changed geometry, revoked preview and fresh presentation before
+releasing. Desktop dragging survives coordinate changes: the original release
+must complete the first move against current authority, then the remaining
+three physical moves and exact Child retirement must succeed. The zoom profile
+converts egui desktop points back to native logical points and checks that both
+OS clients retain their physical size. Other profiles still reject nondefault
+egui zoom.
+
+`native-cancel-target-close` performs the owned Child's actual accessibility
+close-button action while primary remains held. It requires physical window
+retirement and exact presentation recovery before sending the old input tail.
+It then creates a new Child with a fresh viewport and completes four physical
+moves. Ordinary `ViewportCommand::Close` is not used to emulate an OS close
+callback.
+
+`content-cancel-deactivate` and `content-release-outside` exercise the actual
+canvas, Zoom slider, Document text selection and Console scrollbar. Every control
+must change under a real held drag before interruption. Deactivation must clear
+held/dragged/button state before the real release; outside release must arrive
+through the native callback. Two subsequent observed pointer movements must
+leave the value unchanged, and a fresh physical drag must change it again.
+Layout and all eight application texts remain unchanged.
+
+This covers local tab merges,
 contained-root retirement, divider hit padding, held-button client re-entry,
-Escape/application-deactivation cancellation with late input tails, and the
-specified moving-pointer cross-window paths.
+Escape/application-deactivation cancellation with late input tails, changing
+geometry, closing/recreating the target, ordinary content input and the specified
+moving-pointer cross-window paths.
 It does not emulate a remote desktop disconnect, suppress a release callback,
 or qualify arbitrary tear-off, stationary dwell/autoscroll, mixed-monitor DPI or
 the separate X11 lifecycle driver. Stationary macOS samples do not establish

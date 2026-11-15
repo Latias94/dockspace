@@ -253,6 +253,88 @@ class Mouse:
         self.press()
         self.release()
 
+    def close_while_pressed(self, pid: int, window_id: int) -> None:
+        """Press the owned native close button without releasing the held drag."""
+        if not self.held:
+            raise RuntimeError("the target close requires a held pointer gesture")
+        window = next(item for item in self.windows(pid)
+                      if item["kCGWindowNumber"] == window_id)
+        bounds = window["kCGWindowBounds"]
+        services = ctypes.CDLL(
+            "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+        )
+        services.AXUIElementCreateApplication.argtypes = [ctypes.c_int]
+        services.AXUIElementCreateApplication.restype = ctypes.c_void_p
+        services.AXUIElementCopyAttributeValue.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+        ]
+        services.AXUIElementCopyAttributeValue.restype = ctypes.c_int32
+        services.AXUIElementPerformAction.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        services.AXUIElementPerformAction.restype = ctypes.c_int32
+        services.AXValueGetValue.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p]
+        services.AXValueGetValue.restype = ctypes.c_bool
+        self.cf.CFArrayGetCount.argtypes = [ctypes.c_void_p]
+        self.cf.CFArrayGetCount.restype = ctypes.c_long
+        self.cf.CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
+        self.cf.CFArrayGetValueAtIndex.restype = ctypes.c_void_p
+        self.cf.CFStringCreateWithCString.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32,
+        ]
+        self.cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+
+        def copy_attribute(element: int, name: bytes) -> int:
+            attribute = self.cf.CFStringCreateWithCString(None, name, 0x08000100)
+            value = ctypes.c_void_p()
+            try:
+                status = services.AXUIElementCopyAttributeValue(element, attribute,
+                                                               ctypes.byref(value))
+                if status or not value.value:
+                    raise RuntimeError(f"could not read owned AX window {name!r}: {status}")
+                return value.value
+            finally:
+                self.cf.CFRelease(attribute)
+
+        application = services.AXUIElementCreateApplication(pid)
+        if not application:
+            raise RuntimeError("could not address the owned editor's AX application")
+        windows = None
+        try:
+            windows = copy_attribute(application, b"AXWindows")
+            matches = []
+            for index in range(self.cf.CFArrayGetCount(windows)):
+                element = self.cf.CFArrayGetValueAtIndex(windows, index)
+                position = copy_attribute(element, b"AXPosition")
+                size = None
+                try:
+                    size = copy_attribute(element, b"AXSize")
+                    point, dimensions = Point(), Size()
+                    if not (services.AXValueGetValue(position, 1, ctypes.byref(point))
+                            and services.AXValueGetValue(size, 2, ctypes.byref(dimensions))):
+                        raise RuntimeError("could not decode owned AX window geometry")
+                    if all(abs(actual - expected) < 2 for actual, expected in zip(
+                            (point.x, point.y, dimensions.width, dimensions.height),
+                            (bounds["X"], bounds["Y"], bounds["Width"], bounds["Height"]))):
+                        matches.append(element)
+                finally:
+                    if size:
+                        self.cf.CFRelease(size)
+                    self.cf.CFRelease(position)
+            if len(matches) != 1:
+                raise RuntimeError("expected one owned AX window matching the target CGWindow")
+            button = copy_attribute(matches[0], b"AXCloseButton")
+            action = self.cf.CFStringCreateWithCString(None, b"AXPress", 0x08000100)
+            try:
+                status = services.AXUIElementPerformAction(button, action)
+                if status:
+                    raise RuntimeError(f"the owned native close action failed: {status}")
+            finally:
+                self.cf.CFRelease(action)
+                self.cf.CFRelease(button)
+        finally:
+            if windows:
+                self.cf.CFRelease(windows)
+            self.cf.CFRelease(application)
+
     def post(self, kind: int, point: Point) -> None:
         event = self.cg.CGEventCreateMouseEvent(None, kind, point, 0)
         if not event:
@@ -295,7 +377,8 @@ class Mouse:
         raise RuntimeError("the desktop needs space outside the editor client area")
 
 
-def coordinates(log: Path, viewport: str = "FFFF") -> tuple[float, tuple[float, ...]]:
+def coordinates(log: Path, viewport: str = "FFFF", *,
+                allow_zoom: bool = False) -> tuple[float, tuple[float, ...]]:
     latest = None
     for line in log.read_text().splitlines():
         if f'\tviewport\tid="{viewport}"' not in line:
@@ -312,9 +395,11 @@ def coordinates(log: Path, viewport: str = "FFFF") -> tuple[float, tuple[float, 
             )
     if latest is None or latest[1] <= 0:
         raise RuntimeError("the editor has not supplied its real client geometry")
-    if latest[0] != 1.0:
-        raise RuntimeError("this finite docking profile requires egui zoom 1.0")
-    return latest[1], latest[2]
+    if latest[0] not in ((1.0, 1.25) if allow_zoom else (1.0,)):
+        raise RuntimeError("the editor zoom is outside this finite profile's qualified values")
+    # ViewportInfo stores desktop geometry in egui points. CoreGraphics uses
+    # native logical points; widget markers are physical pixels already.
+    return latest[1], tuple(value * latest[0] for value in latest[2])
 
 
 def run_case(binary: Path, case: str, artifacts: Path, mouse: Mouse) -> None:
@@ -346,11 +431,15 @@ def run_case(binary: Path, case: str, artifacts: Path, mouse: Mouse) -> None:
     native_windows: dict[str, int] = {}
     native_retired = False
     native_target: Point | None = None
-    interrupt_case = case.startswith("native-cancel-")
+    interrupt_case = case.startswith(("native-cancel-", "native-change-"))
     interrupt_verified = False
     interrupt_tail = False
+    content_controls: set[str] = set()
+    retired_target: tuple[str, int] | None = None
+    recreated_target = False
     try:
-        deadline = time.monotonic() + (45 if case.startswith(("drain-", "native-")) else 20)
+        deadline = time.monotonic() + (75 if case.startswith("content-") else
+                                       60 if case.startswith(("drain-", "native-")) else 20)
         while time.monotonic() < deadline:
             try:
                 line = lines.get(timeout=1)
@@ -361,12 +450,67 @@ def run_case(binary: Path, case: str, artifacts: Path, mouse: Mouse) -> None:
                 break
             print(f"{case}: {line}", end="", flush=True)
             failed |= "Native dockspace stopped" in line or "panicked at" in line
-            if line.startswith("editor-native-drag:"):
+            if line.startswith(("editor-content-start:", "editor-content-fresh:",
+                                "editor-content-cancelled:")):
+                _, sx, sy, tx, ty = line.split(":", 1)[1].split()
+                scale, frame = coordinates(log)
+                source = Point(frame[0] + float(sx) / scale, frame[1] + float(sy) / scale)
+                target = Point(frame[0] + float(tx) / scale, frame[1] + float(ty) / scale)
+                if line.startswith("editor-content-cancelled:"):
+                    mouse.move(Point(target.x + 25, target.y + 12))
+                    time.sleep(0.15)
+                    mouse.move(target)
+                    time.sleep(0.15)
+                    mouse.release()
+                    assert process.stdin is not None
+                    process.stdin.write("content-tail-sent\n")
+                    process.stdin.flush()
+                    continue
+                mouse.activate(process.pid)
+                mouse.move(source)
+                time.sleep(0.12)
+                mouse.press()
+                time.sleep(0.12)
+                for step in range(1, 9):
+                    mouse.move(Point(source.x + (target.x - source.x) * step / 8,
+                                     source.y + (target.y - source.y) * step / 8))
+                    time.sleep(0.025)
+                if line.startswith("editor-content-fresh:"):
+                    time.sleep(0.15)
+                    mouse.release()
+            elif line.startswith("editor-content-interrupt:"):
+                if not mouse.held:
+                    raise RuntimeError("the content interruption requires a held real drag")
+                kind, _ = line.split(":", 1)[1].split()
+                if kind == "Deactivate" and case == "content-cancel-deactivate":
+                    mouse.set_hidden(process.pid, True)
+                    time.sleep(0.2)
+                    mouse.set_hidden(process.pid, False)
+                    mouse.activate(process.pid)
+                elif kind == "OutsideRelease" and case == "content-release-outside":
+                    _, frame = coordinates(log)
+                    display = mouse.cg.CGDisplayBounds(mouse.cg.CGMainDisplayID())
+                    outside = Point(display.origin.x + 10,
+                                    display.origin.y + display.size.height - 10)
+                    if frame[0] <= outside.x < frame[2] and frame[1] <= outside.y < frame[3]:
+                        raise RuntimeError("the content profile needs desktop space outside Root")
+                    mouse.move(outside)
+                    time.sleep(0.15)
+                    mouse.release()
+                else:
+                    raise RuntimeError("unexpected content interruption")
+            elif line.startswith("editor-content-verified:"):
+                control = line.split(":", 1)[1].split()[0]
+                if control in content_controls:
+                    raise RuntimeError("content control was verified twice")
+                content_controls.add(control)
+            elif line.startswith("editor-native-drag:"):
                 arguments = shlex.split(line.split(":", 1)[1])
 
                 def native_point(offset: int) -> tuple[Point, tuple[float, ...]]:
                     viewport, _, x, y = arguments[offset:offset + 4]
-                    scale, frame = coordinates(log, viewport)
+                    scale, frame = coordinates(log, viewport,
+                                               allow_zoom=case == "native-change-zoom")
                     if scale != 1.0:
                         raise RuntimeError("the native-window docking profile requires native scale 1.0")
                     actual = mouse.window_at_frame(process.pid, frame)
@@ -404,8 +548,19 @@ def run_case(binary: Path, case: str, artifacts: Path, mouse: Mouse) -> None:
                 mouse.move(Point(target.x - 25, target.y))
                 time.sleep(0.12)
                 mouse.move(target)
+                native_target = target
+            elif line.startswith("editor-native-target:"):
+                viewport, _, x, y = shlex.split(line.split(":", 1)[1])
+                if not mouse.held or native_target is None:
+                    raise RuntimeError("the rendered merge guide requires a held native drag")
+                scale, frame = coordinates(log, viewport, allow_zoom=case == "native-change-zoom")
+                target = Point(frame[0] + float(x) / scale, frame[1] + float(y) / scale)
+                if mouse.visible_window_at(process.pid, target) != native_windows[viewport]:
+                    raise RuntimeError("the rendered merge guide is obscured")
+                mouse.move(target)
                 time.sleep(0.2)
                 mouse.release()
+                native_target = None
                 drags += 1
             elif line.startswith("editor-native-interrupt:"):
                 if not interrupt_case or not mouse.held or native_target is None:
@@ -419,39 +574,75 @@ def run_case(binary: Path, case: str, artifacts: Path, mouse: Mouse) -> None:
                     time.sleep(0.2)
                     mouse.set_hidden(process.pid, False)
                     mouse.activate(process.pid)
+                elif action == "target-close" and case == "native-cancel-target-close":
+                    children = set(native_windows.values()) - {native_windows["FFFF"]}
+                    if len(children) != 1:
+                        raise RuntimeError("target close requires one exact owned Child")
+                    mouse.close_while_pressed(process.pid, children.pop())
+                elif action in ("resize", "zoom") and case == f"native-change-{action}":
+                    # The application requests the real eframe geometry change
+                    # after observing a live preview. Keep the original press.
+                    pass
                 else:
                     raise RuntimeError("the interruption does not match the selected case")
             elif line.startswith("editor-native-interrupt-cancelled:"):
                 if native_target is None or not mouse.held or interrupt_tail:
                     raise RuntimeError("the cancellation must precede the original release")
-                mouse.move(Point(native_target.x - 25, native_target.y))
-                time.sleep(0.12)
-                mouse.move(native_target)
-                time.sleep(0.12)
+                if "tail=release-only" not in line:
+                    if retired_target is not None:
+                        _, frame = coordinates(log)
+                        native_target = Point(frame[0] + 30, frame[1] + 10)
+                    mouse.move(Point(native_target.x - 15, native_target.y))
+                    time.sleep(0.12)
+                    mouse.move(native_target)
+                    time.sleep(0.12)
                 mouse.release()
                 assert process.stdin is not None
                 process.stdin.write("native-interrupt-tail-sent\n")
                 process.stdin.flush()
                 native_target = None
                 interrupt_tail = True
+            elif line.startswith("editor-native-interrupt-target-retired:"):
+                viewport, window = shlex.split(line.split(":", 1)[1])
+                if case != "native-cancel-target-close" or not mouse.held:
+                    raise RuntimeError("target retirement must interrupt the original held drag")
+                old_window = native_windows[viewport]
+                if int(window) == 0:
+                    raise RuntimeError("target retirement needs a concrete native identity")
+                retirement_deadline = time.monotonic() + 3
+                while old_window in {item["kCGWindowNumber"] for item in mouse.windows(process.pid)}:
+                    if time.monotonic() >= retirement_deadline:
+                        raise RuntimeError("the interrupted target OS window did not retire")
+                    time.sleep(0.02)
+                retired_target = (viewport, old_window)
+                del native_windows[viewport]
+                assert process.stdin is not None
+                process.stdin.write("native-interrupt-target-retirement-observed\n")
+                process.stdin.flush()
+            elif line.startswith("editor-native-interrupt-recreated:"):
+                old_viewport, _, viewport, _ = shlex.split(line.split(":", 1)[1])
+                if retired_target is None or old_viewport != retired_target[0] or viewport == old_viewport:
+                    raise RuntimeError("the replacement target must use a fresh viewport identity")
+                recreated_target = True
             elif line.startswith("editor-native-interrupt-verified:"):
                 if not interrupt_tail or interrupt_verified:
                     raise RuntimeError("native interruption verification is out of order")
                 interrupt_verified = True
+                if "continuation=true" in line:
+                    if not case.startswith("native-change-"):
+                        raise RuntimeError("only geometry changes preserve the original drag")
+                    drags += 1
             elif line.startswith("editor-native-outside-observed:"):
                 if native_target is None or not mouse.held or drags:
                     raise RuntimeError("held outside receipt does not match the initial native drag")
                 mouse.move(Point(native_target.x - 25, native_target.y))
                 time.sleep(0.12)
                 mouse.move(native_target)
-                time.sleep(0.2)
-                mouse.release()
-                drags += 1
-                native_target = None
             elif line.startswith("editor-native-empty-central:"):
                 viewport, _ = shlex.split(line.split(":", 1)[1])
                 child = native_windows[viewport]
-                if (case not in ("native-inspector-first", "native-cancel-escape", "native-cancel-deactivate")
+                if (case not in ("native-inspector-first", "native-cancel-escape", "native-cancel-deactivate",
+                                  "native-change-resize", "native-change-zoom", "native-cancel-target-close")
                         or drags != 4):
                     raise RuntimeError("only the drained central Child may request native close")
                 current = {window["kCGWindowNumber"] for window in mouse.windows(process.pid)}
@@ -524,6 +715,10 @@ def run_case(binary: Path, case: str, artifacts: Path, mouse: Mouse) -> None:
             failed = True
         if interrupt_case and not interrupt_verified:
             failed = True
+        if case.startswith("content-") and content_controls != {"Canvas", "Zoom", "Text", "Scroll"}:
+            failed = True
+        if case == "native-cancel-target-close" and not recreated_target:
+            failed = True
         if status or not completed or failed:
             raise RuntimeError(
                 f"editor docking failed for {case}: exit={status}, "
@@ -557,6 +752,8 @@ def main() -> None:
         "drain-inspector-first", "drain-preview-first",
         "native-inspector-first", "native-preview-first",
         "native-cancel-escape", "native-cancel-deactivate",
+        "content-cancel-deactivate", "content-release-outside",
+        "native-change-resize", "native-change-zoom", "native-cancel-target-close",
     ]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)

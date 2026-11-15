@@ -12,6 +12,7 @@ use egui_dockspace::DockspaceActionStatus;
 use super::super::{INSPECTOR_FLOATING, INSPECTOR_ROOT, MAIN_ROOT};
 use super::*;
 
+mod geometry;
 mod interrupt;
 use interrupt::InterruptedDrag;
 pub(super) use interrupt::Interruption;
@@ -23,16 +24,19 @@ pub(super) struct NativeSmoke {
     child: Option<(egui::ViewportId, u64, SurfaceId)>,
     step: usize,
     announced: bool,
+    target_announced: bool,
     expected: Vec<ItemId>,
     remaining: Vec<ItemId>,
     text: Option<BTreeMap<ItemId, String>>,
     setup_completed: bool,
     outside_observed: bool,
+    geometry_continued: bool,
     retains_empty_central: bool,
     close_announced: bool,
     retirement_announced: bool,
     external_observation: Receiver<String>,
     interruption: Option<InterruptedDrag>,
+    retired_child: Option<(egui::ViewportId, u64, SurfaceId)>,
 }
 
 impl NativeSmoke {
@@ -53,16 +57,19 @@ impl NativeSmoke {
             child: None,
             step: 0,
             announced: false,
+            target_announced: false,
             expected: Vec::new(),
             remaining: Vec::new(),
             text: None,
             setup_completed: false,
             outside_observed: false,
+            geometry_continued: false,
             retains_empty_central,
             close_announced: false,
             retirement_announced: false,
             external_observation,
             interruption: None,
+            retired_child: None,
         }
     }
 
@@ -74,11 +81,12 @@ impl NativeSmoke {
     pub(super) fn advance(
         &mut self,
         app: &NativeExampleApp,
+        context: &egui::Context,
         observations: &Arc<Mutex<EditorObservations>>,
     ) -> bool {
         assert!(app.dockspace.error_kind().is_none());
         assert!(
-            self.started.elapsed() < Duration::from_secs(30),
+            self.started.elapsed() < Duration::from_secs(45),
             "native physical journey timed out at step {}; pending={:?}; view={:?}; interruption={:?}; observations={:?}",
             self.step,
             app.dockspace.pending_work(),
@@ -151,12 +159,28 @@ impl NativeSmoke {
             let observations = observations.lock().unwrap();
             let Some((&viewport, child)) = observations.viewports.iter().find(|(id, sample)| {
                 **id != egui::ViewportId::ROOT
+                    && self
+                        .retired_child
+                        .is_none_or(|(retired, _, _)| **id != retired)
                     && sample.tabs.contains_key("Inspector")
                     && sample.window.is_some()
             }) else {
                 return false;
             };
             let window = child.window.unwrap();
+            if let Some((old_viewport, old_window, old_surface)) = self.retired_child {
+                assert_ne!(
+                    viewport, old_viewport,
+                    "a recreated Child has a fresh viewport"
+                );
+                assert_ne!(
+                    child_surface, old_surface,
+                    "the retired surface cannot be reused"
+                );
+                eprintln!(
+                    "editor-native-interrupt-recreated: {old_viewport:?} {old_window} {viewport:?} {window}"
+                );
+            }
             eprintln!("editor-native-child: {viewport:?} {window}");
             self.child = Some((viewport, window, child_surface));
         }
@@ -223,7 +247,7 @@ impl NativeSmoke {
             });
             assert_eq!(self.text.as_ref().unwrap(), &text(app));
             assert_eq!(self.text.as_ref().unwrap().len(), 8);
-            assert!(self.outside_observed);
+            assert!(self.outside_observed || self.geometry_continued);
             if !self.retirement_announced {
                 eprintln!(
                     "editor-native-retired: {} registry=8 text=preserved quiescent=true",
@@ -249,19 +273,36 @@ impl NativeSmoke {
         };
         if self.announced {
             if let Some(interruption) = &mut self.interruption {
-                if interruption.advance(
+                if !interruption.advance(
                     app,
+                    context,
                     observations,
-                    self.child.unwrap().0,
+                    self.child.unwrap(),
                     &self.expected,
                     &self.external_observation,
                 ) {
-                    self.interruption = None;
+                    return false;
+                }
+                let continued = interruption.continues_drag();
+                if interruption.recreates_child() {
+                    self.retired_child = self.child.take();
+                    let retired = self.retired_child.unwrap().0;
+                    observations.lock().unwrap().viewports.remove(&retired);
+                    self.created = false;
+                    self.setup_completed = false;
+                }
+                assert_eq!(self.text.as_ref().unwrap(), &text(app));
+                self.interruption = None;
+                if !continued {
                     self.announced = false;
                     self.expected.clear();
                     self.remaining.clear();
+                    return false;
                 }
-                return false;
+                // A geometry refresh keeps the original held drag. Its real
+                // release is step zero and goes through the usual completion
+                // checks instead of minting a replacement press.
+                self.geometry_continued = true;
             }
             let completed = app.dockspace.with_view(|view| {
                 let source = view.item(source).unwrap();
@@ -288,8 +329,39 @@ impl NativeSmoke {
                 );
                 self.step += 1;
                 self.announced = false;
+                self.target_announced = false;
                 self.expected.clear();
                 self.remaining.clear();
+            } else if !self.target_announced {
+                let target_viewport = if self.step == 0 {
+                    self.child.unwrap().0
+                } else {
+                    egui::ViewportId::ROOT
+                };
+                let selected = app
+                    .dockspace
+                    .with_view(|view| view.item(target).unwrap().tabs().selected().unwrap());
+                if let Some((bounds, scale)) = app
+                    .dockspace
+                    .with_panes(|panes| panes.panes[&selected].content)
+                    && let Some(sample) =
+                        observations.lock().unwrap().viewports.get(&target_viewport)
+                    && let Some(guide) = sample
+                        .center_guides
+                        .iter()
+                        .find(|guide| bounds.contains(guide.center()))
+                {
+                    // Small panes may move their guide cluster to avoid root
+                    // edge targets. Drive the rendered merge button itself.
+                    let point = guide.center() * scale;
+                    eprintln!(
+                        "editor-native-target: {target_viewport:?} {} {} {}",
+                        sample.window.unwrap(),
+                        point.x,
+                        point.y
+                    );
+                    self.target_announced = true;
+                }
             }
             return false;
         }

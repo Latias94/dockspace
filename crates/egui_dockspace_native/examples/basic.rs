@@ -156,7 +156,7 @@ fn main() -> eframe::Result {
             if let Some(smoke) = &app.docking_smoke {
                 smoke.install(&creation.egui_ctx);
                 app.dockspace
-                    .with_panes_mut(|panes| panes.preview_probe = Some(smoke.preview_probe()));
+                    .with_panes_mut(|panes| panes.probe = Some(smoke.probe()));
             }
             Ok(Box::new(app))
         }),
@@ -732,14 +732,14 @@ impl ExamplePane {
 struct ExamplePanes {
     panes: BTreeMap<ItemId, ExamplePane>,
     text_editable: bool,
-    preview_probe: Option<docking_smoke::PreviewProbe>,
+    probe: Option<docking_smoke::EditorProbeHandle>,
 }
 
 impl ExamplePanes {
     fn new() -> Self {
         Self {
             text_editable: true,
-            preview_probe: None,
+            probe: None,
             panes: [
                 (OUTLINE, "pane/outline", "Outline", "Scene\n  Camera\n  Directional light\n  Player\n    Mesh\n    Controller"),
                 (EDITOR, "pane/document", "Document", "fn update(scene: &mut Scene) {\n    scene.player.translate([1.0, 0.0, 0.0]);\n}\n"),
@@ -773,7 +773,12 @@ fn pane_focus_id(item: ItemId) -> egui::Id {
     egui::Id::unique(("native-editor-content", item.get()))
 }
 
-fn paint_canvas(pane: &mut ExamplePane, ui: &mut egui::Ui, content: PaneResponse) -> PaneResponse {
+fn paint_canvas(
+    pane: &mut ExamplePane,
+    ui: &mut egui::Ui,
+    content: PaneResponse,
+    probe: Option<&docking_smoke::EditorProbeHandle>,
+) -> PaneResponse {
     let controls = ui.horizontal(|ui| {
         let reset = ui.button("Reset view");
         if reset.clicked() {
@@ -787,6 +792,9 @@ fn paint_canvas(pane: &mut ExamplePane, ui: &mut egui::Ui, content: PaneResponse
     let response = ui.interact(rect, pane_focus_id(PREVIEW), egui::Sense::click_and_drag());
     if response.dragged() {
         pane.pan += response.drag_delta();
+    }
+    if let Some(probe) = probe {
+        probe.observe_canvas(ui, &response, pane.pan, &controls.inner.1, pane.zoom);
     }
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     painter.rect_filled(rect, 0.0, ui.visuals().extreme_bg_color);
@@ -833,8 +841,8 @@ impl PaneView for ExamplePanes {
 
     fn drop_preview_ui(&mut self, ui: &egui::Ui, preview: &egui_dockspace::DropPreview) {
         preview.paint(ui);
-        if let Some(probe) = &self.preview_probe {
-            probe.observe(ui, preview);
+        if let Some(probe) = &self.probe {
+            probe.observe_preview(ui, preview);
         }
     }
 
@@ -870,7 +878,7 @@ impl PaneView for ExamplePanes {
                 .with_content(&reload);
         }
         if item == PREVIEW {
-            content = paint_canvas(pane, ui, content);
+            content = paint_canvas(pane, ui, content, self.probe.as_ref());
         } else if item == CONSOLE {
             let description = ui.label(&pane.text);
             content = content.with_content(&description);
@@ -885,6 +893,9 @@ impl PaneView for ExamplePanes {
                     content
                 });
             content = log.inner;
+            if let Some(probe) = &self.probe {
+                probe.observe_scroll(ui, log.id, log.state.clamped_offset().y);
+            }
             // Only declare scroll controls actually registered in this pass.
             for id in [log.id.with("area"), log.id.with(1_usize)] {
                 if ui
@@ -914,6 +925,11 @@ impl PaneView for ExamplePanes {
                     .font(egui::TextStyle::Monospace),
             );
             content = content.with_content(&response);
+            if item == EDITOR
+                && let Some(probe) = &self.probe
+            {
+                probe.observe_text(ui, &response);
+            }
             pane.input = Some((
                 ui.ctx().viewport_id(),
                 response.rect,

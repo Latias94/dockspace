@@ -87,15 +87,21 @@ Cloned, overlapping or transformed configurations and missing authority remain
 Both backends have compile coverage for the native adapter. macOS also has
 real-window programmatic lifecycle coverage and a [physical docking
 driver](../integration/egui-native-smoke/README.md#run-docking-input-on-macos).
-Its eleven physically qualified journeys cover tab merges, contained-root retirement,
+Its physical journeys cover tab merges, contained-root retirement,
 held-button client re-entry, subsequent divider resizing and physical Root/Child round trips.
 The cross-window profile uses nonoverlapping windows on a 1920 × 1080 desktop
-at native scale and egui zoom 1. It verifies ordinary empty-child retirement,
+at native scale 1. It verifies ordinary empty-child retirement,
 empty central-area retention and native close through presentation recovery.
 Escape and application deactivation cancel a visible cross-window preview before
 the real release. Late movement/release preserves every pane placement, and fresh
 native round trips still complete. All eight panes and their text survive, and
 the original Root's OS window identity remains unchanged.
+Separate cases resize the source or change egui zoom from 1 to 1.25 while held,
+then require successful docking using fresh geometry and presentation. Another
+closes the target through its actual native accessibility button while held,
+checks recovery and physical retirement, and repeats docking with a new Child.
+Real canvas, slider, text selection and scrollbar drags also cover application
+deactivation, outside-client release, inert late movement and fresh recovery.
 These checks do not emulate remote desktop disconnects or
 qualify mixed-monitor DPI, arbitrary tear-off or third-party windows.
 
@@ -117,6 +123,12 @@ synchronous no-owner capture notification caused by its own final button release
 external capture loss still cancels. These event-ordering and content-input
 contracts have deterministic regression coverage; Windows has cross-compile
 coverage rather than physical qualification.
+
+Windows checks the actual thread capture owner before releasing it, so an old
+window's late button-up cannot release a newer window's capture. Its live HWND
+roster distinguishes managed owners from foreign windows without accessing
+foreign userdata. The isolated Windows ownership regression is compiled here;
+execute it on a Windows desktop before claiming physical qualification.
 
 Windows lacks hovered-window, desktop-pointer and button-state authority and
 does not have physical cross-window qualification. Keep paths unavailable when
