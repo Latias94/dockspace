@@ -440,7 +440,7 @@ fn publication_retires_removed_surfaces_and_preserves_unpresented_owners(
 fn actual_repeat_preserves_scrollbar_response_identity(token: NativeOutputToken) {
     let mut fixture = Fixture::new(SURFACE, layout(SURFACE, 40));
     let (_, output) = fixture.render(Vec::new(), Vec::new());
-    let control = node(&output, Role::Button, "Show hidden tabs").0;
+    let control = node(&output, Role::Button, "List tabs").0;
     output.drop_without_applying_deltas();
     let (open, output) = fixture.render(vec![accesskit(control, Action::Click)], Vec::new());
     output.drop_without_applying_deltas();

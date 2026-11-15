@@ -741,7 +741,7 @@ fn activating_an_overflow_menu_row_focuses_its_editable_content() {
                 .unwrap()
                 .nodes
                 .iter()
-                .find(|(_, node)| node.label() == Some("Show hidden tabs"))
+                .find(|(_, node)| node.label() == Some("List tabs"))
                 .map(|(id, _)| *id);
             assert!(menu_button.is_some());
         }
@@ -833,7 +833,7 @@ fn escaping_an_overflow_menu_returns_focus_to_its_button_for_keyboard_reopening(
         if pass == 3 {
             menu_button = nodes
                 .iter()
-                .find(|(_, node)| node.label() == Some("Show hidden tabs"))
+                .find(|(_, node)| node.label() == Some("List tabs"))
                 .map(|(id, _)| *id);
         }
         let menu_visible = nodes.iter().any(|(_, node)| node.role() == Role::Menu);
@@ -944,7 +944,7 @@ fn an_overflow_menu_yields_focus_and_keyboard_activation_to_an_application_modal
         if pass == 3 {
             menu_button = nodes
                 .iter()
-                .find(|(_, node)| node.label() == Some("Show hidden tabs"))
+                .find(|(_, node)| node.label() == Some("List tabs"))
                 .map(|(id, _)| *id);
         }
         if pass == 7 {
@@ -1571,7 +1571,7 @@ fn overflow_menu_titles_fit_their_text_clip_after_ui_zoom() {
             if pass == 3 {
                 menu_button = nodes
                     .iter()
-                    .find(|(_, node)| node.label() == Some("Show hidden tabs"))
+                    .find(|(_, node)| node.label() == Some("List tabs"))
                     .map(|(id, _)| *id);
             }
             if pass == 7 {

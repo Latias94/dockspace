@@ -100,7 +100,7 @@ fn check_overflow_scroll_transition(pointer: bool) {
         "an unchanged selection must not reclaim an explicit manual offset"
     );
 
-    let (menu, _) = accesskit_node(&held.output, Role::Button, "Show hidden tabs");
+    let (menu, _) = accesskit_node(&held.output, Role::Button, "List tabs");
     run_frame(
         &context,
         &mut dockspace,

@@ -417,7 +417,7 @@ fn hiding_an_open_menu_member_removes_its_row_and_rejects_old_accesskit_activati
         },
     );
     harness
-        .get_by_role_and_label(Role::Button, "Show hidden tabs")
+        .get_by_role_and_label(Role::Button, "List tabs")
         .click_accesskit();
     harness.run_steps(2);
     let (old_row, tree) = harness

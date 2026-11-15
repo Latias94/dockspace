@@ -27,7 +27,7 @@ const OVERFLOW_TAB_CONTROL_LABELS: [&str; 6] = [
     "Close Child",
     "Scroll tabs backward",
     "Scroll tabs forward",
-    "Show hidden tabs",
+    "List tabs",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -892,7 +892,7 @@ pub(super) fn stationary_overflow_edge_point(
         }
         match label {
             "Scroll tabs backward" => viewport.min_x = viewport.min_x.max(control.max_x),
-            "Scroll tabs forward" | "Show hidden tabs" => {
+            "Scroll tabs forward" | "List tabs" => {
                 viewport.max_x = viewport.max_x.min(control.min_x);
             }
             _ => {}
@@ -2013,7 +2013,7 @@ mod tests {
                 NodeId::from(8_u64),
                 node(
                     Role::Button,
-                    Some("Show hidden tabs"),
+                    Some("List tabs"),
                     None,
                     Rect::new(724.75, 12.25, 752.75, 40.25),
                 ),

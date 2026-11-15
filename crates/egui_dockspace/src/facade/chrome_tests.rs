@@ -666,7 +666,7 @@ fn overflow_rows_use_full_titles_and_native_popup_theme() {
     }
     let trigger = nodes(&output)
         .iter()
-        .find(|(_, node)| node.label() == Some("Show hidden tabs"))
+        .find(|(_, node)| node.label() == Some("List tabs"))
         .unwrap()
         .0;
     harness.run(
@@ -829,7 +829,7 @@ fn overflow_menu_with_first_row_focused() -> (Harness, f32, NodeId) {
     }
     let trigger = nodes(&output)
         .iter()
-        .find(|(_, node)| node.label() == Some("Show hidden tabs"))
+        .find(|(_, node)| node.label() == Some("List tabs"))
         .expect("the 640-point fixture keeps the overflow trigger beside a minimum-width tab")
         .0;
     harness.run(
@@ -1604,7 +1604,7 @@ fn rich_overflow_titles_preserve_span_colors() {
     }
     let trigger = nodes(&output)
         .iter()
-        .find(|(_, node)| node.label() == Some("Show hidden tabs"))
+        .find(|(_, node)| node.label() == Some("List tabs"))
         .unwrap()
         .0;
     run_rich_title_frame(

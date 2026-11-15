@@ -1860,9 +1860,9 @@ fn default_features_overflow_menu_opens_and_selects_hidden_tab() {
 
     let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    let (control, control_node) = accesskit_node(&stable.output, Role::Button, "Show hidden tabs");
+    let (control, control_node) = accesskit_node(&stable.output, Role::Button, "List tabs");
     assert!(control_node.supports_action(Action::Click));
-    let control_point = node_center(&stable.output, Role::Button, "Show hidden tabs");
+    let control_point = node_center(&stable.output, Role::Button, "List tabs");
 
     let _ = run_frame(
         &context,
@@ -1918,7 +1918,7 @@ fn default_features_overflow_menu_supports_accesskit_and_keyboard() {
 
     let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    let (control, control_node) = accesskit_node(&stable.output, Role::Button, "Show hidden tabs");
+    let (control, control_node) = accesskit_node(&stable.output, Role::Button, "List tabs");
     assert!(control_node.supports_action(Action::Click));
     let _ = run_frame(
         &context,
@@ -2037,7 +2037,7 @@ fn disabled_ancestor_blocks_tab_strip_wheel_input() {
         &mut panes,
         vec![Event::PointerMoved(pointer), mouse_wheel(vec2(0.0, -120.0))],
     );
-    let (_, menu) = accesskit_node(&disabled.output, Role::Button, "Show hidden tabs");
+    let (_, menu) = accesskit_node(&disabled.output, Role::Button, "List tabs");
     assert!(menu.is_disabled());
     assert!(!menu.supports_action(Action::Click));
 
@@ -2066,7 +2066,7 @@ fn disabled_ancestor_suppresses_tab_list_menu_semantics_and_keyboard() {
 
     let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    let (control, _) = accesskit_node(&stable.output, Role::Button, "Show hidden tabs");
+    let (control, _) = accesskit_node(&stable.output, Role::Button, "List tabs");
     let _ = run_frame(
         &context,
         &mut dockspace,
@@ -2122,7 +2122,7 @@ fn partially_clipped_menu_row_scroll_into_view_reaches_core_before_interact_cons
 
     let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    let (control, _) = accesskit_node(&stable.output, Role::Button, "Show hidden tabs");
+    let (control, _) = accesskit_node(&stable.output, Role::Button, "List tabs");
     let _ = run_frame(
         &context,
         &mut dockspace,
@@ -2200,7 +2200,7 @@ fn tab_list_menu_scrollbar_pointer_drag_updates_core_owned_scroll() {
 
     let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    let (control, _) = accesskit_node(&stable.output, Role::Button, "Show hidden tabs");
+    let (control, _) = accesskit_node(&stable.output, Role::Button, "List tabs");
     let _ = run_frame(
         &context,
         &mut dockspace,

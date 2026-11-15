@@ -184,7 +184,7 @@ fn configure_control_accessibility(
         node.set_label(match control.kind() {
             TabStripControlKind::ScrollBackward => "Scroll tabs backward",
             TabStripControlKind::ScrollForward => "Scroll tabs forward",
-            TabStripControlKind::TabListMenu => "Show hidden tabs",
+            TabStripControlKind::TabListMenu => "List tabs",
             TabStripControlKind::RevealTabBar => "Show the tab bar",
         });
         if control.kind() == TabStripControlKind::TabListMenu {

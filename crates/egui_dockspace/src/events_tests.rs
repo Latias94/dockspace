@@ -238,7 +238,7 @@ fn overflow_menu_selection_uses_the_same_committed_event_contract() {
         tab_max_width: 400.0,
         ..DockStyle::default()
     });
-    let mut events = harness.activate(Role::Button, "Show hidden tabs");
+    let mut events = harness.activate(Role::Button, "List tabs");
     events.extend(harness.settle());
     events.extend(harness.activate(Role::MenuItem, "Second"));
     events.extend(harness.settle());

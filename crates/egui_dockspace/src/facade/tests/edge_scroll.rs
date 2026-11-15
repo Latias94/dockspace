@@ -343,7 +343,7 @@ fn edge_scroll_yields_to_explicit_scroll_then_menu_selection_and_reveal() {
     frame(&context, &mut dockspace, 1.2, Vec::new());
     assert_eq!(overflow(&mut dockspace).1, offset);
     assert!(dockspace.session.pointer_continuation().is_none());
-    let open = semantic_action(&output, Role::Button, "Show hidden tabs");
+    let open = semantic_action(&output, Role::Button, "List tabs");
     frame(&context, &mut dockspace, 1.3, vec![open]);
     let mut output = frame(&context, &mut dockspace, 1.31, Vec::new());
     for index in 0..4 {

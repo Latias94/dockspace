@@ -75,8 +75,7 @@ fn locked_overflow_menu_selects_hidden_tabs_without_reordering_or_closing() {
 
         let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
         assert!(stable.close_requests.is_empty());
-        let (control, control_node) =
-            accesskit_node(&stable.output, Role::Button, "Show hidden tabs");
+        let (control, control_node) = accesskit_node(&stable.output, Role::Button, "List tabs");
         assert!(control_node.supports_action(Action::Click));
         let open_events = match activation {
             Activation::Pointer => {

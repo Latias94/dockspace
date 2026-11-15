@@ -329,7 +329,7 @@ fn reveal_first(ctx: &Context, dock: &mut Dockspace, panes: &mut ContentPanes, s
         let point = tab.center();
         frame(ctx, dock, panes, size, click(point));
     } else {
-        let (menu, _) = accesskit_node(&stable.output, Role::Button, "Show hidden tabs");
+        let (menu, _) = accesskit_node(&stable.output, Role::Button, "List tabs");
         frame(
             ctx,
             dock,
