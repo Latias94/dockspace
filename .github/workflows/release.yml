@@ -65,7 +65,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Package and build the public dependency chain without uploading
         run: >-
-          cargo publish --dry-run --locked --all-features
+          cargo package --locked --all-features
           --package dockspace --package dockspace_winit --package egui_dockspace
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

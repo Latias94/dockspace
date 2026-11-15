@@ -107,10 +107,13 @@ or bypass package verification.
      -p dockspace -p dockspace_winit -p egui_dockspace
    ```
 
-The [Release workflow](../.github/workflows/release.yml) also runs this dry run,
-uploads the verified `.crate` archives and reuses the full CI workflow. Dispatch
-it on `main` with `publish=false` for a release rehearsal. This default mode does
-not request a registry token or upload packages to crates.io.
+The [Release workflow](../.github/workflows/release.yml) verifies the same three
+packages with `cargo package`, uploads the verified `.crate` archives from
+`target/package`, and reuses the full CI workflow. Using the package command
+keeps artifact collection on Cargo's documented archive path; publication dry
+runs use temporary archives. Dispatch it on `main` with `publish=false` for a
+release rehearsal. This default mode does not request a registry token or
+upload packages to crates.io.
 
 ### First publication and Trusted Publishing
 
