@@ -90,10 +90,18 @@ fn moving(entry: Entry, discarded_passes: usize) -> (Harness, Sample) {
         assert_eq!(stable.splitters.len(), 2);
     }
     let before = harness.panes.bounds[&SECOND];
-    harness
+    let moved = harness
         .dockspace
         .dock_item_current(THIRD, DockPlacement::After(FIRST))
         .unwrap();
+    assert!(matches!(
+        moved.status(),
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Docked {
+            item: THIRD,
+            changed: true,
+            ..
+        })
+    ));
     sample(&mut harness, 1.0, Vec::new());
     let moving = sample(&mut harness, 1.05, Vec::new());
     assert!(harness.dockspace.session.surface_motion_is_active(SURFACE));

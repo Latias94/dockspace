@@ -1,6 +1,7 @@
 //! Visibility crosses the real renderer, keyboard navigation and accessible resize controls.
 
 use super::*;
+use crate::{DockspaceActionOutcome, DockspaceActionStatus};
 
 fn settle(harness: &mut Harness) -> FullOutput {
     let mut output = harness.run(800.0, Vec::new());
@@ -18,10 +19,18 @@ fn tab_cycling_and_accessibility_skip_hidden_tabs_until_restored() {
         ..Default::default()
     });
     for item in [2, 4, 5, 6] {
-        harness
+        let hidden = harness
             .dockspace
             .set_item_visibility_current(ItemId::new(item), false)
             .unwrap();
+        assert!(matches!(
+            hidden.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemVisibilityChanged {
+                item: hidden_item,
+                visible: false,
+                changed: true,
+            }) if *hidden_item == ItemId::new(item)
+        ));
     }
     let output = settle(&mut harness);
     assert!(
@@ -51,10 +60,18 @@ fn tab_cycling_and_accessibility_skip_hidden_tabs_until_restored() {
                 .is_selected()
         );
     }
-    harness
+    let shown = harness
         .dockspace
         .set_item_visibility_current(ItemId::new(2), true)
         .unwrap();
+    assert!(matches!(
+        shown.status(),
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemVisibilityChanged {
+            item,
+            visible: true,
+            changed: true,
+        }) if *item == ItemId::new(2)
+    ));
     let output = settle(&mut harness);
     assert!(
         nodes(&output)
@@ -106,10 +123,18 @@ fn keyboard_splitter_ranges_and_equalization_preserve_hidden_pane_shares() {
         harness.dockspace = Dockspace::builder(("hidden-splitter", axis), layout)
             .build()
             .unwrap();
-        harness
+        let hidden = harness
             .dockspace
             .set_item_visibility_current(ItemId::new(2), false)
             .unwrap();
+        assert!(matches!(
+            hidden.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemVisibilityChanged {
+                item,
+                visible: false,
+                changed: true,
+            }) if *item == ItemId::new(2)
+        ));
         let output = settle(&mut harness);
         let splitters: Vec<_> = nodes(&output)
             .iter()
@@ -170,10 +195,18 @@ fn keyboard_splitter_ranges_and_equalization_preserve_hidden_pane_shares() {
         assert_eq!(after[1], 0.3);
         assert!((after[0] - 0.35).abs() < 1e-5);
         assert!((after[2] - 0.35).abs() < 1e-5);
-        harness
+        let shown = harness
             .dockspace
             .set_item_visibility_current(ItemId::new(2), true)
             .unwrap();
+        assert!(matches!(
+            shown.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemVisibilityChanged {
+                item,
+                visible: true,
+                changed: true,
+            }) if *item == ItemId::new(2)
+        ));
         let output = settle(&mut harness);
         assert_eq!(
             nodes(&output)

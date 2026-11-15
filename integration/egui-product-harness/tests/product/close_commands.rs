@@ -513,9 +513,17 @@ fn closing_the_focused_group_or_last_tab_focuses_the_persistent_workspace() {
             panic!("group close plan")
         };
         for item in request.plan().items() {
-            dockspace
+            let closed = dockspace
                 .resolve_close(request.plan().request(), item.token(), CloseDecision::Allow)
                 .unwrap();
+            assert!(matches!(
+                closed.outcome(),
+                DockspaceCloseOutcome::Processed {
+                    resolution: DockspaceCloseResolution::Approved { .. },
+                    application: Some(Ok(_)),
+                    ..
+                }
+            ));
         }
         assert!(dockspace.view().item(SECOND).is_none());
         let (closed, capability) =
@@ -669,10 +677,32 @@ fn contained_presentation_menu_close_group_requests_a_root_close_plan() {
         assert_eq!(location.tabs().items(), &[SECOND, THIRD]);
         assert_eq!(location.tabs().selected(), Some(SECOND));
     }
-    for item in request.plan().items() {
-        dockspace
+    for (index, item) in request.plan().items().iter().enumerate() {
+        let closed = dockspace
             .resolve_close(request.plan().request(), item.token(), CloseDecision::Allow)
             .expect("application approval closes the group requested by its menu");
+        if index + 1 == request.plan().items().len() {
+            assert!(matches!(
+                closed.outcome(),
+                DockspaceCloseOutcome::Processed {
+                    resolution: DockspaceCloseResolution::Approved { .. },
+                    application: Some(Ok(DockspaceAppliedClose::RootClosed {
+                        root: FLOATING_ROOT,
+                        ..
+                    })),
+                    ..
+                }
+            ));
+        } else {
+            assert!(matches!(
+                closed.outcome(),
+                DockspaceCloseOutcome::Processed {
+                    resolution: DockspaceCloseResolution::Recorded { item: recorded, .. },
+                    application: None,
+                    ..
+                } if *recorded == item.item()
+            ));
+        }
     }
     assert!(dockspace.view().contained(FLOATING).is_none());
     assert!(dockspace.view().root(FLOATING_ROOT).is_none());

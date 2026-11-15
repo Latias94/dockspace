@@ -31,7 +31,7 @@ pub(crate) fn window_title(
 fn append_selected_titles(title: &mut String, node: DockspaceNodeView<'_>, panes: &impl PaneView) {
     let mut pending = vec![node];
     while let Some(node) = pending.pop() {
-        if let Some(item) = node.tabs().and_then(DockspaceTabsView::selected) {
+        if let Some(item) = node.tabs().and_then(DockspaceTabsView::visible_selected) {
             if !title.is_empty() {
                 title.push_str(" · ");
             }
@@ -129,6 +129,46 @@ mod tests {
             window_title(session.view(), &Panes, SurfaceId::new(8)),
             "Panel 8"
         );
+    }
+
+    #[test]
+    fn hidden_leaves_leave_the_caption_and_restore_without_replacing_identity() {
+        let mut session = session(
+            DockspaceNode::equal_split(
+                DockspaceAxis::Horizontal,
+                [DockspaceNode::tabs([FIRST]), DockspaceNode::tabs([SECOND])],
+            )
+            .unwrap(),
+        );
+        let root = session.view().item(FIRST).unwrap().root();
+        assert_eq!(
+            window_title(session.view(), &Panes, SURFACE),
+            "Inspector · 预览"
+        );
+
+        for (item, visible, expected) in [
+            (FIRST, false, "预览"),
+            (SECOND, false, "Panel 2"),
+            (FIRST, true, "Inspector"),
+            (SECOND, true, "Inspector · 预览"),
+        ] {
+            let mut frame = session.begin_host_frame().unwrap();
+            frame.set_item_visibility_current(item, visible).unwrap();
+            frame
+                .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+                .unwrap();
+            frame.commit().unwrap();
+
+            assert_eq!(window_title(session.view(), &Panes, SURFACE), expected);
+            let surface = session.view().surface(SURFACE).unwrap();
+            assert_eq!(surface.id(), SURFACE);
+            assert_eq!(surface.main_root().unwrap().id(), root);
+            for item in [FIRST, SECOND] {
+                let pane = session.view().item(item).unwrap();
+                assert_eq!(pane.surface(), SURFACE);
+                assert_eq!(pane.root(), root);
+            }
+        }
     }
 
     #[test]

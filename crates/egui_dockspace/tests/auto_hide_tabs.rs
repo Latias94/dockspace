@@ -4,9 +4,11 @@ use dockspace::policy::{DockPolicy, TabBarInteraction, TabBarPolicy, TabBarVisib
 use egui::accesskit::{Node, Role};
 use egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Ui};
 use egui_dockspace::{
-    CloseDecision, DockPlacement, Dockspace, DockspaceCloseRequestStatus, DockspaceLayout,
-    DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, PaneResponse, PaneView,
-    RootId, SurfaceId, SurfacePresentationResult,
+    CloseDecision, DockPlacement, Dockspace, DockspaceActionOutcome, DockspaceActionStatus,
+    DockspaceAppliedClose, DockspaceCloseOutcome, DockspaceCloseRequestStatus,
+    DockspaceCloseResolution, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
+    DockspaceSurfaceLayout, ItemId, PaneResponse, PaneView, RootId, SurfaceId,
+    SurfacePresentationResult,
 };
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -156,10 +158,14 @@ fn a_single_tab_can_be_revealed_and_roster_changes_restore_automatic_visibility(
             );
         }
 
-        harness
+        let opened = harness
             .dock
             .open_item_current(SECOND, DockPlacement::After(FIRST))
             .unwrap();
+        assert!(matches!(
+            opened.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Opened { item: SECOND, .. })
+        ));
         let nodes = harness.settle();
         assert_eq!(
             nodes.iter().filter(|node| node.role() == Role::Tab).count(),
@@ -170,7 +176,7 @@ fn a_single_tab_can_be_revealed_and_roster_changes_restore_automatic_visibility(
             panic!("closing the extra tab opens a real close plan");
         };
         let plan = request.plan().clone();
-        harness
+        let closed = harness
             .dock
             .resolve_close(
                 plan.request(),
@@ -178,6 +184,14 @@ fn a_single_tab_can_be_revealed_and_roster_changes_restore_automatic_visibility(
                 CloseDecision::Allow,
             )
             .unwrap();
+        assert!(matches!(
+            closed.outcome(),
+            DockspaceCloseOutcome::Processed {
+                resolution: DockspaceCloseResolution::Approved { .. },
+                application: Some(Ok(DockspaceAppliedClose::ItemClosed { item: SECOND, .. })),
+                ..
+            }
+        ));
         let nodes = harness.settle();
         assert!(!nodes.iter().any(|node| node.role() == Role::Tab));
         assert!(

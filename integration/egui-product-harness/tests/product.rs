@@ -52,8 +52,9 @@ use egui::{
 };
 use egui_dockspace::{
     CloseDecision, ClosePlanTarget, DockPlacement, DockStyle, Dockspace, DockspaceActionOutcome,
-    DockspaceActionStatus, DockspaceAxis, DockspaceCapability, DockspaceCloseRequest,
-    DockspaceCloseRequestRejection, DockspaceCloseRequestStatus, DockspaceContainedLayout,
+    DockspaceActionStatus, DockspaceAppliedClose, DockspaceAxis, DockspaceCapability,
+    DockspaceCloseOutcome, DockspaceCloseRequest, DockspaceCloseRequestRejection,
+    DockspaceCloseRequestStatus, DockspaceCloseResolution, DockspaceContainedLayout,
     DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout,
     DockspaceUnavailableReason, FloatingPresentationId, ItemId, LogicalRect, PaneFocusState,
     PaneResponse, PaneView, RootId, SurfaceId, SurfacePresentationResult, run_ui,
@@ -1280,9 +1281,17 @@ fn default_features_expose_item_centric_contained_actions() {
         vec![second_floating, first_floating],
     );
 
-    dockspace
+    let raised = dockspace
         .raise_contained_current(SECOND)
         .expect("contained raise through the product facade");
+    assert!(matches!(
+        raised.status(),
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::ContainedRaised {
+            floating,
+            changed: true,
+            ..
+        }) if *floating == second_floating
+    ));
     assert_eq!(
         dockspace
             .view()
@@ -1368,10 +1377,12 @@ fn default_features_contained_chrome_exposes_focusable_accessibility_controls() 
     let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     let (title, title_node) = accesskit_node(&stable.output, Role::TitleBar, "Second");
     assert!(title_node.supports_action(Action::Focus));
-    assert_eq!(
-        title_node.description(),
-        Some("Drag to move floating window"),
-        "the title bar must expose its direct-manipulation affordance"
+    assert!(
+        title_node.description().is_some_and(|description| {
+            description.contains("move or dock the entire floating window")
+                && description.contains("every tab group and split")
+        }),
+        "the title bar must explain that dragging moves every group inside the window"
     );
     let (_, close_node) = accesskit_node(&stable.output, Role::Button, "Close floating Second");
     assert!(close_node.supports_action(Action::Focus));
@@ -1505,9 +1516,18 @@ fn contained_move_resize_select_focus_and_dock_back_preserve_exact_ownership() {
 
     // Accept the exact presented focus acknowledgement before changing roots.
     let _ = run_focus_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    dockspace
+    let recovered = dockspace
         .dock_root_back_current(FLOATING_ROOT)
         .expect("the explicit Dock Back command preserves the source content");
+    assert!(matches!(
+        recovered.status(),
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::RootDocked {
+            root: FLOATING_ROOT,
+            target_root: ROOT,
+            changed: true,
+            ..
+        })
+    ));
 
     assert!(dockspace.view().contained(FLOATING).is_none());
     let tabs = dockspace
@@ -2962,9 +2982,17 @@ fn default_features_close_request_can_be_resolved() {
         .expect("the close button opens one plan");
     let item = request.plan().items()[0];
     assert_eq!(item.item(), SECOND);
-    dockspace
+    let closed = dockspace
         .resolve_close(request.plan().request(), item.token(), CloseDecision::Allow)
         .expect("the close decision commits");
+    assert!(matches!(
+        closed.outcome(),
+        DockspaceCloseOutcome::Processed {
+            resolution: DockspaceCloseResolution::Approved { .. },
+            application: Some(Ok(DockspaceAppliedClose::ItemClosed { item: SECOND, .. })),
+            ..
+        }
+    ));
     assert!(dockspace.view().item(SECOND).is_none());
 }
 
@@ -2983,10 +3011,29 @@ fn default_features_programmatic_root_close_uses_the_product_facade() {
         request.plan().target(),
         egui_dockspace::ClosePlanTarget::Root { root: ROOT }
     );
-    for item in request.plan().items() {
-        root_dockspace
+    for (index, item) in request.plan().items().iter().enumerate() {
+        let closed = root_dockspace
             .resolve_close(request.plan().request(), item.token(), CloseDecision::Allow)
             .expect("each root close decision commits");
+        if index + 1 == request.plan().items().len() {
+            assert!(matches!(
+                closed.outcome(),
+                DockspaceCloseOutcome::Processed {
+                    resolution: DockspaceCloseResolution::Approved { .. },
+                    application: Some(Ok(DockspaceAppliedClose::RootClosed { root: ROOT, .. })),
+                    ..
+                }
+            ));
+        } else {
+            assert!(matches!(
+                closed.outcome(),
+                DockspaceCloseOutcome::Processed {
+                    resolution: DockspaceCloseResolution::Recorded { item: recorded, .. },
+                    application: None,
+                    ..
+                } if *recorded == item.item()
+            ));
+        }
     }
     assert!(root_dockspace.view().root(ROOT).is_none());
 }
@@ -3924,9 +3971,13 @@ fn unavailable_pane_focus_binding_terminates_without_guessing_a_target() {
         !context.memory(|memory| memory.has_focus(panes.target)),
         "an acknowledged unavailable request cannot replay when its binding appears",
     );
-    dockspace
+    let selected = dockspace
         .select_item_current(SECOND)
         .expect("a fresh explicit selection publishes a new focus request");
+    assert!(matches!(
+        selected.status(),
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: SECOND, .. })
+    ));
     let (_, capability) = run_focus_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert_eq!(capability, DockspaceCapability::Supported);
     assert!(
@@ -3953,9 +4004,13 @@ fn discarded_pane_focus_does_not_replay_over_later_application_focus() {
 
     let _ = run_focus_frame(&context, &mut dockspace, &mut panes, Vec::new());
     let _ = run_focus_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    dockspace
+    let selected = dockspace
         .select_item_current(SECOND)
         .expect("the exact pane-focus request precedes the discarded UI passes");
+    assert!(matches!(
+        selected.status(),
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: SECOND, .. })
+    ));
     assert!(!context.memory(|memory| memory.has_focus(panes.target)));
 
     context
@@ -3977,9 +4032,13 @@ fn discarded_pane_focus_does_not_replay_over_later_application_focus() {
     let _ = run_focus_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert!(!context.memory(|memory| memory.has_focus(panes.target)));
 
-    dockspace
+    let selected = dockspace
         .select_item_current(SECOND)
         .expect("a new explicit selection requests focus again");
+    assert!(matches!(
+        selected.status(),
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: SECOND, .. })
+    ));
     let _ = run_focus_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert!(context.memory(|memory| memory.has_focus(panes.target)));
     let _ = run_focus_frame(&context, &mut dockspace, &mut panes, Vec::new());

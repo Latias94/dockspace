@@ -599,6 +599,7 @@ impl PaneView for PersistencePanes {
 mod tests {
     use super::*;
     use egui::accesskit::{Action, ActionRequest, Role, TreeId};
+    use egui_dockspace::{DockspaceActionOutcome, DockspaceCloseOutcome, DockspaceCloseResolution};
 
     #[test]
     fn layout_file_round_trip_preserves_tab_order_and_reconnects_application_keys() {
@@ -613,9 +614,18 @@ mod tests {
             .dockspace
             .item_id_for_external_key("pane/inspector")
             .unwrap();
-        app.dockspace
+        let moved = app
+            .dockspace
             .dock_item_current(document, DockPlacement::Center(DockAnchor::Item(inspector)))
             .unwrap();
+        assert!(matches!(
+            moved.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Docked {
+                item,
+                changed: true,
+                ..
+            }) if *item == document
+        ));
         app.save_layout_file();
         assert!(path.is_file());
         let restored = PersistenceApp::open(path.clone());
@@ -633,9 +643,17 @@ mod tests {
         assert_eq!(restored.status, format!("Restored {}", path.display()));
 
         // A second save replaces the existing file atomically on supported platforms.
-        app.dockspace
+        let moved = app
+            .dockspace
             .dock_item_current(inspector, DockPlacement::Center(DockAnchor::Item(document)))
             .unwrap();
+        assert!(matches!(
+            moved.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Docked {
+                item,
+                ..
+            }) if *item == inspector
+        ));
         app.save_layout_file();
         assert!(app.status.starts_with("Saved "));
         assert!(PersistenceApp::open(path).save_on_close);
@@ -1053,10 +1071,33 @@ mod tests {
             panic!("the editor root must offer an ordinary application close plan");
         };
         let plan = request.plan();
-        for item in plan.items() {
-            app.dockspace
+        for (index, item) in plan.items().iter().enumerate() {
+            let closed = app
+                .dockspace
                 .resolve_close(plan.request(), item.token(), CloseDecision::Allow)
                 .unwrap();
+            if index + 1 == plan.items().len() {
+                assert!(matches!(
+                    closed.outcome(),
+                    DockspaceCloseOutcome::Processed {
+                        resolution: DockspaceCloseResolution::Approved { .. },
+                        application: Some(Ok(egui_dockspace::DockspaceAppliedClose::RootClosed {
+                            root: ROOT,
+                            ..
+                        })),
+                        ..
+                    }
+                ));
+            } else {
+                assert!(matches!(
+                    closed.outcome(),
+                    DockspaceCloseOutcome::Processed {
+                        resolution: DockspaceCloseResolution::Recorded { item: recorded, .. },
+                        application: None,
+                        ..
+                    } if *recorded == item.item()
+                ));
+            }
         }
         assert!(app.dockspace.view().root(ROOT).is_none());
         assert!(app.dockspace.view().surfaces().next().is_none());
@@ -1074,13 +1115,25 @@ mod tests {
             panic!("the restored document must remain closeable");
         };
         let plan = request.plan();
-        app.dockspace
+        let closed = app
+            .dockspace
             .resolve_close(
                 plan.request(),
                 plan.items()[0].token(),
                 CloseDecision::Allow,
             )
             .unwrap();
+        assert!(matches!(
+            closed.outcome(),
+            DockspaceCloseOutcome::Processed {
+                resolution: DockspaceCloseResolution::Approved { .. },
+                application: Some(Ok(egui_dockspace::DockspaceAppliedClose::ItemClosed {
+                    item,
+                    ..
+                })),
+                ..
+            } if *item == document
+        ));
         app.reopen(document);
         assert_eq!(app.status, "Pane reopened");
         assert_eq!(app.dockspace.view().item(document).unwrap().root(), root);

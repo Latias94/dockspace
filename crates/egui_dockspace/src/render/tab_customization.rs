@@ -20,7 +20,15 @@ pub(super) fn paint_tab(
 ) -> TabVisuals {
     let selected = record.selected();
     let preset = context.style.tab_preset;
-    let emphasized = RenderContext::response_emphasized(response);
+    let emphasized = if preset == TabStylePreset::ImGui {
+        // Keyboard focus has its own outline and must not retain the hover fill.
+        response.sense.interactive()
+            && (response.is_pointer_button_down_on()
+                || response.hovered()
+                || response.highlighted())
+    } else {
+        RenderContext::response_emphasized(response)
+    };
     let text_override = if selected {
         context.style.visuals.tab_active_text_color
     } else {

@@ -120,10 +120,18 @@ fn sample_resize(entry: Entry, axis: DockspaceAxis, sequence: Sequence) {
 
     #[cfg(feature = "motion")]
     {
-        harness
+        let moved = harness
             .dockspace
             .dock_item_current(THIRD, crate::DockPlacement::After(FIRST))
             .unwrap();
+        assert!(matches!(
+            moved.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Docked {
+                item: THIRD,
+                changed: true,
+                ..
+            })
+        ));
         let (output, feedback) = harness.run(11.0, Vec::new());
         assert_eq!(feedback, []);
         let (output, receipt) = output.into_parts();

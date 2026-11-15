@@ -135,6 +135,7 @@ impl DockspaceMutation {
 /// [`Self::status`] to distinguish an applied action from policy/topology rejection
 /// or a stale prepared revision.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[must_use = "inspect status() to distinguish an applied action from rejection or staleness"]
 pub struct DockspaceActionResult {
     mutation: DockspaceMutation,
     status: DockspaceActionStatus,
@@ -227,7 +228,11 @@ pub enum DockspaceCloseRequestStatus {
 }
 
 /// Atomic publication plus one exact programmatic close-request result.
+///
+/// Successful publication does not guarantee that a close plan was opened.
+/// Inspect [`Self::status`] for the accepted request, rejection, or stale revision.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[must_use = "inspect status() before treating the close request as accepted"]
 pub struct DockspaceCloseRequestResult {
     mutation: DockspaceMutation,
     status: DockspaceCloseRequestStatus,
@@ -296,7 +301,12 @@ pub enum DockspaceCloseOutcome {
 }
 
 /// Atomic publication plus one close-decision result.
+///
+/// Successful publication does not guarantee that content was closed. Inspect
+/// [`Self::outcome`] for token resolution and the resulting close application,
+/// including a topology rejection or a stale revision.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[must_use = "inspect outcome() because successful publication does not guarantee content was closed"]
 pub struct DockspaceCloseResult {
     mutation: DockspaceMutation,
     outcome: DockspaceCloseOutcome,

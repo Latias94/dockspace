@@ -10,7 +10,10 @@ use egui::{
     ViewportId,
 };
 
-use crate::{Dockspace, DockspaceOutput, PaneResponse, PaneView, SurfacePresentationResult};
+use crate::{
+    Dockspace, DockspaceActionOutcome, DockspaceActionStatus, DockspaceOutput, PaneResponse,
+    PaneView, SurfacePresentationResult,
+};
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const EDITOR: ItemId = ItemId::new(1);
@@ -296,7 +299,11 @@ fn an_unsuperseded_tab_press_hands_focus_to_its_content_once() {
 fn pending_pane_focus_keeps_ime_composition_while_receipts_are_held() {
     for owned in [true, false] {
         let (context, mut dockspace, mut pane, _) = presented_editor(owned);
-        dockspace.select_item_current(EDITOR).unwrap();
+        let selected = dockspace.select_item_current(EDITOR).unwrap();
+        assert!(matches!(
+            selected.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: EDITOR, .. })
+        ));
         let (mut output, request_receipt) =
             run(owned, &context, &mut dockspace, &mut pane, 1.0, Vec::new()).into_parts();
         output.textures_delta.clear();
@@ -555,7 +562,11 @@ fn an_owned_tab_press_yields_to_a_plugins_later_search_focus_in_a_child_viewport
 fn assert_pending_pane_focus_yields_to_search(owned: bool, hold_receipts: bool) {
     let mut search = SearchField::new();
     let (context, mut dockspace, mut pane, _) = presented_editor_with_ui(owned, |ui| search.ui(ui));
-    dockspace.select_item_current(EDITOR).unwrap();
+    let selected = dockspace.select_item_current(EDITOR).unwrap();
+    assert!(matches!(
+        selected.status(),
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: EDITOR, .. })
+    ));
     let (mut output, receipt) = run_with_ui(
         owned,
         &context,
@@ -699,7 +710,11 @@ fn a_stable_unfocused_request_idles_and_a_new_selection_can_request_focus_again(
         let mut search = SearchField::new();
         let (context, mut dockspace, mut pane, _) =
             presented_editor_with_ui(owned, |ui| search.ui(ui));
-        dockspace.select_item_current(EDITOR).unwrap();
+        let selected = dockspace.select_item_current(EDITOR).unwrap();
+        assert!(matches!(
+            selected.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: EDITOR, .. })
+        ));
         let (mut output, receipt) = run_with_ui(
             owned,
             &context,
@@ -742,7 +757,11 @@ fn a_stable_unfocused_request_idles_and_a_new_selection_can_request_focus_again(
             "an unchanged NotFocused observation must not request another immediate paint, owned={owned}"
         );
 
-        dockspace.select_item_current(EDITOR).unwrap();
+        let selected = dockspace.select_item_current(EDITOR).unwrap();
+        assert!(matches!(
+            selected.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: EDITOR, .. })
+        ));
         let (mut output, receipt) = run_with_ui(
             owned,
             &context,

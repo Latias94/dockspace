@@ -365,10 +365,21 @@ fn middle_click_on_inactive_tab_requests_close_once_without_selecting_it() {
     };
     let continuation = *continuation;
     assert!(harness.dock.view().item(SECOND).is_some());
-    harness
+    let closed = harness
         .dock
         .resolve_deferred_close(plan.request(), continuation, DeferredCloseDecision::Allow)
         .unwrap();
+    assert!(matches!(
+        closed.outcome(),
+        DockspaceCloseOutcome::Processed {
+            resolution: DockspaceCloseResolution::Approved { .. },
+            application: Some(Ok(crate::DockspaceAppliedClose::ItemClosed {
+                item: SECOND,
+                ..
+            })),
+            ..
+        }
+    ));
     assert!(harness.dock.view().item(SECOND).is_none());
     assert!(harness.settle().is_empty());
 }

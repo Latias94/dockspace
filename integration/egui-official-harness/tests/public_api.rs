@@ -396,7 +396,14 @@ fn missing_or_dropped_host_receipts_do_not_reapply_surrendered_focus() {
 
         // Framework focus application and exact presentation acknowledgement
         // have separate lifetimes. A new explicit intent may request focus again.
-        dockspace.select_item_current(SECOND_ITEM).unwrap();
+        let selected = dockspace.select_item_current(SECOND_ITEM).unwrap();
+        assert!(matches!(
+            selected.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
+                item: SECOND_ITEM,
+                ..
+            })
+        ));
         for _ in 0..2 {
             let mut output = run_headless(&context, raw_input(), |ui| {
                 dockspace

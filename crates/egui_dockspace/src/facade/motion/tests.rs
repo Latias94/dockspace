@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
-    DockPlacement, DockspaceAxis, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
-    DockspaceSurfaceLayout, ItemId, PaneResponse, PaneView, RootId, SurfaceId,
-    SurfacePresentationResult,
+    DockPlacement, DockspaceActionOutcome, DockspaceActionStatus, DockspaceAxis, DockspaceLayout,
+    DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, PaneResponse, PaneView,
+    RootId, SurfaceId, SurfacePresentationResult,
 };
 use dockspace::{
     geometry::LogicalRect,
@@ -73,8 +73,17 @@ fn present_frame(context: &egui::Context, dock: &mut Dockspace, time: f64) {
 }
 
 fn reflow(dock: &mut Dockspace) {
-    dock.dock_item_current(ItemId::new(3), DockPlacement::After(ItemId::new(1)))
+    let moved = dock
+        .dock_item_current(ItemId::new(3), DockPlacement::After(ItemId::new(1)))
         .unwrap();
+    assert!(matches!(
+        moved.status(),
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Docked {
+            item,
+            changed: true,
+            ..
+        }) if *item == ItemId::new(3)
+    ));
 }
 
 fn sample(dock: &mut Dockspace) -> (LogicalRect, bool, usize) {
@@ -139,8 +148,17 @@ fn default_unknown_preference_animates_and_restores_dividers_at_two_hundred_mill
 fn visibility_reflow_can_be_interrupted_by_showing_the_same_pane_again() {
     let (context, mut dock) = fixture();
     let before = sample(&mut dock).0;
-    dock.set_item_visibility_current(ItemId::new(3), false)
+    let hidden = dock
+        .set_item_visibility_current(ItemId::new(3), false)
         .unwrap();
+    assert!(matches!(
+        hidden.status(),
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemVisibilityChanged {
+            item,
+            visible: false,
+            changed: true,
+        }) if *item == ItemId::new(3)
+    ));
     present_frame(&context, &mut dock, 1.0);
     assert!(dock.session.surface_motion_is_active(SurfaceId::new(1)));
     assert_eq!(sample(&mut dock).0, before);
@@ -162,8 +180,17 @@ fn visibility_reflow_can_be_interrupted_by_showing_the_same_pane_again() {
     present_frame(&context, &mut dock, 1.08);
     let during_hide = sample(&mut dock).0;
     assert_ne!(during_hide, before);
-    dock.set_item_visibility_current(ItemId::new(3), true)
+    let shown = dock
+        .set_item_visibility_current(ItemId::new(3), true)
         .unwrap();
+    assert!(matches!(
+        shown.status(),
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemVisibilityChanged {
+            item,
+            visible: true,
+            changed: true,
+        }) if *item == ItemId::new(3)
+    ));
     present_frame(&context, &mut dock, 1.08);
     assert_eq!(sample(&mut dock).0, during_hide);
     present_frame(&context, &mut dock, 2.0);
@@ -240,8 +267,7 @@ fn terminal_receipt_wakes_caller_owned_motion_after_output_backpressure() {
         output.drop_without_applying_deltas();
         receipt.report(SurfacePresentationResult::Presented);
     }
-    dock.dock_item_current(ItemId::new(3), DockPlacement::After(ItemId::new(1)))
-        .unwrap();
+    reflow(&mut dock);
     let (output, active) = frame(&context, &mut dock, 1.0).into_parts();
     output.drop_without_applying_deltas();
     assert!(dock.session.surface_motion_is_active(SurfaceId::new(1)));

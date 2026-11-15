@@ -67,10 +67,18 @@ fn cancel_across_output_results(
 
     #[cfg(feature = "motion")]
     {
-        harness
+        let moved = harness
             .dockspace
             .dock_item_current(FOURTH, crate::DockPlacement::After(FIRST))
             .unwrap();
+        assert!(matches!(
+            moved.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Docked {
+                item: FOURTH,
+                changed: true,
+                ..
+            })
+        ));
         let (output, feedback) = harness.run(2.0, Vec::new());
         assert_eq!(feedback, []);
         let (output, receipt) = output.into_parts();

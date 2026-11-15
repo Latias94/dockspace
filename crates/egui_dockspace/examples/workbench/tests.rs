@@ -2,6 +2,7 @@
 
 use super::super::editor::{self, SURFACE, apply_editor_commands, demo_layout, run_editor};
 use super::*;
+use egui_dockspace::{DockspaceActionOutcome, DockspaceActionStatus};
 
 #[path = "tests/randomized.rs"]
 mod randomized;
@@ -71,15 +72,24 @@ fn rearranging_the_editor_tabs_does_not_leave_an_unlabelled_empty_pane() {
         (INSPECTOR, EDITOR, DockEdge::Left),
         (EDITOR, INSPECTOR, DockEdge::Top),
     ] {
-        dock.dock_item_current(
-            item,
-            DockPlacement::InnerEdge {
-                anchor: DockAnchor::Item(anchor),
-                edge,
-                fraction: DockFraction::new(0.5).unwrap(),
-            },
-        )
-        .unwrap();
+        let moved = dock
+            .dock_item_current(
+                item,
+                DockPlacement::InnerEdge {
+                    anchor: DockAnchor::Item(anchor),
+                    edge,
+                    fraction: DockFraction::new(0.5).unwrap(),
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            moved.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Docked {
+                item: moved_item,
+                changed: true,
+                ..
+            }) if *moved_item == item
+        ));
         for _ in 0..16 {
             let _ = workbench_frame(&context, &mut dock, &mut panes, Vec::new());
         }
@@ -120,15 +130,24 @@ fn an_animated_editor_tab_can_start_another_docking_gesture() {
     let _ = workbench_frame(&context, &mut dock, &mut panes, Vec::new());
     let initial = workbench_frame(&context, &mut dock, &mut panes, Vec::new());
     let initial_editor = semantic_rect(&initial, Role::Tab, "Editor");
-    dock.dock_item_current(
-        PREVIEW,
-        DockPlacement::InnerEdge {
-            anchor: DockAnchor::Item(EDITOR),
-            edge: DockEdge::Top,
-            fraction: DockFraction::new(0.5).unwrap(),
-        },
-    )
-    .unwrap();
+    let moved = dock
+        .dock_item_current(
+            PREVIEW,
+            DockPlacement::InnerEdge {
+                anchor: DockAnchor::Item(EDITOR),
+                edge: DockEdge::Top,
+                fraction: DockFraction::new(0.5).unwrap(),
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        moved.status(),
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Docked {
+            item: PREVIEW,
+            changed: true,
+            ..
+        })
+    ));
     let mut output = workbench_frame(&context, &mut dock, &mut panes, Vec::new());
     for _ in 0..4 {
         output = workbench_frame(&context, &mut dock, &mut panes, Vec::new());

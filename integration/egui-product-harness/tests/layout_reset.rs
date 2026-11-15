@@ -4,9 +4,10 @@ use std::collections::BTreeMap;
 
 use egui::{Context, Pos2, RawInput, Rect, Ui, vec2};
 use egui_dockspace::{
-    CloseDecision, Dockspace, DockspaceCloseRequestStatus, DockspaceLayout, DockspaceNode,
-    DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, PaneView, RootId, SurfaceId,
-    SurfacePresentationResult,
+    CloseDecision, Dockspace, DockspaceActionOutcome, DockspaceActionStatus, DockspaceAppliedClose,
+    DockspaceCloseOutcome, DockspaceCloseRequestStatus, DockspaceCloseResolution, DockspaceLayout,
+    DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, PaneView, RootId,
+    SurfaceId, SurfacePresentationResult,
 };
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -86,17 +87,40 @@ fn application_default_reset_preserves_semantic_identities_pane_data_and_rules()
     };
     frame(&context, &mut dockspace, &mut panes);
     frame(&context, &mut dockspace, &mut panes);
-    dockspace.select_item_current(SECOND).unwrap();
+    let selected = dockspace.select_item_current(SECOND).unwrap();
+    assert!(matches!(
+        selected.status(),
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: SECOND, .. })
+    ));
     frame(&context, &mut dockspace, &mut panes);
     assert!(context.memory(|memory| memory.has_focus(panes.focus_target(SECOND).unwrap())));
     let close = dockspace.request_close_root_current(ROOT).unwrap();
     let DockspaceCloseRequestStatus::Requested(request) = close.status() else {
         panic!("the application approves closure through the ordinary public workflow");
     };
-    for item in request.plan().items() {
-        dockspace
+    for (index, item) in request.plan().items().iter().enumerate() {
+        let closed = dockspace
             .resolve_close(request.plan().request(), item.token(), CloseDecision::Allow)
             .unwrap();
+        if index + 1 == request.plan().items().len() {
+            assert!(matches!(
+                closed.outcome(),
+                DockspaceCloseOutcome::Processed {
+                    resolution: DockspaceCloseResolution::Approved { .. },
+                    application: Some(Ok(DockspaceAppliedClose::RootClosed { root: ROOT, .. })),
+                    ..
+                }
+            ));
+        } else {
+            assert!(matches!(
+                closed.outcome(),
+                DockspaceCloseOutcome::Processed {
+                    resolution: DockspaceCloseResolution::Recorded { item: recorded, .. },
+                    application: None,
+                    ..
+                } if *recorded == item.item()
+            ));
+        }
     }
     assert!(dockspace.view().surfaces().next().is_none());
     let mutation = dockspace.reset_layout(default.clone()).unwrap();

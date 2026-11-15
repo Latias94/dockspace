@@ -100,9 +100,17 @@ fn egui_facade_does_not_refresh_a_stored_group_after_its_anchor_moves() {
             .capture_tabs_group(DockAnchor::Item(FIRST))
             .unwrap();
         let captured = group.expected_version();
-        dockspace
+        let moved = dockspace
             .dock_item_current(FIRST, DockPlacement::After(THIRD))
             .unwrap();
+        assert!(matches!(
+            moved.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Docked {
+                item: FIRST,
+                changed: true,
+                ..
+            })
+        ));
         let accepted = dockspace.version();
         let result = if float {
             dockspace.float_tabs_current(group, SURFACE).unwrap()

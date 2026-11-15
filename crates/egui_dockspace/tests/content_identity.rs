@@ -5,9 +5,10 @@ use std::collections::BTreeMap;
 use egui::text::{CCursor, CCursorRange};
 use egui::{Context, Event, Id, Pos2, RawInput, Rect, ScrollArea, TextEdit, Ui, UiBuilder, Vec2};
 use egui_dockspace::{
-    DockPlacement, Dockspace, DockspaceAxis, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
-    DockspaceSurfaceLayout, ItemId, PaneResponse, PaneView, RootId, SurfaceId,
-    SurfacePresentationResult, Tab, TabBarId, TabVisuals,
+    DockPlacement, Dockspace, DockspaceActionOutcome, DockspaceActionStatus, DockspaceAxis,
+    DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId,
+    PaneResponse, PaneView, RootId, SurfaceId, SurfacePresentationResult, Tab, TabBarId,
+    TabVisuals,
 };
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -231,10 +232,18 @@ fn item_local_state_and_focus_survive_moving_between_tab_groups() {
         let destination_group = harness.documents.groups[&DESTINATION];
         assert_ne!(source_group, destination_group);
 
-        harness
+        let moved = harness
             .dock
             .dock_item_current(EDITOR, DockPlacement::After(DESTINATION))
             .unwrap();
+        assert!(matches!(
+            moved.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Docked {
+                item: EDITOR,
+                changed: true,
+                ..
+            })
+        ));
         harness.frame(Vec::new());
 
         assert_eq!(harness.documents.groups[&EDITOR], destination_group);
@@ -274,10 +283,18 @@ fn declared_global_focus_target_stays_exact_after_docking() {
         let mut harness = Harness::new(owned, Some(target));
         let before = harness.focus_and_select_editor();
         assert_eq!(before.editor, target);
-        harness
+        let moved = harness
             .dock
             .dock_item_current(EDITOR, DockPlacement::After(DESTINATION))
             .unwrap();
+        assert!(matches!(
+            moved.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Docked {
+                item: EDITOR,
+                changed: true,
+                ..
+            })
+        ));
         harness.frame(Vec::new());
         harness.assert_editor_state(before);
         assert_eq!(harness.documents.focus_target(EDITOR), Some(target));

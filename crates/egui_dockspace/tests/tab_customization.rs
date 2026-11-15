@@ -26,6 +26,7 @@ struct CloseSnapshot {
 #[derive(Clone)]
 struct TabSnapshot {
     item: ItemId,
+    id: egui::Id,
     bar: TabBarId,
     rect: Rect,
     visible: Rect,
@@ -106,6 +107,7 @@ impl PaneView for Panes {
     fn tab_ui(&mut self, ui: &mut Ui, tab: &Tab<'_>) -> TabVisuals {
         self.tabs.push(TabSnapshot {
             item: tab.item,
+            id: tab.response.id,
             bar: tab.bar,
             rect: tab.rect,
             visible: tab.visible_rect,
@@ -364,6 +366,98 @@ fn tab_presets_follow_theme_hover_and_selection_while_custom_callbacks_still_win
             );
         }
     }
+}
+
+#[test]
+fn tab_presets_keep_selection_precedence_for_keyboard_focus_and_pointer_feedback() {
+    const ACTIVE: Color32 = Color32::from_rgb(13, 73, 131);
+    const HOVERED: Color32 = Color32::from_rgb(211, 167, 23);
+    let focus_stroke = egui::Stroke::new(3.0, Color32::MAGENTA);
+    for preset in [
+        TabStylePreset::Dockspace,
+        TabStylePreset::ImGui,
+        TabStylePreset::EguiTiles,
+    ] {
+        for theme in [egui::Visuals::light(), egui::Visuals::dark()] {
+            let mut harness = Harness::new(DockPolicy::default());
+            harness.context.set_visuals(theme);
+            let mut style = harness.dock.style().clone();
+            style.apply_tab_preset(preset);
+            style.visuals.tab_active_fill = Some(ACTIVE);
+            style.visuals.tab_hover_fill = Some(HOVERED);
+            style.visuals.tab_focus_stroke = Some(focus_stroke);
+            harness.dock.set_style(style).unwrap();
+            harness
+                .run(vec![Event::PointerGone])
+                .drop_without_applying_deltas();
+            harness.settle();
+
+            harness.accesskit_action("First", egui::accesskit::Action::Focus);
+            let output = harness.run(Vec::new());
+            let tab = harness.tab(FIRST);
+            assert!(tab.selected);
+            assert!(harness.context.memory(|memory| memory.has_focus(tab.id)));
+            assert_eq!(tab.visuals.fill, ACTIVE);
+            assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+                egui::Shape::Rect(rect) if rect.stroke == focus_stroke
+                    && rect.rect.contains(tab.rect.center())
+            )));
+
+            let point = tab.content.left_center() + vec2(2.0, 0.0);
+            let pointer_fill = if preset == TabStylePreset::ImGui {
+                HOVERED
+            } else {
+                ACTIVE
+            };
+            harness
+                .run(vec![Event::PointerMoved(point)])
+                .drop_without_applying_deltas();
+            assert_eq!(harness.tab(FIRST).visuals.fill, pointer_fill);
+            for pressed in [true, false] {
+                harness
+                    .run(vec![Event::PointerButton {
+                        pos: point,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }])
+                    .drop_without_applying_deltas();
+                assert_eq!(harness.tab(FIRST).visuals.fill, pointer_fill);
+            }
+            harness
+                .run(vec![Event::PointerGone])
+                .drop_without_applying_deltas();
+            harness.settle();
+            assert!(
+                harness
+                    .context
+                    .memory(|memory| memory.has_focus(harness.tab(FIRST).id))
+            );
+            assert_eq!(harness.tab(FIRST).visuals.fill, ACTIVE);
+        }
+    }
+}
+
+#[test]
+fn imgui_keyboard_navigation_does_not_hover_an_unselected_tab() {
+    let mut harness = Harness::new(DockPolicy::default());
+    let mut style = harness.dock.style().clone();
+    style.apply_tab_preset(TabStylePreset::ImGui);
+    style.visuals.tab_fill = Some(Color32::BLUE);
+    style.visuals.tab_hover_fill = Some(Color32::YELLOW);
+    harness.dock.set_style(style).unwrap();
+    harness
+        .run(vec![Event::PointerGone])
+        .drop_without_applying_deltas();
+    harness.settle();
+    let id = harness.tab(SECOND).id;
+    harness
+        .context
+        .memory_mut(|memory| memory.request_focus(id));
+    harness.settle();
+    assert!(harness.context.memory(|memory| memory.has_focus(id)));
+    assert!(!harness.tab(SECOND).selected);
+    assert_eq!(harness.tab(SECOND).visuals.fill, Color32::BLUE);
 }
 
 #[test]
