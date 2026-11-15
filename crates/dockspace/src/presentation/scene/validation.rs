@@ -1906,7 +1906,7 @@ fn validate_splitter_geometry(
         }
         validate_semantic_layer(ready.surface, id.root, record.layer(), workspace_index)?;
         if record.operable()
-            != (policy.splitter_resize_is_allowed(record.axis(), ready.surface)
+            != (policy.splitter_resize_is_allowed(id.root, record.axis(), ready.surface)
                 && !compressed
                 && region_has_authoritative_area(
                     record.hit().rect(),

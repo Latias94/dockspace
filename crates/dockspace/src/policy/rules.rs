@@ -718,6 +718,7 @@ struct DockPolicyRules {
     allowed_operations: BTreeSet<DockOperation>,
     allowed_presentations: BTreeSet<DockPresentationMode>,
     resize_axes: BTreeSet<Axis>,
+    root_disabled_resize_axes: BTreeMap<RootId, BTreeSet<Axis>>,
     tab_bar: TabBarPolicy,
     close: CloseCapability,
     central_node: CentralNodePolicy,
@@ -744,6 +745,7 @@ impl Default for DockPolicyRules {
                 DockPresentationMode::Contained,
             ]),
             resize_axes: all_axes(),
+            root_disabled_resize_axes: BTreeMap::new(),
             tab_bar: TabBarPolicy::default(),
             close: CloseCapability::default(),
             central_node: CentralNodePolicy::default(),
@@ -855,6 +857,40 @@ impl DockPolicy {
     /// Enables or disables splitter resizing along one axis.
     pub fn set_allow_resize_axis(&mut self, axis: DockspaceAxis, allowed: bool) {
         set_membership(&mut self.rules.resize_axes, axis.into(), allowed);
+    }
+
+    /// Returns whether this root's own rule allows split resizing along one axis.
+    ///
+    /// Roots are unrestricted by default. Workspace and surface rules, and arrangement locking,
+    /// are evaluated separately; this query does not return effective permissions.
+    #[must_use]
+    pub fn allows_root_resize_axis(&self, root: RootId, axis: DockspaceAxis) -> bool {
+        self.rules
+            .root_disabled_resize_axes
+            .get(&root)
+            .is_none_or(|axes| !axes.contains(&axis.into()))
+    }
+
+    /// Enables or disables split resizing along one axis throughout a stable root.
+    ///
+    /// The restriction follows the root when its presentation moves to another surface. It does
+    /// not apply to the contained window frame or transfer to newly created roots. Workspace and
+    /// surface rules can further restrict resizing. Enabling both axes removes the root restriction.
+    pub fn set_allow_root_resize_axis(&mut self, root: RootId, axis: DockspaceAxis, allowed: bool) {
+        if allowed {
+            if let Some(axes) = self.rules.root_disabled_resize_axes.get_mut(&root) {
+                axes.remove(&axis.into());
+                if axes.is_empty() {
+                    self.rules.root_disabled_resize_axes.remove(&root);
+                }
+            }
+        } else {
+            self.rules
+                .root_disabled_resize_axes
+                .entry(root)
+                .or_default()
+                .insert(axis.into());
+        }
     }
 
     /// Returns whether contained-floating presentation is allowed.
@@ -1272,15 +1308,20 @@ impl DockPresentationPolicyRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub struct DockResizePolicyRequest {
+    root: RootId,
     axis: Axis,
     surface: Option<SurfaceId>,
 }
 
 impl DockResizePolicyRequest {
-    /// Creates a resize request, optionally scoped to one surface.
+    /// Creates an exact root resize request, optionally scoped to its presentation surface.
     #[must_use]
-    pub const fn new(axis: Axis, surface: Option<SurfaceId>) -> Self {
-        Self { axis, surface }
+    pub const fn new(root: RootId, axis: Axis, surface: Option<SurfaceId>) -> Self {
+        Self {
+            root,
+            axis,
+            surface,
+        }
     }
 }
 
@@ -1458,9 +1499,15 @@ impl DockPolicySnapshot {
         PolicyDecision::from_result(result)
     }
 
-    pub(crate) fn splitter_resize_is_allowed(&self, axis: Axis, surface: SurfaceId) -> bool {
+    pub(crate) fn splitter_resize_is_allowed(
+        &self,
+        root: RootId,
+        axis: Axis,
+        surface: SurfaceId,
+    ) -> bool {
         matches!(
             self.evaluate(&DockPolicyRequest::Resize(DockResizePolicyRequest::new(
+                root,
                 axis,
                 Some(surface),
             ))),
@@ -1640,6 +1687,18 @@ impl DockPolicySnapshot {
         {
             return Err(PolicyRejection::SurfaceResizeAxisDisabled {
                 surface,
+                axis: request.axis,
+            });
+        }
+        if self
+            .policy
+            .rules
+            .root_disabled_resize_axes
+            .get(&request.root)
+            .is_some_and(|axes| axes.contains(&request.axis))
+        {
+            return Err(PolicyRejection::RootResizeAxisDisabled {
+                root: request.root,
                 axis: request.axis,
             });
         }
@@ -1956,6 +2015,14 @@ pub enum PolicyRejection {
     SurfaceResizeAxisDisabled {
         /// Rejected surface.
         surface: SurfaceId,
+        /// Rejected axis.
+        axis: Axis,
+    },
+    /// One resize axis is disabled throughout a stable root.
+    #[error("resize axis {axis:?} is disabled in root {root}")]
+    RootResizeAxisDisabled {
+        /// Rejected root.
+        root: RootId,
         /// Rejected axis.
         axis: Axis,
     },

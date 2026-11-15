@@ -59,8 +59,8 @@ fn draft(roots: &[RootId], allowed: [bool; 2]) -> PresentationPlan {
             split: nodes.insert_node(Node::tabs([])),
             index: 0,
         });
-        let horizontal = policy.splitter_resize_is_allowed(Axis::Horizontal, SURFACE);
-        let vertical = policy.splitter_resize_is_allowed(Axis::Vertical, SURFACE);
+        let horizontal = policy.splitter_resize_is_allowed(root, Axis::Horizontal, SURFACE);
+        let vertical = policy.splitter_resize_is_allowed(root, Axis::Vertical, SURFACE);
         // Two distinct north/south handles meet one through east/west handle.
         let records = [
             splitter(

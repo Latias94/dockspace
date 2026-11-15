@@ -27,6 +27,7 @@ fn locked_policy_rejects_mutation_requests_and_eligibility_fast_paths() {
             surface,
         )),
         DockPolicyRequest::Resize(DockResizePolicyRequest::new(
+            RootId::new(10),
             Axis::Horizontal,
             Some(surface),
         )),
@@ -87,8 +88,8 @@ fn locked_policy_rejects_mutation_requests_and_eligibility_fast_paths() {
         locked.evaluate_drag_source_facts(&payload),
         PolicyDecision::Reject(PolicyRejection::ArrangementLocked)
     );
-    assert!(unlocked.splitter_resize_is_allowed(Axis::Horizontal, surface));
-    assert!(!locked.splitter_resize_is_allowed(Axis::Horizontal, surface));
+    assert!(unlocked.splitter_resize_is_allowed(RootId::new(10), Axis::Horizontal, surface));
+    assert!(!locked.splitter_resize_is_allowed(RootId::new(10), Axis::Horizontal, surface));
     for presentation in [TearOffPresentation::Contained, TearOffPresentation::Native] {
         assert_eq!(unlocked.check_tear_off(presentation), Ok(()));
         assert_eq!(

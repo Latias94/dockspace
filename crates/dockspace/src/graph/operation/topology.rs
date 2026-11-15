@@ -422,7 +422,7 @@ pub(crate) fn validate_split_resizes(
             });
         evaluate_policy(
             policy,
-            &DockPolicyRequest::Resize(DockResizePolicyRequest::new(axis, surface)),
+            &DockPolicyRequest::Resize(DockResizePolicyRequest::new(split.root(), axis, surface)),
         )?;
     }
     Ok(validated)

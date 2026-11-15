@@ -656,7 +656,7 @@ fn compile_root(
                     bounds,
                 )?;
                 let mut resize_facts = None;
-                let operable = policy.splitter_resize_is_allowed(*axis, surface)
+                let operable = policy.splitter_resize_is_allowed(root, *axis, surface)
                     && !(config.pane_overflow_policy()
                         == crate::presentation::config::PaneOverflowPolicy::Compress
                         && split.overflow > 0.0);

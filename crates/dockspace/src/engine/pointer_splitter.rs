@@ -476,7 +476,9 @@ impl DockEngine {
         };
         let surface = self.root_surface(split.root());
         match policy.evaluate(&DockPolicyRequest::Resize(DockResizePolicyRequest::new(
-            axis, surface,
+            split.root(),
+            axis,
+            surface,
         ))) {
             PolicyDecision::Allow => Ok(()),
             PolicyDecision::Reject(reason) => Err(reason.into()),

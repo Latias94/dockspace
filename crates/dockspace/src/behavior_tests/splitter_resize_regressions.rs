@@ -39,6 +39,8 @@ use dockspace::presentation::hit::{PresentationHitRegionId, PresentationHitRegio
 use dockspace::presentation::manifest::{MeasurementAuthorityError, MeasurementUnavailableReason};
 use dockspace::presentation::scene::{SplitterRecord, SurfaceSceneStamp};
 
+mod root_resize_policy;
+
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const ROOT: RootId = RootId::new(1);
 const POINTER: PointerId = PointerId::new(1);

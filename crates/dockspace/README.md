@@ -73,7 +73,9 @@ close decisions and persistence contracts, and the
 - Keep pane data in your own registry, keyed by `ItemId`.
 - Configure move/close restrictions, compatibility and arrangement locking with
   `DockPolicy`; configure geometry and interaction timing with
-  `DockPresentationConfig`.
+  `DockPresentationConfig`. Use `set_allow_root_resize_axis` to restrict internal
+  resizing to either axis for a complete root, independently of its floating
+  window border.
 - Layout weights, docking fractions and logical geometry use `f64` throughout
   the core and persistence. Convert to your renderer's coordinate type at the
   adapter boundary.

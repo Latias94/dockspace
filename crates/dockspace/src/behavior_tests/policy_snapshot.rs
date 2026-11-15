@@ -193,6 +193,7 @@ fn axis_tab_close_and_presentation_permissions_are_independent() {
     let snapshot = policy.snapshot(PolicyRevision::new(9));
     assert_eq!(
         snapshot.evaluate(&DockPolicyRequest::Resize(DockResizePolicyRequest::new(
+            SOURCE_ROOT,
             Axis::Vertical,
             Some(TARGET_SURFACE),
         ))),
@@ -202,6 +203,7 @@ fn axis_tab_close_and_presentation_permissions_are_independent() {
     );
     assert_eq!(
         snapshot.evaluate(&DockPolicyRequest::Resize(DockResizePolicyRequest::new(
+            SOURCE_ROOT,
             Axis::Horizontal,
             Some(TARGET_SURFACE),
         ))),
