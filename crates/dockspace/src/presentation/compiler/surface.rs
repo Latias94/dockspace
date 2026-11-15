@@ -949,10 +949,6 @@ fn edge_availability(policy: &DockPolicySnapshot) -> DropTargetAvailability {
 }
 
 fn dock_fraction(config: &DockPresentationConfig) -> Result<DockFraction, SceneCompilationError> {
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "validated unit fractions are intentionally represented by DockFraction as f32"
-    )]
-    let fraction = config.dock_fraction() as f32;
-    DockFraction::new(fraction).map_err(|_| SceneCompilationError::InvalidDockFraction)
+    DockFraction::new(config.dock_fraction())
+        .map_err(|_| SceneCompilationError::InvalidDockFraction)
 }

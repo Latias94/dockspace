@@ -18,6 +18,37 @@ fn rect(x: f64, y: f64, width: f64, height: f64) -> LogicalRect {
 }
 
 #[test]
+fn product_layout_and_views_retain_double_precision_split_weights() {
+    let first = 0.5_f64.next_up();
+    let expected = [first, 1.0 - first];
+    let split = DockspaceNode::split(
+        DockspaceAxis::Horizontal,
+        [
+            (DockspaceNode::tabs([ItemId::new(1)]), expected[0]),
+            (DockspaceNode::tabs([ItemId::new(2)]), expected[1]),
+        ],
+    )
+    .unwrap();
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        MAIN_SURFACE,
+        DockspaceRootLayout::new(MAIN_ROOT, split),
+    )])
+    .unwrap();
+    let weights = layout
+        .view()
+        .root(MAIN_ROOT)
+        .unwrap()
+        .content()
+        .unwrap()
+        .split()
+        .unwrap()
+        .weights()
+        .map(f64::to_bits)
+        .collect::<Vec<_>>();
+    assert_eq!(weights, expected.map(f64::to_bits));
+}
+
+#[test]
 fn product_layout_builds_central_nary_contained_and_rootless_topology() {
     let main = DockspaceNode::equal_split(
         DockspaceAxis::Horizontal,
@@ -72,7 +103,7 @@ fn product_layout_builds_central_nary_contained_and_rootless_topology() {
             .iter()
             .all(|weight| (*weight - (1.0 / 3.0)).abs() < 1.0e-6)
     );
-    assert!((weights.iter().sum::<f32>() - 1.0).abs() <= f32::EPSILON * 2.0);
+    assert!((weights.iter().sum::<f64>() - 1.0).abs() <= f64::EPSILON * 2.0);
 
     let children = split.children().collect::<Vec<_>>();
     assert_eq!(children.len(), 3);

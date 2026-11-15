@@ -80,7 +80,7 @@ fn assert_float_eq(actual: f64, expected: f64) {
     assert!((actual - expected).abs() <= f64::EPSILON);
 }
 
-fn split_weights(snapshot: &mut WorkspaceSnapshot) -> &mut Vec<f32> {
+fn split_weights(snapshot: &mut WorkspaceSnapshot) -> &mut Vec<f64> {
     snapshot
         .nodes
         .iter_mut()
@@ -204,6 +204,47 @@ fn json_round_trip_preserves_the_complete_workspace_contract() {
             .contained,
         [FLOATING]
     );
+}
+
+#[test]
+fn json_round_trips_retain_double_precision_split_weights_bitwise() {
+    for share in [
+        0.123_456_789_012_345_66,
+        1.0 / 3.0,
+        0.5_f64.next_up(),
+        f64::MIN_POSITIVE,
+    ] {
+        let expected = [share, 1.0 - share];
+        let mut snapshot = sample_snapshot();
+        *split_weights(&mut snapshot) = expected.to_vec();
+
+        for _ in 0..3 {
+            let json = serde_json::to_vec(&snapshot).expect("split weights must serialize");
+            let mut decoded: WorkspaceSnapshot =
+                serde_json::from_slice(&json).expect("split weights must deserialize");
+            assert_eq!(
+                split_weights(&mut decoded)
+                    .iter()
+                    .copied()
+                    .map(f64::to_bits)
+                    .collect::<Vec<_>>(),
+                expected.map(f64::to_bits),
+            );
+            let restored = decoded
+                .build_candidate(|_| true)
+                .expect("weights must restore");
+            snapshot =
+                WorkspaceSnapshot::capture(&restored).expect("restored weights must capture");
+            assert_eq!(
+                split_weights(&mut snapshot)
+                    .iter()
+                    .copied()
+                    .map(f64::to_bits)
+                    .collect::<Vec<_>>(),
+                expected.map(f64::to_bits),
+            );
+        }
+    }
 }
 
 #[test]
@@ -633,7 +674,7 @@ fn unknown_items_and_invalid_scalar_data_are_typed() {
     ));
 
     let mut non_finite_weight = sample_snapshot();
-    split_weights(&mut non_finite_weight)[0] = f32::INFINITY;
+    split_weights(&mut non_finite_weight)[0] = f64::INFINITY;
     assert!(matches!(
         candidate_error(&non_finite_weight),
         SnapshotRestoreError::InvalidSplitWeight {

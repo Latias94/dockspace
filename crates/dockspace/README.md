@@ -74,6 +74,9 @@ close decisions and persistence contracts, and the
 - Configure move/close restrictions, compatibility and arrangement locking with
   `DockPolicy`; configure geometry and interaction timing with
   `DockPresentationConfig`.
+- Layout weights, docking fractions and logical geometry use `f64` throughout
+  the core and persistence. Convert to your renderer's coordinate type at the
+  adapter boundary.
 - Resolve close requests immediately or retain a deferred token while saving.
 - Enable `serde` to save and restore a complete layout document with stable pane
   keys. The application chooses storage and serializes its own pane data.

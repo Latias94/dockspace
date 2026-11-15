@@ -118,7 +118,7 @@ fn wide_split_retains_one_resize_snapshot_per_projection() {
             .workspace()
             .capture_node_source(ROOT, first.id().split)
             .unwrap();
-        let weights = SplitWeight::normalize((1..=children).map(f32::from)).unwrap();
+        let weights = SplitWeight::normalize((1..=children).map(f64::from)).unwrap();
         let projected = compile(
             &engine,
             &measurements,

@@ -12,7 +12,9 @@ use crate::graph::WorkspaceData;
 use crate::graph::command::NodeSource;
 use crate::graph::error::{CommandError, ReferenceRole};
 use crate::graph::workspace::WorkspaceIndex;
-use crate::graph::{Axis, NORMALIZED_WEIGHT_TOLERANCE, Node, SplitWeight, Workspace};
+use crate::graph::{
+    Axis, NORMALIZED_WEIGHT_TOLERANCE, Node, SplitWeight, Workspace, normalized_weight_sum,
+};
 use crate::ids::{NodeId, RootId};
 use crate::presentation::config::PaneOverflowPolicy;
 
@@ -797,9 +799,9 @@ fn validate_split_weight_overrides(
         let weights = weight_override
             .weights
             .iter()
-            .map(|weight| f64::from(weight.get()))
+            .map(|weight| weight.get())
             .collect::<Vec<_>>();
-        let sum = weights.iter().sum::<f64>();
+        let sum = normalized_weight_sum(weights.iter().copied());
         if !sum.is_finite() || (sum - 1.0).abs() > NORMALIZED_WEIGHT_TOLERANCE {
             return Err(LayoutError::SplitWeightOverrideNotNormalized {
                 node: source.node(),
@@ -1139,14 +1141,14 @@ fn prepare_split_projection(
     } else {
         match (children, payload.weights()) {
             ([_, _], [first, second]) => {
-                binary_weights = [f64::from(first.get()), f64::from(second.get())];
+                binary_weights = [first.get(), second.get()];
                 binary_weights.as_slice()
             }
             (_, weights) => {
                 scratch.weights.clear();
                 scratch
                     .weights
-                    .extend(weights.iter().map(|weight| f64::from(weight.get())));
+                    .extend(weights.iter().map(|weight| weight.get()));
                 scratch.weights.as_slice()
             }
         }

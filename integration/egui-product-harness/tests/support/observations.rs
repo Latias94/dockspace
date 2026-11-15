@@ -104,7 +104,7 @@ pub(super) fn root_split(dockspace: &Dockspace) -> Option<(DockspaceAxis, Vec<Ve
     ))
 }
 
-pub(super) fn root_weights(dockspace: &Dockspace) -> Option<Vec<f32>> {
+pub(super) fn root_weights(dockspace: &Dockspace) -> Option<Vec<f64>> {
     Some(
         dockspace
             .view()
@@ -118,7 +118,7 @@ pub(super) fn root_weights(dockspace: &Dockspace) -> Option<Vec<f32>> {
 
 pub(super) fn splitter_junction_weights(
     dockspace: &Dockspace,
-) -> Option<(Vec<f32>, Vec<Vec<f32>>)> {
+) -> Option<(Vec<f64>, Vec<Vec<f64>>)> {
     let root = dockspace.view().root(ROOT)?.content()?.split()?;
     let root_weights = root.weights().collect();
     let column_weights = root

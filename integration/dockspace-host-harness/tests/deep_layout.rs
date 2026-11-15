@@ -157,7 +157,7 @@ fn deep_declaration_errors_release_unvisited_subtrees() {
             DockspaceNode::split(
                 DockspaceAxis::Horizontal,
                 [
-                    (declaration(), f32::NAN),
+                    (declaration(), f64::NAN),
                     (DockspaceNode::tabs([ItemId::new(99_999)]), 1.0),
                 ],
             )

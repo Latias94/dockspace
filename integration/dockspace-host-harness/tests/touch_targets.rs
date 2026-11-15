@@ -280,12 +280,12 @@ fn fixture(surface: DockspaceSurfaceLayout, controls: bool) -> (DockspaceSession
 #[derive(Debug, PartialEq)]
 struct Durable {
     version: WorkspaceVersion,
-    weights: Vec<Vec<f32>>,
+    weights: Vec<Vec<f64>>,
     contained: Vec<(FloatingPresentationId, LogicalRect)>,
 }
 
 fn durable(session: &DockspaceSession) -> Durable {
-    fn collect(node: DockspaceNodeView<'_>, weights: &mut Vec<Vec<f32>>) {
+    fn collect(node: DockspaceNodeView<'_>, weights: &mut Vec<Vec<f64>>) {
         if let Some(split) = node.split() {
             weights.push(split.weights().collect());
             for child in split.children() {
@@ -738,8 +738,6 @@ fn expanded_splitter_and_junction_start_from_touch_only_points_without_a_first_m
                 DockspaceAxis::Horizontal => (new.x() - old.x(), 28.0),
                 DockspaceAxis::Vertical => (new.y() - old.y(), 24.0),
             };
-            // Split weights use f32; the projection retains the contact delta
-            // within the same tolerance as the shared splitter regressions.
             assert!(
                 (actual - expected).abs() < 1e-4,
                 "junction={junction}: the first move must use contact delta, got {actual}"

@@ -213,7 +213,7 @@ fn ae1_post_extraction_edge_failure_discards_the_candidate() {
         axis: Axis::Horizontal,
         children: vec![tiny_target, normal_target],
         weights: vec![
-            SplitWeight::new(f32::MIN_POSITIVE).expect("positive tiny weight"),
+            SplitWeight::new(f64::MIN_POSITIVE).expect("positive tiny weight"),
             SplitWeight::new(1.0).expect("positive unit weight"),
         ],
     });
@@ -231,7 +231,7 @@ fn ae1_post_extraction_edge_failure_discards_the_candidate() {
             ROOT_B,
             tiny_target,
             Edge::Left,
-            DockFraction::new(f32::MIN_POSITIVE).expect("fraction is positive"),
+            DockFraction::new(f64::MIN_POSITIVE).expect("fraction is positive"),
         )
         .expect("target exists");
     let before = workspace.clone();
@@ -652,8 +652,8 @@ fn same_axis_edge_insertion_splits_only_the_target_branch_weight() {
     };
     assert_eq!(children.len(), 3);
     assert_eq!(children[1..], [left, right]);
-    let actual: Vec<f32> = weights.iter().map(|weight| weight.get()).collect();
-    for (actual, expected) in actual.iter().zip([0.1_f32, 0.3, 0.6]) {
+    let actual: Vec<f64> = weights.iter().map(|weight| weight.get()).collect();
+    for (actual, expected) in actual.iter().zip([0.1_f64, 0.3, 0.6]) {
         assert!((actual - expected).abs() <= 1.0e-6);
     }
     assert_eq!(workspace.item_multiset().len(), 3);

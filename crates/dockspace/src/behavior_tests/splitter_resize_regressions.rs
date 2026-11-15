@@ -66,7 +66,7 @@ fn center(bounds: LogicalRect) -> LogicalPoint {
     .expect("fixture point is valid")
 }
 
-fn weights(first: f32, second: f32) -> Vec<SplitWeight> {
+fn weights(first: f64, second: f64) -> Vec<SplitWeight> {
     SplitWeight::normalize([first, second]).expect("fixture weights normalize")
 }
 
@@ -736,10 +736,7 @@ fn handle_resize_clamps_both_directions_at_core_derived_root_limits() {
     let positive_before = record
         .before_maximum_extent()
         .min(pair_extent - record.after_minimum_extent());
-    assert!(
-        (f64::from(positive.weights()[index].get()) - positive_before / full_extent).abs()
-            <= 1.0e-6
-    );
+    assert!((positive.weights()[index].get() - positive_before / full_extent).abs() <= 1.0e-6);
 
     let negative_point =
         LogicalPoint::new(press.x() - 10_000.0, press.y()).expect("negative update point is valid");
@@ -767,10 +764,7 @@ fn handle_resize_clamps_both_directions_at_core_derived_root_limits() {
     let negative_before = record
         .before_minimum_extent()
         .max(pair_extent - record.after_maximum_extent());
-    assert!(
-        (f64::from(negative.weights()[index].get()) - negative_before / full_extent).abs()
-            <= 1.0e-6
-    );
+    assert!((negative.weights()[index].get() - negative_before / full_extent).abs() <= 1.0e-6);
 
     let delivered_transition = submit_pointer_edge(
         &mut engine,
@@ -891,7 +885,7 @@ fn junction_resize_clamps_one_axis_and_commits_both_axes_in_one_revision() {
         + horizontal_record.child_extents()[horizontal_index + 1];
     let horizontal_expected_before = horizontal_pair - horizontal_record.after_minimum_extent();
     assert!(
-        (f64::from(horizontal_update.weights()[horizontal_index].get())
+        (horizontal_update.weights()[horizontal_index].get()
             - horizontal_expected_before / horizontal_available)
             .abs()
             <= 1.0e-6
@@ -907,7 +901,7 @@ fn junction_resize_clamps_one_axis_and_commits_both_axes_in_one_revision() {
     assert!(vertical_delta < vertical_after - vertical_record.after_minimum_extent());
     let vertical_available = vertical_record.child_extents().iter().sum::<f64>();
     assert!(
-        (f64::from(vertical_update.weights()[vertical_index].get())
+        (vertical_update.weights()[vertical_index].get()
             - (vertical_before + vertical_delta) / vertical_available)
             .abs()
             <= 1.0e-6
@@ -1051,7 +1045,7 @@ fn cross_junction_clamps_all_touching_handles_to_one_common_axis_delta() {
             .expect("touching split has one update");
         let index = record.id().index;
         let available = record.child_extents().iter().sum::<f64>();
-        f64::from(update.weights()[index].get()) * available - record.child_extents()[index]
+        update.weights()[index].get() * available - record.child_extents()[index]
     };
     let left_delta = projected_delta(&left_record, left);
     let right_delta = projected_delta(&right_record, right);

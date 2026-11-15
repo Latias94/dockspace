@@ -31,7 +31,26 @@ use crate::graph::validation::WorkspaceValidationErrors;
 use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
 use shared_storage::NodeStore;
 
-pub(crate) const NORMALIZED_WEIGHT_TOLERANCE: f64 = 1.0e-5;
+pub(crate) const NORMALIZED_WEIGHT_TOLERANCE: f64 = 1.0e-12;
+
+/// Uses Neumaier compensation at persistent split-weight boundaries.
+pub(crate) fn normalized_weight_sum(values: impl IntoIterator<Item = f64>) -> f64 {
+    let mut sum = 0.0_f64;
+    let mut correction = 0.0_f64;
+    for value in values {
+        let next = sum + value;
+        if !next.is_finite() {
+            return next;
+        }
+        correction += if sum.abs() >= value.abs() {
+            (sum - next) + value
+        } else {
+            (value - next) + sum
+        };
+        sum = next;
+    }
+    sum + correction
+}
 
 pub(crate) fn is_exact_tab_mru(items: &[ItemId], selected: Option<ItemId>, mru: &[ItemId]) -> bool {
     if mru.len() != items.len() || mru.first().copied() != selected {
@@ -67,8 +86,9 @@ pub enum Axis {
 ///
 /// A collection of weights is valid only when it is normalized. Use
 /// [`SplitWeight::normalize`] when converting arbitrary application values.
+/// Weights retain the same `f64` precision as logical layout geometry.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub struct SplitWeight(pub(crate) f32);
+pub struct SplitWeight(pub(crate) f64);
 
 impl SplitWeight {
     /// Creates one positive, finite split weight.
@@ -76,7 +96,7 @@ impl SplitWeight {
     /// # Errors
     ///
     /// Returns [`InvalidSplitWeight`] when `value` is non-finite, zero, or negative.
-    pub fn new(value: f32) -> Result<Self, InvalidSplitWeight> {
+    pub fn new(value: f64) -> Result<Self, InvalidSplitWeight> {
         if !value.is_finite() {
             return Err(InvalidSplitWeight::NonFinite { value });
         }
@@ -87,7 +107,7 @@ impl SplitWeight {
     }
 
     /// Returns the scalar value represented by this weight.
-    pub fn get(self) -> f32 {
+    pub fn get(self) -> f64 {
         self.0
     }
 
@@ -96,32 +116,27 @@ impl SplitWeight {
     /// # Errors
     ///
     /// Returns [`InvalidSplitWeights`] for an empty collection, an invalid scalar, an invalid
-    /// accumulated sum, or a value that cannot remain positive when represented as `f32`.
+    /// accumulated sum, or a value that underflows to zero during normalization.
     pub fn normalize(
-        values: impl IntoIterator<Item = f32>,
+        values: impl IntoIterator<Item = f64>,
     ) -> Result<Vec<Self>, InvalidSplitWeights> {
-        let values: Vec<f32> = values.into_iter().collect();
+        let values: Vec<f64> = values.into_iter().collect();
         if values.is_empty() {
             return Err(InvalidSplitWeights::Empty);
         }
 
-        let mut sum = 0.0_f64;
         for (index, value) in values.iter().copied().enumerate() {
             SplitWeight::new(value)
                 .map_err(|source| InvalidSplitWeights::Invalid { index, source })?;
-            sum += f64::from(value);
         }
+        let sum = normalized_weight_sum(values.iter().copied());
         if !sum.is_finite() || sum <= 0.0 {
             return Err(InvalidSplitWeights::InvalidSum);
         }
 
         let mut normalized = Vec::with_capacity(values.len());
         for (index, value) in values.into_iter().enumerate() {
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "the unit ratio is intentionally stored in the runtime f32 model"
-            )]
-            let normalized_value = (f64::from(value) / sum) as f32;
+            let normalized_value = value / sum;
             normalized.push(
                 SplitWeight::new(normalized_value)
                     .map_err(|source| InvalidSplitWeights::Invalid { index, source })?,
@@ -139,13 +154,13 @@ pub enum InvalidSplitWeight {
     #[error("split weight must be finite, got {value}")]
     NonFinite {
         /// Rejected scalar value.
-        value: f32,
+        value: f64,
     },
     /// The supplied weight is zero or negative.
     #[error("split weight must be greater than zero, got {value}")]
     NonPositive {
         /// Rejected scalar value.
-        value: f32,
+        value: f64,
     },
 }
 
@@ -257,7 +272,7 @@ impl Node {
     pub fn split(
         axis: Axis,
         children: impl IntoIterator<Item = NodeId>,
-        weights: impl IntoIterator<Item = f32>,
+        weights: impl IntoIterator<Item = f64>,
     ) -> Result<Self, NodeBuildError> {
         let children: Vec<NodeId> = children.into_iter().collect();
         if children.len() < 2 {

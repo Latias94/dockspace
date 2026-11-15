@@ -440,7 +440,7 @@ fn intersect_split_intervals(
     intersect_extent_interval(
         interval,
         total,
-        total * f64::from(f32::EPSILON),
+        total * f64::EPSILON,
         f64::MAX,
         total_coefficient,
         0.0,
@@ -455,9 +455,9 @@ fn intersect_split_intervals(
             coefficient,
             0.0,
         )?;
-        // Keep normalized f32 shares positive as the total changes. A smaller
+        // Keep normalized f64 shares positive as the total changes. A smaller
         // existing share remains valid at zero displacement.
-        let share_floor = (extent / total).min(f64::from(f32::EPSILON));
+        let share_floor = (extent / total).min(f64::EPSILON);
         let margin = (extent - share_floor * total).max(0.0);
         let slope = coefficient - share_floor * total_coefficient;
         if share_floor <= 0.0 {
@@ -520,7 +520,6 @@ fn split_update(split: &FrozenResizeSplit, delta: f64) -> Option<SplitResize> {
         let mut siblings = 0.0;
         for (index, share) in shares.iter_mut().enumerate() {
             if index != central {
-                *share = f64::from(weight(*share)?.get());
                 siblings += *share;
             }
         }
@@ -537,11 +536,7 @@ fn split_update(split: &FrozenResizeSplit, delta: f64) -> Option<SplitResize> {
 }
 
 fn weight(value: f64) -> Option<SplitWeight> {
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "normalized logical extents use the workspace's f32 weight representation"
-    )]
-    SplitWeight::new(value as f32).ok()
+    SplitWeight::new(value).ok()
 }
 
 #[cfg(test)]

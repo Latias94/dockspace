@@ -355,7 +355,7 @@ fn contained_roster(session: &DockspaceSession) -> Vec<FloatingPresentationId> {
         .collect()
 }
 
-fn split_weights(session: &DockspaceSession) -> Vec<f32> {
+fn split_weights(session: &DockspaceSession) -> Vec<f64> {
     session
         .view()
         .surface(SURFACE)
@@ -367,7 +367,7 @@ fn split_weights(session: &DockspaceSession) -> Vec<f32> {
         .collect()
 }
 
-fn splitter_junction_weights(session: &DockspaceSession) -> (Vec<f32>, Vec<Vec<f32>>) {
+fn splitter_junction_weights(session: &DockspaceSession) -> (Vec<f64>, Vec<Vec<f64>>) {
     let root = session
         .view()
         .surface(SURFACE)

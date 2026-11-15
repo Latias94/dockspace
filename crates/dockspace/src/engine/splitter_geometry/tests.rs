@@ -400,7 +400,7 @@ fn zero_effective_motion_preserves_constrained_split_intent_bitwise() {
                 .iter()
                 .map(|weight| weight.get().to_bits())
                 .collect::<Vec<_>>(),
-            [0.25_f32.to_bits(), 0.75_f32.to_bits()]
+            [0.25_f64.to_bits(), 0.75_f64.to_bits()]
         );
     }
 }
@@ -551,8 +551,9 @@ fn small_far_central_keeps_nary_resize_available_on_both_axes() {
         let a = tabs(&mut builder, 1);
         let b = tabs(&mut builder, 2);
         let central = tabs(&mut builder, 3);
-        let split =
-            builder.insert_node(Node::split(axis, [a, b, central], [0.5, 0.5, 1e-10]).unwrap());
+        let split = builder.insert_node(
+            Node::split(axis, [a, b, central], [0.5 - 0.5e-10, 0.5 - 0.5e-10, 1e-10]).unwrap(),
+        );
         let fixture = Fixture::new(
             finish(builder, split, Some(central)),
             bounds_along(axis, 0.0, 500.0),
@@ -580,7 +581,11 @@ fn small_far_central_keeps_nary_resize_available_on_both_axes() {
             .collect::<Vec<_>>();
         assert_eq!(
             original_bits,
-            [0.5_f32.to_bits(), 0.5_f32.to_bits(), 1e-10_f32.to_bits()]
+            [
+                (0.5_f64 - 0.5e-10).to_bits(),
+                (0.5_f64 - 0.5e-10).to_bits(),
+                1e-10_f64.to_bits(),
+            ]
         );
 
         for delta in [0.0, 64.0, -64.0, 0.0] {
@@ -594,10 +599,7 @@ fn small_far_central_keeps_nary_resize_available_on_both_axes() {
                     .iter()
                     .all(|weight| weight.get().is_finite() && weight.get() > 0.0)
             );
-            let sum = weights
-                .iter()
-                .map(|weight| f64::from(weight.get()))
-                .sum::<f64>();
+            let sum = weights.iter().map(|weight| weight.get()).sum::<f64>();
             assert!((sum - 1.0).abs() <= crate::graph::NORMALIZED_WEIGHT_TOLERANCE);
             if delta == 0.0 {
                 assert_eq!(
@@ -666,7 +668,7 @@ fn rounded_nested_minimum_overflow_allows_reverse_expansion_on_both_axes() {
             children: vec![a, across],
             weights: vec![
                 SplitWeight::new(0.9).unwrap(),
-                SplitWeight::new(1.0_f32 - 0.9_f32).unwrap(),
+                SplitWeight::new(1.0_f64 - 0.9_f64).unwrap(),
             ],
         });
         let fixture = Fixture::new(

@@ -406,12 +406,10 @@ fn prepare_split_projection<'workspace>(
         .iter()
         .map(|constraint| constraint.max())
         .collect();
-    let axis_weights = weight_overrides.get(&node_id).cloned().unwrap_or_else(|| {
-        weights
-            .iter()
-            .map(|weight| f64::from(weight.get()))
-            .collect()
-    });
+    let axis_weights = weight_overrides
+        .get(&node_id)
+        .cloned()
+        .unwrap_or_else(|| weights.iter().map(|weight| weight.get()).collect());
     let central_index = child_measurements
         .iter()
         .position(|child| child.contains_central);

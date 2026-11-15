@@ -579,7 +579,7 @@ impl<'a> DockspaceSplitView<'a> {
     }
 
     /// Iterates normalized child weights in visual order.
-    pub fn weights(self) -> impl Iterator<Item = f32> + 'a {
+    pub fn weights(self) -> impl Iterator<Item = f64> + 'a {
         self.weights.iter().map(|weight| weight.get())
     }
 }

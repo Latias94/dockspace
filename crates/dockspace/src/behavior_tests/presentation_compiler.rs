@@ -379,7 +379,7 @@ fn central_root_compiles_center_only_inner_and_exact_outer_guides() {
         canonical_target(ready, top).location(),
         DropTargetLocation::OuterEdge { surface: SURFACE, root: ROOT, node, edge: Edge::Top, fraction }
             if node == tabs
-                && (f64::from(fraction.get()) - 0.5).abs() < f64::EPSILON
+                && (fraction.get() - 0.5).abs() < f64::EPSILON
     ));
     assert_eq!(top.preview().height(), ready.bounds().height() * 0.5);
 }

@@ -32,7 +32,6 @@ const E: ItemId = ItemId::new(5);
 const F: ItemId = ItemId::new(6);
 const GAP: f64 = 2.0;
 const TAB_BAR: f64 = 28.0;
-// Durable split weights use f32, as in the existing public splitter regressions.
 const EPSILON: f64 = 1e-4;
 
 fn point(x: f64, y: f64) -> LogicalPoint {
@@ -165,10 +164,10 @@ impl Geometry {
     }
 }
 
-fn weights(view: DockspaceView<'_>) -> Vec<Vec<u32>> {
-    fn collect(node: DockspaceNodeView<'_>, result: &mut Vec<Vec<u32>>) {
+fn weights(view: DockspaceView<'_>) -> Vec<Vec<u64>> {
+    fn collect(node: DockspaceNodeView<'_>, result: &mut Vec<Vec<u64>>) {
         if let Some(split) = node.split() {
-            result.push(split.weights().map(f32::to_bits).collect());
+            result.push(split.weights().map(f64::to_bits).collect());
             for child in split.children() {
                 collect(child, result);
             }
@@ -182,7 +181,7 @@ fn weights(view: DockspaceView<'_>) -> Vec<Vec<u32>> {
 #[derive(Debug, PartialEq)]
 struct Durable {
     version: WorkspaceVersion,
-    weights: Vec<Vec<u32>>,
+    weights: Vec<Vec<u64>>,
 }
 
 fn durable(session: &DockspaceSession) -> Durable {
@@ -192,7 +191,7 @@ fn durable(session: &DockspaceSession) -> Durable {
     }
 }
 
-fn changed_splits(before: &[Vec<u32>], after: &[Vec<u32>], expected: &[bool]) {
+fn changed_splits(before: &[Vec<u64>], after: &[Vec<u64>], expected: &[bool]) {
     assert_eq!(before.len(), expected.len());
     assert_eq!(after.len(), expected.len());
     for (index, ((before, after), expected)) in before.iter().zip(after).zip(expected).enumerate() {
@@ -794,7 +793,7 @@ fn four_arm_junction_commits_all_four_splits_in_one_workspace_revision() {
         assert_junction_initial(&initial);
         let before = durable(&fixture.session);
         assert_eq!(before.version, initial_version);
-        assert_eq!(before.weights[1], [0.25_f32.to_bits(), 0.75_f32.to_bits()]);
+        assert_eq!(before.weights[1], [0.25_f64.to_bits(), 0.75_f64.to_bits()]);
         let target = initial.four_arm_junction();
         let after = pointer_resize(
             &mut fixture,
@@ -898,7 +897,7 @@ fn four_arm_junction_return_to_origin_restores_original_weight_bits_without_a_co
         let (mut fixture, initial) = nested_junction();
         assert_junction_initial(&initial);
         let before = durable(&fixture.session);
-        assert_eq!(before.weights[1], [0.25_f32.to_bits(), 0.75_f32.to_bits()]);
+        assert_eq!(before.weights[1], [0.25_f64.to_bits(), 0.75_f64.to_bits()]);
         let target = initial.four_arm_junction();
         let start = target.center();
         press(&mut fixture, start, target);

@@ -12,11 +12,11 @@ fn item(value: u64) -> ItemId {
     ItemId::new(value)
 }
 
-fn weight(value: f32) -> SplitWeight {
+fn weight(value: f64) -> SplitWeight {
     SplitWeight::new(value).expect("test weights must be valid")
 }
 
-fn draft_split(axis: Axis, children: Vec<NodeId>, weights: Vec<f32>) -> Node {
+fn draft_split(axis: Axis, children: Vec<NodeId>, weights: Vec<f64>) -> Node {
     Node::Split {
         axis,
         children,
@@ -29,7 +29,7 @@ fn present_main(builder: &mut WorkspaceBuilder, root: RootRecord) {
     builder.set_surface(SURFACE, SurfacePresentation::with_main(ROOT));
 }
 
-fn split_parts(workspace: &Workspace, node: NodeId) -> (&[NodeId], Vec<f32>) {
+fn split_parts(workspace: &Workspace, node: NodeId) -> (&[NodeId], Vec<f64>) {
     let Some(Node::Split {
         children, weights, ..
     }) = workspace.node(node)
@@ -42,7 +42,7 @@ fn split_parts(workspace: &Workspace, node: NodeId) -> (&[NodeId], Vec<f32>) {
     )
 }
 
-fn assert_weights(actual: &[f32], expected: &[f32]) {
+fn assert_weights(actual: &[f64], expected: &[f64]) {
     assert_eq!(actual.len(), expected.len());
     for (actual, expected) in actual.iter().zip(expected) {
         assert!(
@@ -273,11 +273,11 @@ fn invalid_graphs_return_structured_errors_without_partial_rewrites() {
 #[test]
 fn nonfinite_and_nonpositive_weights_are_unrepresentable() {
     assert!(matches!(
-        SplitWeight::new(f32::NAN),
+        SplitWeight::new(f64::NAN),
         Err(InvalidSplitWeight::NonFinite { .. })
     ));
     assert!(matches!(
-        SplitWeight::new(f32::INFINITY),
+        SplitWeight::new(f64::INFINITY),
         Err(InvalidSplitWeight::NonFinite { .. })
     ));
     assert!(matches!(

@@ -9,7 +9,7 @@ use super::{
     SceneCompilationError, checked_sum, clip_rect, intersect_rect, rect_contains, rect_has_area,
     tab_availability,
 };
-use crate::geometry::{GeometryError, LogicalRect};
+use crate::geometry::{GeometryError, LogicalPoint, LogicalRect};
 use crate::graph::command::{DockFraction, Edge};
 use crate::graph::{Node, Workspace};
 use crate::ids::{NodeId, RootId, SurfaceId};
@@ -1114,11 +1114,9 @@ pub(in crate::presentation::compiler) fn operable_tab_chrome(
         None
     };
     let drag = if let Some(close) = close {
-        LogicalRect::new(
-            visible.x(),
-            visible.y(),
-            (close.x() - visible.x()).max(0.0),
-            visible.height(),
+        LogicalRect::from_min_max(
+            visible.min(),
+            LogicalPoint::new(close.x().max(visible.x()), visible.max().y())?,
         )?
     } else {
         visible
@@ -1129,11 +1127,9 @@ pub(in crate::presentation::compiler) fn operable_tab_chrome(
     let padding = config.tab_horizontal_padding().min(full.width());
     let text_left = (full.x() + padding).min(full.max().x());
     let text_right = allocated_close.map_or(full.max().x() - padding, |close| close.x() - padding);
-    let text_layout = LogicalRect::new(
-        text_left,
-        full.y(),
-        text_right.clamp(text_left, full.max().x()) - text_left,
-        full.height(),
+    let text_layout = LogicalRect::from_min_max(
+        LogicalPoint::new(text_left, full.y())?,
+        LogicalPoint::new(text_right.clamp(text_left, full.max().x()), full.max().y())?,
     )?;
     let text = clip_rect(text_layout, visible)?;
     Ok(Some(TabChromeGeometry {
@@ -1187,8 +1183,20 @@ fn tab_gap_geometries(
         }
         let marker_min = (marker_x - width * 0.5)
             .clamp(viewport.x(), (viewport.max().x() - width).max(viewport.x()));
-        let visual = LogicalRect::new(marker_min, viewport.y(), width, viewport.height())?;
+        // A passive marker may be narrower than one ULP at this tab strip's
+        // absolute position. Round its corners outward within the viewport.
+        let marker_max = (marker_min + width)
+            .max(marker_min.next_up())
+            .min(viewport.max().x());
+        let marker_min = marker_min.min(marker_max.next_down()).max(viewport.x());
+        let visual = LogicalRect::from_min_max(
+            LogicalPoint::new(marker_min, viewport.y())?,
+            LogicalPoint::new(marker_max, viewport.max().y())?,
+        )?;
         gaps.push(TabGapGeometry { index, hit, visual });
     }
     Ok(gaps)
 }
+
+#[cfg(test)]
+mod tests;

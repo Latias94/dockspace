@@ -19,7 +19,7 @@ use crate::graph::transaction::{clone_workspace_data_draft, clone_workspace_draf
 use crate::graph::validation::WorkspaceValidationErrors;
 use crate::graph::{
     InvalidSplitWeight, InvalidSplitWeights, NORMALIZED_WEIGHT_TOLERANCE, Node, SplitWeight,
-    Workspace, WorkspaceData, is_exact_tab_mru,
+    Workspace, WorkspaceData, is_exact_tab_mru, normalized_weight_sum,
 };
 use crate::ids::{ItemId, NodeId, RootId};
 
@@ -713,16 +713,15 @@ fn validate_split_weights(
         });
     }
 
-    let mut sum = 0.0_f64;
     for (index, weight) in weights.iter().copied().enumerate() {
         SplitWeight::new(weight.get()).map_err(|source| CanonicalizationError::InvalidWeight {
             node,
             index,
             source,
         })?;
-        sum += f64::from(weight.get());
     }
-    if (sum - 1.0).abs() > NORMALIZED_WEIGHT_TOLERANCE {
+    let sum = normalized_weight_sum(weights.iter().map(|weight| weight.get()));
+    if !sum.is_finite() || (sum - 1.0).abs() > NORMALIZED_WEIGHT_TOLERANCE {
         return Err(CanonicalizationError::WeightsNotNormalized { node, sum });
     }
     Ok(())

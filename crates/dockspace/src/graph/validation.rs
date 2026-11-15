@@ -9,6 +9,7 @@ use thiserror::Error;
 
 use crate::graph::{
     Axis, NORMALIZED_WEIGHT_TOLERANCE, Node, Workspace, WorkspaceData, is_exact_tab_mru,
+    normalized_weight_sum,
 };
 use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
 
@@ -162,7 +163,7 @@ pub enum WorkspaceValidationError {
         /// Weight position.
         index: usize,
         /// Invalid scalar value.
-        value: f32,
+        value: f64,
     },
     /// A split's weights do not sum to one.
     #[error("split node {split:?} weights are not normalized; sum is {sum}")]
@@ -691,7 +692,6 @@ impl<'workspace> Validator<'workspace> {
                 });
         }
 
-        let mut sum = 0.0_f64;
         let mut all_valid = true;
         for (index, weight) in weights.iter().copied().enumerate() {
             let value = weight.get();
@@ -703,13 +703,14 @@ impl<'workspace> Validator<'workspace> {
                         index,
                         value,
                     });
-            } else {
-                sum += f64::from(value);
             }
         }
-        if all_valid && (sum - 1.0).abs() > NORMALIZED_WEIGHT_TOLERANCE {
-            self.errors
-                .push(WorkspaceValidationError::SplitWeightsNotNormalized { split, sum });
+        if all_valid {
+            let sum = normalized_weight_sum(weights.iter().map(|weight| weight.get()));
+            if !sum.is_finite() || (sum - 1.0).abs() > NORMALIZED_WEIGHT_TOLERANCE {
+                self.errors
+                    .push(WorkspaceValidationError::SplitWeightsNotNormalized { split, sum });
+            }
         }
     }
 
@@ -920,7 +921,7 @@ mod tests {
         let split = builder.insert_node(Node::Split {
             axis: Axis::Horizontal,
             children: vec![left, right],
-            weights: vec![SplitWeight(f32::NAN), SplitWeight(0.5)],
+            weights: vec![SplitWeight(f64::NAN), SplitWeight(0.5)],
         });
         builder.set_root(RootId::new(1), RootRecord::new(split));
         builder.set_surface(

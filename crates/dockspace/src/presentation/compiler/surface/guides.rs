@@ -828,25 +828,50 @@ pub(in crate::presentation::compiler) fn edge_preview(
     edge: Edge,
     fraction: DockFraction,
 ) -> Result<LogicalRect, GeometryError> {
-    let fraction = f64::from(fraction.get());
+    let fraction = fraction.get();
     let min = bounds.min();
     let max = bounds.max();
+    // Round passive edge strips outward when a positive share is smaller than
+    // one coordinate ULP. This does not change the command's docking fraction;
+    // payload-specific previews still come from the constrained future layout.
     match edge {
         Edge::Left => LogicalRect::from_min_max(
             min,
-            LogicalPoint::new(min.x() + bounds.width() * fraction, max.y())?,
+            LogicalPoint::new(
+                (min.x() + bounds.width() * fraction)
+                    .max(min.x().next_up())
+                    .min(max.x()),
+                max.y(),
+            )?,
         ),
         Edge::Right => {
             let width = bounds.width() * fraction;
-            LogicalRect::from_min_max(LogicalPoint::new(max.x() - width, min.y())?, max)
+            LogicalRect::from_min_max(
+                LogicalPoint::new(
+                    (max.x() - width).min(max.x().next_down()).max(min.x()),
+                    min.y(),
+                )?,
+                max,
+            )
         }
         Edge::Top => LogicalRect::from_min_max(
             min,
-            LogicalPoint::new(max.x(), min.y() + bounds.height() * fraction)?,
+            LogicalPoint::new(
+                max.x(),
+                (min.y() + bounds.height() * fraction)
+                    .max(min.y().next_up())
+                    .min(max.y()),
+            )?,
         ),
         Edge::Bottom => {
             let height = bounds.height() * fraction;
-            LogicalRect::from_min_max(LogicalPoint::new(min.x(), max.y() - height)?, max)
+            LogicalRect::from_min_max(
+                LogicalPoint::new(
+                    min.x(),
+                    (max.y() - height).min(max.y().next_down()).max(min.y()),
+                )?,
+                max,
+            )
         }
     }
 }

@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use dockspace::geometry::LogicalRect;
 use dockspace::graph::validation::{PresentationLocation, WorkspaceValidationError};
 use dockspace::graph::{
-    Axis, ContainedFloating, Node, RootRecord, SplitWeight, SurfacePresentation, Workspace,
+    Axis, ContainedFloating, InvalidSplitWeights, NORMALIZED_WEIGHT_TOLERANCE, Node, RootRecord,
+    SplitWeight, SurfacePresentation, Workspace, normalized_weight_sum,
 };
 use dockspace::ids::{FloatingPresentationId, ItemId, RootId, SurfaceId};
 
@@ -16,6 +17,83 @@ fn contains_error(
     predicate: impl Fn(&WorkspaceValidationError) -> bool,
 ) -> bool {
     errors.iter().any(predicate)
+}
+
+#[test]
+fn normalized_large_equal_split_weights_remain_normalized() {
+    let weights = SplitWeight::normalize(std::iter::repeat_n(1.0, 100_000)).unwrap();
+    assert_eq!(weights.len(), 100_000);
+    let expected_bits = (1.0_f64 / 100_000.0).to_bits();
+    assert!(
+        weights
+            .iter()
+            .all(|weight| weight.get().to_bits() == expected_bits)
+    );
+    let sum = normalized_weight_sum(weights.iter().map(|weight| weight.get()));
+    assert!(sum.is_finite() && (sum - 1.0).abs() <= NORMALIZED_WEIGHT_TOLERANCE);
+}
+
+#[test]
+fn normalized_large_skewed_split_weights_remain_normalized() {
+    let small = 0.5_f64 / 19_999.0;
+    let weights =
+        SplitWeight::normalize(std::iter::once(0.5).chain(std::iter::repeat_n(small, 19_999)))
+            .unwrap();
+    assert_eq!(weights.len(), 20_000);
+    assert_eq!(weights[0].get().to_bits(), 0.5_f64.to_bits());
+    assert!(
+        weights[1..]
+            .iter()
+            .all(|weight| weight.get().to_bits() == small.to_bits())
+    );
+    let sum = normalized_weight_sum(weights.iter().map(|weight| weight.get()));
+    assert!(sum.is_finite() && (sum - 1.0).abs() <= NORMALIZED_WEIGHT_TOLERANCE);
+}
+
+#[test]
+fn normalization_rejects_an_overflowing_sum() {
+    assert!(matches!(
+        SplitWeight::normalize([f64::MAX, f64::MAX]),
+        Err(InvalidSplitWeights::InvalidSum)
+    ));
+}
+
+#[test]
+fn root_fingerprint_preserves_split_weight_bits_below_f32_precision() {
+    let mut builder = Workspace::builder();
+    let left = builder.insert_node(Node::tabs([ItemId::new(1)]));
+    let right = builder.insert_node(Node::tabs([ItemId::new(2)]));
+    let split = builder.insert_node(Node::equal_split(Axis::Horizontal, [left, right]).unwrap());
+    let root = RootId::new(1);
+    builder.set_root(root, RootRecord::new(split));
+    builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(root));
+    let original = builder.clone().build().unwrap();
+
+    let first = f64::from_bits(0.5_f64.to_bits() + 1);
+    let shares = [first, 1.0 - first];
+    #[allow(clippy::cast_possible_truncation)]
+    for share in shares {
+        assert_eq!((share as f32).to_bits(), 0.5_f32.to_bits());
+    }
+    builder
+        .replace_node(
+            split,
+            Node::Split {
+                axis: Axis::Horizontal,
+                children: vec![left, right],
+                weights: shares
+                    .map(|share| SplitWeight::new(share).unwrap())
+                    .to_vec(),
+            },
+        )
+        .unwrap();
+    let changed = builder.build().unwrap();
+    let before = original.root_fingerprint(root).unwrap();
+    let after = changed.root_fingerprint(root).unwrap();
+    assert_eq!(original.item_multiset(), changed.item_multiset());
+    assert!(before.presentation_topology_eq(&after));
+    assert!(!before.presentation_structure_eq(&after));
+    assert_ne!(before, after);
 }
 
 #[test]
@@ -166,9 +244,9 @@ fn strict_validation_rejects_weight_and_canonical_shape_corruption() {
         WorkspaceValidationError::SameAxisNesting { child, .. } if *child == nested
     )));
     assert!(SplitWeight::new(0.0).is_err());
-    assert!(SplitWeight::new(f32::NAN).is_err());
+    assert!(SplitWeight::new(f64::NAN).is_err());
     assert!(
-        SplitWeight::normalize([f32::MIN_POSITIVE, f32::MAX]).is_err(),
+        SplitWeight::normalize([f64::MIN_POSITIVE, f64::MAX]).is_err(),
         "normalization must not underflow a positive runtime weight to zero"
     );
 }

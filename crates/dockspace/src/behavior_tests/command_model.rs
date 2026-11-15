@@ -297,7 +297,7 @@ fn edge_move_command(
         .collect();
     let (target_tabs, _) = nonempty_targets[rng.index(nonempty_targets.len())];
     let edges = [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom];
-    let fractions = [0.25_f32, 0.5, 0.75];
+    let fractions = [0.25_f64, 0.5, 0.75];
     let edge = edges[rng.index(edges.len())];
     let fraction = DockFraction::new(fractions[rng.index(fractions.len())])
         .expect("model fraction must be valid");
@@ -343,8 +343,8 @@ fn resize_or_toggle_command(
     };
     let first_weight = if current_first > 0.5 { 0.25 } else { 0.75 };
     let remaining_count = u16::try_from(child_count - 1)
-        .expect("test split child count must fit a normalized f32 divisor");
-    let remaining_weight = (1.0 - first_weight) / f32::from(remaining_count);
+        .expect("test split child count must fit a normalized f64 divisor");
+    let remaining_weight = (1.0 - first_weight) / f64::from(remaining_count);
     let weights = SplitWeight::normalize(
         std::iter::once(first_weight).chain(std::iter::repeat_n(remaining_weight, child_count - 1)),
     )
@@ -603,7 +603,7 @@ fn assert_success_postcondition(
 fn edge_move_model_covers_each_direction_and_fraction_with_a_state_change() {
     let policy = DockPolicySnapshot::default();
     let edges = [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom];
-    let fractions = [0.25_f32, 0.5, 0.75];
+    let fractions = [0.25_f64, 0.5, 0.75];
 
     for edge in edges {
         for value in fractions {

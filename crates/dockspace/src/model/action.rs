@@ -48,7 +48,7 @@ pub enum DockEdge {
 
 /// Payload share assigned by one edge docking action.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DockFraction(f32);
+pub struct DockFraction(f64);
 
 impl DockFraction {
     /// Creates a finite fraction strictly between zero and one.
@@ -56,7 +56,7 @@ impl DockFraction {
     /// # Errors
     ///
     /// Returns [`InvalidDockFraction`] when `value` is non-finite or outside the open unit range.
-    pub fn new(value: f32) -> Result<Self, InvalidDockFraction> {
+    pub fn new(value: f64) -> Result<Self, InvalidDockFraction> {
         if value.is_finite() && value > 0.0 && value < 1.0 {
             Ok(Self(value))
         } else {
@@ -66,7 +66,7 @@ impl DockFraction {
 
     /// Returns the validated scalar.
     #[must_use]
-    pub const fn get(self) -> f32 {
+    pub const fn get(self) -> f64 {
         self.0
     }
 }
@@ -76,7 +76,7 @@ impl DockFraction {
 #[error("dock fraction must be finite and strictly between zero and one, got {value}")]
 pub struct InvalidDockFraction {
     /// Rejected scalar.
-    pub value: f32,
+    pub value: f64,
 }
 
 /// Stable product placement for opening or moving one item.

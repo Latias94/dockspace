@@ -1,4 +1,5 @@
 use super::*;
+use crate::graph::normalized_weight_sum;
 
 #[derive(Debug)]
 enum DetachedPayload {
@@ -467,8 +468,8 @@ pub(super) fn validate_split_resizes_structure(
                 weights: weights.len(),
             });
         }
-        let sum: f64 = weights.iter().map(|weight| f64::from(weight.get())).sum();
-        if (sum - 1.0).abs() > NORMALIZED_WEIGHT_TOLERANCE {
+        let sum = normalized_weight_sum(weights.iter().map(|weight| weight.get()));
+        if !sum.is_finite() || (sum - 1.0).abs() > NORMALIZED_WEIGHT_TOLERANCE {
             return Err(CommandError::SplitWeightsNotNormalized {
                 split: node_id,
                 sum,
@@ -1527,7 +1528,7 @@ fn split_existing_branch(
     target: NodeId,
     payload: NodeId,
     before: bool,
-    fraction: f32,
+    fraction: f64,
     axis: Axis,
 ) -> Result<(), CommandError> {
     let node = workspace
@@ -1556,7 +1557,7 @@ fn split_existing_branch_roster(
     target: NodeId,
     payload: NodeId,
     before: bool,
-    fraction: f32,
+    fraction: f64,
     axis: Axis,
 ) -> Result<(), CommandError> {
     let index =
@@ -1591,7 +1592,7 @@ fn wrap_target_branch(
     payload: NodeId,
     axis: Axis,
     before: bool,
-    fraction: f32,
+    fraction: f64,
 ) -> Result<NodeId, CommandError> {
     let payload_weight =
         SplitWeight::new(fraction).map_err(|_| CommandError::InvalidEdgeWeight { axis })?;

@@ -189,7 +189,7 @@ fn submit_move(fixture: &mut Fixture, edge: Edge) {
             TARGET_ROOT,
             fixture.target_tabs,
             edge,
-            DockFraction::new(fixture.engine.presentation_config().dock_fraction() as f32)
+            DockFraction::new(fixture.engine.presentation_config().dock_fraction())
                 .expect("the configured dock fraction is valid"),
         )
         .expect("the exact inner-edge target is current");

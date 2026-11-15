@@ -648,7 +648,7 @@ impl DockPresentationConfigBuilder {
 
     /// Sets the fraction assigned to a newly docked edge child.
     ///
-    /// The value must remain strictly between zero and one when stored as `f32`.
+    /// The value must be finite and strictly between zero and one.
     #[must_use]
     pub const fn dock_fraction(mut self, value: f64) -> Self {
         self.dock_fraction = value;
@@ -760,12 +760,7 @@ impl DockPresentationConfigBuilder {
             return Err(DockPresentationConfigError::ZeroEdgeScrollInterval);
         }
         require_finite("dock_fraction", self.dock_fraction)?;
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "docking fractions use the model's f32 representation"
-        )]
-        let model_fraction = self.dock_fraction as f32;
-        if crate::model::DockFraction::new(model_fraction).is_err() {
+        if crate::model::DockFraction::new(self.dock_fraction).is_err() {
             return Err(DockPresentationConfigError::DockFractionOutOfRange {
                 value: self.dock_fraction,
             });
@@ -945,8 +940,8 @@ pub enum DockPresentationConfigError {
     /// A zero edge scroll interval would continuously reschedule work.
     #[error("tab-strip edge scroll interval must be positive or disabled with None")]
     ZeroEdgeScrollInterval,
-    /// The docking fraction was outside `(0, 1)` in the model's `f32` representation.
-    #[error("dock fraction must remain strictly between zero and one as f32, got {value}")]
+    /// The docking fraction was outside `(0, 1)`.
+    #[error("dock fraction must be strictly between zero and one, got {value}")]
     DockFractionOutOfRange {
         /// Rejected fraction.
         value: f64,

@@ -127,7 +127,7 @@ fn observed_redock_layout(view: DockspaceView<'_>) -> Option<RedockLayout> {
     if split.child_count() != 2
         || split
             .weights()
-            .any(|weight| (weight - 0.5).abs() > f32::EPSILON)
+            .any(|weight| (weight - 0.5).abs() > f64::EPSILON)
     {
         return None;
     }

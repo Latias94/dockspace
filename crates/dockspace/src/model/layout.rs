@@ -247,9 +247,9 @@ impl DockspaceNode {
     /// [`DockspaceLayoutError::InvalidSplitWeights`] when the weights cannot be normalized.
     pub fn split(
         axis: DockspaceAxis,
-        children: impl IntoIterator<Item = (Self, f32)>,
+        children: impl IntoIterator<Item = (Self, f64)>,
     ) -> Result<Self, DockspaceLayoutError> {
-        let (children, weights): (Vec<Self>, Vec<f32>) = children.into_iter().unzip();
+        let (children, weights): (Vec<Self>, Vec<f64>) = children.into_iter().unzip();
         if children.len() < 2 {
             return Err(DockspaceLayoutError::SplitTooFewChildren {
                 children: children.len(),

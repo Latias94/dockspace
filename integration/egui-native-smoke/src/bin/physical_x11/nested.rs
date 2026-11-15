@@ -10,8 +10,8 @@ use super::{
 };
 
 pub(super) const SIBLING_ITEM: ItemId = ItemId::new(3);
-const OUTER_WEIGHTS: [f32; 2] = [0.25, 0.75];
-const INNER_WEIGHTS: [f32; 2] = [0.375, 0.625];
+const OUTER_WEIGHTS: [f64; 2] = [0.25, 0.75];
+const INNER_WEIGHTS: [f64; 2] = [0.375, 0.625];
 
 pub(super) fn smoke_layout() -> DockspaceLayout {
     layout_with_target(
@@ -95,14 +95,14 @@ fn singleton(node: DockspaceNodeView<'_>, item: ItemId) -> bool {
 fn binary_children(
     split: DockspaceSplitView<'_>,
     axis: DockspaceAxis,
-    weights: [f32; 2],
+    weights: [f64; 2],
 ) -> Option<[DockspaceNodeView<'_>; 2]> {
     if split.axis() != axis
         || split.child_count() != 2
         || split
             .weights()
             .zip(weights)
-            .any(|(actual, expected)| (actual - expected).abs() > f32::EPSILON)
+            .any(|(actual, expected)| (actual - expected).abs() > f64::EPSILON)
     {
         return None;
     }

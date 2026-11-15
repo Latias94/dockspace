@@ -951,8 +951,9 @@ fn cross_surface_split_root_dock_back_uses_current_surface_and_configured_fracti
         ),
     ])
     .expect("split recovery layout validates");
+    let fraction = 0.312_345_678_901_234_5;
     let presentation = DockPresentationConfig::builder()
-        .dock_fraction(0.3)
+        .dock_fraction(fraction)
         .build()
         .expect("custom dock fraction validates");
     let mut session = DockspaceSession::from_layout_with_presentation_config(
@@ -1023,9 +1024,9 @@ fn cross_surface_split_root_dock_back_uses_current_surface_and_configured_fracti
         .expect("a split payload docks at an outer edge");
     let weights = split.weights().collect::<Vec<_>>();
     assert_eq!(weights.len(), 3);
-    assert!((weights[0] - 0.7).abs() <= f32::EPSILON, "{weights:?}");
+    assert_eq!(weights[0].to_bits(), (1.0 - fraction).to_bits());
     assert!(
-        (weights[1] + weights[2] - 0.3).abs() <= f32::EPSILON,
+        (weights[1] + weights[2] - fraction).abs() <= f64::EPSILON,
         "{weights:?}"
     );
     for item in [TARGET_ITEM, LEFT, RIGHT] {

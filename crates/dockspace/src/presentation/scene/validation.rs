@@ -4,6 +4,7 @@ use super::*;
 #[cfg(test)]
 use crate::graph::command::Edge;
 use crate::graph::workspace::WorkspaceIndexView;
+use crate::graph::{NORMALIZED_WEIGHT_TOLERANCE, normalized_weight_sum};
 #[cfg(test)]
 use crate::interaction::targeting::field::{pane_center_basin, root_edge_band};
 use crate::interaction::targeting::targets::DropTargetLocation;
@@ -371,11 +372,7 @@ fn validate_magnetic_target_field(
         };
     };
     let config = layout.config();
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "validated presentation fractions use the command layer's f32 representation"
-    )]
-    let expected_fraction = config.dock_fraction() as f32;
+    let expected_fraction = config.dock_fraction();
 
     let mut depths = BTreeMap::new();
     for facts in layout.roots() {
@@ -541,7 +538,7 @@ fn magnetic_targets_are_canonical(
     target_coverage: &mut MagneticTargetCoverage<'_, '_>,
     targets: impl IntoIterator<Item = DropTargetId>,
     layer: SceneLayerKey,
-    expected_fraction: f32,
+    expected_fraction: f64,
 ) -> bool {
     targets.into_iter().all(|target| {
         target.surface() == ready.surface
@@ -2013,13 +2010,9 @@ fn splitter_resize_arrays_are_valid(record: &SplitterRecord, children: usize) ->
     if record.weights().len() != children || record.child_extents().len() != children {
         return false;
     }
-    let weight_sum = record
-        .weights()
-        .iter()
-        .map(|weight| f64::from(weight.get()))
-        .sum::<f64>();
+    let weight_sum = normalized_weight_sum(record.weights().iter().map(|weight| weight.get()));
     weight_sum.is_finite()
-        && (weight_sum - 1.0).abs() <= 1.0e-5
+        && (weight_sum - 1.0).abs() <= NORMALIZED_WEIGHT_TOLERANCE
         && record
             .child_extents()
             .iter()

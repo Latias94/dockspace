@@ -258,7 +258,7 @@ fn unrouted_edge(session: &mut DockspaceSession, event: Event) -> HostFrameRepor
     frame.commit().unwrap()
 }
 
-fn split_weights(session: &DockspaceSession) -> Vec<f32> {
+fn split_weights(session: &DockspaceSession) -> Vec<f64> {
     session
         .view()
         .surface(SURFACE)

@@ -209,9 +209,8 @@ impl DockEngine {
                     .and_then(|record| self.workspace.node(record.node))
                     .ok_or(DockspaceActionRejection::DockBackUnavailable { root })?;
                 if matches!(source, Node::Split { .. }) {
-                    let fraction =
-                        DockFraction::new(self.presentation_config().dock_fraction() as f32)
-                            .map_err(|_| DockspaceActionRejection::DockBackUnavailable { root })?;
+                    let fraction = DockFraction::new(self.presentation_config().dock_fraction())
+                        .map_err(|_| DockspaceActionRejection::DockBackUnavailable { root })?;
                     return Ok(DockPlacement::OuterEdge {
                         root: target_root,
                         edge: DockEdge::Right,
@@ -256,7 +255,7 @@ impl DockEngine {
                 if target_root == root {
                     return Err(DockspaceActionRejection::DockBackUnavailable { root });
                 }
-                let fraction = DockFraction::new(self.presentation_config().dock_fraction() as f32)
+                let fraction = DockFraction::new(self.presentation_config().dock_fraction())
                     .map_err(|_| DockspaceActionRejection::DockBackUnavailable { root })?;
                 Ok(DockPlacement::OuterEdge {
                     root: target_root,

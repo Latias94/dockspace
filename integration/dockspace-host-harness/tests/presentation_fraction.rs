@@ -11,8 +11,8 @@ use dockspace::runtime::{
 };
 
 #[test]
-fn rejects_fractions_that_round_to_model_endpoints() {
-    for fraction in [0.999_999_99, 1.0e-50] {
+fn rejects_fractions_outside_the_double_precision_open_unit_interval() {
+    for fraction in [-0.1, 0.0, 1.0, 1.0_f64.next_up()] {
         assert!(matches!(
             DockPresentationConfig::builder()
                 .dock_fraction(fraction)
@@ -25,7 +25,13 @@ fn rejects_fractions_that_round_to_model_endpoints() {
 
 #[test]
 fn representable_fractions_measure_a_surface() {
-    for fraction in [0.25, f64::from(f32::from_bits(1.0_f32.to_bits() - 1))] {
+    for fraction in [
+        0.25,
+        0.999_999_99,
+        1.0e-50,
+        1.0_f64.next_down(),
+        f64::from_bits(1),
+    ] {
         let surface = SurfaceId::new(1);
         let config = DockPresentationConfig::builder()
             .dock_fraction(fraction)
@@ -56,8 +62,9 @@ fn representable_fractions_measure_a_surface() {
 
 #[test]
 fn positive_model_subnormal_fraction_is_accepted() {
-    DockPresentationConfig::builder()
-        .dock_fraction(f64::from(f32::from_bits(1)))
+    let config = DockPresentationConfig::builder()
+        .dock_fraction(f64::from_bits(1))
         .build()
         .unwrap();
+    assert_eq!(config.dock_fraction().to_bits(), 1);
 }

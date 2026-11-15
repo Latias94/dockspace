@@ -297,7 +297,7 @@ fn three_leaf_workspace() -> (Workspace, RootId, [NodeId; 3], NodeId) {
 }
 
 fn nested_split_workspace(
-    inner_weights: [f32; 2],
+    inner_weights: [f64; 2],
 ) -> (Workspace, RootId, [NodeId; 3], NodeId, NodeId) {
     let mut builder = Workspace::builder();
     let left = builder.insert_node(Node::tabs([ItemId::new(40)]));

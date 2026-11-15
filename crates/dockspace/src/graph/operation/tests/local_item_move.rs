@@ -1,5 +1,4 @@
 use super::*;
-use crate::graph::canonical::CanonicalizationError;
 use crate::interaction::targeting::resolver::structural_work;
 
 const LOCAL_ROOT: RootId = RootId::new(1);
@@ -338,7 +337,7 @@ fn outer_flattening_weight_failure_still_discards_the_entire_move() {
     let left = builder.insert_node(Node::tabs([ItemId::new(3)]));
     let right = builder.insert_node(Node::tabs([ItemId::new(4)]));
     let target = builder.insert_node(
-        Node::split(Axis::Horizontal, [left, right], [f32::from_bits(1), 1.0]).unwrap(),
+        Node::split(Axis::Horizontal, [left, right], [f64::from_bits(1), 1.0]).unwrap(),
     );
     builder.set_root(OTHER_ROOT, RootRecord::new(source));
     builder.set_root(LOCAL_ROOT, RootRecord::new(target));
@@ -363,7 +362,7 @@ fn outer_flattening_weight_failure_still_discards_the_entire_move() {
                 .capture_outer_edge_target(
                     LOCAL_ROOT,
                     Edge::Right,
-                    DockFraction::new(1.0 - f32::EPSILON).unwrap(),
+                    DockFraction::new(1.0 - f64::EPSILON).unwrap(),
                 )
                 .unwrap(),
         ),
@@ -384,7 +383,7 @@ fn outer_flattening_weight_failure_still_discards_the_entire_move() {
 }
 
 #[test]
-fn inner_edge_input_weight_sum_witness_matches_general_rejection_and_rolls_back() {
+fn inner_edge_input_weight_sum_boundary_matches_general_success() {
     let mut builder = Workspace::builder();
     let source = builder.insert_node(Node::tabs([ItemId::new(1), MOVED]));
     let left = builder.insert_node(Node::tabs([ItemId::new(3)]));
@@ -392,8 +391,10 @@ fn inner_edge_input_weight_sum_witness_matches_general_rejection_and_rolls_back(
     let target = builder.insert_node(Node::Split {
         axis: Axis::Horizontal,
         children: vec![left, right],
-        weights: [0x3c75_c28f, 0x3f7c_284e]
-            .map(|bits| SplitWeight::new(f32::from_bits(bits)).unwrap())
+        // Naive summation crosses the tolerance after splitting the first share.
+        // Compensated validation must preserve the accepted near-boundary input.
+        weights: [0x3f89_945b_6c37_60bf, 0x3fef_99ae_924f_45ac]
+            .map(|bits| SplitWeight::new(f64::from_bits(bits)).unwrap())
             .to_vec(),
     });
     builder.set_root(LOCAL_ROOT, RootRecord::new(source));
@@ -408,7 +409,6 @@ fn inner_edge_input_weight_sum_witness_matches_general_rejection_and_rolls_back(
     );
     let mut workspace = builder.build().unwrap();
     workspace.validate().unwrap();
-    let original = workspace.clone();
     let movement = WorkspaceCommand::Move {
         payload: MovePayload::Item(
             workspace
@@ -427,23 +427,20 @@ fn inner_edge_input_weight_sum_witness_matches_general_rejection_and_rolls_back(
         ),
     };
     let policy = default_policy();
-    let expected = prepare_general_candidate(
+    let (expected_workspace, expected_report) = prepare_general_candidate(
         &workspace,
         TransactionAuthority::Policy(&policy),
         std::slice::from_ref(&movement),
         workspace.clone(),
     )
-    .unwrap_err();
-    assert!(matches!(
-        &expected,
-        TransactionError::Canonicalization(CanonicalizationError::WeightsNotNormalized { node, .. })
-            if *node == target
-    ));
+    .unwrap()
+    .into_parts();
     let actual = crate::graph::transaction::WorkspaceTransaction::from_commands([movement])
         .apply(&mut workspace, &policy)
-        .unwrap_err();
-    assert_eq!(actual, expected);
-    assert_eq!(workspace, original);
+        .unwrap();
+    assert_eq!(actual, expected_report);
+    assert_eq!(workspace, expected_workspace);
+    assert!(actual.changed());
     workspace.validate().unwrap();
 }
 
@@ -464,16 +461,7 @@ fn source_collapse_of_wide_split_matches_general_success_and_preserves_items() {
     let source_split = builder.insert_node(Node::Split {
         axis: Axis::Horizontal,
         children,
-        weights: (0..2000)
-            .map(|index| {
-                let bits = if index == 1999 {
-                    0x3a03_0f3f
-                } else {
-                    0x3a03_126f
-                };
-                SplitWeight::new(f32::from_bits(bits)).unwrap()
-            })
-            .collect(),
+        weights: SplitWeight::normalize(std::iter::repeat_n(1.0, 2000)).unwrap(),
     });
     let target = builder.insert_node(Node::tabs([ItemId::new(3), ItemId::new(4)]));
     builder.set_root(LOCAL_ROOT, RootRecord::new(source_split));

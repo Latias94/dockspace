@@ -75,7 +75,7 @@ pub(super) struct Exercise {
     version: Option<WorkspaceVersion>,
     original_text: String,
     original_width: f32,
-    original_weights: [u32; 2],
+    original_weights: [u64; 2],
     resized: bool,
 }
 
@@ -407,7 +407,7 @@ fn button(pos: Pos2, pressed: bool) -> Event {
     }
 }
 
-fn top_weights(dock: &Dockspace) -> [u32; 2] {
+fn top_weights(dock: &Dockspace) -> [u64; 2] {
     let rows = dock
         .view()
         .root(MAIN_ROOT)

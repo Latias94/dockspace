@@ -32,7 +32,7 @@ fn tree(
         .collect::<Vec<_>>();
     let weights = (0..count)
         .map(|_| u16::try_from(next(seed) % 17 + 1).unwrap())
-        .map(f32::from)
+        .map(f64::from)
         .collect::<Vec<_>>();
     builder.insert_node(Node::split(axis, children, weights).unwrap())
 }

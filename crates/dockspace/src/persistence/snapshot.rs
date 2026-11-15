@@ -63,7 +63,7 @@ pub enum SnapshotNode {
         /// Snapshot-local child node identities.
         children: Vec<u64>,
         /// Exact normalized shares from the runtime model.
-        weights: Vec<f32>,
+        weights: Vec<f64>,
     },
 }
 

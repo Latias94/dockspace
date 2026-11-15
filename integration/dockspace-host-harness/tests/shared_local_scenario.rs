@@ -161,7 +161,7 @@ fn paint_and_present(session: &mut DockspaceSession, step: SemanticStep) -> Prep
     prepared
 }
 
-fn weights(session: &DockspaceSession) -> Vec<f32> {
+fn weights(session: &DockspaceSession) -> Vec<f64> {
     session
         .view()
         .root(ROOT)
