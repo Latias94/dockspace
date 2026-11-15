@@ -141,7 +141,12 @@ fn tab_presentation_menu_anchor(
     let maximum_width = (available - group_extent - tab_extent).max(0.0);
     let width = bar.height().min(maximum_width);
     (width >= minimum_anchor_extent && minimum_anchor_extent > 0.0)
-        .then(|| LogicalRect::new(content_right - width, bar.y(), width, bar.height()))
+        .then(|| {
+            LogicalRect::from_min_max(
+                LogicalPoint::new((content_right - width).max(content_left), bar.y())?,
+                LogicalPoint::new(content_right, bar.max().y())?,
+            )
+        })
         .transpose()
 }
 
@@ -191,14 +196,15 @@ fn tab_strip_optional_chrome_candidate(
         return Ok(None);
     }
 
-    let presentation_menu_extent = presentation_menu_bounds.map_or(0.0, LogicalRect::width);
-    let content_x = bar.x() + group_extent + leading_reserved;
-    let base_viewport_width = (bar.width()
-        - group_extent
-        - leading_reserved
-        - trailing_reserved
-        - presentation_menu_extent)
-        .max(0.0);
+    let content_x = (bar.x() + group_extent + leading_reserved).min(bar.max().x());
+    let content_right = presentation_menu_bounds
+        .map_or(bar.max().x() - trailing_reserved, LogicalRect::x)
+        .max(content_x);
+    let content = LogicalRect::from_min_max(
+        LogicalPoint::new(content_x, bar.y())?,
+        LogicalPoint::new(content_right, bar.max().y())?,
+    )?;
+    let base_viewport_width = content.width();
     let item_count_u32 =
         u32::try_from(item_count).map_err(|_| SceneCompilationError::GeometryCountOverflow)?;
     let minimum_total = checked_sum(
@@ -211,9 +217,7 @@ fn tab_strip_optional_chrome_candidate(
     let overflowing = item_count > 0 && minimum_total > base_viewport_width;
     let controls = if overflowing && include_overflow_controls {
         match strip.controls().filter(|metrics| !metrics.is_empty()) {
-            Some(metrics) => {
-                tab_strip_control_layout(content_x, bar, base_viewport_width, metrics)?
-            }
+            Some(metrics) => tab_strip_control_layout(content, metrics)?,
             None => None,
         }
     } else {
@@ -226,18 +230,7 @@ fn tab_strip_optional_chrome_candidate(
     {
         return Ok(None);
     }
-    let reserved_leading = controls
-        .as_ref()
-        .map_or(0.0, |layout| layout.reserved_leading);
-    let reserved_trailing = controls
-        .as_ref()
-        .map_or(0.0, |layout| layout.reserved_trailing);
-    let viewport = LogicalRect::new(
-        content_x + reserved_leading,
-        bar.y(),
-        (base_viewport_width - reserved_leading - reserved_trailing).max(0.0),
-        bar.height(),
-    )?;
+    let viewport = controls.as_ref().map_or(content, |layout| layout.viewport);
     if item_count > 0 && viewport.width() < config.tab_min_width() {
         return Ok(None);
     }
@@ -366,14 +359,15 @@ pub(super) fn compile_tabs_leaf(
     } else {
         0.0
     };
-    let tab_bar = LogicalRect::new(bounds.x(), bounds.y(), bounds.width(), tab_height)?;
-    let content_height = (bounds.height() - tab_height).max(0.0);
-    let content = LogicalRect::new(
-        bounds.x(),
-        bounds.y() + tab_height,
-        bounds.width(),
-        content_height,
+    let content_top = (bounds.y() + tab_height).min(bounds.max().y());
+    // Share the original edges: rebuilding a sampled maximum from a span can
+    // round the content outside its pane by one ULP.
+    let tab_bar = LogicalRect::from_min_max(
+        bounds.min(),
+        LogicalPoint::new(bounds.max().x(), content_top)?,
     )?;
+    let content =
+        LogicalRect::from_min_max(LogicalPoint::new(bounds.x(), content_top)?, bounds.max())?;
     let pane_id = PaneSceneId { root, tabs };
     ready.push_pane_record(PaneRecord::new(pane_id, bounds, content, layer));
     ready.push_surface_program_pane_operation(pane_id, selected)?;
@@ -655,7 +649,12 @@ fn compile_tab_strip(
         let trailing_start = cursor.min(viewport.max().x());
         let trailing_width = (viewport.max().x() - trailing_start).max(0.0);
         (trailing_width > 0.0)
-            .then(|| LogicalRect::new(trailing_start, bar.y(), trailing_width, bar.height()))
+            .then(|| {
+                LogicalRect::from_min_max(
+                    LogicalPoint::new(trailing_start, bar.y())?,
+                    viewport.max(),
+                )
+            })
             .transpose()?
     } else {
         None
@@ -823,14 +822,11 @@ fn compile_tab_strip(
 #[derive(Debug, Clone, Copy)]
 pub(in crate::presentation::compiler) struct TabStripControlLayout {
     pub(in crate::presentation::compiler) rects: [Option<LogicalRect>; 3],
-    pub(in crate::presentation::compiler) reserved_leading: f64,
-    pub(in crate::presentation::compiler) reserved_trailing: f64,
+    pub(in crate::presentation::compiler) viewport: LogicalRect,
 }
 
 pub(in crate::presentation::compiler) fn tab_strip_control_layout(
-    content_x: f64,
-    bar: LogicalRect,
-    available: f64,
+    content: LogicalRect,
     metrics: TabStripControlMetrics,
 ) -> Result<Option<TabStripControlLayout>, GeometryError> {
     let entries = [
@@ -851,15 +847,19 @@ pub(in crate::presentation::compiler) fn tab_strip_control_layout(
     };
     let reserved_leading = group_extent(TabStripControlPlacement::ReservedLeading);
     let reserved_trailing = group_extent(TabStripControlPlacement::ReservedTrailing);
-    if reserved_leading + reserved_trailing >= available {
+    if reserved_leading + reserved_trailing >= content.width() {
         return Ok(None);
     }
-    let viewport_x = content_x + reserved_leading;
-    let viewport_width = available - reserved_leading - reserved_trailing;
-    let viewport_right = viewport_x + viewport_width;
-    let overlay_fits = group_extent(TabStripControlPlacement::OverlayLeading)
-        + group_extent(TabStripControlPlacement::OverlayTrailing)
-        <= viewport_width;
+    let viewport_x = (content.x() + reserved_leading).min(content.max().x());
+    let viewport_right = (content.max().x() - reserved_trailing).max(viewport_x);
+    let viewport = LogicalRect::from_min_max(
+        LogicalPoint::new(viewport_x, content.y())?,
+        LogicalPoint::new(viewport_right, content.max().y())?,
+    )?;
+    let overlay_leading = group_extent(TabStripControlPlacement::OverlayLeading);
+    let overlay_trailing = group_extent(TabStripControlPlacement::OverlayTrailing);
+    let overlay_fits = overlay_leading + overlay_trailing <= viewport.width();
+    let overlay_divider = (viewport_x + overlay_leading).min(viewport_right);
     let mut rects = [None; 3];
 
     for placement in [
@@ -869,28 +869,23 @@ pub(in crate::presentation::compiler) fn tab_strip_control_layout(
         if placement == TabStripControlPlacement::OverlayLeading && !overlay_fits {
             continue;
         }
-        let mut cursor = if placement == TabStripControlPlacement::ReservedLeading {
-            content_x
+        let (mut cursor, right) = if placement == TabStripControlPlacement::ReservedLeading {
+            (content.x(), viewport_x)
         } else {
-            viewport_x
+            (viewport_x, overlay_divider)
         };
-        let total = group_extent(placement);
-        if total > viewport_width && placement == TabStripControlPlacement::OverlayLeading {
-            continue;
-        }
         for (index, metric) in entries.iter().copied().enumerate() {
             let Some(metric) =
                 metric.filter(|metric| metric.can_allocate() && metric.placement() == placement)
             else {
                 continue;
             };
-            rects[index] = Some(LogicalRect::new(
-                cursor,
-                bar.y(),
-                metric.extent(),
-                bar.height(),
+            let next = (cursor + metric.extent()).min(right);
+            rects[index] = Some(LogicalRect::from_min_max(
+                LogicalPoint::new(cursor, content.y())?,
+                LogicalPoint::new(next, content.max().y())?,
             )?);
-            cursor += metric.extent() + metrics.spacing();
+            cursor = (next + metrics.spacing()).min(right);
         }
     }
 
@@ -901,40 +896,30 @@ pub(in crate::presentation::compiler) fn tab_strip_control_layout(
         if placement == TabStripControlPlacement::OverlayTrailing && !overlay_fits {
             continue;
         }
-        let mut cursor = if placement == TabStripControlPlacement::ReservedTrailing {
-            content_x + available
+        let (mut cursor, left) = if placement == TabStripControlPlacement::ReservedTrailing {
+            (content.max().x(), viewport_right)
         } else {
-            viewport_right
+            (viewport_right, overlay_divider)
         };
-        let total = group_extent(placement);
-        if total > viewport_width && placement == TabStripControlPlacement::OverlayTrailing {
-            continue;
-        }
         for (index, metric) in entries.iter().copied().enumerate().rev() {
             let Some(metric) =
                 metric.filter(|metric| metric.can_allocate() && metric.placement() == placement)
             else {
                 continue;
             };
-            cursor -= metric.extent();
-            rects[index] = Some(LogicalRect::new(
-                cursor,
-                bar.y(),
-                metric.extent(),
-                bar.height(),
+            let next = (cursor - metric.extent()).max(left);
+            rects[index] = Some(LogicalRect::from_min_max(
+                LogicalPoint::new(next, content.y())?,
+                LogicalPoint::new(cursor, content.max().y())?,
             )?);
-            cursor -= metrics.spacing();
+            cursor = (next - metrics.spacing()).max(left);
         }
     }
 
     Ok(rects
         .iter()
         .any(Option::is_some)
-        .then_some(TabStripControlLayout {
-            rects,
-            reserved_leading,
-            reserved_trailing,
-        }))
+        .then_some(TabStripControlLayout { rects, viewport }))
 }
 
 #[allow(clippy::too_many_arguments)]

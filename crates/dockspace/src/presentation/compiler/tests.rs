@@ -20,6 +20,8 @@ use crate::presentation::scene::{
 };
 use crate::presentation::tab_strip::{TabStripControlId, TabStripStateKey};
 
+mod contained_geometry;
+mod tab_strip_geometry;
 mod visibility;
 
 fn version() -> WorkspaceVersion {
@@ -2609,12 +2611,12 @@ fn menu_only_control_reserves_only_its_trailing_extent() {
             TabStripControlMetric::new(20.0, TabStripControlPlacement::ReservedTrailing)
                 .expect("menu extent is valid"),
         );
-    let layout = tab_strip_control_layout(bar.x(), bar, bar.width(), controls)
+    let layout = tab_strip_control_layout(bar, controls)
         .expect("control geometry compiles")
         .expect("menu-only roster is allocatable");
 
-    assert_eq!(layout.reserved_leading, 0.0);
-    assert_eq!(layout.reserved_trailing, 20.0);
+    assert_eq!(layout.viewport.x(), bar.x());
+    assert_eq!(layout.viewport.max().x(), bar.max().x() - 20.0);
     assert_eq!(layout.rects[0], None);
     assert_eq!(layout.rects[1], None);
     let menu = layout.rects[2].expect("menu control is present");
@@ -2691,14 +2693,14 @@ fn overlay_controls_never_overlap_when_the_viewport_is_too_narrow() {
             TabStripControlMetric::new(20.0, TabStripControlPlacement::ReservedTrailing)
                 .expect("menu extent is valid"),
         );
-    let layout = tab_strip_control_layout(bar.x(), bar, bar.width(), controls)
+    let layout = tab_strip_control_layout(bar, controls)
         .expect("control geometry compiles")
         .expect("reserved menu remains allocatable");
 
     assert_eq!(layout.rects[0], None);
     assert_eq!(layout.rects[1], None);
     assert!(layout.rects[2].is_some());
-    assert_eq!(layout.reserved_trailing, 20.0);
+    assert_eq!(layout.viewport.max().x(), bar.max().x() - 20.0);
 }
 
 #[test]
@@ -2712,7 +2714,7 @@ fn tiny_host_omits_an_unallocatable_reserved_control_roster() {
         );
 
     assert!(
-        tab_strip_control_layout(bar.x(), bar, bar.width(), controls)
+        tab_strip_control_layout(bar, controls)
             .expect("tiny geometry is a valid unavailable allocation")
             .is_none()
     );

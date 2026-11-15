@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use super::{SceneCompilationError, clip_rect, rect_has_area};
-use crate::geometry::{GeometryError, LogicalRect, LogicalSize};
+use crate::geometry::{GeometryError, LogicalPoint, LogicalRect, LogicalSize};
 use crate::graph::{Node, Workspace};
 use crate::ids::{FloatingPresentationId, RootId, SurfaceId};
 use crate::interaction::targeting::targets::SceneLayerKey;
@@ -34,24 +34,24 @@ pub(super) fn compile_contained_record(
         .floating_border_width()
         .min(durable_outer.width() * 0.5)
         .min(durable_outer.height() * 0.5);
-    let durable_inner = LogicalRect::new(
-        durable_outer.x() + border,
-        durable_outer.y() + border,
-        (durable_outer.width() - 2.0 * border).max(0.0),
-        (durable_outer.height() - 2.0 * border).max(0.0),
+    let inner_left = (durable_outer.x() + border).min(durable_outer.max().x());
+    let inner_top = (durable_outer.y() + border).min(durable_outer.max().y());
+    let durable_inner = LogicalRect::from_min_max(
+        LogicalPoint::new(inner_left, inner_top)?,
+        LogicalPoint::new(
+            (durable_outer.max().x() - border).max(inner_left),
+            (durable_outer.max().y() - border).max(inner_top),
+        )?,
     )?;
     let title_height = config.floating_title_height().min(durable_inner.height());
-    let durable_title = LogicalRect::new(
-        durable_inner.x(),
-        durable_inner.y(),
-        durable_inner.width(),
-        title_height,
+    let content_top = (durable_inner.y() + title_height).min(durable_inner.max().y());
+    let durable_title = LogicalRect::from_min_max(
+        durable_inner.min(),
+        LogicalPoint::new(durable_inner.max().x(), content_top)?,
     )?;
-    let durable_content = LogicalRect::new(
-        durable_inner.x(),
-        durable_inner.y() + title_height,
-        durable_inner.width(),
-        (durable_inner.height() - title_height).max(0.0),
+    let durable_content = LogicalRect::from_min_max(
+        LogicalPoint::new(durable_inner.x(), content_top)?,
+        durable_inner.max(),
     )?;
     let title_inset_x = config
         .floating_resize_extent()
@@ -59,11 +59,16 @@ pub(super) fn compile_contained_record(
     let title_top_inset = config
         .floating_resize_extent()
         .min(durable_title.height() * 0.5);
-    let inner_title = LogicalRect::new(
-        durable_title.x() + title_inset_x,
-        durable_title.y() + title_top_inset,
-        (durable_title.width() - 2.0 * title_inset_x).max(0.0),
-        (durable_title.height() - title_top_inset).max(0.0),
+    let title_left = (durable_title.x() + title_inset_x).min(durable_title.max().x());
+    let inner_title = LogicalRect::from_min_max(
+        LogicalPoint::new(
+            title_left,
+            (durable_title.y() + title_top_inset).min(content_top),
+        )?,
+        LogicalPoint::new(
+            (durable_title.max().x() - title_inset_x).max(title_left),
+            content_top,
+        )?,
     )?;
     let has_content = root_has_content(workspace, surface, root)?;
     let durable_close = has_content
@@ -73,11 +78,11 @@ pub(super) fn compile_contained_record(
     let durable_presentation_menu =
         contained_presentation_menu_rect(inner_title, durable_close, config)?;
     let durable_title_drag = if let Some(control) = durable_presentation_menu.or(durable_close) {
-        LogicalRect::new(
-            inner_title.x(),
-            inner_title.y(),
-            (control.x() - config.tab_horizontal_padding() - inner_title.x()).max(0.0),
-            inner_title.height(),
+        let drag_right = (control.x() - config.tab_horizontal_padding())
+            .clamp(inner_title.x(), inner_title.max().x());
+        LogicalRect::from_min_max(
+            inner_title.min(),
+            LogicalPoint::new(drag_right, inner_title.max().y())?,
         )?
     } else {
         inner_title
@@ -219,12 +224,12 @@ fn contained_resize_records(
 ) -> Result<[ContainedResizeRecord; 8], GeometryError> {
     let x = configured_extent.min(rect.width() * 0.5);
     let y = configured_extent.min(rect.height() * 0.5);
-    let left = rect.x() + x;
-    let right = rect.max().x() - x;
-    let top = rect.y() + y;
-    let bottom = rect.max().y() - y;
-    let record = |direction, x, y, width, height| {
-        LogicalRect::new(x, y, width, height)
+    let left = (rect.x() + x).min(rect.max().x());
+    let right = (rect.max().x() - x).max(left);
+    let top = (rect.y() + y).min(rect.max().y());
+    let bottom = (rect.max().y() - y).max(top);
+    let record = |direction, x, y, max_x, max_y| {
+        LogicalRect::from_min_max(LogicalPoint::new(x, y)?, LogicalPoint::new(max_x, max_y)?)
             .and_then(|rect| clip_rect(rect, surface_bounds))
             .map(HitRegion::new)
             .map(|hit| ContainedResizeRecord::new(direction, hit))
@@ -234,39 +239,45 @@ fn contained_resize_records(
             ContainedResizeDirection::NorthWest,
             rect.x(),
             rect.y(),
-            x,
-            y,
-        )?,
-        record(
-            ContainedResizeDirection::North,
             left,
-            rect.y(),
-            (right - left).max(0.0),
-            y,
+            top,
         )?,
-        record(ContainedResizeDirection::NorthEast, right, rect.y(), x, y)?,
+        record(ContainedResizeDirection::North, left, rect.y(), right, top)?,
+        record(
+            ContainedResizeDirection::NorthEast,
+            right,
+            rect.y(),
+            rect.max().x(),
+            top,
+        )?,
         record(
             ContainedResizeDirection::East,
             right,
             top,
-            x,
-            (bottom - top).max(0.0),
+            rect.max().x(),
+            bottom,
         )?,
-        record(ContainedResizeDirection::SouthEast, right, bottom, x, y)?,
+        record(
+            ContainedResizeDirection::SouthEast,
+            right,
+            bottom,
+            rect.max().x(),
+            rect.max().y(),
+        )?,
         record(
             ContainedResizeDirection::South,
             left,
             bottom,
-            (right - left).max(0.0),
-            y,
+            right,
+            rect.max().y(),
         )?,
-        record(ContainedResizeDirection::SouthWest, rect.x(), bottom, x, y)?,
         record(
-            ContainedResizeDirection::West,
+            ContainedResizeDirection::SouthWest,
             rect.x(),
-            top,
-            x,
-            (bottom - top).max(0.0),
+            bottom,
+            left,
+            rect.max().y(),
         )?,
+        record(ContainedResizeDirection::West, rect.x(), top, left, bottom)?,
     ])
 }

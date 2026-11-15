@@ -5,6 +5,7 @@ use crate::ids::ItemId;
 use crate::policy::DockPolicy;
 use crate::presentation::manifest::{Measurement, PolicyRevision, TabIntrinsic, TabStripMetrics};
 use crate::presentation::scene::SurfaceProgramBlock;
+use proptest::prelude::*;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const ROOT: RootId = RootId::new(1);
@@ -169,6 +170,81 @@ fn sampled_leaf_reflows_without_scaling_text_and_keeps_target_layout_shared() {
     ));
     assert_eq!(sampled.splitter_records(), target.splitter_records());
     assert_eq!(target, original);
+}
+
+#[test]
+fn fractional_sample_keeps_content_inside_the_exact_pane_edges() {
+    let (workspace, policy, manifest, target) = fixture();
+    let pane = moving_pane(&target);
+    let bounds = LogicalRect::from_min_max(
+        LogicalPoint::new(80.0, 242.858_136_646_816_4).unwrap(),
+        LogicalPoint::new(380.0, 433.674_076_586_488_87).unwrap(),
+    )
+    .unwrap();
+    let sampled = materialize_presentation_sample(
+        &workspace,
+        &policy,
+        &manifest,
+        &TabStripStateStore::default(),
+        &target,
+        &BTreeMap::from([(pane.id(), bounds)]),
+        &BTreeMap::from([(pane.id(), 1)]),
+    )
+    .unwrap();
+    let pane = sampled
+        .pane_records()
+        .iter()
+        .find(|record| record.id() == pane.id())
+        .unwrap();
+    let bar = sampled
+        .tab_bar_records()
+        .iter()
+        .find(|bar| bar.id().tabs == pane.id().tabs)
+        .unwrap();
+    assert_eq!(pane.bounds(), bounds);
+    assert_eq!(pane.content_bounds().max(), bounds.max());
+    assert_eq!(bar.bounds().min(), bounds.min());
+    assert_eq!(bar.bounds().max().y(), pane.content_bounds().y());
+    assert!(pane.content_bounds().y() <= bounds.max().y());
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+
+    #[test]
+    fn sampled_fractional_and_thin_panes_preserve_shared_edges(
+        x in 0.0_f64..100.0,
+        y in 0.0_f64..100.0,
+        width in prop_oneof![Just(0.0), 0.0_f64..600.0],
+        height in prop_oneof![Just(0.0), Just(28.0), 0.0_f64..28.0, 28.0_f64..480.0],
+    ) {
+        let (workspace, policy, manifest, target) = fixture();
+        let pane = moving_pane(&target);
+        let bounds = LogicalRect::new(x, y, width, height).unwrap();
+        let sampled = materialize_presentation_sample(
+            &workspace,
+            &policy,
+            &manifest,
+            &TabStripStateStore::default(),
+            &target,
+            &BTreeMap::from([(pane.id(), bounds)]),
+            &BTreeMap::from([(pane.id(), 1)]),
+        ).unwrap();
+        let pane = sampled.pane_records().iter()
+            .find(|record| record.id() == pane.id()).unwrap();
+        prop_assert_eq!(pane.bounds(), bounds);
+        prop_assert_eq!(pane.content_bounds().x(), bounds.x());
+        prop_assert_eq!(pane.content_bounds().max(), bounds.max());
+        prop_assert!(pane.content_bounds().y() >= bounds.y());
+        prop_assert!(pane.content_bounds().y() <= bounds.max().y());
+        if let Some(bar) = sampled.tab_bar_records().iter()
+            .find(|bar| bar.id().tabs == pane.id().tabs)
+        {
+            prop_assert_eq!(bar.bounds().min(), bounds.min());
+            prop_assert_eq!(bar.bounds().max().x(), bounds.max().x());
+            prop_assert_eq!(bar.bounds().max().y(), pane.content_bounds().y());
+        }
+    }
 }
 
 #[test]
