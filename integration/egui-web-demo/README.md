@@ -5,6 +5,9 @@ Tabs, nested splits, contained floating groups, selectable tab-style presets and
 configurable motion run in one canvas. Separate browser windows and native
 multiview are outside this demo's scope.
 
+[Open the workbench](https://frankorz.com/dockspace/demo/egui/) or visit the
+[project homepage](https://frankorz.com/dockspace/).
+
 The `egui_dockspace/web` host owns the complete egui output and renderer
 settlement. Its WGPU initialization is asynchronous; it prefers WebGPU and
 falls back to WebGL2. Application panes and toolbar code are shared directly

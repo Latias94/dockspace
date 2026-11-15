@@ -150,7 +150,9 @@ impl Dockspace {
     ///
     /// This path needs no serialization or document lineage. Pane data, item-key
     /// history, configured policy and renderer style remain application/session
-    /// owned. Retired presentation identities are rebased by core before commit.
+    /// owned. Declared root, surface and contained-presentation identities are
+    /// preserved in a new workspace epoch. Earlier presentation outputs and
+    /// native bindings remain bound to their previous epoch.
     ///
     /// # Errors
     ///

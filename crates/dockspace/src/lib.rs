@@ -1,39 +1,58 @@
-//! Renderer-neutral docking state and protocol engine.
+//! Renderer-neutral docking layouts for Rust editor UIs.
 //!
-//! `dockspace` owns docking topology, validation, layout projection, interaction
-//! generations, and native-surface lifecycle. UI adapters submit typed facts and
-//! intents; they never mutate docking state directly.
+//! Build tabs, nested splits and floating groups while keeping pane content in
+//! your application. Dockspace owns layout and interaction state; your host
+//! supplies measurements, drawing, input and presentation results.
 //!
-//! Raw reducer, scene, provider, and ingress protocols are implementation details,
-//! even when every crate feature is enabled:
+//! # Start with a layout
 //!
-//! ```compile_fail
-//! use dockspace::engine::DockEngine;
+//! ```
+//! use dockspace::model::{
+//!     DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout,
+//!     ItemId, RootId, SurfaceId,
+//! };
+//! use dockspace::policy::DockPolicy;
+//! use dockspace::runtime::DockspaceSession;
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+//!         SurfaceId::new(1),
+//!         DockspaceRootLayout::new(
+//!             RootId::new(1),
+//!             DockspaceNode::central_tabs([ItemId::new(1), ItemId::new(2)]),
+//!         ),
+//!     )])?;
+//!     let session = DockspaceSession::from_layout(layout, DockPolicy::default())?;
+//!     assert!(session.view().item(ItemId::new(1)).is_some());
+//!     Ok(())
+//! }
 //! ```
 //!
-//! ```compile_fail
-//! use dockspace::graph::Workspace;
-//! ```
+//! # Connect your host
 //!
-//! ```compile_fail
-//! use dockspace::ids::NodeId;
-//! ```
+//! - [`model`] defines stable item identities, layouts and read-only views.
+//! - [`policy`] controls docking, closing and resizing permissions.
+//! - [`runtime::DockspaceSession`] accepts host frames and application commands.
+//! - [`close`] supports immediate decisions and deferred approval while saving.
 //!
-//! ```compile_fail
-//! use dockspace::presentation::scene::SurfaceSceneStamp;
-//! ```
+//! A host executes the returned surface program, commits the frame and reports
+//! whether that exact output was presented or dropped. A logical surface need
+//! not be an OS window. Native window operations are explicit host requests.
+//! The core owns no renderer, event loop, UI framework or async runtime.
 //!
-//! ```compile_fail
-//! use dockspace::platform::provider::PlatformObservationLease;
-//! ```
+//! The default `motion` feature provides interruptible presentation geometry;
+//! custom hosts supply its clock and schedule frames. Enable `serde` for layout
+//! documents with stable application keys. Pane data and file storage remain
+//! application-owned.
 //!
-//! ```compile_fail
-//! use dockspace::persistence::snapshot::WorkspaceSnapshot;
-//! ```
+//! Start with the [layout commands example], then follow the [engine host guide]
+//! for rendering, input, native windows and output settlement. For an existing
+//! UI integration, see [`egui_dockspace`] or [`dockspace_winit`].
 //!
-//! ```compile_fail
-//! use dockspace::close::plan::ClosePlanPhase;
-//! ```
+//! [layout commands example]: https://github.com/Latias94/dockspace/blob/main/crates/dockspace/examples/layout_commands.rs
+//! [engine host guide]: https://github.com/Latias94/dockspace/blob/main/crates/dockspace/docs/guide.md
+//! [`egui_dockspace`]: https://docs.rs/egui_dockspace
+//! [`dockspace_winit`]: https://docs.rs/dockspace_winit
 
 #![forbid(unsafe_code)]
 
@@ -59,3 +78,37 @@ pub mod runtime;
 
 #[cfg(test)]
 mod behavior_tests;
+
+#[doc(hidden)]
+mod public_boundary_contracts {
+    //! Raw reducer, scene, provider and ingress protocols remain private even
+    //! when every crate feature is enabled.
+    //!
+    //! ```compile_fail
+    //! use dockspace::engine::DockEngine;
+    //! ```
+    //!
+    //! ```compile_fail
+    //! use dockspace::graph::Workspace;
+    //! ```
+    //!
+    //! ```compile_fail
+    //! use dockspace::ids::NodeId;
+    //! ```
+    //!
+    //! ```compile_fail
+    //! use dockspace::presentation::scene::SurfaceSceneStamp;
+    //! ```
+    //!
+    //! ```compile_fail
+    //! use dockspace::platform::provider::PlatformObservationLease;
+    //! ```
+    //!
+    //! ```compile_fail
+    //! use dockspace::persistence::snapshot::WorkspaceSnapshot;
+    //! ```
+    //!
+    //! ```compile_fail
+    //! use dockspace::close::plan::ClosePlanPhase;
+    //! ```
+}

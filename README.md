@@ -12,9 +12,10 @@ Rust 1.95 or later is required. The egui adapter targets egui 0.37.
 
 ## Try it
 
-The [browser demo](integration/egui-web-demo) showcases
-docking and configurable motion in one canvas. Its [homepage source](site/)
-and [local build instructions](integration/egui-web-demo) are included here.
+Open the [browser workbench](https://frankorz.com/dockspace/demo/egui/) to try
+docking and configurable motion in one canvas. The
+[project homepage](https://frankorz.com/dockspace/) and
+[local build instructions](integration/egui-web-demo) are also available.
 
 Run the interactive editor using official egui, winit and WGPU:
 
@@ -67,10 +68,10 @@ explain the difference before you integrate.
 - Custom pane drawing, minimum sizes, styling, focus and docking policies.
 
 The experimental native adapter adds OS-window creation, recovery and shared
-Root-window layouts. Physical cross-window docking is qualified on a finite
-Linux X11 profile; macOS/Windows physical drag-out and mixed-monitor DPI need
-further validation. See [platform support](docs/PLATFORM_SUPPORT.md) before
-choosing a native integration.
+Root-window layouts. Physical cross-window docking has finite Linux X11 and macOS
+coverage. Physical drag-out to create a window, Windows cross-window input and
+arbitrary mixed-monitor DPI need further validation. See
+[platform support](docs/PLATFORM_SUPPORT.md) before choosing a native integration.
 
 ## Use from source
 

@@ -84,16 +84,24 @@ close decisions and persistence contracts, and the
   `true` to restore it. Hidden panes keep their tab order, split proportions and
   window ownership; close removes their layout slot. Query `is_visible()` on an
   item view or `visible_items()` on its tabs view. Showing does not request focus.
-- Enable `serde` to save and restore a complete layout document with stable pane
-  keys. The application chooses storage and serializes its own pane data.
+- Enable `serde` to save and restore layouts with stable pane keys. The
+  application chooses storage and serializes its own pane data.
 - The default `motion` feature provides interruptible presentation geometry.
-  A custom host opts in by supplying a monotonic `MotionFrame` once per host
-  update, rendering the sampled surface program, and
-  scheduling another visible frame while `surface_motion_is_active` is true and
-  output capacity permits. [The host guide](docs/guide.md#motion) explains timing,
-  reduced motion, input authority and integration with retained UI frameworks.
-  Use `MotionMode::Off` for immediate geometry, omit `set_motion` for a static
-  host, or set `default-features = false` to compile without motion support.
+  Custom hosts supply a monotonic clock and request frames while motion is
+  active. Use `MotionMode::Off` for immediate geometry, omit `set_motion` for a
+  static host, or disable default features to omit motion support. The
+  [motion guide](docs/guide.md#motion) explains timing, reduced motion and retained
+  UI integration.
+
+## Features
+
+| Feature | Purpose |
+| --- | --- |
+| `motion` (default) | Interruptible presentation geometry with a host-supplied clock; no renderer or platform dependency |
+| `serde` | JSON layout documents with stable pane keys and optional native placement preferences |
+
+With `default-features = false`, the core retains static docking, layouts and
+native lifecycle without motion or persistence dependencies.
 
 [Examples](../../docs/EXAMPLES.md) · [Platform support](../../docs/PLATFORM_SUPPORT.md)
 · [Repository](../../README.md)

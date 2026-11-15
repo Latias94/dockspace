@@ -2,14 +2,14 @@
 
 [Crate overview](../README.md) · [Examples](../../../docs/EXAMPLES.md)
 
-
 - [Pane rendering](#pane-rendering) and background work
-- [Complete-output hosts](#complete-output-hosts) and [callback hosts](#callback-hosts)
+- [Complete-output hosts](#complete-output-hosts), [winit/browser setup](#winit-and-browser-hosts) and [callback hosts](#callback-hosts)
 - [Pointer input](#pointer-input) and [output contract](#output-contract)
 - [Close decisions](#closing-content-and-dock-back)
 - [Committed lifecycle events](#committed-lifecycle-events)
 - [Feedback and focus](#feedback-and-focus)
-- [Styling](#styling) and [features](#features)
+- [Motion](#motion), [styling](#styling) and [persistence](#persistence)
+- [Cargo features](../README.md#features)
 
 `egui_dockspace` is the official-egui renderer for the renderer-neutral
 `dockspace` core. Its default product facade provides interactive docking for
@@ -22,17 +22,16 @@ use egui_dockspace::{
     DockspaceSurfaceLayout, ItemId, RootId, SurfaceId,
 };
 
-let item = ItemId::new(1);
-let surface = SurfaceId::new(1);
-let root = RootId::new(1);
-let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
-    surface,
-    DockspaceRootLayout::new(root, DockspaceNode::central_tabs([item])),
-)])?;
-let mut dockspace = Dockspace::builder("my-dockspace", layout).build()?;
-
-assert!(dockspace.view().item(item).is_some());
-# Ok::<(), Box<dyn std::error::Error>>(())
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let item = ItemId::new(1);
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SurfaceId::new(1),
+        DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([item])),
+    )])?;
+    let dockspace = Dockspace::builder("my-dockspace", layout).build()?;
+    assert!(dockspace.view().item(item).is_some());
+    Ok(())
+}
 ```
 
 ## Pane rendering
@@ -53,6 +52,13 @@ Use `with_content` or `with_content_ids` for composite content. Only declare
 ordinary controls created during that callback; popups and foreign overlays
 remain docking blockers. Returning `PaneResponse::default()` declares no
 content. Focus targets remain separate application observations.
+
+Pane content stays within its allocated clip. Use an egui `ScrollArea` for long
+forms or logs, wrapping for text, and pan/zoom for canvases as appropriate.
+`PaneView::minimum_size` describes the smallest useful content viewport, not the
+size of the complete document. A host window can still be smaller than the
+combined layout minimum, so a minimum does not guarantee full content visibility.
+See [overflow policy](#styling) for clipping and proportional compression.
 
 `PaneView` callbacks are synchronous and can run again in a later egui pass.
 Keep I/O and background computation in application-owned tasks. Transfer finished
@@ -154,6 +160,77 @@ horizontal and vertical keyboard controls. Resizing is immediate; there is no
 animation delay on these keyboard actions. AccessKit reports the actual reachable
 range for each separator, including nested pane constraints.
 
+## Winit and browser hosts
+
+Enable only the integration your application needs. Winit, WGPU and eframe stay
+optional. The default Linux backend selection takes effect when one of those
+integrations is enabled:
+
+```toml
+[dependencies]
+dockspace = { path = "../dockspace/crates/dockspace" }
+egui_dockspace = { path = "../dockspace/crates/egui_dockspace", features = ["wgpu"] }
+egui = "=0.37.0"
+```
+
+- `winit` exposes `egui_dockspace::winit::WinitIntegration` for an existing
+  event loop and renderer. Feed window events, take input, run Dockspace, and
+  handle platform output. Your renderer settles the returned output receipt.
+- `wgpu` includes `winit` and exposes `run_native`, `NativeApp` and `NativeOptions`.
+  Implement `NativeApp::update` by returning the `DockspaceOutput` from
+  `run_single_surface`. The runner owns the window loop, renderer and exact
+  output settlement. `frame_finished` handles application commands after rendering.
+- `accesskit` adds the system accessibility adapter. The runner connects it
+  automatically; an existing event loop calls `init_accesskit` and forwards its
+  user events through `on_accesskit_event`. Create the window hidden, initialize
+  the adapter, then show it for the first time.
+- `web` adds `run_web` and `WebOptions` on `wasm32-unknown-unknown`, using the
+  same full-output frame pipeline with asynchronous browser startup. Disable
+  default features and enable `web,motion` for a focused browser dependency.
+
+The default backend features support X11 and Wayland. To build only one Linux
+backend, disable defaults and select it explicitly:
+
+```toml
+egui_dockspace = { path = "../dockspace/crates/egui_dockspace", default-features = false, features = ["motion", "wgpu", "x11"] }
+```
+
+Replace `x11` with `wayland` for Wayland-only support. Add
+`wayland-csd-adwaita` for the winit runner's Adwaita client decorations. The same
+backend features apply to `winit` and the `example-app` eframe examples. On
+Windows and macOS, no Linux backend feature is required. These feature selectors
+do not enable a window integration on their own.
+
+The [small editor](../examples/winit.rs) shows this setup without custom event-loop
+code. Configure window attributes through `NativeOptions::window`, and configure
+fonts and theme on the supplied egui context. A root-window close request reaches
+the application as viewport input; return `ViewportCommand::CancelClose` to keep
+the window open for saving or confirmation. This runner owns one OS window and
+reports an error for separate viewport or screenshot requests. Use a custom
+host when those capabilities are needed.
+
+The runner discards stale egui repaint messages and paces failed surface
+acquisitions. Scheduled hidden-window updates still process visibility and close commands,
+but run only when requested and at most once every 250 ms. Native input and
+window restoration can wake the UI immediately.
+
+The separate [`dockspace_winit`](../../dockspace_winit) crate supplies mouse event,
+coordinate and repaint helpers for other winit-based UI frameworks. It has no
+egui or renderer dependency. GPUI uses its own platform event integration.
+
+### Browser startup and preferences
+
+On `wasm32-unknown-unknown`, `run_web` starts asynchronous GPU initialization and
+returns after installing event dispatch. Implement the same `NativeApp` callbacks
+as the desktop runner; the host owns rendering and exact output settlement.
+`WebOptions::new(canvas)` configures an existing HTML canvas and background color.
+The runner supports one canvas and contained floating groups.
+
+The [browser workbench](../../../integration/egui-web-demo) reuses the desktop
+panes and motion toolbar. It observes `prefers-reduced-motion` and keeps manual
+toolbar choices until that system preference changes again. Browser applications
+should observe the same preference and supply it through `set_motion_preference`.
+
 ## Pointer input
 
 The owned run captures the original ordered input batch once, including an
@@ -176,6 +253,29 @@ extra modifiers do not accidentally restore docking or prevent cancellation.
 `Modifiers::COMMAND` follows egui's platform mapping. Runtime changes recompute
 the last observed modifiers at the next input boundary, without fabricated
 motion. Explicit touch contacts use the same settings.
+
+For example, require Alt for docking and configure optional tab cycling:
+
+```rust
+use egui_dockspace::{DockInputConfig, DockingActivation};
+
+let input = DockInputConfig {
+    docking: DockingActivation::HoldToEnable(egui::Modifiers::ALT),
+    cancel_drag: Some(egui::KeyboardShortcut::new(
+        egui::Modifiers::NONE,
+        egui::Key::Escape,
+    )),
+    next_tab: Some(egui::KeyboardShortcut::new(
+        egui::Modifiers::CTRL,
+        egui::Key::Tab,
+    )),
+    previous_tab: Some(egui::KeyboardShortcut::new(
+        egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+        egui::Key::Tab,
+    )),
+    ..Default::default()
+};
+```
 
 `next_tab` and `previous_tab` optionally accept egui `KeyboardShortcut` values;
 both default to `None`, leaving application Ctrl+Tab handling unchanged. For
@@ -204,6 +304,12 @@ true: a primary double click requests equal logical pixel extents for the two
 neighbors, clamped by their full nested size constraints. Either shortcut can be
 disabled independently through the same input configuration. These settings are
 also consumed by the native adapter's shared renderer.
+
+To restrict internal splitters in one stable root, use
+`policy.set_allow_root_resize_axis(root, DockspaceAxis::Horizontal, false)`.
+Root rules intersect the workspace and surface rules, follow a complete root
+when it moves, and do not lock the contained window's outer frame. They do not
+identify arbitrary nested split containers.
 
 By default, Shift temporarily disables docking acquisition. The adapter preserves ordered
 `ModifiersChanged`, key and pointer-button modifier observations, including
@@ -304,8 +410,8 @@ cargo run -p egui_dockspace --example workbench --features wgpu --locked
 Enable `wgpu` to reuse the public single-window `winit::run_native` runner, or
 enable `winit` for `WinitIntegration` with an existing event loop and renderer.
 Both are optional. The [small editor](../examples/winit.rs) demonstrates the
-runner; the [crate README](../README.md#use-winit) covers setup and the optional
-system accessibility adapter.
+runner; [winit and browser setup](#winit-and-browser-hosts) covers backend
+selection and the optional system accessibility adapter.
 
 ## Callback hosts
 
@@ -455,6 +561,63 @@ still pending. Stable unfocused observations remain available without requesting
 continuous repaints. A new explicit selection can request pane focus again.
 Applications continue to own document text and composition behavior.
 
+## Motion
+
+The default `motion` feature adds interruptible layout and drop-preview motion.
+Layout changes finish in 200 ms; drop previews finish in 125 ms. Its settings
+are independent of `DockStyle` and do not invalidate layout measurements.
+To disable all geometry motion at runtime:
+
+```rust,ignore
+use egui_dockspace::motion::{MotionMode, MotionSettings};
+
+dockspace.set_motion_settings(MotionSettings {
+    mode: MotionMode::Off,
+    ..Default::default()
+});
+```
+
+To omit motion support entirely, set `default-features = false` on your dependency.
+Add only the integrations and Linux backends you need, for example
+`features = ["wgpu", "x11"]`. Or keep motion and customize each effect:
+
+```rust,ignore
+use std::time::Duration;
+use egui_dockspace::motion::{Curve, MotionSettings, Transition};
+
+dockspace.set_motion_settings(MotionSettings {
+    layout: Transition::Tween {
+        duration: Duration::from_millis(200),
+        curve: Curve::EaseInOut,
+    },
+    ..Default::default()
+});
+```
+
+Supply your application's observed system preference. egui has no portable OS
+reduced-motion fact, so the adapter starts with `Unknown`, which allows motion.
+Call `set_motion_preference(MotionPreference::Reduced)` when your host observes
+that preference, or set `unknown_prefers_reduced_motion = true` for a conservative
+fallback. An egui `animation_time` of zero also disables geometry motion,
+including when the application supplies `Full`.
+
+`MotionMode::Off`, `Transition::Instant`, and zero timing settle immediately.
+`CriticalSpring { response }` preserves position and velocity on unconstrained
+retargeting; response is its natural period, not an exact completion deadline.
+`Tween { duration, curve }` has a finite duration and preserves position when
+retargeted. `Curve::Bezier(CubicBezier::new(...)?)` accepts validated custom curves;
+`control_points()` reads them back for a settings editor or application storage.
+`drop_preview` and `pointer_focus` are separately configurable; spatial focus
+motion defaults to off, and keyboard focus remains immediate.
+
+Custom `PaneView::drop_preview_ui` painters receive both `DropPreview::rect`
+(the final candidate area) and `presentation_rect` (the passive animated overlay).
+The default painter uses the latter without changing docking targets or hits.
+Content widget identity follows the item within the same live workspace and
+egui Context, preserving editor selection and scroll state when it changes groups.
+Workspace replacement starts a new content namespace. Separate egui Contexts
+still require application-owned state transfer.
+
 ## Styling
 
 The application owns the surrounding egui `Panel`, `Frame`, and margins.
@@ -468,16 +631,15 @@ state. Applications can override only the tokens that belong to their visual
 language:
 
 ```rust
-use egui_dockspace::{DockStyle, Dockspace};
+use egui_dockspace::{DockStyle, Dockspace, DockspaceError, DockspaceLayout};
 
-let mut style = DockStyle::default();
-style.tab_corner_radius = egui::CornerRadius::same(6);
-style.visuals.tab_active_fill = Some(egui::Color32::from_rgb(40, 100, 120));
-style.visuals.tab_active_stroke = Some(egui::Stroke::new(1.0, egui::Color32::WHITE));
-let dockspace = Dockspace::builder("my-dockspace", layout)
-    .style(style)
-    .build()?;
-# Ok::<(), Box<dyn std::error::Error>>(())
+fn build_dockspace(layout: DockspaceLayout) -> Result<Dockspace, DockspaceError> {
+    let mut style = DockStyle::default();
+    style.tab_corner_radius = egui::CornerRadius::same(6);
+    style.visuals.tab_active_fill = Some(egui::Color32::from_rgb(40, 100, 120));
+    style.visuals.tab_active_stroke = Some(egui::Stroke::new(1.0, egui::Color32::WHITE));
+    Dockspace::builder("my-dockspace", layout).style(style).build()
+}
 ```
 
 Geometry remains explicit. To match a customized font or control density, call
@@ -533,6 +695,37 @@ span colors survive in tabs, overflow rows and drag previews. The corresponding
 by the local egui `override_text_color`, then explicit span colors. Uncolored
 spans follow the current interaction state. Disabled UI retains egui's standard
 tint; no per-pane color configuration is needed.
+
+### Tab presets
+
+Choose a theme-relative recipe with `DockStyle::apply_tab_preset`:
+
+| Preset | Tab treatment |
+| --- | --- |
+| `TabStylePreset::Dockspace` | Flat tabs with egui hover colors |
+| `TabStylePreset::ImGui` | Rounded upper corners, tinted backgrounds and a selected-tab overline |
+| `TabStylePreset::EguiTiles` | Square tabs, a thin separator and a selected outline open to the pane |
+
+```rust
+use egui_dockspace::{DockStyle, TabStylePreset};
+
+let mut style = DockStyle::default();
+style.apply_tab_preset(TabStylePreset::ImGui);
+style.tab_bar_height = 26.0;
+style.tab_horizontal_padding = 10.0;
+style.visuals.tab_selected_overline = Some(egui::Stroke::NONE);
+```
+
+`apply_tab_preset` sets tab geometry once and retains explicit color/stroke
+overrides and non-tab settings. Later metric edits stay in effect. To retain
+font-derived geometry, assign `style.tab_preset` directly instead. Colors resolve
+from the current Ui theme each pass, followed by `DockVisualOverrides` and then
+per-tab callbacks. The recipes affect appearance; docking and focus behavior
+remain shared. Change a live style with `set_style` between settled UI runs,
+after reporting the previous output's presentation result.
+
+Choose **Tab style** in the desktop or browser workbench to compare the presets
+in both themes. Enable **Custom tabs** to layer application callbacks on top.
 
 ### Custom tabs and tab-bar controls
 
@@ -731,7 +924,12 @@ remains readable before host attachment and after fatal shutdown. View/pane
 callbacks hold the runtime lock, so perform other runtime queries and requests
 outside them.
 
-## Features
+<a id="features"></a>
+
+## Persistence
+
+Enable `serde` for layout documents; see the [Cargo feature table](../README.md#features)
+for the complete integration and backend options.
 
 Run the bounded editor layout example with:
 
@@ -766,11 +964,6 @@ the same item renders in place. An ordinary selection can issue a new focus
 request; the completed unavailable request does not replay. Rejecting a document
 key instead rejects the complete identity association. Removing unavailable
 content is an application decision through the ordinary close workflow.
-
-- `serde`: product document save and restore.
-- `example-app`: builds the eframe examples.
-- `native-render-support`: internal rendering seam for the unpublished native
-  adapter; it is not a public multiview runtime.
 
 Native multi-viewport support is intentionally not claimed by this crate. The
 fork-backed `egui_dockspace_native` crate remains unpublished. Its published

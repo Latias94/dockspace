@@ -24,7 +24,10 @@ From the repository root:
 cargo run --manifest-path integration/egui-fork-workspace/Cargo.toml -p egui_dockspace_native --example basic --locked
 ```
 
-Use **Move to New Window** and **Dock Back** to explore the native lifecycle.
+Click **Open Inspector Window ↗** in the toolbar to move the floating Inspector
+group into a child OS window, then **Dock Inspector Back** to return it. A tab
+bar's three-dot menu also offers **Move to New Window** and **Dock Back** for
+other eligible groups. Closing a child window recovers its panes by default.
 Use **Pane inventory → Hide / Show** to temporarily remove panes while keeping
 their layout slots. **Close** removes a slot; pane data remains in the inventory.
 Add `--features serde` for application-owned named layout presets. These presets
@@ -44,24 +47,16 @@ these snapshots are not a historical replay recording. Text entry and pane
 content are omitted. Fatal runtime errors print to the terminal once, followed
 by any cleanup errors, even without `--event-log`.
 
-The [platform matrix](../../docs/PLATFORM_SUPPORT.md) distinguishes programmatic
-window operations from physical cross-window dragging. Linux X11 and macOS have
-separate finite physical-input profiles. The macOS profile qualifies sixteen
-real-input journeys, including Root/Child tab round trips, cancellation,
-geometry changes, target recreation, ordinary-content drags,
-empty-window retirement and native close of a retained empty central area.
-Stationary cross-window dwell and autoscroll still lack capture/delivery
-authority on macOS. Physical drag-out to create a new window, Windows cross-window
-dragging and arbitrary mixed-monitor DPI are not qualified by this macOS profile;
-see the matrix for the precise limits.
+Check the [platform matrix](../../docs/PLATFORM_SUPPORT.md) before choosing this
+adapter. Programmatic window commands and physical cross-window dragging have
+different requirements. Linux X11 and macOS have finite physical-input coverage;
+physical drag-out to create a window, Windows cross-window input and arbitrary
+mixed-monitor DPI need further validation. Stationary cross-window dwell and
+autoscroll lack capture/delivery authority on macOS.
 
-On Wayland, configured client-local readiness permits local and contained docking
-without inventing OS visibility or desktop coordinates. Exact renderer presentation
-still precedes receiver interaction. The headless Sway profile covers seven
-native editor docking journeys, including contained-window retirement, held
-client re-entry and subsequent divider resizing. The official `egui_dockspace`
-host also covers text, wheel input and a real output scale change. Managed
-native lifecycle and physical cross-window docking remain unavailable on Wayland.
+On Wayland, configured client-local readiness permits local and contained docking.
+Managed native lifecycle and physical cross-window docking remain unavailable.
+The matrix and linked qualification guides describe the tested configurations.
 
 For a small multiview demonstration with a central Sun and three orbiting OS
 windows:

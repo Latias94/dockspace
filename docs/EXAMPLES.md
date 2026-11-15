@@ -10,7 +10,7 @@ need a desktop session and a working graphics backend.
 | Learn the renderer-neutral core | [Layout commands](../crates/dockspace/examples/layout_commands.rs) | Create a layout, select/open/move panes and inspect committed results; no window |
 | Integrate a custom renderer | [Engine host](../integration/dockspace-host-harness/examples/engine_host.rs) | Measure, record and settle output for two logical surfaces; recording renderer |
 | Connect a custom renderer to winit | [Software host](../crates/dockspace_winit/examples/software.rs) | Caller-owned event loop, software drawing, pointer routing and actual presentation; no UI framework |
-| Manage native windows without egui | [Winit multiview](../crates/dockspace_winit/examples/multiview.rs) | Core window bindings, renderer preparation, exact presentation, Dock Back, close recovery and shutdown |
+| Manage native windows without egui | [Winit multiview](../crates/dockspace_winit/examples/multiview/main.rs) | Core window bindings, renderer preparation, exact presentation, Dock Back, close recovery and shutdown |
 | Try full docking with official egui | [Workbench](../crates/egui_dockspace/examples/workbench.rs) | Drag docking, splitters, contained Inspector, themes and retained document data |
 | Try docking in a browser | [Web workbench](../integration/egui-web-demo) | The same panes and configurable motion in one WebAssembly canvas |
 | Start a small winit editor | [Winit editor](../crates/egui_dockspace/examples/winit.rs) | Application panes with the optional complete-output runner; no custom event-loop code |
@@ -124,9 +124,11 @@ cargo run --manifest-path integration/egui-fork-workspace/Cargo.toml -p egui_doc
 ```
 
 Add `--features serde` for named JSON presets. The editor starts in one Root OS
-window. Use **Move to New Window** to create a native child and **Dock Back** to
-return it; the default Child-close policy recovers its content. Programmatic
-window commands and physical drag-out have different platform requirements.
+window. Click **Open Inspector Window ↗** to create a native child, then
+**Dock Inspector Back** to return it. Other eligible groups offer **Move to New
+Window** and **Dock Back** in their three-dot menu. Closing a child recovers its
+content by default. Programmatic window commands and physical drag-out have
+different platform requirements.
 Check [platform support](PLATFORM_SUPPORT.md) before testing cross-window input.
 
 Pane motion is enabled by default. Add `--no-default-features` to run without

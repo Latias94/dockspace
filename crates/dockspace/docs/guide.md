@@ -11,6 +11,7 @@
 - [Close decisions](#application-close-decisions) and [arrangement locking](#arrangement-locking)
 - [Layout defaults and persistence](#application-defaults-and-layout-reset)
 - [Feedback and focus](#manipulation-feedback-and-focus)
+- [Motion](#motion) and [Cargo features](../README.md#features)
 
 `dockspace` is a renderer-neutral docking library for custom editor UIs,
 including self-drawn game-engine interfaces. `egui_dockspace` is its interactive
@@ -40,17 +41,16 @@ use dockspace::model::{
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::DockspaceSession;
 
-let item = ItemId::new(1);
-let surface = SurfaceId::new(1);
-let root = RootId::new(1);
-let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
-    surface,
-    DockspaceRootLayout::new(root, DockspaceNode::central_tabs([item])),
-)])?;
-let session = DockspaceSession::from_layout(layout, DockPolicy::default())?;
-
-assert!(session.view().item(item).is_some());
-# Ok::<(), Box<dyn std::error::Error>>(())
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let item = ItemId::new(1);
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SurfaceId::new(1),
+        DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([item])),
+    )])?;
+    let session = DockspaceSession::from_layout(layout, DockPolicy::default())?;
+    assert!(session.view().item(item).is_some());
+    Ok(())
+}
 ```
 
 ## Engine host integration
@@ -1034,18 +1034,21 @@ Keep default layouts and preset names in the application. Applying a default
 does not require serde, JSON, document lineage or a second docking session:
 
 ```rust
-# use dockspace::model::DockspaceLayout;
-# use dockspace::runtime::{DockspaceSession, SurfaceUnavailableReason};
-# fn apply(session: &mut DockspaceSession, default: DockspaceLayout) -> Result<(), Box<dyn std::error::Error>> {
-let reset = session.prepare_layout_reset(default)?;
-let mut frame = session.begin_host_frame()?;
-frame.submit_layout_reset(&reset)?;
-// A renderer may measure this candidate here. This example defers its surfaces.
-frame.complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)?;
-let report = frame.commit()?;
-# let _ = report;
-# Ok(())
-# }
+use dockspace::model::DockspaceLayout;
+use dockspace::runtime::{DockspaceSession, SurfaceUnavailableReason};
+
+fn apply_default(
+    session: &mut DockspaceSession,
+    default: DockspaceLayout,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let reset = session.prepare_layout_reset(default)?;
+    let mut frame = session.begin_host_frame()?;
+    frame.submit_layout_reset(&reset)?;
+    // A renderer may measure this candidate here; this example defers its surfaces.
+    frame.complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)?;
+    let _report = frame.commit()?;
+    Ok(())
+}
 ```
 
 The prepared reset belongs to its session and published version. Drop or failed
@@ -1174,18 +1177,21 @@ are identical.
 Before encoding, set one monotonic timestamp and policy for the entire update:
 
 ```rust
-# #[cfg(feature = "motion")]
-# fn update(frame: &mut dockspace::runtime::DockspaceHostFrame<'_>) -> Result<(), dockspace::runtime::DockspaceRuntimeError> {
 use std::time::Duration;
 use dockspace::motion::{MotionFrame, MotionPreference, MotionSettings};
+use dockspace::runtime::{DockspaceHostFrame, DockspaceRuntimeError};
 
-frame.set_motion(MotionFrame {
-    now: Duration::from_millis(1000), // Use your host's monotonic elapsed time.
-    settings: MotionSettings::default(),
-    preference: MotionPreference::Full, // Supply the preference actually observed.
-})?;
-# Ok(())
-# }
+fn update_motion(
+    frame: &mut DockspaceHostFrame<'_>,
+    elapsed: Duration,
+    preference: MotionPreference,
+) -> Result<(), DockspaceRuntimeError> {
+    frame.set_motion(MotionFrame {
+        now: elapsed,
+        settings: MotionSettings::default(),
+        preference,
+    })
+}
 ```
 
 Keep the timestamp fixed across rendering passes and surfaces in that update.
@@ -1211,9 +1217,9 @@ from their current analytic position and velocity. Springs preserve unconstraine
 channel velocities; tweens promise position continuity. Clipping, nonnegative-size
 projection, direct gestures and explicit settlement can reset velocity.
 
-The first delivery animates surviving visible items within the same surface and
-root. Newly visible items appear at target, and removed items have no exit
-snapshot. Root changes and native prospective-child first-live output are
+Motion animates surviving visible items within the same surface and root. Newly
+visible items appear at target, and removed items have no exit snapshot.
+Root changes and native prospective-child first-live output are
 immediate. It does not move OS windows or promise atomic cross-window animation.
 During topology changes, panes may overlap. One core pane order drives drawing
 and hit precedence. A moving root without a valid partition exposes no splitter,
@@ -1247,8 +1253,7 @@ rendering; use the egui workbench exercise to measure those host costs separatel
 
 ## Features
 
-- `serde`: session-owned versioned JSON persistence with append-only external
-  item identity and viewport placement.
-
-This crate does not own an OS event loop, renderer, widget tree, animation
-clock, or platform window. Those responsibilities belong to adapters.
+The [crate feature table](../README.md#features) lists the default `motion` feature
+and optional `serde` persistence. Custom hosts supply an animation clock when
+using motion; the core owns no OS event loop, renderer, widget tree or platform
+window.
