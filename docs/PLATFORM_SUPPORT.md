@@ -87,17 +87,15 @@ Cloned, overlapping or transformed configurations and missing authority remain
 Both backends have compile coverage for the native adapter. macOS also has
 real-window programmatic lifecycle coverage and a [physical docking
 driver](../integration/egui-native-smoke/README.md#run-docking-input-on-macos).
-Its nine physically qualified journeys cover tab merges, contained-root retirement,
+Its eleven physically qualified journeys cover tab merges, contained-root retirement,
 held-button client re-entry, subsequent divider resizing and physical Root/Child round trips.
 The cross-window profile uses nonoverlapping windows on a 1920 × 1080 desktop
 at native scale and egui zoom 1. It verifies ordinary empty-child retirement,
 empty central-area retention and native close through presentation recovery.
-Two additional journeys require Escape and application deactivation to cancel a
-visible cross-window preview before the real release, reject late movement/release,
-and allow fresh native round trips. They await an unlocked-desktop run; deterministic
-cancellation/repaint regressions alone do not qualify physical delivery. In the
-original journeys all eight panes and their text survive, and the original Root's
-OS window identity remains unchanged.
+Escape and application deactivation cancel a visible cross-window preview before
+the real release. Late movement/release preserves every pane placement, and fresh
+native round trips still complete. All eight panes and their text survive, and
+the original Root's OS window identity remains unchanged.
 These checks do not emulate remote desktop disconnects or
 qualify mixed-monitor DPI, arbitrary tear-off or third-party windows.
 

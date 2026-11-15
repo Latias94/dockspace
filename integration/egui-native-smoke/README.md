@@ -92,7 +92,8 @@ python3 integration/egui-native-smoke/editor_docking_macos.py integration/egui-f
 
 Build the editor first with the command above. Grant the launching process
 Accessibility permission in **System Settings → Privacy & Security → Accessibility**.
-This driver uses CoreGraphics mouse events and needs Python 3.10 or later; no
+This driver uses CoreGraphics mouse/keyboard events and process-scoped
+Accessibility requests for activation and hiding. It needs Python 3.10 or later; no
 additional Python packages are required. Leave the desktop available while it
 owns mouse input, unlock it, and keep egui zoom at its default 1.0. Other UI zoom
 factors are rejected before sending input. It releases the primary button, restores the
@@ -127,14 +128,14 @@ and release must remain inert. Each case then repeats the four successful native
 docking moves and the central-root close/recovery checks from
 `native-inspector-first`. A same-application focus transfer during normal docking
 must continue to work; losing one window's keyboard focus is not application
-deactivation.
+deactivation. Visibility and activation requests use `AXHidden` and `AXFrontmost`
+on the owned editor process, with actual hidden/active state observed before
+continuing. Native focus and capture callbacks still drive cancellation.
 
-The original nine journeys have physical qualification. The two cancellation
-journeys currently await an unlocked-desktop run; deterministic cancellation and
-repaint regressions pass, but do not replace those physical checks.
-
-This qualifies local tab merges, contained-root retirement, divider hit padding,
-held-button client re-entry and the specified moving-pointer cross-window paths.
+All eleven journeys have physical qualification. This covers local tab merges,
+contained-root retirement, divider hit padding, held-button client re-entry,
+Escape/application-deactivation cancellation with late input tails, and the
+specified moving-pointer cross-window paths.
 It does not emulate a remote desktop disconnect, suppress a release callback,
 or qualify arbitrary tear-off, stationary dwell/autoscroll, mixed-monitor DPI or
 the separate X11 lifecycle driver. Stationary macOS samples do not establish

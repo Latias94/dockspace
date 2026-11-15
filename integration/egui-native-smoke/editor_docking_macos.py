@@ -127,35 +127,64 @@ class Mouse:
 
     def activate(self, pid: int) -> None:
         objc, selector, application = self.application(pid)
-        activate = ctypes.CFUNCTYPE(
-            ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong,
-        )(("objc_msgSend", objc))
         active = ctypes.CFUNCTYPE(
             ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p,
         )(("objc_msgSend", objc))
-        if not activate(
-            application, selector(b"activateWithOptions:"), 2,
-        ):
-            raise RuntimeError(f"could not activate the owned editor process {pid}")
+        self._set_application_bool(pid, b"AXFrontmost", True)
         deadline = time.monotonic() + 3
         while not active(application, selector(b"isActive")):
             if time.monotonic() >= deadline:
                 raise RuntimeError(f"the owned editor process {pid} did not become active")
             self.cf.CFRunLoopRunInMode(self.default_run_loop_mode, 0.02, False)
 
-    def hide(self, pid: int) -> None:
+    def set_hidden(self, pid: int, hidden: bool) -> None:
         objc, selector, application = self.application(pid)
         send = ctypes.CFUNCTYPE(
             ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p,
         )(("objc_msgSend", objc))
-        if not send(application, selector(b"hide")):
-            raise RuntimeError("could not hide the owned editor for deactivation")
+        self._set_application_bool(pid, b"AXHidden", hidden)
         deadline = time.monotonic() + 3
-        while (not send(application, selector(b"isHidden"))
-               or send(application, selector(b"isActive"))):
+        while (send(application, selector(b"isHidden")) != hidden
+               or (hidden and send(application, selector(b"isActive")))):
             if time.monotonic() >= deadline:
-                raise RuntimeError("the owned editor did not become hidden and inactive")
+                expected = "hidden and inactive" if hidden else "visible"
+                raise RuntimeError(f"the owned editor did not become {expected}")
             self.cf.CFRunLoopRunInMode(self.default_run_loop_mode, 0.02, False)
+
+    def _set_application_bool(self, pid: int, name: bytes, value: bool) -> None:
+        # NSRunningApplication control can reject the unbundled editor. Use its
+        # real accessibility interface, retaining native focus/capture callbacks.
+        services = ctypes.CDLL(
+            "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+        )
+        services.AXUIElementCreateApplication.argtypes = [ctypes.c_int]
+        services.AXUIElementCreateApplication.restype = ctypes.c_void_p
+        services.AXUIElementSetAttributeValue.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+        ]
+        services.AXUIElementSetAttributeValue.restype = ctypes.c_int32
+        self.cf.CFStringCreateWithCString.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32,
+        ]
+        self.cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+        element = services.AXUIElementCreateApplication(pid)
+        attribute = self.cf.CFStringCreateWithCString(None, name, 0x08000100)
+        try:
+            if not element or not attribute:
+                raise RuntimeError("could not create the owned editor's accessibility target")
+            boolean = "kCFBooleanTrue" if value else "kCFBooleanFalse"
+            status = services.AXUIElementSetAttributeValue(
+                element, attribute, ctypes.c_void_p.in_dll(self.cf, boolean),
+            )
+            if status:
+                raise RuntimeError(
+                    f"could not set {name!r}={value} for the owned editor: status={status}"
+                )
+        finally:
+            if attribute:
+                self.cf.CFRelease(attribute)
+            if element:
+                self.cf.CFRelease(element)
 
     def escape(self) -> None:
         for pressed in [True, False]:
@@ -385,9 +414,10 @@ def run_case(binary: Path, case: str, artifacts: Path, mouse: Mouse) -> None:
                 if action == "escape" and case == "native-cancel-escape":
                     mouse.escape()
                 elif action == "deactivate" and case == "native-cancel-deactivate":
-                    mouse.hide(process.pid)
+                    mouse.set_hidden(process.pid, True)
                     # Wait while the real applicationDidResignActive callback runs.
                     time.sleep(0.2)
+                    mouse.set_hidden(process.pid, False)
                     mouse.activate(process.pid)
                 else:
                     raise RuntimeError("the interruption does not match the selected case")
