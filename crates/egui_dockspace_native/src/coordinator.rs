@@ -1951,6 +1951,13 @@ impl NativeCoordinator {
         envelope: NativeViewportRosterEnvelope,
         work_areas: Result<&FrozenWorkAreaRoster, NativeHostProtocolError>,
     ) -> Result<(), NativeRuntimeError> {
+        if roster.backend() == eframe::NativeWindowingBackend::Wayland
+            && self.bridge.accepts_new_work()
+        {
+            // Winit cannot report Wayland visibility. Renderer settlement must
+            // not manufacture OS presentation authority to escape Bootstrap.
+            return Err(NativeHostProtocolError::WaylandPresentationUnsupported.into());
+        }
         self.bridge.observe_window_preparations(roster);
         let compiled = self.bridge.with_retirement_destroyed_observations(
             |destroyed_count, destroyed, created_ack, preparation| {

@@ -3,6 +3,10 @@ name: Native qualification
 on:
   workflow_dispatch:
 
+defaults:
+  run:
+    shell: bash
+
 permissions:
   contents: read
 
@@ -143,5 +147,64 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-x11-${{ github.sha }}
+          path: integration/egui-fork-workspace/target/qualification
+          if-no-files-found: ignore
+
+  wayland:
+    name: Physical Wayland input and output scaling
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-linux
+          workspaces: |
+            . -> target
+            integration/egui-fork-workspace -> target
+      - name: Install headless Wayland dependencies
+        timeout-minutes: 5
+        run: >-
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20
+          -o Acquire::https::Timeout=20 update &&
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20
+          -o Acquire::https::Timeout=20 install --no-install-recommends -y
+          libwayland-dev libxkbcommon-x11-0 libgl1-mesa-dri mesa-vulkan-drivers sway wtype grim
+      - name: Record source and toolchain
+        run: |
+          mkdir -p "$QUALIFICATION_LOG_DIR"
+          git rev-parse HEAD > "$QUALIFICATION_LOG_DIR/source.txt"
+          rustc -Vv > "$QUALIFICATION_LOG_DIR/rustc.txt"
+          uname -a > "$QUALIFICATION_LOG_DIR/platform.txt"
+      - name: Build official winit runner with system accessibility
+        run: >-
+          cargo build --package egui_dockspace --example workbench
+          --features wgpu,accesskit --locked
+      - name: Build real Wayland pointer device
+        run: >-
+          cargo build --manifest-path integration/egui-fork-workspace/Cargo.toml
+          --package egui-native-smoke --bin wayland_seat --locked
+      - name: Exercise physical docking and ordinary content
+        run: |
+          python3 integration/egui-native-smoke/with_sway.py --timeout 90 \
+            --artifacts "$QUALIFICATION_LOG_DIR/wayland-baseline" \
+            --seat-helper integration/egui-fork-workspace/target/debug/wayland_seat -- \
+            python3 integration/egui-native-smoke/editor_docking_wayland.py \
+            target/debug/examples/workbench --artifacts "$QUALIFICATION_LOG_DIR/wayland-baseline/editor" \
+            2>&1 | tee "$QUALIFICATION_LOG_DIR/wayland-baseline.log"
+      - name: Exercise a real output scale change
+        run: |
+          python3 integration/egui-native-smoke/with_sway.py --timeout 90 \
+            --artifacts "$QUALIFICATION_LOG_DIR/wayland-scale" \
+            --seat-helper integration/egui-fork-workspace/target/debug/wayland_seat -- \
+            python3 integration/egui-native-smoke/editor_docking_wayland.py \
+            target/debug/examples/workbench --change-scale --artifacts "$QUALIFICATION_LOG_DIR/wayland-scale/editor" \
+            2>&1 | tee "$QUALIFICATION_LOG_DIR/wayland-scale.log"
+      - name: Upload Wayland qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wayland-${{ github.sha }}
           path: integration/egui-fork-workspace/target/qualification
           if-no-files-found: ignore

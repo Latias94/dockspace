@@ -16,13 +16,23 @@ use egui_dockspace::{Dockspace, DockspaceOutput, DockspaceResponse, SurfacePrese
 mod editor;
 #[path = "workbench/exercise.rs"]
 mod exercise;
+#[path = "workbench/physical_smoke.rs"]
+mod physical_smoke;
 
 use editor::{DemoPanes, apply_editor_commands, demo_layout, run_editor};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let exercise = exercise::Exercise::from_args()?;
+    let physical = std::env::args().nth(1).as_deref() == Some("--physical-smoke");
+    let exercise = if physical {
+        if std::env::args().len() != 2 {
+            return Err("--physical-smoke runs alone; --exercise uses synthetic input".into());
+        }
+        None
+    } else {
+        exercise::Exercise::from_args()?
+    };
     let context = editor::new_context();
-    if exercise.is_some() {
+    if exercise.is_some() || physical {
         context.enable_accesskit();
     }
     let options = NativeOptions {
@@ -31,18 +41,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_inner_size(backend::dpi::LogicalSize::new(1280.0, 820.0)),
         ..Default::default()
     };
+    let panes = DemoPanes::new();
+    let physical_smoke = physical.then(|| physical_smoke::PhysicalSmoke::new(&panes));
     let mut app = Workbench {
         dockspace: Dockspace::builder("workbench", demo_layout())
             .style(editor::dock_style())
             .build()?,
-        panes: DemoPanes::new(),
+        panes,
         response: None,
         restore_layout: false,
         exercise,
+        physical_smoke,
     };
     run_native(options, context, &mut app)?;
     if let Some(exercise) = app.exercise {
         exercise.require_complete()?;
+    }
+    if let Some(smoke) = app.physical_smoke {
+        smoke.require_complete()?;
     }
     Ok(())
 }
@@ -53,12 +69,16 @@ struct Workbench {
     response: Option<DockspaceResponse>,
     restore_layout: bool,
     exercise: Option<exercise::Exercise>,
+    physical_smoke: Option<physical_smoke::PhysicalSmoke>,
 }
 
 impl NativeApp for Workbench {
     fn prepare_input(&mut self, input: &mut RawInput) -> AppResult<()> {
         if let Some(exercise) = &mut self.exercise {
             exercise.prepare(input, &self.panes)?;
+        }
+        if let Some(smoke) = &mut self.physical_smoke {
+            smoke.observe_input(input);
         }
         Ok(())
     }
@@ -82,6 +102,15 @@ impl NativeApp for Workbench {
             self.response.as_ref(),
             self.restore_layout,
         )?;
+        if let Some(smoke) = &mut self.physical_smoke {
+            if smoke.finish_frame(&self.panes, &self.dockspace, &frame)? {
+                return Ok(FrameControl::Exit);
+            }
+            frame
+                .context
+                .request_repaint_after(Duration::from_millis(16));
+            return Ok(FrameControl::Continue);
+        }
         let Some(exercise) = &mut self.exercise else {
             return Ok(if changed {
                 FrameControl::Repaint

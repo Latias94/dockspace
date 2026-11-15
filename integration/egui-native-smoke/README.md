@@ -172,6 +172,60 @@ the separate X11 lifecycle driver. Stationary macOS samples do not establish
 capture or delivery continuity; see the
 [platform capability matrix](../../docs/PLATFORM_SUPPORT.md#macos-and-windows).
 
+## Run physical input on Wayland
+
+The official `egui_dockspace` workbench has a separate finite profile for local
+and contained docking under headless Sway/wlroots. It runs on Linux, including
+a Docker Desktop Linux VM on macOS, without a physical display or GPU passthrough.
+Install Sway, `wtype`, `grim`, Mesa software Vulkan and the normal Wayland build
+dependencies. On Debian/Ubuntu:
+
+```sh
+sudo apt-get install --no-install-recommends sway wtype grim mesa-vulkan-drivers libgl1-mesa-dri libwayland-dev libxkbcommon-x11-0
+cargo build -p egui_dockspace --example workbench --features wgpu,accesskit --locked -j2
+cargo build --manifest-path integration/egui-fork-workspace/Cargo.toml -p egui-native-smoke --bin wayland_seat --locked -j2
+```
+
+Run as an **unprivileged Linux user**. In a container, give that user access to
+the checkout and built executables; no input-device mount or privileged mode
+is needed. Each run owns its compositor, runtime directory and seat devices:
+
+```sh
+python3 integration/egui-native-smoke/with_sway.py --timeout 90 --seat-helper integration/egui-fork-workspace/target/debug/wayland_seat -- python3 integration/egui-native-smoke/editor_docking_wayland.py target/debug/examples/workbench
+python3 integration/egui-native-smoke/with_sway.py --timeout 90 --seat-helper integration/egui-fork-workspace/target/debug/wayland_seat -- python3 integration/egui-native-smoke/editor_docking_wayland.py target/debug/examples/workbench --change-scale
+```
+
+The driver requires the application's exact owned `xdg_shell` toplevel and
+disables XWayland and `DISPLAY`. A real virtual pointer sends complete protocol
+frames for movement, primary-button and wheel input; `wtype` supplies keyboard
+input. Sway IPC supplies test-only window inventory, geometry, activation and
+output scaling. The production adapter receives only normal Wayland callbacks;
+compositor coordinates never become backend capabilities.
+
+The actual presented workbench reports tab, center-guide and divider locations
+through AccessKit. Before dragging, the driver waits for presented source hover
+and the original held press, rather than relying on fixed startup delays.
+The driver drags Preview and the contained Inspector into
+Outline, resizes their divider, types `waylandinput` into Editor and scrolls
+Console. The application requires exact tab order and selection, retirement of
+the old contained root, changed split weights and pane width, one exact text
+insertion, actual scroll movement, all eight original panes and unchanged
+unrelated text. Content input must leave the docking version unchanged.
+
+`--change-scale` changes the real headless output from 1600 × 1200 at scale 1 to
+3200 × 2400 at scale 2. The application must observe the new client scale while
+preserving logical client size, UI zoom and docking state. Subsequent text and
+wheel coordinates use that actual client scale. Fractional and mixed-monitor
+DPI are separate qualification work. Each run retains compositor/app logs,
+window/output inventories and screenshots in its printed artifact directories;
+use `--artifacts` on each driver to choose them explicitly.
+
+This profile qualifies the official local/contained host, not native multiview.
+The fork-backed native adapter returns `Unsupported` on Wayland because it
+cannot establish OS window presentation authority from unknown visibility.
+It no longer waits indefinitely for a first Ready output. The deterministic
+regression also requires quarantine cleanup to consume retained Wayland rosters.
+
 ## Fatal teardown and fresh-host recovery
 
 The separate `egui-native-recovery-smoke` binary runs two native hosts in one
@@ -221,6 +275,8 @@ the applications once in the native workspace's target directory and runs:
 - Programmatic native redock and all three native close policies.
 - Fatal multiwindow teardown followed by a new host and fresh docking commands.
 - Physical X11/XTest drag-out and redock.
+- A separate isolated Sway job exercises official-host physical docking,
+  content input and a real output scale change, retaining logs and screenshots.
 
 The workflow uploads run logs with the source revision and toolchain as an
 artifact. Dependency pins and enabled features are available from that source

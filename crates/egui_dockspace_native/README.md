@@ -46,13 +46,20 @@ by any cleanup errors, even without `--event-log`.
 
 The [platform matrix](../../docs/PLATFORM_SUPPORT.md) distinguishes programmatic
 window operations from physical cross-window dragging. Linux X11 and macOS have
-separate finite physical-input profiles. The macOS profile qualifies nine
-real-input journeys, including Root/Child tab round trips,
-ordinary empty-window retirement and native close of a retained empty central
-area. Stationary cross-window dwell and autoscroll still lack capture/delivery
+separate finite physical-input profiles. The macOS profile qualifies sixteen
+real-input journeys, including Root/Child tab round trips, cancellation,
+geometry changes, target recreation, ordinary-content drags,
+empty-window retirement and native close of a retained empty central area.
+Stationary cross-window dwell and autoscroll still lack capture/delivery
 authority on macOS. Physical drag-out to create a new window, Windows cross-window
 dragging and arbitrary mixed-monitor DPI are not qualified by this macOS profile;
 see the matrix for the precise limits.
+
+The fork-backed native adapter currently rejects Wayland with `Unsupported`:
+its presentation contract requires window visibility that winit cannot query
+there. Use the official `egui_dockspace` winit host for local and contained
+docking on Wayland; its headless Sway qualification covers real pointer,
+keyboard, wheel input and an output scale change.
 
 For a small multiview demonstration with a central Sun and three orbiting OS
 windows:

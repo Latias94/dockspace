@@ -46,6 +46,9 @@ The adapter currently advertises the following capabilities in
 [`capabilities.rs`](../crates/egui_dockspace_native/src/capabilities.rs).
 An advertised capability means the backend can supply that class of fact;
 individual observations can still be unavailable or `Unknown`.
+The matrix describes available observations, not end-to-end adapter support.
+In particular, the fork-backed native adapter currently rejects Wayland at
+startup because it cannot establish native presentation authority.
 
 | Capability | Linux X11 | macOS | Windows | Wayland | Other |
 | --- | --- | --- | --- | --- | --- |
@@ -143,8 +146,26 @@ cross-window dragging or an OS close-button event.
 
 ### Wayland and other backends
 
-Wayland does not advertise managed lifecycle, global placement or work-area
-support in this adapter. Local surface contracts do not require those facts.
+The official `egui_dockspace` winit host supports local and contained docking
+without desktop coordinates. Its finite physical-input profile runs the actual
+eight-pane workbench under an isolated headless Sway/wlroots compositor, with
+XWayland disabled. Real virtual-seat input merges two tabs, retires the contained
+Inspector root, resizes a divider, types into Editor and scrolls Console. A second
+run changes the real output scale from 1 to 2, preserves logical client size,
+UI zoom and docking state, then repeats content input at the new client scale.
+See the [Wayland qualification commands](../integration/egui-native-smoke/README.md#run-physical-input-on-wayland).
+These software-rendered, single-output checks do not qualify native multiview,
+mixed-monitor DPI or fractional output scaling.
+
+The fork-backed `egui_dockspace_native` adapter currently returns `Unsupported`
+for Wayland before waiting for its first Ready output. Winit cannot query
+Wayland window visibility, and the adapter's native-coordinate and focus
+contracts require known presentation authority. Renderer `Presented` reports
+cannot replace OS visibility. Native Wayland needs a separate local render/input
+readiness contract before this adapter can support it; it also lacks managed
+lifecycle, global placement and work-area authority. Use the official host for
+local and contained docking in the meantime.
+
 Other backends retain only the common observations shown above. New backend
 support needs actual input and presentation tests as well as compile coverage.
 
@@ -154,7 +175,7 @@ The default [CI workflow](../.github/workflows/ci.yml) checks core behavior,
 independent consumers, feature combinations, native compilation/tests and a
 small real-renderer publication/backpressure smoke.
 The separate [native qualification workflow](../.github/workflows/native-qualification.yml)
-runs the real-window and X11 input journeys on demand. Run it before a release
+runs the real-window, X11 and Wayland input journeys on demand. Run it before a release
 or when changing native input, output ownership, lifecycle or dependency pins.
 The [native qualification guide](../integration/egui-native-smoke/README.md)
 contains the local commands and environment requirements.

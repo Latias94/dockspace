@@ -1787,6 +1787,53 @@ fn complete_root_roster_publishes_one_exact_platform_snapshot() {
 }
 
 #[test]
+fn wayland_roster_rejects_missing_native_presentation_support_before_bootstrap_wait() {
+    let mut native = coordinator();
+    let (first, second) = register_roots(&mut native);
+    let version = native.session.version();
+    let facts = NativeWindowFacts::live()
+        .with_content_size(dockspace::geometry::PhysicalSize::new(1280.0, 820.0).unwrap())
+        .with_native_scale_factor(ScaleFactor::new(1.0).unwrap())
+        .with_presentation_scale_factor(ScaleFactor::new(1.0).unwrap())
+        .with_input(NativeWindowInputState::ReceivesInput, None);
+    let roster = NativeViewportRosterRecord::for_test_with_backend_and_work_areas(
+        [first, second]
+            .map(|binding| crate::window_snapshot::CompiledWindowObservation::new(binding, facts)),
+        FrozenWorkAreaRoster::Unknown,
+        eframe::NativeWindowingBackend::Wayland,
+    );
+    native.bridge.push_viewport_roster(roster);
+    let error = native.reduce_next_viewport_roster().expect_err(
+        "native Wayland must return a specific error instead of waiting forever for Visible",
+    );
+    assert_eq!(error.kind(), crate::NativeRuntimeErrorKind::Unsupported);
+    assert!(
+        std::error::Error::source(&error)
+            .unwrap()
+            .to_string()
+            .contains("egui_dockspace")
+    );
+    assert_eq!(native.session.version(), version);
+    assert!(native.session.is_current_native_binding(first));
+    assert!(native.session.is_current_native_binding(second));
+    assert!(native.session.presented_surface(FIRST_SURFACE).is_none());
+    native.bridge.enter_quarantine();
+    assert!(
+        native.reduce_next_viewport_roster().unwrap(),
+        "fatal cleanup must still consume the unsupported backend's retained roster"
+    );
+    let mut cleanup = native
+        .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    cleanup
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    cleanup.commit().unwrap();
+    assert_eq!(native.session.version(), version);
+    assert!(native.session.presented_surface(FIRST_SURFACE).is_none());
+}
+
+#[test]
 fn incomplete_root_roster_revokes_inventory_without_destroying_bindings() {
     let mut native = coordinator();
     let (first, second) = register_roots(&mut native);
