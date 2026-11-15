@@ -56,7 +56,7 @@ individual observations can still be unavailable or `Unknown`.
 | Managed native lifecycle | Yes | Yes | Yes | No | No |
 | Hovered window | Yes | Yes | No | No | No |
 | Desktop pointer position | Yes | Yes | No | No | No |
-| Authoritative button state | Yes | No | No | No | No |
+| Authoritative button state | Yes | Yes | No | No | No |
 | Global window placement | Yes | Yes | Yes | No | No |
 | Work area | Conditional | Yes | Yes | No | No |
 | Pointer hit-test control | Yes | Yes | Yes | Yes | No |
@@ -85,17 +85,29 @@ Cloned, overlapping or transformed configurations and missing authority remain
 ### macOS and Windows
 
 Both backends have compile coverage for the native adapter. macOS also has
-real-window programmatic lifecycle coverage and a [physical same-window docking
+real-window programmatic lifecycle coverage and a [physical docking
 driver](../integration/egui-native-smoke/README.md#run-docking-input-on-macos).
-Its seven journeys cover tab merges, contained-root retirement, held-button
-client re-entry and subsequent divider resizing. They do not emulate remote
-desktop disconnects or qualify mixed-monitor DPI.
+Its nine journeys cover tab merges, contained-root retirement, held-button
+client re-entry, subsequent divider resizing and physical Root/Child round trips.
+The cross-window profile uses nonoverlapping windows on a 1920 × 1080 desktop
+at native scale and egui zoom 1. It verifies ordinary empty-child retirement,
+empty central-area retention and native close through presentation recovery.
+All eight panes and their text survive; the original Root's OS window identity
+remains unchanged. These checks do not emulate remote desktop disconnects or
+qualify mixed-monitor DPI, arbitrary tear-off or third-party windows.
 
-macOS has no authoritative button-state capability. Windows lacks hovered-window,
-desktop-pointer and button-state authority. Neither backend currently has
-complete physical cross-window drag qualification. Keep those paths unavailable
-when their required facts are missing; granting Accessibility permission to a
-test driver does not add missing backend observations.
+macOS assigns a view-scoped identity to each real primary press. Current pointer
+queries wait for queued callbacks and native dispatch to drain. A global sample
+with all buttons up may cancel that exact old press, without synthesizing a
+release or drop. A held button alone cannot prove uninterrupted capture or
+delivery: stationary observations keep those facts `Unknown`, and explicit
+capture acquisition remains unsupported. Stationary cross-window dwell and
+autoscroll are therefore not qualified by these moving-pointer journeys.
+
+Windows lacks hovered-window, desktop-pointer and button-state authority and
+does not have physical cross-window qualification. Keep paths unavailable when
+their required facts are missing; test-driver permissions cannot supply those
+backend facts.
 
 The [solar-system example](../crates/egui_dockspace_native/examples/solar_system.rs)
 provides a finite programmatic check: three real children present and move,

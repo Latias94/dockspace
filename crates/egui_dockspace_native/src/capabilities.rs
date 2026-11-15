@@ -21,6 +21,7 @@ pub(crate) fn capabilities_for_backend(backend: NativeWindowingBackend) -> Nativ
             .with(NativeHostCapability::NativeWindowLifecycle)
             .with(NativeHostCapability::HoveredWindow)
             .with(NativeHostCapability::DesktopPointerPosition)
+            .with(NativeHostCapability::AuthoritativeButtonState)
             .with(NativeHostCapability::GlobalWindowPlacement)
             .with(NativeHostCapability::WorkArea)
             .with(NativeHostCapability::WindowActivationControl),
@@ -55,7 +56,7 @@ mod tests {
         assert!(macos.supports(NativeHostCapability::NativeWindowLifecycle));
         assert!(macos.supports(NativeHostCapability::HoveredWindow));
         assert!(macos.supports(NativeHostCapability::DesktopPointerPosition));
-        assert!(!macos.supports(NativeHostCapability::AuthoritativeButtonState));
+        assert!(macos.supports(NativeHostCapability::AuthoritativeButtonState));
         assert!(macos.supports(NativeHostCapability::GlobalWindowPlacement));
         assert!(macos.supports(NativeHostCapability::WorkArea));
         assert!(macos.supports(NativeHostCapability::PointerHitTestObservation));

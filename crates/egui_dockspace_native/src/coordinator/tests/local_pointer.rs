@@ -969,7 +969,7 @@ fn raw_local_reorder_survives_unknown_capture_release_motion() {
 #[test]
 fn macos_capabilities_and_unknown_initial_roster_allow_same_window_reorder() {
     let capabilities = capabilities_for_backend(eframe::NativeWindowingBackend::MacOs);
-    assert!(!capabilities.supports(NativeHostCapability::AuthoritativeButtonState));
+    assert!(capabilities.supports(NativeHostCapability::AuthoritativeButtonState));
     let (mut native, binding, scene, now) =
         fixture_with_capabilities(true, capabilities, NativePointerRoster::Unknown);
     let source = scene.point(FIRST, 0.25);

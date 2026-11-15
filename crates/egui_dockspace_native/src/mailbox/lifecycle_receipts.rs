@@ -540,7 +540,7 @@ impl NativeHostBridge {
             return NativeViewportCreateAdmission::Defer;
         }
         NativeViewportCreateAdmission::Proceed {
-            undecorated_outer_rect: Some(reservation.rect),
+            requested_outer_rect: Some(reservation.rect),
         }
     }
 

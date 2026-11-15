@@ -143,7 +143,7 @@ handler detach is not a substitute for destruction evidence.
 | Independent public consumer | [Recording host tests](../integration/dockspace-host-harness/tests/) | External API usability, owned output, routing and settlement contracts |
 | Concrete UI entry point | [egui product harness](../integration/egui-product-harness/tests/product.rs) | Actual egui measurement, widgets, accessibility and input mapping |
 | Retained UI entry point | [GPUI harness](../integration/gpui-harness/README.md) | GPUI views, event delivery, candidate rollback and exact test-renderer outcomes |
-| Native physical integration | [X11 qualification drivers](../integration/egui-native-smoke/README.md) | Only the exercised backend, environment and physical journeys |
+| Native physical integration | [X11 and macOS qualification drivers](../integration/egui-native-smoke/README.md) | Only the exercised backend, environment and physical journeys |
 
 `dockspace_host_conformance` is an unpublished test crate. Its shared `scenario`
 module describes semantic selectors, actions, capabilities and observations. Its

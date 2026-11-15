@@ -8,7 +8,10 @@ fn editor_probe_excludes_real_junction_controls_from_ordinary_splitters() {
     let context = egui::Context::default();
     context.enable_accesskit();
     let observations = Arc::new(Mutex::new(EditorObservations::default()));
-    context.add_plugin(EditorProbe(Arc::clone(&observations)));
+    context.add_plugin(EditorProbe(
+        Arc::clone(&observations),
+        egui::ViewportId::ROOT,
+    ));
     let mut dockspace = egui_dockspace::Dockspace::builder("editor-probe", example_layout())
         .build()
         .unwrap();
@@ -36,13 +39,14 @@ fn editor_probe_excludes_real_junction_controls_from_ordinary_splitters() {
                 .is_some_and(|label| label.starts_with("Resize pane grid"))
     }));
     let observed = observations.lock().unwrap();
-    assert_eq!(observed.splitters.len(), 2);
+    assert_eq!(observed.root().splitters.len(), 2);
     for orientation in [
         egui::accesskit::Orientation::Horizontal,
         egui::accesskit::Orientation::Vertical,
     ] {
         assert_eq!(
             observed
+                .root()
                 .splitters
                 .iter()
                 .filter(|(axis, _)| *axis == orientation)
@@ -123,7 +127,7 @@ fn reentry_observer_requires_the_same_held_press_on_both_sides() {
         modifiers: egui::Modifiers::NONE,
     };
     let observed = Arc::new(Mutex::new(EditorObservations::default()));
-    let mut probe = EditorProbe(Arc::clone(&observed));
+    let mut probe = EditorProbe(Arc::clone(&observed), egui::ViewportId::ROOT);
     let mut input = |events| {
         probe.input_hook(
             &egui::Context::default(),
@@ -141,15 +145,15 @@ fn reentry_observer_requires_the_same_held_press_on_both_sides() {
         egui::Event::PointerGone,
         egui::Event::PointerMoved(point),
     ]);
-    assert_eq!(observed.lock().unwrap().pressed_reentries, 0);
+    assert_eq!(observed.lock().unwrap().root().pressed_reentries, 0);
     input(vec![button(true), egui::Event::PointerGone, button(false)]);
     input(vec![egui::Event::PointerMoved(point)]);
-    assert_eq!(observed.lock().unwrap().pressed_reentries, 0);
+    assert_eq!(observed.lock().unwrap().root().pressed_reentries, 0);
     input(vec![button(true), egui::Event::PointerGone]);
     input(vec![egui::Event::PointerMoved(egui::pos2(-20.0, 20.0))]);
-    assert_eq!(observed.lock().unwrap().pressed_reentries, 0);
+    assert_eq!(observed.lock().unwrap().root().pressed_reentries, 0);
     input(vec![egui::Event::PointerMoved(point)]);
-    assert_eq!(observed.lock().unwrap().pressed_reentries, 1);
+    assert_eq!(observed.lock().unwrap().root().pressed_reentries, 1);
     input(vec![egui::Event::PointerMoved(point), button(false)]);
-    assert_eq!(observed.lock().unwrap().pressed_reentries, 1);
+    assert_eq!(observed.lock().unwrap().root().pressed_reentries, 1);
 }

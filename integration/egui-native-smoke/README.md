@@ -81,8 +81,9 @@ physical-input qualification.
 
 ## Run docking input on macOS
 
-The same seven application-observed docking and divider journeys can run on a
-dedicated macOS desktop using [`editor_docking_macos.py`](editor_docking_macos.py):
+Nine application-observed journeys run on a dedicated macOS desktop using
+[`editor_docking_macos.py`](editor_docking_macos.py): the same seven local docking
+and divider cases, plus two real Root/Child docking journeys.
 
 ```text
 python3 integration/egui-native-smoke/editor_docking_macos.py integration/egui-fork-workspace/target/debug/examples/basic
@@ -98,12 +99,32 @@ pointer and terminates only its own remaining editor processes during cleanup.
 Console and operation logs are retained in the temporary directory printed at
 startup.
 
-This qualifies same-window tab merges, contained-root retirement, divider hit
-padding and leaving/re-entering the client with primary held. It does not emulate
-a remote desktop disconnect, suppress a release callback, or qualify physical
-cross-window dragging, mixed-monitor DPI or the separate X11 lifecycle driver.
-macOS native-window commands remain available independently of physical dragging;
-see the [platform capability matrix](../../docs/PLATFORM_SUPPORT.md#macos-and-windows).
+The two native cases require a 1920 × 1080 desktop at native scale 1. They place
+nonoverlapping windows and verify each input point against the owned OS window
+inventory. Setup creates the Inspector child with the public Move to New Window
+command. All four subsequent docking moves use CoreGraphics mouse input:
+History moves Root → Child → Root, then Inspector and Preview return in both
+orders. The first drag pauses outside both windows until the application observes
+the original primary button held there. The target uses its current selected
+content, including when accumulated labels overflow the tab strip.
+
+`native-inspector-first` keeps the example's central Inspector area: after the
+last tab leaves, the empty child must remain. A real click on its standard AppKit
+close button invokes the default RecoverPresentation policy, restoring the exact
+empty central root as a contained target. `native-preview-first` starts with an
+ordinary Inspector tabs root and requires automatic retirement after draining.
+Both require the exact Child OS window to disappear while the original Root
+survives, and preserve all eight pane identities, tab order, selection and text.
+The application waits for that independent OS observation before it exits.
+Use repeated `--case` options to select individual journeys.
+
+This qualifies local tab merges, contained-root retirement, divider hit padding,
+held-button client re-entry and the specified moving-pointer cross-window paths.
+It does not emulate a remote desktop disconnect, suppress a release callback,
+or qualify arbitrary tear-off, stationary dwell/autoscroll, mixed-monitor DPI or
+the separate X11 lifecycle driver. Stationary macOS samples do not establish
+capture or delivery continuity; see the
+[platform capability matrix](../../docs/PLATFORM_SUPPORT.md#macos-and-windows).
 
 ## Fatal teardown and fresh-host recovery
 

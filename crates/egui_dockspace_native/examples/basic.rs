@@ -67,6 +67,11 @@ fn main() -> eframe::Result {
     panes.text_editable = !command_smoke;
     let default_layout = if command_smoke {
         command_smoke::layout()
+    } else if docking_smoke
+        && std::env::var("EGUI_DOCKSPACE_DOCKING_CASE").as_deref() == Ok("native-preview-first")
+    {
+        // Exercise automatic native retirement without a persistent central area.
+        editor_layout_with_inspector(false, SURFACE, false)
     } else {
         example_layout()
     };
@@ -126,7 +131,17 @@ fn main() -> eframe::Result {
         operation_log,
     };
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 820.0]),
+        viewport: {
+            let viewport = egui::ViewportBuilder::default().with_inner_size([1280.0, 820.0]);
+            if docking_smoke
+                && std::env::var("EGUI_DOCKSPACE_DOCKING_CASE")
+                    .is_ok_and(|case| case.starts_with("native-"))
+            {
+                viewport.with_position([40.0, 80.0])
+            } else {
+                viewport
+            }
+        },
         native_host: Some(native_host),
         ..Default::default()
     };
@@ -629,6 +644,14 @@ fn editor_layout(separate_assets: bool) -> DockspaceLayout {
 }
 
 fn editor_layout_on_surface(separate_assets: bool, host_surface: SurfaceId) -> DockspaceLayout {
+    editor_layout_with_inspector(separate_assets, host_surface, true)
+}
+
+fn editor_layout_with_inspector(
+    separate_assets: bool,
+    host_surface: SurfaceId,
+    central_inspector: bool,
+) -> DockspaceLayout {
     let center = DockspaceNode::split(
         DockspaceAxis::Vertical,
         [
@@ -655,13 +678,15 @@ fn editor_layout_on_surface(separate_assets: bool, host_surface: SurfaceId) -> D
         ],
     )
     .expect("the static split is valid");
+    let inspector_tabs = if central_inspector {
+        DockspaceNode::central_tabs_with_selection([PREVIEW, INSPECTOR], Some(INSPECTOR))
+    } else {
+        DockspaceNode::tabs_with_selection([PREVIEW, INSPECTOR], Some(INSPECTOR))
+    }
+    .expect("the Inspector starts selected");
     let inspector = DockspaceContainedLayout::new(
         INSPECTOR_FLOATING,
-        DockspaceRootLayout::new(
-            INSPECTOR_ROOT,
-            DockspaceNode::central_tabs_with_selection([PREVIEW, INSPECTOR], Some(INSPECTOR))
-                .expect("the Inspector starts selected"),
-        ),
+        DockspaceRootLayout::new(INSPECTOR_ROOT, inspector_tabs),
         LogicalRect::new(850.0, 80.0, 360.0, 410.0).expect("the static contained rect is valid"),
     );
     let mut surface =

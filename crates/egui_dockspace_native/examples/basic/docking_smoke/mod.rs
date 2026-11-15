@@ -1,7 +1,7 @@
 //! Real-input regression over the actual eight-pane example and its ordinary content.
 //!
-//! The external input driver reads coordinates only. This observer accepts no
-//! synthetic input, presentation, or programmatic docking commands.
+//! The external input driver reads coordinates only. Docking uses real pointer
+//! input; native journeys create their initial child through the public command.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -16,18 +16,33 @@ use super::{
 };
 
 mod drain;
+mod native;
 
 #[derive(Default)]
 struct EditorObservations {
+    viewports: BTreeMap<egui::ViewportId, ViewportObservations>,
+}
+
+impl EditorObservations {
+    fn root(&self) -> &ViewportObservations {
+        &self.viewports[&egui::ViewportId::ROOT]
+    }
+}
+
+#[derive(Default)]
+struct ViewportObservations {
     tabs: BTreeMap<String, egui::Rect>,
     splitters: Vec<(egui::accesskit::Orientation, egui::Rect)>,
     primary_down: bool,
     left_while_pressed: bool,
     pressed_reentries: usize,
     client_rect: Option<egui::Rect>,
+    window: Option<u64>,
+    scale: f32,
+    held_below_client: bool,
 }
 
-struct EditorProbe(Arc<Mutex<EditorObservations>>);
+struct EditorProbe(Arc<Mutex<EditorObservations>>, egui::ViewportId);
 
 impl egui::plugin::Plugin for EditorProbe {
     fn debug_name(&self) -> &'static str {
@@ -35,7 +50,11 @@ impl egui::plugin::Plugin for EditorProbe {
     }
 
     fn input_hook(&mut self, _: &egui::Context, input: &mut egui::RawInput) {
-        let mut tabs = self.0.lock().unwrap();
+        self.1 = input.viewport_id;
+        let mut observations = self.0.lock().unwrap();
+        let tabs = observations.viewports.entry(input.viewport_id).or_default();
+        tabs.window =
+            eframe::current_native_output_token().map(|token| u64::from(token.window_id()));
         if let Some(rect) = input.screen_rect {
             tabs.client_rect = Some(rect);
         }
@@ -48,6 +67,15 @@ impl egui::plugin::Plugin for EditorProbe {
                 } => {
                     tabs.primary_down = *pressed;
                     tabs.left_while_pressed = false;
+                    if *pressed {
+                        tabs.held_below_client = false;
+                    }
+                }
+                egui::Event::PointerMoved(point)
+                    if tabs.primary_down
+                        && tabs.client_rect.is_some_and(|rect| point.y > rect.max.y) =>
+                {
+                    tabs.held_below_client = true;
                 }
                 egui::Event::PointerGone if tabs.primary_down => {
                     tabs.left_while_pressed = true;
@@ -66,7 +94,7 @@ impl egui::plugin::Plugin for EditorProbe {
     }
 
     #[allow(clippy::cast_possible_truncation)]
-    fn output_hook(&mut self, _: &egui::Context, output: &mut egui::FullOutput) {
+    fn output_hook(&mut self, context: &egui::Context, output: &mut egui::FullOutput) {
         fn unaligned_labels(shape: &egui::Shape) -> usize {
             match shape {
                 egui::Shape::Text(text) => usize::from(text.galley.job.text == "Unaligned"),
@@ -84,7 +112,9 @@ impl egui::plugin::Plugin for EditorProbe {
         let Some(update) = &output.platform_output.accesskit_update else {
             return;
         };
-        let mut tabs = self.0.lock().unwrap();
+        let mut observations = self.0.lock().unwrap();
+        let tabs = observations.viewports.entry(self.1).or_default();
+        tabs.scale = context.pixels_per_point();
         tabs.tabs.clear();
         tabs.splitters.clear();
         for (_, node) in &update.nodes {
@@ -120,6 +150,7 @@ pub(super) struct DockingSmoke {
 enum Journey {
     Merge(MergeSmoke),
     Drain(drain::DrainSmoke),
+    Native(native::NativeSmoke),
     Complete,
 }
 
@@ -137,6 +168,12 @@ impl DockingSmoke {
             Ok("drain-preview-first") => {
                 Journey::Drain(drain::DrainSmoke::new([PREVIEW, INSPECTOR]))
             }
+            Ok("native-inspector-first") => {
+                Journey::Native(native::NativeSmoke::new([INSPECTOR, PREVIEW], true))
+            }
+            Ok("native-preview-first") => {
+                Journey::Native(native::NativeSmoke::new([PREVIEW, INSPECTOR], false))
+            }
             Ok(value) => panic!("unknown editor docking case: {value}"),
         };
         Self {
@@ -147,13 +184,14 @@ impl DockingSmoke {
 
     pub(super) fn install(&self, context: &egui::Context) {
         context.enable_accesskit();
-        context.add_plugin(EditorProbe(Arc::clone(&self.tabs)));
+        context.add_plugin(EditorProbe(Arc::clone(&self.tabs), egui::ViewportId::ROOT));
     }
 
     pub(super) fn advance(&mut self, app: &NativeExampleApp, context: &egui::Context) {
         let complete = match &mut self.journey {
             Journey::Merge(smoke) => smoke.advance(app, context, &self.tabs),
             Journey::Drain(smoke) => smoke.advance(app, context, &self.tabs),
+            Journey::Native(smoke) => smoke.advance(app, &self.tabs),
             Journey::Complete => return,
         };
         if complete {
@@ -228,7 +266,7 @@ impl MergeSmoke {
             && !self.announced
             && !target_selected
             && !self.selection_announced
-            && let Some(rect) = tabs.lock().unwrap().tabs.get(target_title).copied()
+            && let Some(rect) = tabs.lock().unwrap().root().tabs.get(target_title).copied()
         {
             let point = rect.min + rect.size() * 0.35;
             let scale = context.pixels_per_point();
@@ -243,7 +281,10 @@ impl MergeSmoke {
         }
         let (source, reentries_before) = {
             let tabs = tabs.lock().unwrap();
-            (tabs.tabs.get(source_title).copied(), tabs.pressed_reentries)
+            (
+                tabs.root().tabs.get(source_title).copied(),
+                tabs.root().pressed_reentries,
+            )
         };
         if !self.announced
             && ready

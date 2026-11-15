@@ -12,7 +12,7 @@ use super::super::{
     ASSETS, CONSOLE, EDITOR, HISTORY, INSPECTOR, INSPECTOR_FLOATING, INSPECTOR_ROOT, MAIN_ROOT,
     NativeExampleApp, OUTLINE, PREVIEW, PROFILER, SURFACE,
 };
-use super::{EditorObservations, MergeSmoke};
+use super::{EditorObservations, MergeSmoke, ViewportObservations};
 
 pub(super) struct DrainSmoke {
     started: Instant,
@@ -60,7 +60,7 @@ impl DrainSmoke {
             Phase::First(smoke) => {
                 if smoke.advance(app, context, tabs) {
                     assert!(
-                        tabs.lock().unwrap().pressed_reentries > smoke.reentries_before,
+                        tabs.lock().unwrap().root().pressed_reentries > smoke.reentries_before,
                         "the first drag must leave and re-enter the window while primary is held"
                     );
                     app.dockspace.with_view(|view| {
@@ -82,7 +82,7 @@ impl DrainSmoke {
                 if ready(app, tabs)
                     && let Some(before) = pane_bounds(app, *axis)
                 {
-                    let hit = splitter_bounds(&tabs.lock().unwrap(), *axis);
+                    let hit = splitter_bounds(tabs.lock().unwrap().root(), *axis);
                     let scale = context.pixels_per_point();
                     let (source, target) = resize_points(hit, *axis, scale);
                     let token = eframe::current_native_output_token().unwrap();
@@ -141,10 +141,10 @@ fn ready(app: &NativeExampleApp, tabs: &Arc<Mutex<EditorObservations>>) -> bool 
     app.dockspace.is_surface_presented(SURFACE)
         && app.dockspace.is_quiescent()
         && !app.dockspace.current_output_is_retained()
-        && !tabs.lock().unwrap().primary_down
+        && !tabs.lock().unwrap().root().primary_down
 }
 
-fn splitter_bounds(observations: &EditorObservations, axis: DockspaceAxis) -> egui::Rect {
+fn splitter_bounds(observations: &ViewportObservations, axis: DockspaceAxis) -> egui::Rect {
     let orientation = match axis {
         DockspaceAxis::Horizontal => egui::accesskit::Orientation::Vertical,
         DockspaceAxis::Vertical => egui::accesskit::Orientation::Horizontal,

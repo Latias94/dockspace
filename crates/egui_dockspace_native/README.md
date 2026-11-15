@@ -45,9 +45,14 @@ content are omitted. Fatal runtime errors print to the terminal once, followed
 by any cleanup errors, even without `--event-log`.
 
 The [platform matrix](../../docs/PLATFORM_SUPPORT.md) distinguishes programmatic
-window operations from physical cross-window dragging. Linux X11 has a finite
-qualified physical-input profile. macOS/Windows physical drag-out and arbitrary
-mixed-monitor DPI are not qualified by that profile.
+window operations from physical cross-window dragging. Linux X11 and macOS have
+separate finite physical-input profiles. The macOS profile qualifies nine
+real-input journeys, including Root/Child tab round trips,
+ordinary empty-window retirement and native close of a retained empty central
+area. Stationary cross-window dwell and autoscroll still lack capture/delivery
+authority on macOS. Physical drag-out to create a new window, Windows cross-window
+dragging and arbitrary mixed-monitor DPI are not qualified by this macOS profile;
+see the matrix for the precise limits.
 
 For a small multiview demonstration with a central Sun and three orbiting OS
 windows:
