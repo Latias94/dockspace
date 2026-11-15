@@ -10,6 +10,7 @@ use std::marker::PhantomData;
 mod actions;
 mod contained;
 mod drag_feedback;
+mod drag_grip;
 mod drop_feedback;
 mod geometry;
 mod guides;

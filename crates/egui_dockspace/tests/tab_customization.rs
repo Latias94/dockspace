@@ -7,7 +7,7 @@ use egui_dockspace::{
     DockStyle, Dockspace, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
     DockspaceSurfaceLayout, DragPreview, ItemId, PaneResponse, PaneView, RootId, SurfaceId,
     SurfacePresentationResult, Tab, TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose,
-    TabCloseVisibility, TabVisuals,
+    TabCloseVisibility, TabStylePreset, TabVisuals,
 };
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -31,6 +31,9 @@ struct TabSnapshot {
     visible: Rect,
     content: Rect,
     enabled: bool,
+    selected: bool,
+    pane_focused: bool,
+    visuals: TabVisuals,
 }
 
 #[derive(Clone)]
@@ -108,6 +111,9 @@ impl PaneView for Panes {
             visible: tab.visible_rect,
             content: tab.content_rect,
             enabled: tab.enabled && ui.is_enabled(),
+            selected: tab.selected,
+            pane_focused: tab.pane_focused,
+            visuals: tab.visuals,
         });
         let mut custom = tab.clone();
         custom.visuals.fill = CUSTOM_FILL;
@@ -296,6 +302,67 @@ impl Harness {
         )])
         .drop_without_applying_deltas();
         self.settle();
+    }
+}
+
+#[test]
+fn tab_presets_follow_theme_hover_and_selection_while_custom_callbacks_still_win() {
+    for preset in [
+        TabStylePreset::Dockspace,
+        TabStylePreset::ImGui,
+        TabStylePreset::EguiTiles,
+    ] {
+        let mut harness = Harness::new(DockPolicy::default());
+        let mut style = harness.dock.style().clone();
+        style.apply_tab_preset(preset);
+        style.tab_bar_height = 31.0;
+        harness.dock.set_style(style).unwrap();
+        for theme in [egui::Visuals::light(), egui::Visuals::dark()] {
+            harness.context.set_visuals(theme.clone());
+            harness
+                .run(vec![Event::PointerGone])
+                .drop_without_applying_deltas();
+            harness.settle();
+            let first = harness.tab(FIRST);
+            assert!(first.selected && !first.pane_focused);
+            assert_eq!(
+                first.rect.height(),
+                31.0,
+                "rendering must retain manual metric edits"
+            );
+            assert_eq!(
+                first.visuals.connect_to_pane,
+                preset == TabStylePreset::EguiTiles
+            );
+            assert_eq!(
+                first.visuals.overline_stroke.width > 0.0,
+                preset == TabStylePreset::ImGui
+            );
+            if preset == TabStylePreset::ImGui {
+                assert_eq!(
+                    first.visuals.overline_stroke.color,
+                    theme.selection.stroke.color
+                );
+            } else {
+                assert_eq!(first.visuals.fill, theme.panel_fill);
+            }
+            let idle = harness.tab(SECOND).visuals.fill;
+            let target = harness.tab(SECOND).content.left_center() + vec2(2.0, 0.0);
+            let output = harness.run(vec![Event::PointerMoved(target)]);
+            harness.settle();
+            if preset == TabStylePreset::EguiTiles {
+                assert_eq!(harness.tab(SECOND).visuals.fill, idle);
+            } else {
+                assert_ne!(harness.tab(SECOND).visuals.fill, idle);
+            }
+            assert!(
+                output.shapes.iter().any(|shape| matches!(&shape.shape,
+                    egui::Shape::Rect(rect) if rect.fill == CUSTOM_FILL
+                        && rect.rect.contains(harness.tab(SECOND).rect.center())
+                )),
+                "the application callback can override every recipe"
+            );
+        }
     }
 }
 

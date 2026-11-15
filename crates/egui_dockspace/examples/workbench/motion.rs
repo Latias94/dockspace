@@ -55,7 +55,9 @@ pub(super) fn controls(
                         ] {
                             ui.selectable_value(&mut curve, value, label);
                         }
-                    });
+                    })
+                    .response
+                    .labelled_by(ui.label("Curve").id);
             }
             let time = Duration::from_secs_f64(millis / 1000.0);
             settings.layout = if use_spring {

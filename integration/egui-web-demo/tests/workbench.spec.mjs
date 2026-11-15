@@ -24,7 +24,9 @@ async function point(page, rect) {
 }
 
 async function clickControl(page, label) {
-  const control = (await state(page)).controls.find(node => node.label === label);
+  const control = (await state(page)).controls
+    .filter(node => node.label === label && node.role !== 'Label')
+    .sort((a, b) => a.rect[1] - b.rect[1])[0];
   expect(control, `presented control ${label}`).toBeTruthy();
   const position = await point(page, control.rect);
   await page.mouse.click(position.x, position.y);
@@ -193,7 +195,7 @@ test('motion produces intermediate pane geometry, accepts tuning and settles to 
   await page.mouse.move(maximum.x, maximum.y, { steps: 6 });
   await page.mouse.up();
   await expect.poll(async () => (await state(page)).motion.settings).toContain('duration: 300ms');
-  const combo = (await state(page)).controls.find(node => node.role === 'ComboBox');
+  const combo = (await state(page)).controls.find(node => node.role === 'ComboBox' && node.text === 'EaseInOut');
   const curveMenu = await point(page, combo.rect);
   await page.mouse.click(curveMenu.x, curveMenu.y);
   await expect.poll(async () => (await state(page)).controls.some(node => node.label === 'Ease out')).toBe(true);
@@ -216,6 +218,38 @@ test('motion produces intermediate pane geometry, accepts tuning and settles to 
   const settled = (await state(page)).frames;
   await page.waitForTimeout(300);
   expect((await state(page)).frames).toBe(settled);
+});
+
+test('tab presets switch live, follow themes and retain custom tabs and docking', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await open(page);
+  const original = await state(page);
+  for (const [label, preset] of [['ImGui', 'ImGui'], ['egui_tiles', 'EguiTiles'], ['Dockspace', 'Dockspace']]) {
+    const combo = (await state(page)).controls.find(node => node.role === 'ComboBox'
+      && ['Dockspace', 'ImGui', 'egui_tiles'].includes(node.text));
+    expect(combo, 'presented tab-style selector').toBeTruthy();
+    const position = await point(page, combo.rect);
+    await page.mouse.click(position.x, position.y);
+    await expect.poll(async () => (await state(page)).controls.some(node => node.label === label)).toBe(true);
+    await clickControl(page, label);
+    await expect.poll(async () => (await state(page)).tabPreset).toBe(preset);
+    await clickControl(page, 'Dark');
+    await expect.poll(async () => (await state(page)).darkMode).toBe(true);
+    await clickControl(page, 'Light');
+    await expect.poll(async () => (await state(page)).darkMode).toBe(false);
+    await expect.poll(async () => (await state(page)).tabs.length).toBe(8);
+    expect(topology(await state(page))).toEqual(topology(original));
+  }
+  const beforeCustom = (await state(page)).tabs.find(tab => tab.label === 'Preview').rect;
+  await clickControl(page, 'Custom tabs');
+  await expect.poll(async () => {
+    const rect = (await state(page)).tabs.find(tab => tab.label === 'Preview').rect;
+    return rect[2] - rect[0];
+  }).toBeGreaterThan(beforeCustom[2] - beforeCustom[0] + 10);
+  await mergeLeft(page, 'Preview', [3, 2]);
+  expect((await state(page)).editorText).toBe(original.editorText);
+  expect(errors).toEqual([]);
 });
 
 test('reduced motion follows system changes and preserves a manual toolbar choice', async ({ page }) => {

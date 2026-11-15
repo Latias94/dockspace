@@ -78,6 +78,10 @@ pub struct TabVisuals {
     pub fill: Color32,
     /// Tab outline, painted inside its allocation; `Stroke::NONE` hides it.
     pub stroke: Stroke,
+    /// Top accent, independent of focus; `Stroke::NONE` hides it.
+    pub overline_stroke: Stroke,
+    /// Extend the background through the bottom outline, opening into the pane.
+    pub connect_to_pane: bool,
     /// Rounding shared by the tab background and its focus outline.
     pub corner_radius: CornerRadius,
     /// Fallback used by title spans without an explicit color.
@@ -139,13 +143,14 @@ impl Tab<'_> {
 
     /// Paints the configured background and outline without the title.
     pub fn paint_background(&self, painter: &Painter) {
-        painter.with_clip_rect(self.visible_rect).rect(
-            self.rect,
-            self.visuals.corner_radius,
-            self.visuals.fill,
-            self.visuals.stroke,
-            StrokeKind::Inside,
-        );
+        TabBackground {
+            fill: self.visuals.fill,
+            stroke: self.visuals.stroke,
+            corner_radius: self.visuals.corner_radius,
+            overline_stroke: self.visuals.overline_stroke,
+            connect_to_pane: self.visuals.connect_to_pane,
+        }
+        .paint(painter, self.rect, self.visible_rect);
     }
 
     /// Paints a vertically centered title, elided to the provided content subrect.
@@ -163,6 +168,57 @@ impl Tab<'_> {
             self.content_clip_rect,
             self.visuals.text_color,
             self.visuals.text_color_override,
+        );
+    }
+}
+
+/// Shared paint-only treatment for live tabs and their candidate-layout preview.
+pub(crate) struct TabBackground {
+    pub(crate) fill: Color32,
+    pub(crate) stroke: Stroke,
+    pub(crate) corner_radius: CornerRadius,
+    pub(crate) overline_stroke: Stroke,
+    pub(crate) connect_to_pane: bool,
+}
+
+impl TabBackground {
+    pub(crate) fn paint(&self, painter: &Painter, rect: Rect, clip: Rect) {
+        let painter = painter.with_clip_rect(clip);
+        let mut background = rect;
+        if self.connect_to_pane {
+            background.max.y += self.stroke.width;
+        }
+        painter.rect(
+            background,
+            self.corner_radius,
+            self.fill,
+            self.stroke,
+            StrokeKind::Inside,
+        );
+        if self.overline_stroke.width > 0.0 {
+            painter.line_segment(
+                [
+                    egui::pos2(
+                        rect.left() + f32::from(self.corner_radius.nw).min(rect.width() * 0.5),
+                        rect.top() + self.overline_stroke.width * 0.5,
+                    ),
+                    egui::pos2(
+                        rect.right() - f32::from(self.corner_radius.ne).min(rect.width() * 0.5),
+                        rect.top() + self.overline_stroke.width * 0.5,
+                    ),
+                ],
+                self.overline_stroke,
+            );
+        }
+    }
+}
+
+pub(crate) fn paint_bar_separator(painter: &Painter, rect: Rect, stroke: Stroke) {
+    if stroke.width > 0.0 && stroke.color.a() > 0 {
+        let y = rect.bottom() - stroke.width * 0.5;
+        painter.with_clip_rect(rect).line_segment(
+            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+            stroke,
         );
     }
 }

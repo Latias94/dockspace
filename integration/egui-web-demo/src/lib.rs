@@ -245,6 +245,8 @@ impl Workbench {
             "consoleOffset": self.panes.panes.get(&editor::CONSOLE).map(|pane| pane.scroll_offset),
             "consoleRect": self.panes.panes.get(&editor::CONSOLE).and_then(|pane| pane.scroll_bounds).map(rect),
             "motion": motion,
+            "tabPreset": format!("{:?}", self.dockspace.style().tab_preset),
+            "darkMode": frame.context.global_style().visuals.dark_mode,
         });
         let _ = canvas.set_attribute("data-dockspace-state", &state.to_string());
     }

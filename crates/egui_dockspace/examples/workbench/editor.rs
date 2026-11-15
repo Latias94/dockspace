@@ -8,7 +8,7 @@ use egui_dockspace::{
     DockspaceContainedLayout, DockspaceError, DockspaceLayout, DockspaceNode, DockspaceOutput,
     DockspaceResponse, DockspaceRootLayout, DockspaceSurfaceLayout, DragPreview, DropGuide,
     FloatingPresentationId, ItemId, LogicalRect, PaneResponse, PaneView, RootId, SurfaceId, Tab,
-    TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose, TabVisuals,
+    TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose, TabStylePreset, TabVisuals,
 };
 
 #[cfg(feature = "motion")]
@@ -55,7 +55,12 @@ pub(super) fn dock_style() -> DockStyle {
     }
 }
 
-fn toolbar(ui: &mut egui::Ui, restore_layout: &mut bool, custom_tabs: &mut bool) {
+fn toolbar(
+    ui: &mut egui::Ui,
+    restore_layout: &mut bool,
+    custom_tabs: &mut bool,
+    tab_preset: &mut TabStylePreset,
+) {
     egui::Panel::top("workbench-toolbar").show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.strong("Dockspace");
@@ -68,10 +73,21 @@ fn toolbar(ui: &mut egui::Ui, restore_layout: &mut bool, custom_tabs: &mut bool)
                 ui.label("Drag a tab into the center of a pane to merge it.");
                 ui.label("Drop near an edge to split. Drag a divider to resize.");
                 ui.label("Hold Shift while dragging to float a tab without docking.");
-                ui.label("Drag a floating window's dotted title grip to move or dock its group.");
+                ui.label("Drag a tab to move one pane; drag a bar's dotted grip to move its tab group.");
+                ui.label("The dotted window-title grip moves the entire floating window, including its splits.");
                 ui.label("Close panes freely; Restore layout keeps your edits.");
             });
             ui.checkbox(custom_tabs, "Custom tabs");
+            egui::ComboBox::from_id_salt("workbench-tab-style")
+                .selected_text(preset_name(*tab_preset))
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    for preset in [TabStylePreset::Dockspace, TabStylePreset::ImGui, TabStylePreset::EguiTiles] {
+                        ui.selectable_value(tab_preset, preset, preset_name(preset));
+                    }
+                })
+                .response
+                .labelled_by(ui.label("Tab style").id);
             ui.separator();
             ui.weak("Shift + drag to float").on_hover_text(
                 "Hold Shift to disable docking while dragging, then release inside this window to float the tab.",
@@ -89,6 +105,14 @@ fn toolbar(ui: &mut egui::Ui, restore_layout: &mut bool, custom_tabs: &mut bool)
     });
 }
 
+fn preset_name(preset: TabStylePreset) -> &'static str {
+    match preset {
+        TabStylePreset::Dockspace => "Dockspace",
+        TabStylePreset::ImGui => "ImGui",
+        TabStylePreset::EguiTiles => "egui_tiles",
+    }
+}
+
 pub(super) fn run_editor(
     dockspace: &mut Dockspace,
     context: &Context,
@@ -96,13 +120,20 @@ pub(super) fn run_editor(
     panes: &mut DemoPanes,
     restore_layout: &mut bool,
 ) -> Result<(DockspaceOutput, Option<DockspaceResponse>), DockspaceError> {
+    // Apply geometry between settled runs, never from inside a paint callback.
+    if panes.tab_preset != dockspace.style().tab_preset {
+        let mut style = dockspace.style().clone();
+        style.apply_tab_preset(panes.tab_preset);
+        dockspace.set_style(style)?;
+    }
     let mut custom_tabs = panes.custom_tabs;
+    let mut tab_preset = panes.tab_preset;
     #[cfg(feature = "motion")]
     let (mut motion_settings, mut motion_preference) =
         (*dockspace.motion_settings(), dockspace.motion_preference());
     if dockspace.view().surfaces().next().is_none() {
         let output = egui_dockspace::run_ui(context, input, |ui| {
-            toolbar(ui, restore_layout, &mut custom_tabs);
+            toolbar(ui, restore_layout, &mut custom_tabs, &mut tab_preset);
             ui.centered_and_justified(|ui| {
                 ui.label(
                     "All panes are closed. Restore layout to reopen them and keep your edits.",
@@ -110,16 +141,18 @@ pub(super) fn run_editor(
             });
         });
         panes.custom_tabs = custom_tabs;
+        update_tab_preset(context, panes, tab_preset);
         return Ok((output, None));
     }
     let result = dockspace
         .run_single_surface_with_ui(context, input, SURFACE, panes, |ui| {
-            toolbar(ui, restore_layout, &mut custom_tabs);
+            toolbar(ui, restore_layout, &mut custom_tabs, &mut tab_preset);
             #[cfg(feature = "motion")]
             motion::controls(ui, &mut motion_settings, &mut motion_preference);
         })
         .map(|(output, response)| (output, Some(response)));
     panes.custom_tabs = custom_tabs;
+    update_tab_preset(context, panes, tab_preset);
     #[cfg(feature = "motion")]
     {
         if *dockspace.motion_settings() != motion_settings
@@ -131,6 +164,13 @@ pub(super) fn run_editor(
         dockspace.set_motion_preference(motion_preference);
     }
     result
+}
+
+fn update_tab_preset(context: &Context, panes: &mut DemoPanes, preset: TabStylePreset) {
+    if panes.tab_preset != preset {
+        panes.tab_preset = preset;
+        context.request_repaint();
+    }
 }
 
 pub(super) fn apply_editor_commands(
@@ -205,6 +245,7 @@ pub(super) struct DemoPane {
 
 pub(super) struct DemoPanes {
     pub(super) custom_tabs: bool,
+    pub(super) tab_preset: TabStylePreset,
     tab_accent: usize,
     pub(super) panes: BTreeMap<ItemId, DemoPane>,
     selection: usize,
@@ -223,6 +264,7 @@ impl DemoPanes {
     pub(super) fn new() -> Self {
         Self {
             custom_tabs: false,
+            tab_preset: TabStylePreset::default(),
             tab_accent: 0,
             panes: [
                 (EDITOR, "Editor", "// src/main.rs\n\nfn main() {\n    let mut scene = Scene::new();\n    scene.add(\"Player\");\n    scene.run();\n}\n"),

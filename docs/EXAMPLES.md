@@ -82,16 +82,19 @@ presentation result. This is a single OS-window example. Its application code
 lives in [editor.rs](../crates/egui_dockspace/examples/workbench/editor.rs), separate
 from the public runner and opt-in measurement exercise. The independent
 official harness compiles the same example against its own locked dependencies.
-Enable **Custom tabs** to try per-tab icons and rounded backgrounds, fixed group
-counts and **Tint** buttons. The [tab callbacks](../crates/egui_dockspace/examples/workbench/tabs.rs)
+Use **Tab style** to compare Dockspace, ImGui-inspired and egui_tiles-inspired
+tabs in either theme. Enable **Custom tabs** to layer per-tab icons and rounded
+backgrounds, fixed group counts and **Tint** buttons over the selected preset.
+The [tab callbacks](../crates/egui_dockspace/examples/workbench/tabs.rs)
 show how to customize chrome while retaining docking input and accessibility.
 Motion is on by default; a second toolbar controls layout transitions, timing and easing,
 and reduced motion. The [motion settings guide](../crates/egui_dockspace/README.md#configure-motion)
 covers application preferences and custom drop-preview decoration.
 
 Hold **Shift** while dragging a tab to disable docking and release inside the
-window to float it. Drag the dotted title grip to move or dock the
-whole floating group. These gestures also work with **Custom tabs** disabled.
+window to float it. A tab bar's dotted grip moves its tab group; a floating
+window's dotted title grip moves or docks the entire window, including internal
+splits. These gestures also work with **Custom tabs** disabled.
 
 Smaller eframe examples:
 

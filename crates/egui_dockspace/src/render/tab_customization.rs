@@ -4,7 +4,7 @@ use dockspace::policy::TabBarInteraction;
 use dockspace::runtime::{SurfacePaintDisposition, TabBarPaintRecord, TabPaintRecord};
 use egui::{Align, Layout, Response, Stroke, UiBuilder};
 
-use crate::{Tab, TabBar, TabBarId, TabBarSlot, TabVisuals};
+use crate::{Tab, TabBar, TabBarId, TabBarSlot, TabStylePreset, TabVisuals};
 
 use super::RenderContext;
 use super::actions::effective_enabled;
@@ -19,29 +19,40 @@ pub(super) fn paint_tab(
     pane_focused: bool,
 ) -> TabVisuals {
     let selected = record.selected();
+    let preset = context.style.tab_preset;
+    let emphasized = RenderContext::response_emphasized(response);
     let text_override = if selected {
         context.style.visuals.tab_active_text_color
     } else {
         context.style.visuals.tab_text_color
     };
     let visuals = TabVisuals {
-        fill: if selected {
+        fill: if emphasized && (!selected || preset == TabStylePreset::ImGui) {
+            if preset == TabStylePreset::Dockspace {
+                context.interaction_fill(response)
+            } else {
+                context.visuals.tab_hover_fill
+            }
+        } else if selected {
             context.visuals.tab_active_fill
-        } else if RenderContext::response_emphasized(response) {
-            context.interaction_fill(response)
         } else {
             context.visuals.tab_fill
         },
         stroke: if selected {
-            context.style.visuals.tab_active_stroke
+            context.visuals.tab_active_stroke
         } else {
-            context.style.visuals.tab_stroke
-        }
-        .unwrap_or(Stroke::NONE),
+            context.visuals.tab_stroke
+        },
+        overline_stroke: if selected {
+            context.visuals.tab_selected_overline
+        } else {
+            Stroke::NONE
+        },
+        connect_to_pane: selected && context.style.tab_connect_to_pane,
         corner_radius: context.style.tab_corner_radius,
         text_color: if selected {
             context.visuals.tab_active_text_color
-        } else if RenderContext::response_emphasized(response) {
+        } else if emphasized && preset == TabStylePreset::Dockspace {
             context.interaction_text_color(response, text_override)
         } else {
             context.visuals.tab_text_color

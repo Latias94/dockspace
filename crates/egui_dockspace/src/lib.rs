@@ -88,7 +88,7 @@ pub use response::{
 };
 pub use style::{
     DockDensity, DockFrameVisuals, DockStyle, DockStyleError, DockVisualOverrides,
-    TabCloseVisibility, TabGroupGripVisibility,
+    TabCloseVisibility, TabGroupGripVisibility, TabStylePreset,
 };
 pub use tab::{Tab, TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose, TabVisuals};
 

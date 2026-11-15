@@ -1,9 +1,9 @@
 # Browser workbench
 
 The same eight-pane editor as the desktop workbench, compiled to WebAssembly.
-Tabs, nested splits, contained floating groups and configurable motion run in
-one canvas. Separate browser windows and native multiview are outside this
-demo's scope.
+Tabs, nested splits, contained floating groups, selectable tab-style presets and
+configurable motion run in one canvas. Separate browser windows and native
+multiview are outside this demo's scope.
 
 The `egui_dockspace/web` host owns the complete egui output and renderer
 settlement. Its WGPU initialization is asynchronous; it prefers WebGPU and
@@ -44,10 +44,11 @@ npm test
 Tests run one Chromium worker with real mouse and keyboard input, against the
 generated site under a project-path prefix. They cover merges, floating-group
 retirement, splitters, focus cancellation and recovery, retained edits,
-intermediate and disabled motion, live reduced-motion changes, initialization
-failure and native device scale two. `?test=1` enables read-only geometry
-and state diagnostics emitted after exact renderer presentation; it adds no
-input or layout mutation endpoint. Ordinary demo loads omit those diagnostics.
+tab-style and theme changes, intermediate and disabled motion, live
+reduced-motion changes, initialization failure and native device scale two.
+`?test=1` enables read-only geometry and state diagnostics emitted after exact
+renderer presentation; it adds no input or layout mutation endpoint. Ordinary
+demo loads omit those diagnostics.
 
 The [Pages workflow](../../.github/workflows/pages.yml) builds and tests pull
 requests, and deploys successful main builds. Configure the repository's

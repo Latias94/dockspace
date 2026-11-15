@@ -135,7 +135,7 @@ pub(crate) fn paint_controls(
                 .flatten(),
         );
         let description = if enabled {
-            "Drag to move floating window"
+            "Drag to move or dock the entire floating window, including every tab group and split inside it."
         } else if core_enabled {
             "Dragging floating windows is unavailable in this host"
         } else {
@@ -153,10 +153,16 @@ pub(crate) fn paint_controls(
             }
         });
         if !paint_omitted && enabled {
-            paint_title_grip(
+            let grip = egui::Rect::from_min_max(
+                title.min,
+                egui::pos2((title.left() + 20.0).min(title.right()), title.bottom()),
+            );
+            super::drag_grip::paint(
                 context.ui,
-                title,
-                context.interaction_stroke(&response, Some(title_text_color)),
+                grip,
+                context
+                    .interaction_stroke(&response, Some(title_text_color))
+                    .color,
             );
         }
         if enabled && (response.hovered() || paint_omitted) {
@@ -308,24 +314,6 @@ pub(crate) fn paint_controls(
                 .ui
                 .ctx()
                 .set_cursor_icon(resize_cursor(resize.direction()));
-        }
-    }
-}
-
-fn paint_title_grip(ui: &egui::Ui, title: egui::Rect, stroke: egui::Stroke) {
-    let grip = egui::Rect::from_center_size(
-        egui::pos2(title.left() + 10.0, title.center().y),
-        egui::vec2(10.0, 14.0),
-    );
-    let spacing = 3.5_f32.min(grip.width() * 0.22).min(grip.height() * 0.22);
-    let radius = 1.0_f32.min(spacing * 0.32);
-    for x in [-0.5, 0.5] {
-        for y in [-1.0, 0.0, 1.0] {
-            ui.painter().circle_filled(
-                grip.center() + egui::vec2(x * spacing, y * spacing),
-                radius,
-                stroke.color,
-            );
         }
     }
 }

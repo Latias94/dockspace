@@ -7,14 +7,16 @@ use dockspace::runtime::{
 use egui::{Color32, CornerRadius, Frame, Margin, Rgba, Stroke, Style as EguiStyle, Vec2, Visuals};
 
 mod frame;
+mod preset;
 pub use frame::DockFrameVisuals;
+pub use preset::TabStylePreset;
 
 /// Optional visual overrides applied on top of the current egui theme.
 ///
 /// Every override defaults to unset, so dockspace follows the [`egui::Visuals`]
 /// active on the [`egui::Ui`] that paints it. Set only the colors that belong to
 /// an application-specific visual language; theme changes continue to affect
-/// every color left unspecified. Optional tab outlines default to no stroke.
+/// every color left unspecified. Tab defaults come from [`TabStylePreset`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DockVisualOverrides {
     /// Fill behind tiled docking content.
@@ -23,14 +25,19 @@ pub struct DockVisualOverrides {
     pub tab_bar_fill: Option<Color32>,
     /// Fill of an inactive tab.
     pub tab_fill: Option<Color32>,
-    /// Fill of a hovered inactive tab.
+    /// Fill of a hovered tab; the preset determines selected-tab precedence.
     pub tab_hover_fill: Option<Color32>,
     /// Fill of the selected tab.
     pub tab_active_fill: Option<Color32>,
     /// Outline of an inactive tab; defaults to no outline.
     pub tab_stroke: Option<Stroke>,
-    /// Outline of the selected tab; defaults to no outline.
+    /// Outline of the selected tab; the default comes from the tab preset.
     pub tab_active_stroke: Option<Stroke>,
+    /// Top accent on the selected tab, independent of content or keyboard focus.
+    /// Use `Stroke::NONE` to hide a preset's accent.
+    pub tab_selected_overline: Option<Stroke>,
+    /// Line separating the tab bar from the pane; `Stroke::NONE` hides it.
+    pub tab_bar_stroke: Option<Stroke>,
     /// Text color of inactive tabs.
     pub tab_text_color: Option<Color32>,
     /// Text color of the selected tab.
@@ -80,6 +87,10 @@ pub(crate) struct ResolvedDockVisuals {
     pub(crate) tab_fill: Color32,
     pub(crate) tab_hover_fill: Color32,
     pub(crate) tab_active_fill: Color32,
+    pub(crate) tab_stroke: Stroke,
+    pub(crate) tab_active_stroke: Stroke,
+    pub(crate) tab_selected_overline: Stroke,
+    pub(crate) tab_bar_stroke: Stroke,
     pub(crate) tab_text_color: Color32,
     pub(crate) tab_active_text_color: Color32,
     pub(crate) pane_focus_stroke: Stroke,
@@ -107,29 +118,32 @@ pub(crate) struct ResolvedContainedWindowVisuals {
 }
 
 impl DockVisualOverrides {
-    fn resolve(&self, visuals: &Visuals) -> ResolvedDockVisuals {
+    fn resolve(&self, visuals: &Visuals, preset: TabStylePreset) -> ResolvedDockVisuals {
         let tab_bar_fill = if visuals.dark_mode {
             visuals.extreme_bg_color
         } else {
             (Rgba::from(visuals.panel_fill) * Rgba::from_gray(0.8)).into()
         };
+        let tabs = preset.palette(visuals, tab_bar_fill);
         let selection = visuals.selection.bg_fill;
         ResolvedDockVisuals {
             workspace_fill: self.workspace_fill.unwrap_or(visuals.panel_fill),
             tab_bar_fill: self.tab_bar_fill.unwrap_or(tab_bar_fill),
-            tab_fill: self.tab_fill.unwrap_or(Color32::TRANSPARENT),
-            tab_hover_fill: self
-                .tab_hover_fill
-                .unwrap_or(visuals.widgets.hovered.weak_bg_fill),
-            tab_active_fill: self.tab_active_fill.unwrap_or(visuals.panel_fill),
+            tab_fill: self.tab_fill.unwrap_or(tabs.fill),
+            tab_hover_fill: self.tab_hover_fill.unwrap_or(tabs.hover_fill),
+            tab_active_fill: self.tab_active_fill.unwrap_or(tabs.active_fill),
+            tab_stroke: self.tab_stroke.unwrap_or(Stroke::NONE),
+            tab_active_stroke: self.tab_active_stroke.unwrap_or(tabs.active_stroke),
+            tab_selected_overline: self.tab_selected_overline.unwrap_or(tabs.selected_overline),
+            tab_bar_stroke: self.tab_bar_stroke.unwrap_or(tabs.bar_stroke),
             tab_text_color: self
                 .tab_text_color
                 .or(visuals.override_text_color)
-                .unwrap_or(visuals.widgets.inactive.fg_stroke.color),
+                .unwrap_or(tabs.text_color),
             tab_active_text_color: self
                 .tab_active_text_color
                 .or(visuals.override_text_color)
-                .unwrap_or(visuals.widgets.active.fg_stroke.color),
+                .unwrap_or(tabs.active_text_color),
             pane_focus_stroke: self
                 .pane_focus_stroke
                 .unwrap_or(Stroke::new(2.0, visuals.selection.stroke.color)),
@@ -213,6 +227,9 @@ pub enum TabGroupGripVisibility {
 /// are never derived from viewport size, pointer velocity, elapsed time, or DPI.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DockStyle {
+    /// Theme-relative tab palette and hover behavior. Use [`Self::apply_tab_preset`]
+    /// to also apply the recipe's geometry; direct assignment preserves metrics.
+    pub tab_preset: TabStylePreset,
     /// Delay before an active drag selects its hovered tab; `None` disables it.
     pub hover_selection_delay: Option<std::time::Duration>,
     /// Delay before a touch press becomes a long press.
@@ -229,6 +246,9 @@ pub struct DockStyle {
     pub tab_bar_height: f32,
     /// Radius of tab backgrounds and outlines; independent of core hit geometry.
     pub tab_corner_radius: CornerRadius,
+    /// Open the selected tab's bottom outline into the pane below it.
+    /// This is visual only and does not alter its allocation or hit geometry.
+    pub tab_connect_to_pane: bool,
     /// Width of each tab-strip edge scroll band in egui points; zero disables it.
     pub tab_strip_edge_scroll_band: f32,
     /// Positive interval between edge scroll steps; `None` disables edge scrolling.
@@ -342,7 +362,7 @@ impl DockStyle {
     }
 
     pub(crate) fn resolved_visuals(&self, visuals: &Visuals) -> ResolvedDockVisuals {
-        self.visuals.resolve(visuals)
+        self.visuals.resolve(visuals, self.tab_preset)
     }
 
     pub(crate) fn resolved_popup_frame(&self, style: &EguiStyle) -> Frame {
@@ -476,6 +496,11 @@ impl DockStyle {
         for (field, stroke) in [
             ("tab_stroke.width", self.visuals.tab_stroke),
             ("tab_active_stroke.width", self.visuals.tab_active_stroke),
+            (
+                "tab_selected_overline.width",
+                self.visuals.tab_selected_overline,
+            ),
+            ("tab_bar_stroke.width", self.visuals.tab_bar_stroke),
             ("tab_focus_stroke.width", self.visuals.tab_focus_stroke),
             ("pane_focus_stroke.width", self.visuals.pane_focus_stroke),
         ] {
@@ -497,12 +522,14 @@ impl Default for DockStyle {
     fn default() -> Self {
         let geometry = DockPresentationConfig::default();
         Self {
+            tab_preset: TabStylePreset::default(),
             hover_selection_delay: geometry.hover_selection_delay(),
             touch_long_press_delay: geometry.touch_long_press_delay(),
             touch_press_slop_distance: geometry.touch_press_slop_distance() as f32,
             touch_resize_hit_extent: geometry.touch_resize_hit_extent() as f32,
             tab_bar_height: geometry.tab_bar_height() as f32,
             tab_corner_radius: CornerRadius::ZERO,
+            tab_connect_to_pane: false,
             tab_strip_edge_scroll_band: geometry.tab_strip_edge_scroll_band() as f32,
             tab_strip_edge_scroll_interval: geometry.tab_strip_edge_scroll_interval(),
             tab_group_grip_extent: geometry.tab_group_grip_extent() as f32,
@@ -643,18 +670,21 @@ mod tests {
         };
         style.visuals.tab_stroke = Some(Stroke::new(1.0, Color32::RED));
         style.visuals.tab_active_stroke = Some(Stroke::new(2.0, Color32::BLUE));
+        style.visuals.tab_selected_overline = Some(Stroke::new(2.0, Color32::GREEN));
+        style.visuals.tab_bar_stroke = Some(Stroke::new(1.0, Color32::GRAY));
         assert_eq!(style.validate(), Ok(()));
         assert_eq!(
             style.presentation_config().unwrap(),
             DockPresentationConfig::default()
         );
         for width in [-1.0, f32::NAN, f32::INFINITY] {
-            for active in [false, true] {
+            for decoration in 0..4 {
                 let mut candidate = style.clone();
-                let stroke = if active {
-                    &mut candidate.visuals.tab_active_stroke
-                } else {
-                    &mut candidate.visuals.tab_stroke
+                let stroke = match decoration {
+                    0 => &mut candidate.visuals.tab_stroke,
+                    1 => &mut candidate.visuals.tab_active_stroke,
+                    2 => &mut candidate.visuals.tab_selected_overline,
+                    _ => &mut candidate.visuals.tab_bar_stroke,
                 };
                 stroke.as_mut().unwrap().width = width;
                 assert!(candidate.validate().is_err());

@@ -38,13 +38,20 @@ pub(super) fn paint(
                 context.style.visuals.tab_text_color
             }
             .or(context.ui.visuals().override_text_color);
-            let stroke = if selected {
+            let explicit_stroke = if selected {
                 context.style.visuals.tab_active_stroke
             } else {
                 context.style.visuals.tab_stroke
-            }
-            .unwrap_or_else(|| {
-                if tab.is_payload() {
+            };
+            let stroke = explicit_stroke.unwrap_or_else(|| {
+                let preset_stroke = if selected {
+                    context.visuals.tab_active_stroke
+                } else {
+                    context.visuals.tab_stroke
+                };
+                if preset_stroke.width > 0.0 {
+                    preset_stroke
+                } else if tab.is_payload() {
                     Stroke::new(1.0, context.visuals.drop_border_color)
                 } else {
                     Stroke::NONE
@@ -66,6 +73,12 @@ pub(super) fn paint(
                     context.visuals.tab_fill
                 },
                 stroke,
+                overline_stroke: if selected {
+                    context.visuals.tab_selected_overline
+                } else {
+                    Stroke::NONE
+                },
+                connect_to_pane: selected && context.style.tab_connect_to_pane,
                 corner_radius: context.style.tab_corner_radius,
                 text_color: if selected {
                     context.visuals.tab_active_text_color
@@ -99,6 +112,7 @@ pub(super) fn paint(
             .tab_bar()
             .and_then(|bar| geometry::egui_rect(bar.bounds())),
         tab_bar_fill: context.visuals.tab_bar_fill,
+        tab_bar_stroke: context.visuals.tab_bar_stroke,
         tabs,
         label_rect,
         label_id: context.ui.make_persistent_id((

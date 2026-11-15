@@ -245,6 +245,33 @@ For denser editor chrome, use
 padding, minimum width and group grips while retaining the current font size.
 The `basic` example lets you compare compact and comfortable density.
 
+Choose **Tab style** in the desktop or [browser workbench](../../integration/egui-web-demo)
+to compare three theme-relative recipes:
+
+| Preset | Tab treatment |
+| --- | --- |
+| `TabStylePreset::Dockspace` | Flat tabs with egui hover colors |
+| `TabStylePreset::ImGui` | Rounded upper corners, tinted backgrounds and a selected-tab overline |
+| `TabStylePreset::EguiTiles` | Square tabs, a thin separator and a selected outline open to the pane |
+
+```rust
+use egui_dockspace::{DockStyle, TabStylePreset};
+
+let mut style = DockStyle::default();
+style.apply_tab_preset(TabStylePreset::ImGui);
+style.tab_bar_height = 26.0;
+style.tab_horizontal_padding = 10.0;
+style.visuals.tab_selected_overline = Some(egui::Stroke::NONE);
+```
+
+`apply_tab_preset` sets tab geometry once and retains explicit color/stroke
+overrides and non-tab settings. Later metric edits stay in effect. To retain
+font-derived geometry, assign `style.tab_preset` directly instead. Colors resolve
+from the current Ui theme each pass, followed by `DockVisualOverrides` and then
+per-tab callbacks. These presets borrow visual conventions; docking rules and
+focus behavior remain dockspace's. Change a live style with `set_style` between
+settled UI runs, after reporting the previous output's presentation result.
+
 Override `PaneView::tab_ui` for per-item backgrounds, icons, badges or buttons;
 `Tab::paint`, `paint_background` and `paint_title` retain the default rendering
 where useful. Return the final `TabVisuals` to coordinate built-in focus and
@@ -262,6 +289,10 @@ stay in the adapter. Enable **Custom tabs** in the workbench for a
 Close icon size and visibility are separate from its hit target. The group
 grip can be permanent, shown on bar hover, or hidden with its space reclaimed.
 Floating windows and popups accept independent frame appearance overrides.
+
+The six-dot grip in a tab bar moves that tab group. The same grip in a floating
+window's title bar moves or docks the entire window, including its internal
+splits and other tab groups. Dragging an individual tab moves only its pane.
 
 Configure gesture bindings separately with `DockspaceBuilder::input` or
 `Dockspace::set_input`:

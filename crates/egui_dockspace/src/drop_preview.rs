@@ -39,6 +39,10 @@ pub struct DropPreviewTab {
     pub fill: Color32,
     /// Outline painted inside the complete tab allocation.
     pub stroke: Stroke,
+    /// Selected-tab top accent, independent of content or keyboard focus.
+    pub overline_stroke: Stroke,
+    /// Open the bottom outline into the pane, matching the live tab recipe.
+    pub connect_to_pane: bool,
     /// Rounding of the tab background and outline.
     pub corner_radius: CornerRadius,
     /// Fallback color for title spans without an explicit color.
@@ -61,15 +65,14 @@ impl DropPreviewTab {
         let Some(visible) = self.visible_rect else {
             return;
         };
-        ui.painter()
-            .with_clip_rect(ui.clip_rect().intersect(visible))
-            .rect(
-                self.rect,
-                self.corner_radius,
-                self.fill,
-                self.stroke,
-                StrokeKind::Inside,
-            );
+        crate::tab::TabBackground {
+            fill: self.fill,
+            stroke: self.stroke,
+            corner_radius: self.corner_radius,
+            overline_stroke: self.overline_stroke,
+            connect_to_pane: self.connect_to_pane,
+        }
+        .paint(ui.painter(), self.rect, ui.clip_rect().intersect(visible));
     }
 
     /// Paints the title elided to `rect`, respecting the future title clip.
@@ -127,6 +130,8 @@ pub struct DropPreview {
     pub tab_bar_rect: Option<Rect>,
     /// Background of the future target tab strip.
     pub tab_bar_fill: Color32,
+    /// Bottom separator of the future target tab strip.
+    pub tab_bar_stroke: Stroke,
     /// Complete future order, including members clipped out of the viewport.
     pub tabs: Vec<DropPreviewTab>,
     /// Maximum space available for a single-line destination hint.
@@ -145,6 +150,7 @@ impl DropPreview {
     pub fn paint_tabs(&self, ui: &Ui) {
         if let Some(rect) = self.tab_bar_rect {
             ui.painter().rect_filled(rect, 0.0, self.tab_bar_fill);
+            crate::tab::paint_bar_separator(ui.painter(), rect, self.tab_bar_stroke);
         }
         for tab in &self.tabs {
             tab.paint(ui);

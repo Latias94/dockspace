@@ -6,7 +6,7 @@ use dockspace::runtime::{
 };
 use egui::accesskit::{Action, Role};
 use egui::{
-    Align, CursorIcon, EventFilter, Id, Key, Layout, PointerButton, Sense, Stroke, StrokeKind, Ui,
+    Align, CursorIcon, EventFilter, Id, Key, Layout, PointerButton, Sense, StrokeKind, Ui,
     UiBuilder, pos2,
 };
 
@@ -180,6 +180,11 @@ pub(crate) fn paint_tab_bar(
             .ui
             .painter()
             .rect_filled(bounds, 0.0, context.visuals.tab_bar_fill);
+        crate::tab::paint_bar_separator(
+            context.ui.painter(),
+            bounds,
+            context.visuals.tab_bar_stroke,
+        );
     }
     let id =
         context
@@ -284,8 +289,18 @@ fn paint_group_drag_regions(
             },
             enabled.then_some(receiver).flatten(),
         );
+        let description = "Drag to move or dock this tab group. Other tab groups stay in place.";
+        context.ui.ctx().accesskit_node_builder(id, |node| {
+            node.set_role(Role::GenericContainer);
+            node.set_label("Drag tab group");
+            node.set_description(description);
+            node.set_bounds(accesskit_bounds(bounds));
+            if !enabled {
+                node.set_disabled();
+            }
+        });
         let response = if enabled {
-            response.on_hover_text("Drag tab group")
+            response.on_hover_text(description)
         } else {
             response
         };
@@ -305,26 +320,14 @@ fn paint_group_drag_regions(
                     == crate::TabGroupGripVisibility::Always
                     || bar_hovered)
             {
-                paint_group_grip_icon(
+                super::drag_grip::paint(
                     context.ui,
                     bounds,
-                    context.interaction_stroke(&response, context.style.visuals.tab_text_color),
+                    context
+                        .interaction_stroke(&response, context.style.visuals.tab_text_color)
+                        .color,
                 );
             }
-        }
-    }
-}
-
-fn paint_group_grip_icon(ui: &Ui, rect: egui::Rect, stroke: Stroke) {
-    let spacing = 3.5_f32.min(rect.width() * 0.18).min(rect.height() * 0.18);
-    let radius = 1.0_f32.min(spacing * 0.32);
-    for x in [-0.5, 0.5] {
-        for y in [-1.0, 0.0, 1.0] {
-            ui.painter().circle_filled(
-                rect.center() + egui::vec2(x * spacing, y * spacing),
-                radius,
-                stroke.color,
-            );
         }
     }
 }
