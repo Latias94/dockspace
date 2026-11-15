@@ -30,10 +30,11 @@ struct SplitterFixture {
     context: egui::Context,
     store: NativeReceiverStore,
     zoom: f32,
+    equalize: bool,
 }
 
 impl SplitterFixture {
-    fn new(axis: DockspaceAxis, zoom: f32) -> Self {
+    fn new(axis: DockspaceAxis, zoom: f32, equalize: bool) -> Self {
         let node = DockspaceNode::equal_split(
             axis,
             [
@@ -85,6 +86,7 @@ impl SplitterFixture {
             context,
             store: NativeReceiverStore::default(),
             zoom,
+            equalize,
         }
     }
 
@@ -102,10 +104,14 @@ impl SplitterFixture {
                     ..Default::default()
                 },
                 |ui| {
-                    let mut frame = NativeHostFrame::new(
+                    let mut frame = NativeHostFrame::new_with_input(
                         self.session
                             .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
                             .unwrap(),
+                        egui_dockspace::DockInputConfig {
+                            double_click_equalizes_splitter: self.equalize,
+                            ..Default::default()
+                        },
                         Arc::clone(&bridge),
                         &mut self.store,
                         None,
@@ -254,84 +260,89 @@ fn real_splitter_hit_padding_keeps_click_occlusion_separate_from_resize_delivery
     for axis in [DockspaceAxis::Horizontal, DockspaceAxis::Vertical] {
         for zoom in [1.0_f32, 1.2] {
             for side in [0.25, 0.75] {
-                let trace = format!("splitter-padding axis={axis:?}, zoom={zoom}, side={side}");
-                let mut fixture = SplitterFixture::new(axis, zoom);
-                let (hit, draw) = fixture.publish();
-                let point = match axis {
-                    DockspaceAxis::Horizontal => LogicalPoint::new(
-                        hit.x() + hit.width() * side,
-                        hit.y() + hit.height() * 0.75,
-                    )
-                    .unwrap(),
-                    DockspaceAxis::Vertical => {
-                        LogicalPoint::new(hit.x() + 40.0, hit.y() + hit.height() * side).unwrap()
-                    }
-                };
-                assert!(
-                    hit.contains(point) && !draw.contains(point),
-                    "{trace}: {hit:?}, {draw:?}, {point:?}"
-                );
-                let before_version = fixture.session.version();
-                let (_, answers) = fixture.pointer(
-                    point,
-                    NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
-                    &trace,
-                );
-                assert!(
-                    matches!(answers[0], Some(NativeReceiverAnswer::Blocked(_))),
-                    "{trace}: the drag-only widget occludes the underlying pane's click lane: {answers:?}"
-                );
-                assert!(
-                    matches!(answers[1], Some(NativeReceiverAnswer::Dock(receiver)) if receiver.descriptor().role() == DockspaceReceiverRole::Splitter),
-                    "{trace}: {answers:?}"
-                );
-                assert!(fixture.session.has_active_gesture(), "{trace}");
-                let moved = match axis {
-                    DockspaceAxis::Horizontal => {
-                        LogicalPoint::new(point.x() + 24.0, point.y()).unwrap()
-                    }
-                    DockspaceAxis::Vertical => {
-                        LogicalPoint::new(point.x(), point.y() + 24.0).unwrap()
-                    }
-                };
-                fixture.pointer(moved, NativePointerEvent::Moved, &trace);
-                let (released, _) = fixture.pointer(
-                    moved,
-                    NativePointerEvent::ButtonReleased(NativePointerButton::Primary),
-                    &trace,
-                );
-                assert!(released.workspace_changed(), "{trace}: {released:?}");
-                assert!(
-                    released
-                        .manipulation_feedback()
-                        .iter()
-                        .any(|feedback| feedback.status()
-                            == DockspaceManipulationStatus::Delivered(
-                                DockspaceManipulationDelivery::SplitterResize
-                            )),
-                    "{trace}: {released:?}"
-                );
-                assert!(!fixture.session.has_active_gesture(), "{trace}");
-                assert!(!fixture.session.has_pending_presentation(), "{trace}");
-                assert_ne!(fixture.session.version(), before_version, "{trace}");
-                let view = fixture.session.view();
-                let split = view
-                    .root(RootId::new(1))
-                    .unwrap()
-                    .content()
-                    .unwrap()
-                    .split()
-                    .unwrap();
-                let items = split
-                    .children()
-                    .flat_map(|child| child.tabs().unwrap().items().iter().copied())
-                    .collect::<Vec<_>>();
-                assert_eq!(items, [ItemId::new(1), ItemId::new(2)], "{trace}");
-                let (_, moved_draw) = fixture.publish();
-                assert_ne!(
-                    draw, moved_draw,
-                    "{trace}: the resize must actually move the divider"
-                );
+                for equalize in [false, true] {
+                    let trace = format!(
+                        "splitter-padding axis={axis:?}, zoom={zoom}, side={side}, equalize={equalize}"
+                    );
+                    let mut fixture = SplitterFixture::new(axis, zoom, equalize);
+                    let (hit, draw) = fixture.publish();
+                    let point = match axis {
+                        DockspaceAxis::Horizontal => LogicalPoint::new(
+                            hit.x() + hit.width() * side,
+                            hit.y() + hit.height() * 0.75,
+                        )
+                        .unwrap(),
+                        DockspaceAxis::Vertical => {
+                            LogicalPoint::new(hit.x() + 40.0, hit.y() + hit.height() * side)
+                                .unwrap()
+                        }
+                    };
+                    assert!(
+                        hit.contains(point) && !draw.contains(point),
+                        "{trace}: {hit:?}, {draw:?}, {point:?}"
+                    );
+                    let before_version = fixture.session.version();
+                    let (_, answers) = fixture.pointer(
+                        point,
+                        NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+                        &trace,
+                    );
+                    assert!(
+                        matches!(answers[0], Some(NativeReceiverAnswer::Blocked(_))),
+                        "{trace}: the splitter widget occludes the underlying pane's click lane: {answers:?}"
+                    );
+                    assert!(
+                        matches!(answers[1], Some(NativeReceiverAnswer::Dock(receiver)) if receiver.descriptor().role() == DockspaceReceiverRole::Splitter),
+                        "{trace}: {answers:?}"
+                    );
+                    assert!(fixture.session.has_active_gesture(), "{trace}");
+                    let moved = match axis {
+                        DockspaceAxis::Horizontal => {
+                            LogicalPoint::new(point.x() + 24.0, point.y()).unwrap()
+                        }
+                        DockspaceAxis::Vertical => {
+                            LogicalPoint::new(point.x(), point.y() + 24.0).unwrap()
+                        }
+                    };
+                    fixture.pointer(moved, NativePointerEvent::Moved, &trace);
+                    let (released, _) = fixture.pointer(
+                        moved,
+                        NativePointerEvent::ButtonReleased(NativePointerButton::Primary),
+                        &trace,
+                    );
+                    assert!(released.workspace_changed(), "{trace}: {released:?}");
+                    assert!(
+                        released
+                            .manipulation_feedback()
+                            .iter()
+                            .any(|feedback| feedback.status()
+                                == DockspaceManipulationStatus::Delivered(
+                                    DockspaceManipulationDelivery::SplitterResize
+                                )),
+                        "{trace}: {released:?}"
+                    );
+                    assert!(!fixture.session.has_active_gesture(), "{trace}");
+                    assert!(!fixture.session.has_pending_presentation(), "{trace}");
+                    assert_ne!(fixture.session.version(), before_version, "{trace}");
+                    let view = fixture.session.view();
+                    let split = view
+                        .root(RootId::new(1))
+                        .unwrap()
+                        .content()
+                        .unwrap()
+                        .split()
+                        .unwrap();
+                    let items = split
+                        .children()
+                        .flat_map(|child| child.tabs().unwrap().items().iter().copied())
+                        .collect::<Vec<_>>();
+                    assert_eq!(items, [ItemId::new(1), ItemId::new(2)], "{trace}");
+                    let (_, moved_draw) = fixture.publish();
+                    assert_ne!(
+                        draw, moved_draw,
+                        "{trace}: the resize must actually move the divider"
+                    );
+                }
             }
         }
     }

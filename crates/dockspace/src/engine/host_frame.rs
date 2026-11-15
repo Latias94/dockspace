@@ -525,6 +525,15 @@ impl<'frame> HostFrameView<'frame> {
             .is_ok()
     }
 
+    pub(crate) fn item_close_is_available(&self, item: ItemId) -> bool {
+        self.engine
+            .capture_content_close(
+                crate::graph::command::ContentCloseTarget::Item(item),
+                self.engine.policy_snapshot(),
+            )
+            .is_ok()
+    }
+
     pub(crate) fn default_contained_float_rect(
         &self,
         root: RootId,

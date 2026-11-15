@@ -1,7 +1,8 @@
 //! On-demand resize limits from the same touching-frontier solver as gestures.
 
 use crate::graph::Axis;
-use crate::presentation::scene::SplitterResizeTarget;
+use crate::interaction::ResizeDeltaInterval;
+use crate::presentation::scene::{SplitterResizeTarget, SplitterSceneId};
 
 use super::super::SurfaceSplitterAdjustment;
 use super::{DockspaceVisualId, SurfacePaintPlan, VisualIdentity};
@@ -85,14 +86,67 @@ impl SurfacePaintPlan<'_> {
         match adjustment {
             SurfaceSplitterAdjustment::Decrement => Some(-self.splitter_keyboard_step),
             SurfaceSplitterAdjustment::Increment => Some(self.splitter_keyboard_step),
-            SurfaceSplitterAdjustment::Minimum | SurfaceSplitterAdjustment::Maximum => {
+            SurfaceSplitterAdjustment::Minimum
+            | SurfaceSplitterAdjustment::Maximum
+            | SurfaceSplitterAdjustment::Equalize => {
                 let limits = self
                     .candidate
                     .splitter_resize_delta_interval(self.plan, target, axis)?;
-                Some(match adjustment {
-                    SurfaceSplitterAdjustment::Minimum => limits.minimum,
-                    _ => limits.maximum,
-                })
+                if adjustment == SurfaceSplitterAdjustment::Minimum {
+                    Some(limits.minimum)
+                } else if adjustment == SurfaceSplitterAdjustment::Maximum {
+                    Some(limits.maximum)
+                } else {
+                    self.splitter_equalization_delta(target, axis, limits)
+                }
+            }
+        }
+    }
+
+    fn splitter_equalization_delta(
+        self,
+        target: SplitterResizeTarget,
+        axis: Axis,
+        limits: ResizeDeltaInterval,
+    ) -> Option<f64> {
+        let equalize = |id: SplitterSceneId| {
+            let record = self.plan.splitter_record(id)?;
+            let before = *record.child_extents().get(id.index)?;
+            let after = *record.child_extents().get(id.index + 1)?;
+            let delta = (after - before) * 0.5;
+            let scale = if record
+                .central_index()
+                .is_some_and(|central| central == id.index || central == id.index + 1)
+            {
+                record.child_extents().iter().sum::<f64>()
+            } else {
+                before + after
+            };
+            if !delta.is_finite() || !scale.is_finite() {
+                return None;
+            }
+            let delta = delta.clamp(limits.minimum, limits.maximum);
+            // Only a central child in this pair depends on the whole split's
+            // remainder. Unrelated large siblings must not suppress a locally
+            // representable adjustment. Ordinary displacements use no endpoint.
+            let precision = scale * f64::EPSILON * 64.0;
+            Some(if delta.abs() <= precision { 0.0 } else { delta })
+        };
+        match target {
+            SplitterResizeTarget::Handle(id) => equalize(id),
+            SplitterResizeTarget::Junction(junction) => {
+                let mut displacement = None;
+                for id in junction.splitters() {
+                    if self.plan.splitter_record(id)?.axis() != axis {
+                        continue;
+                    }
+                    let delta = equalize(id)?;
+                    if displacement.is_some_and(|previous| previous != delta) {
+                        return None;
+                    }
+                    displacement = Some(delta);
+                }
+                displacement
             }
         }
     }

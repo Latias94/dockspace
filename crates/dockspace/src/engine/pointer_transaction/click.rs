@@ -538,35 +538,7 @@ impl DockEngine {
         policy: &DockPolicySnapshot,
         target: CloseSceneTarget,
     ) -> Result<FrozenCloseClick, InteractionRejection> {
-        let (close_bounds, layer, content_target) = match target {
-            CloseSceneTarget::Tab(id) => {
-                let Some(record) = plan.tab_records().iter().find(|record| *record.id() == id)
-                else {
-                    return Err(InteractionRejection::CloseSceneTargetUnavailable { target });
-                };
-                let Some(close_bounds) = record.close_bounds() else {
-                    return Err(InteractionRejection::CloseControlUnavailable { target });
-                };
-                (
-                    close_bounds,
-                    record.layer(),
-                    ContentCloseTarget::Item(id.item),
-                )
-            }
-            CloseSceneTarget::Contained(floating) => {
-                let Some(record) = plan.contained_record(floating) else {
-                    return Err(InteractionRejection::CloseSceneTargetUnavailable { target });
-                };
-                let Some(close_bounds) = record.close_bounds() else {
-                    return Err(InteractionRejection::CloseControlUnavailable { target });
-                };
-                (
-                    close_bounds,
-                    record.layer(),
-                    ContentCloseTarget::Root(record.root()),
-                )
-            }
-        };
+        let (close_bounds, layer, content_target) = Self::scene_close_region(plan, target)?;
         if !close_bounds.contains(point) {
             return Err(InteractionRejection::CloseActivationHitMismatch { target });
         }

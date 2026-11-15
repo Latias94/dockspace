@@ -176,7 +176,7 @@ impl Dockspace {
         Ok(DockspaceMutation::from_runtime_report(&report))
     }
 
-    /// Returns the adapter's docking activation and cancellation bindings.
+    /// Returns the adapter's gesture, tab-close and splitter-shortcut bindings.
     #[must_use]
     pub const fn input(&self) -> DockInputConfig {
         self.pointer.input()

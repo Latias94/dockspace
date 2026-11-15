@@ -210,6 +210,8 @@ pub enum TabGestureSource {
 pub enum CloseSceneTarget {
     /// Close one item through its exact painted tab control.
     Tab(TabSceneId),
+    /// Close one item through an independent activation of its visible tab body.
+    TabBody(TabSceneId),
     /// Close every item in one exact contained-root presentation.
     Contained(FloatingPresentationId),
 }

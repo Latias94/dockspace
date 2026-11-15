@@ -2,14 +2,43 @@
 
 use dockspace::runtime::TabPaintRecord;
 use egui::accesskit::{Action, Role};
-use egui::{Sense, UiBuilder, vec2};
+use egui::{PointerButton, Sense, UiBuilder, vec2};
 
 use crate::{TabClose, TabCloseVisibility, TabVisuals};
 
 use super::RenderContext;
-use super::actions::{button_activation_origin, effective_enabled};
+use super::actions::{button_activation_origin, effective_enabled, unambiguous_pointer_click};
 use super::geometry::{accesskit_bounds, egui_rect};
 use super::measurement::TabPaintResource;
+
+pub(super) fn capture_body_click(
+    context: &mut RenderContext<'_, '_, '_>,
+    tab: TabPaintRecord<'_>,
+    response: &egui::Response,
+) {
+    if let Some(origin) = middle_click_origin(context, tab, response)
+        && let Some(action) = context.plan.prepare_tab_body_close(tab.item())
+    {
+        context.push_local_action(origin, action);
+    }
+}
+
+fn middle_click_origin(
+    context: &RenderContext<'_, '_, '_>,
+    tab: TabPaintRecord<'_>,
+    response: &egui::Response,
+) -> Option<egui::Id> {
+    // The core journal handles primary-button gestures. Auxiliary clicks keep
+    // egui's completed widget routing, including application child controls.
+    (context.input.middle_click_closes_tab
+        && effective_enabled(context.ui, response.enabled())
+        && unambiguous_pointer_click(context.ui, response, PointerButton::Middle))
+    .then(|| {
+        context
+            .ui
+            .make_persistent_id((context.instance_id, "middle-tab-close", tab.item()))
+    })
+}
 
 pub(super) fn paint(
     context: &mut RenderContext<'_, '_, '_>,
@@ -89,6 +118,7 @@ pub(super) fn paint(
     if enabled
         && let Some(origin) =
             button_activation_origin(context.ui, &response, context.pointer_authority)
+                .or_else(|| middle_click_origin(context, tab, &response))
         && let Some(action) = context.plan.prepare_tab_close(tab.item())
     {
         context.push_local_action(origin, action);

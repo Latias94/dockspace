@@ -2252,6 +2252,26 @@ impl<'frame> SurfacePaintPlan<'frame> {
         ))
     }
 
+    /// Prepares a close request from an independent activation of a visible tab body.
+    ///
+    /// Hosts can use this for middle-click closing, including partially clipped
+    /// tabs whose close button is unavailable. The body must remain operable and
+    /// the item's close policy must allow the ordinary close-decision workflow.
+    /// This does not grant authority to activate a missing close button.
+    #[must_use]
+    pub fn prepare_tab_body_close(self, item: ItemId) -> Option<super::PreparedSurfaceAction> {
+        let tab = self.tab_record(item)?;
+        self.tab_is_operable(tab).then_some(())?;
+        self.candidate.item_close_is_available(item).then_some(())?;
+        Some(super::PreparedSurfaceAction::close(
+            self.authority_domain,
+            self.version,
+            self.scene,
+            self.frozen_action_witness()?,
+            crate::input::intent::CloseSceneTarget::TabBody(*tab.id()),
+        ))
+    }
+
     /// Prepares a close request for one visible contained-floating close control.
     #[must_use]
     pub fn prepare_contained_close(

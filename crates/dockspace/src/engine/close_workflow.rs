@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::close::plan::{ContentCloseScope, prepare_scoped_content_close};
+use crate::interaction::targeting::targets::SceneLayerKey;
 
 impl DockEngine {
     pub(super) fn capture_content_close(
@@ -87,6 +88,53 @@ impl DockEngine {
         }
     }
 
+    /// Resolves each activation's own region without widening close-button authority.
+    pub(super) fn scene_close_region(
+        plan: &PresentationPlan,
+        target: CloseSceneTarget,
+    ) -> Result<(LogicalRect, SceneLayerKey, ContentCloseTarget), InteractionRejection> {
+        match target {
+            CloseSceneTarget::Tab(id) | CloseSceneTarget::TabBody(id) => {
+                let Some(record) = plan.tab_records().iter().find(|record| *record.id() == id)
+                else {
+                    return Err(InteractionRejection::CloseSceneTargetUnavailable { target });
+                };
+                let bounds = if matches!(target, CloseSceneTarget::TabBody(_)) {
+                    let body = record.drag_hit().rect();
+                    if body.width() <= 0.0
+                        || body.height() <= 0.0
+                        || !plan.tab_bar_records().iter().any(|bar| {
+                            bar.id().root == id.root
+                                && bar.id().tabs == id.tabs
+                                && bar.interaction() == crate::policy::TabBarInteraction::Enabled
+                        })
+                    {
+                        return Err(InteractionRejection::CloseControlUnavailable { target });
+                    }
+                    body
+                } else {
+                    record
+                        .close_bounds()
+                        .ok_or(InteractionRejection::CloseControlUnavailable { target })?
+                };
+                Ok((bounds, record.layer(), ContentCloseTarget::Item(id.item)))
+            }
+            CloseSceneTarget::Contained(floating) => {
+                let record = plan
+                    .contained_record(floating)
+                    .ok_or(InteractionRejection::CloseSceneTargetUnavailable { target })?;
+                let close_bounds = record
+                    .close_bounds()
+                    .ok_or(InteractionRejection::CloseControlUnavailable { target })?;
+                Ok((
+                    close_bounds,
+                    record.layer(),
+                    ContentCloseTarget::Root(record.root()),
+                ))
+            }
+        }
+    }
+
     pub(super) fn request_close_plan(
         &mut self,
         input: InputSequence,
@@ -124,42 +172,9 @@ impl DockEngine {
         }
 
         let plan = painted.plan();
-        let (close_bounds, layer, content_target) = match target {
-            CloseSceneTarget::Tab(id) => {
-                let Some(record) = plan.tab_records().iter().find(|record| *record.id() == id)
-                else {
-                    return Ok(InteractionOutcome::Rejected(
-                        InteractionRejection::CloseSceneTargetUnavailable { target },
-                    ));
-                };
-                let Some(close_bounds) = record.close_bounds() else {
-                    return Ok(InteractionOutcome::Rejected(
-                        InteractionRejection::CloseControlUnavailable { target },
-                    ));
-                };
-                (
-                    close_bounds,
-                    record.layer(),
-                    ContentCloseTarget::Item(id.item),
-                )
-            }
-            CloseSceneTarget::Contained(floating) => {
-                let Some(record) = plan.contained_record(floating) else {
-                    return Ok(InteractionOutcome::Rejected(
-                        InteractionRejection::CloseSceneTargetUnavailable { target },
-                    ));
-                };
-                let Some(close_bounds) = record.close_bounds() else {
-                    return Ok(InteractionOutcome::Rejected(
-                        InteractionRejection::CloseControlUnavailable { target },
-                    ));
-                };
-                (
-                    close_bounds,
-                    record.layer(),
-                    ContentCloseTarget::Root(record.root()),
-                )
-            }
+        let (close_bounds, layer, content_target) = match Self::scene_close_region(plan, target) {
+            Ok(region) => region,
+            Err(error) => return Ok(InteractionOutcome::Rejected(error)),
         };
 
         match activation {

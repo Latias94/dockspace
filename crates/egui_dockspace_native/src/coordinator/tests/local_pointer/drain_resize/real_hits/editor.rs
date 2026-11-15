@@ -9,6 +9,7 @@ use super::*;
 use crate::host_frame::NativeSurfacePaint;
 use crate::receiver::test_support::present_completed_output;
 
+mod auxiliary_close;
 mod scale_changes;
 
 struct Panes(BTreeMap<ItemId, String>);
@@ -97,13 +98,14 @@ impl RenderedScene {
             .capture_completed_pass_hit_authority(ViewportId::ROOT)
             .unwrap();
         let hit = authority.hit_test(point).unwrap();
-        assert!(
-            hit.click().is_none(),
-            "drag-only padding must occlude clicks: {hit:?}"
-        );
         let drag = hit
             .drag()
             .expect("the fresh splitter must receive dragging");
+        assert_eq!(
+            hit.click(),
+            Some(drag),
+            "default splitter double-clicks and dragging must use the same widget: {hit:?}"
+        );
         let receiver = self
             .receivers
             .iter()
@@ -166,6 +168,10 @@ impl Editor {
     }
 
     fn encode(&mut self) -> EncodedScene {
+        self.encode_with_events(Vec::new())
+    }
+
+    fn encode_with_events(&mut self, events: Vec<egui::Event>) -> EncodedScene {
         self.pass += 1;
         let mut input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -173,6 +179,7 @@ impl Editor {
                 egui::vec2(1200.0, 900.0) / self.presentation_scale,
             )),
             time: Some(Duration::from_millis(self.pass * 16).as_secs_f64()),
+            events,
             ..Default::default()
         };
         input
@@ -392,7 +399,23 @@ impl Editor {
         point: LogicalPoint,
         state: Option<ElementState>,
     ) -> HostFrameReport {
+        self.pointer_button(point, state, MouseButton::Left)
+    }
+
+    fn pointer_button(
+        &mut self,
+        point: LogicalPoint,
+        state: Option<ElementState>,
+        button: MouseButton,
+    ) -> HostFrameReport {
         let mut event = raw_event(point, state, f64::from(self.native_scale));
+        if let WindowEvent::MouseInput {
+            button: event_button,
+            ..
+        } = &mut event
+        {
+            *event_button = button;
+        }
         let position = PhysicalPosition::new(
             point.x() * f64::from(self.presentation_scale),
             point.y() * f64::from(self.presentation_scale),

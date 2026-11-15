@@ -1,4 +1,4 @@
-//! Application-configurable docking activation and gesture cancellation.
+//! Application-configurable docking gestures and tab/splitter shortcuts.
 
 use egui::{Key, KeyboardShortcut, Modifiers};
 
@@ -27,10 +27,10 @@ impl Default for DockingActivation {
 
 /// Input bindings owned by one docking adapter instance.
 ///
-/// These bindings affect docking gestures. Ordinary egui control navigation and
-/// application document shortcuts retain their own input owners. The default
-/// configuration pauses docking while Shift is held and cancels a drag with
-/// Escape.
+/// Ordinary egui control navigation and application document shortcuts retain
+/// their own input owners. Defaults pause docking while Shift is held, cancel
+/// a drag with Escape, close tabs with a middle click, and equalize adjacent
+/// panes with a primary-button double click on their splitter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DockInputConfig {
     /// Modifier policy shared by pointer edges and modifier-only observations.
@@ -40,6 +40,15 @@ pub struct DockInputConfig {
     /// Additional modifiers are allowed, so cancellation remains available
     /// while a docking activation modifier is held.
     pub cancel_drag: Option<KeyboardShortcut>,
+    /// Requests closure of the clicked tab with the middle mouse button.
+    ///
+    /// Uses the normal close policy and application decision workflow. It does
+    /// not select an inactive tab or require its close icon to be visible.
+    pub middle_click_closes_tab: bool,
+    /// Equalizes the adjacent panes when their splitter is double-clicked.
+    ///
+    /// The core clamps the result to both panes' current size constraints.
+    pub double_click_equalizes_splitter: bool,
 }
 
 impl Default for DockInputConfig {
@@ -47,6 +56,8 @@ impl Default for DockInputConfig {
         Self {
             docking: DockingActivation::default(),
             cancel_drag: Some(KeyboardShortcut::new(Modifiers::NONE, Key::Escape)),
+            middle_click_closes_tab: true,
+            double_click_equalizes_splitter: true,
         }
     }
 }

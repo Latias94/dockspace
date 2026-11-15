@@ -20,9 +20,12 @@ const ROOT: RootId = RootId::new(1);
 const FIRST: ItemId = ItemId::new(1);
 const SECOND: ItemId = ItemId::new(2);
 
+mod tab_pointer_close;
+
 #[derive(Default)]
 struct Panes {
     tabs: BTreeMap<ItemId, Rect>,
+    blocked_tab: Option<ItemId>,
 }
 
 impl PaneView for Panes {
@@ -36,7 +39,15 @@ impl PaneView for Panes {
 
     fn tab_ui(&mut self, ui: &mut Ui, tab: &Tab<'_>) -> TabVisuals {
         self.tabs.insert(tab.item, tab.visible_rect);
-        tab.paint(ui)
+        let visuals = tab.paint(ui);
+        if self.blocked_tab == Some(tab.item) {
+            ui.interact(
+                tab.visible_rect,
+                ui.scope_id().with("application-tab-button"),
+                egui::Sense::click(),
+            );
+        }
+        visuals
     }
 }
 
@@ -48,6 +59,8 @@ struct Harness {
     frame: u32,
     passes: usize,
     notification: DockspaceNotification,
+    close_requests: Vec<crate::DockspaceClosePlan>,
+    callback_mode: bool,
 }
 
 fn layout() -> DockspaceLayout {
@@ -76,6 +89,8 @@ impl Harness {
             frame: 0,
             passes: 0,
             notification: DockspaceNotification::default(),
+            close_requests: Vec::new(),
+            callback_mode: false,
         };
         assert!(harness.settle().is_empty());
         harness
@@ -84,21 +99,29 @@ impl Harness {
     fn step(&mut self, events: Vec<Event>) -> Vec<DockspaceEvent> {
         self.frame += 1;
         self.panes.tabs.clear();
-        let (output, response) = self
-            .dock
-            .run_single_surface(
-                &self.context,
-                RawInput {
-                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(640.0, 480.0))),
-                    time: Some(f64::from(self.frame) * 0.1),
-                    events,
-                    ..RawInput::default()
-                },
-                SURFACE,
-                &mut self.panes,
-            )
-            .unwrap();
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(640.0, 480.0))),
+            time: Some(f64::from(self.frame) * 0.1),
+            events,
+            ..RawInput::default()
+        };
+        let (output, response) = if self.callback_mode {
+            let mut response = None;
+            let output = crate::run_ui(&self.context, raw, |ui| {
+                response = Some(
+                    self.dock
+                        .show_single_surface(SURFACE, ui, &mut self.panes)
+                        .unwrap(),
+                );
+            });
+            (output, response.unwrap())
+        } else {
+            self.dock
+                .run_single_surface(&self.context, raw, SURFACE, &mut self.panes)
+                .unwrap()
+        };
         let events = response.mutation().events().to_vec();
+        self.close_requests = response.close_requests().cloned().collect();
         self.notification = response.mutation().notification().clone();
         assert_eq!(
             self.notification.layout_change().is_some(),

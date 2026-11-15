@@ -1575,6 +1575,7 @@ fn input_requests_share_the_command_slot_and_publish_only_after_commit() {
     let configured = egui_dockspace::DockInputConfig {
         docking: egui_dockspace::DockingActivation::HoldToEnable(egui::Modifiers::ALT),
         cancel_drag: None,
+        ..Default::default()
     };
     state.request_input(configured).unwrap();
     assert_eq!(state.input(), original);
@@ -1612,6 +1613,7 @@ fn initial_input_configuration_does_not_consume_the_application_slot_and_stops_a
     let configured = egui_dockspace::DockInputConfig {
         docking: egui_dockspace::DockingActivation::Always,
         cancel_drag: None,
+        ..Default::default()
     };
     state.set_initial_input(configured).unwrap();
     assert_eq!(state.input(), configured);

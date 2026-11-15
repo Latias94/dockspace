@@ -506,6 +506,13 @@ impl NativeReceiverStore {
                 }
             }
         }
+        if matches!(query.purpose(), NativeReceiverPurpose::ClickDelivery)
+            && receiver.role() == dockspace::runtime::DockspaceReceiverRole::Splitter
+        {
+            // The completed widget may consume clicks for double-click
+            // equalization while its core receiver only owns the drag lane.
+            return NativeReceiverAnswer::Blocked(query.presented_surface());
+        }
         resolve_matching_receiver(query, receiver)
     }
 }

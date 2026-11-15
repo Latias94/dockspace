@@ -53,7 +53,7 @@ pub enum SurfaceTabListNavigation {
     Last,
 }
 
-/// Product-facing step or constrained endpoint of one exact splitter.
+/// Product-facing adjustment of one exact splitter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SurfaceSplitterAdjustment {
     /// Move the splitter toward the beginning of its axis.
@@ -64,6 +64,12 @@ pub enum SurfaceSplitterAdjustment {
     Minimum,
     /// Move to the end-most position allowed by the full touching layout.
     Maximum,
+    /// Give the two adjacent children equal logical extents, excluding the separator.
+    ///
+    /// The full touching layout's minimum and maximum sizes constrain the result;
+    /// other direct children of this split keep their current extents. A junction
+    /// axis is available only when its incident pairs admit the same displacement.
+    Equalize,
 }
 
 /// Product-facing signed adjustment of one contained-floating edge.

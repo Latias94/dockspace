@@ -1111,6 +1111,7 @@ mod tests {
         let config = DockInputConfig {
             docking: DockingActivation::HoldToEnable(egui::Modifiers::ALT),
             cancel_drag: None,
+            ..Default::default()
         };
         let app = app().with_input(config).unwrap();
         assert_eq!(app.input(), config);

@@ -434,6 +434,7 @@ pub(crate) fn paint_tab(
     publish_native_tab_bounds_diagnostic(context.ui, id, visible, resource.title.as_str());
     if operable {
         capture_tab_actions(context, tab, &response, focused);
+        super::tab_close::capture_body_click(context, tab, &response);
         super::tab_close::paint(context, tab, resource, &response, visuals);
     }
 }

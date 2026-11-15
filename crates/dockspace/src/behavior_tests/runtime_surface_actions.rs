@@ -26,6 +26,8 @@ use crate::runtime::{
     UniformSurfaceMetrics,
 };
 
+mod splitter_equalization;
+
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const TARGET_SURFACE: SurfaceId = SurfaceId::new(2);
 const ROOT: RootId = RootId::new(1);

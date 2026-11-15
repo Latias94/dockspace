@@ -276,6 +276,10 @@ impl DockEngine {
                 ..
             } => item_receiver_is_current(PresentationHitRegionKind::TabClose(*tab)),
             LocalSurfaceAction::Close {
+                target: CloseSceneTarget::TabBody(tab),
+                ..
+            } => item_receiver_is_current(PresentationHitRegionKind::TabBody(*tab)),
+            LocalSurfaceAction::Close {
                 target: CloseSceneTarget::Contained(floating),
                 ..
             } => plan
@@ -506,32 +510,9 @@ impl DockEngine {
         policy: &DockPolicySnapshot,
     ) -> Result<InputOutcome, EngineError> {
         let plan = candidate.plan();
-        let captured = match target {
-            CloseSceneTarget::Tab(tab) => plan
-                .tab_records()
-                .iter()
-                .find(|record| *record.id() == tab)
-                .and_then(|record| {
-                    record
-                        .close_bounds()
-                        .map(|bounds| (bounds, record.layer(), ContentCloseTarget::Item(tab.item)))
-                }),
-            CloseSceneTarget::Contained(floating) => {
-                plan.contained_record(floating).and_then(|record| {
-                    record.close_bounds().map(|bounds| {
-                        (
-                            bounds,
-                            record.layer(),
-                            ContentCloseTarget::Root(record.root()),
-                        )
-                    })
-                })
-            }
-        };
-        let Some((bounds, layer, content)) = captured else {
-            return Ok(self.candidate_action_rejection(
-                InteractionRejection::CloseControlUnavailable { target },
-            ));
+        let (bounds, layer, content) = match Self::scene_close_region(plan, target) {
+            Ok(region) => region,
+            Err(error) => return Ok(self.candidate_action_rejection(error)),
         };
         if !plan.region_is_operable(bounds, layer) {
             return Ok(self.candidate_action_rejection(

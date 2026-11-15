@@ -69,3 +69,71 @@ fn home_end_move_focused_splitter_to_the_reported_accessible_limits() {
         }
     }
 }
+
+fn primary(position: Pos2, pressed: bool) -> Event {
+    Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+#[test]
+fn double_click_equalizes_the_actual_splitter_and_can_be_disabled() {
+    for enabled in [false, true] {
+        let mut harness = Harness::new(
+            vec!["First".into(), "Second".into()],
+            ItemId::new(1),
+            DockStyle::default(),
+        );
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(
+                RootId::new(1),
+                DockspaceNode::split(
+                    crate::DockspaceAxis::Horizontal,
+                    [
+                        (DockspaceNode::tabs([ItemId::new(1)]), 0.25),
+                        (DockspaceNode::tabs([ItemId::new(2)]), 0.75),
+                    ],
+                )
+                .unwrap(),
+            ),
+        )])
+        .unwrap();
+        harness.dockspace = Dockspace::builder(("pointer-equalize", enabled), layout)
+            .input(crate::DockInputConfig {
+                double_click_equalizes_splitter: enabled,
+                ..Default::default()
+            })
+            .build()
+            .unwrap();
+        harness.run(800.0, Vec::new());
+        let initial = harness.run(800.0, Vec::new());
+        let before = splitter_values(&initial).0;
+        assert!((before - 0.5).abs() > 0.1);
+        let node = nodes(&initial)
+            .iter()
+            .find(|(_, node)| node.role() == Role::Splitter)
+            .unwrap()
+            .1
+            .bounds()
+            .unwrap();
+        let position = egui::pos2(
+            ((node.x0 + node.x1) * 0.5) as f32,
+            ((node.y0 + node.y1) * 0.5) as f32,
+        );
+        harness.run(800.0, vec![Event::PointerMoved(position)]);
+        for _ in 0..2 {
+            harness.run(800.0, vec![primary(position, true)]);
+            harness.run(800.0, vec![primary(position, false)]);
+        }
+        let output = harness.run(800.0, Vec::new());
+        let after = splitter_values(&output).0;
+        assert!(
+            (after - if enabled { 0.5 } else { before }).abs() < 1e-5,
+            "enabled={enabled}, before={before}, after={after}"
+        );
+    }
+}

@@ -6,10 +6,10 @@ use dockspace::runtime::{
     SurfaceSplitterAdjustment,
 };
 use egui::accesskit::{Action, Orientation, Role};
-use egui::{CursorIcon, EventFilter, Key, Sense, UiBuilder};
+use egui::{CursorIcon, EventFilter, Key, PointerButton, Sense, UiBuilder};
 
 use super::RenderContext;
-use super::actions::effective_enabled;
+use super::actions::{effective_enabled, unambiguous_pointer_click};
 use super::geometry::{accesskit_bounds, egui_rect, inset_ui_rect};
 pub(crate) fn paint_splitter(
     context: &mut RenderContext<'_, '_, '_>,
@@ -30,8 +30,15 @@ pub(crate) fn paint_splitter(
         .make_persistent_id((context.instance_id, "splitter", splitter.visual_id()));
     let enabled = effective_enabled(context.ui, splitter.operable());
     let drag_enabled = enabled && context.pointer_authority.supports_preview_gestures();
+    let equalize_enabled = enabled && context.input.double_click_equalizes_splitter;
     let sense = if drag_enabled {
-        Sense::drag()
+        if equalize_enabled {
+            Sense::click_and_drag()
+        } else {
+            Sense::drag()
+        }
+    } else if equalize_enabled {
+        Sense::click()
     } else if enabled {
         Sense::focusable_noninteractive()
     } else {
@@ -41,7 +48,9 @@ pub(crate) fn paint_splitter(
         .then(|| context.plan.receiver_for_splitter(splitter))
         .flatten();
     let response = context.interact_receiver(hit, id, sense, receiver);
-    let response = response.on_hover_text(if drag_enabled {
+    let response = response.on_hover_text(if drag_enabled && equalize_enabled {
+        "Drag to resize panes; double-click to equalize adjacent panes. Use Tab to focus, then arrows or Home/End."
+    } else if drag_enabled {
         "Drag to resize panes. Use Tab to focus, then arrows to adjust or Home/End for limits."
     } else if enabled {
         "Use Tab to focus, then arrows or Home/End to resize panes. Drag resizing is unavailable in this host."
@@ -74,7 +83,17 @@ pub(crate) fn paint_splitter(
             );
         });
     }
-    if let Some((origin, adjustment)) = splitter_adjustment(context.ui, id, horizontal, focused)
+    let equalization = (equalize_enabled
+        && response.double_clicked_by(PointerButton::Primary)
+        && unambiguous_pointer_click(context.ui, &response, PointerButton::Primary))
+    .then(|| {
+        (
+            id.with("pointer-equalize"),
+            SurfaceSplitterAdjustment::Equalize,
+        )
+    });
+    if let Some((origin, adjustment)) =
+        equalization.or_else(|| splitter_adjustment(context.ui, id, horizontal, focused))
         && let Some(action) = context
             .plan
             .prepare_splitter_adjustment(splitter.visual_id(), adjustment)

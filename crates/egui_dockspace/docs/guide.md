@@ -177,6 +177,15 @@ extra modifiers do not accidentally restore docking or prevent cancellation.
 the last observed modifiers at the next input boundary, without fabricated
 motion. Explicit touch contacts use the same settings.
 
+`middle_click_closes_tab` defaults to true and emits an ordinary close request
+without selecting the tab. Close policy and deferred application decisions still
+apply, including when the tab's close icon is hidden or clipped. Custom tab child
+widgets keep their own input. `double_click_equalizes_splitter` also defaults to
+true: a primary double click requests equal logical pixel extents for the two
+neighbors, clamped by their full nested size constraints. Either shortcut can be
+disabled independently through the same input configuration. These settings are
+also consumed by the native adapter's shared renderer.
+
 By default, Shift temporarily disables docking acquisition. The adapter preserves ordered
 `ModifiersChanged`, key and pointer-button modifier observations, including
 changes within one raw packet. A modifier-only frame can clear an existing

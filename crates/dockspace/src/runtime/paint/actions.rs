@@ -352,7 +352,7 @@ impl SurfacePaintPlan<'_> {
         ))
     }
 
-    /// Prepares one keyboard or accessibility adjustment for an exact splitter.
+    /// Prepares one scene-bound semantic adjustment for an exact splitter.
     #[must_use]
     pub fn prepare_splitter_adjustment(
         self,
@@ -381,8 +381,11 @@ impl SurfacePaintPlan<'_> {
         ))
     }
 
-    /// Prepares one keyboard or accessibility adjustment for a single axis of
-    /// an exact splitter junction.
+    /// Prepares one scene-bound semantic adjustment for a single junction axis.
+    ///
+    /// Equalizing requires a common constrained displacement for every incident
+    /// pair on that axis. Incompatible pairs return `None` instead of moving
+    /// their shared junction independently.
     #[must_use]
     pub fn prepare_splitter_junction_adjustment(
         self,

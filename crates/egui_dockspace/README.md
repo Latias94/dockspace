@@ -257,6 +257,7 @@ let input = DockInputConfig {
         egui::Modifiers::NONE,
         egui::Key::Escape,
     )),
+    ..Default::default()
 };
 ```
 
@@ -265,6 +266,23 @@ behavior. Additional held modifiers are allowed. Use `Modifiers::COMMAND` for
 the platform's primary shortcut modifier, or set `cancel_drag: None` to let the
 application own cancellation. Standard egui focus navigation and document
 shortcuts remain with their existing input owners.
+
+Middle-clicking an enabled, closable tab requests closure without selecting it;
+the application still decides whether to allow, deny or defer the request. This
+also works on a partially visible tab when its close icon is clipped. Disable
+the shortcut with `middle_click_closes_tab: false`. Application controls inside
+custom tabs retain their own mouse input.
+
+Double-clicking a splitter equalizes its two neighboring panes in logical
+pixels, respecting nested size constraints and leaving other siblings intact.
+Set `double_click_equalizes_splitter: false` to disable this shortcut. Keyboard
+and accessibility adjustments continue to use the same core resize policy.
+
+To restrict internal splitters in one stable root, use
+`policy.set_allow_root_resize_axis(root, DockspaceAxis::Horizontal, false)`.
+Root rules intersect the workspace and surface rules, follow a complete root
+when it moves, and do not lock the contained window's outer frame. They do not
+identify arbitrary nested split containers.
 
 `DockPolicy` controls docking rules and close permissions. The
 [integration guide](docs/guide.md) covers these options and the output contract.
