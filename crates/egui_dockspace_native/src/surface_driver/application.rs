@@ -338,6 +338,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
         self.application_actions
             .enqueue(command, |command| match command {
                 NativeCommand::SelectItem { item } => session.prepare_select_item(item).into(),
+                NativeCommand::SetItemVisibility { item, visible } => {
+                    session.prepare_set_item_visibility(item, visible).into()
+                }
                 NativeCommand::OpenItem { item, placement } => {
                     session.prepare_open_item(item, placement).into()
                 }

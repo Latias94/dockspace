@@ -96,7 +96,7 @@ fn resolved_center_keeps_the_presented_target_when_its_future_rect_covers_a_neig
         panic!("the source must resolve to the exact C center: {query:?}");
     };
     assert_eq!(drop.target_id(), target_id);
-    let feedback = resolve(plan, target_id, Some(&payload)).unwrap();
+    let feedback = resolve(plan, target_id, Some(&payload), &workspace).unwrap();
     assert_eq!(feedback.selected_item(), Some(C));
     assert_eq!(feedback.bounds(), pane(plan, target).bounds());
     assert_eq!(feedback.action(), DockspaceDropAction::Merge);
@@ -156,6 +156,7 @@ fn tab_gap_neighbors_exclude_the_payload_and_preserve_the_pre_removal_index() {
                 index,
             },
             Some(&payload),
+            &workspace,
         )
         .unwrap();
         assert_eq!(
@@ -169,6 +170,120 @@ fn tab_gap_neighbors_exclude_the_payload_and_preserve_the_pre_removal_index() {
         );
         assert_eq!(feedback.selected_item(), Some(A));
         assert_eq!(feedback.bounds(), pane(plan, tabs).bounds());
+    }
+}
+
+#[test]
+fn tab_gap_neighbors_skip_hidden_members_without_renumbering_durable_positions() {
+    let hidden = ItemId::new(99);
+    let cases = [
+        ([hidden, A, B], [1, 2, 3]),
+        ([A, hidden, B], [0, 2, 3]),
+        ([A, B, hidden], [0, 1, 3]),
+    ];
+    let unchanged_neighbors = [(None, Some(A)), (Some(A), Some(B)), (Some(B), None)];
+    let payload_cases = [
+        (None, unchanged_neighbors),
+        (Some(A), [(None, Some(B)), (None, Some(B)), (Some(B), None)]),
+        (Some(B), [(None, Some(A)), (Some(A), None), (Some(A), None)]),
+        (Some(hidden), unchanged_neighbors),
+    ];
+    for (items, gaps) in cases {
+        let mut builder = Workspace::builder();
+        let tabs = builder.insert_node(Node::tabs(items));
+        builder.set_root(ROOT, RootRecord::new(tabs).with_central(tabs));
+        builder.set_surface(SURFACE, SurfacePresentation::with_main(ROOT));
+        let mut workspace = builder.build().unwrap();
+        workspace.replace_hidden_items([hidden].into()).unwrap();
+        let session = measured_session(workspace.clone(), DockPolicy::default());
+        let plan = session
+            .engine
+            .scene()
+            .ready_candidate(SURFACE)
+            .unwrap()
+            .plan();
+        assert_eq!(plan.tab_bar_records()[0].members().len(), 2);
+        for (source, neighbors) in payload_cases {
+            let payload = source.map(|item| {
+                MovePayload::Item(workspace.capture_item_source(ROOT, tabs, item).unwrap())
+            });
+            for (index, (previous, next)) in gaps.into_iter().zip(neighbors) {
+                let feedback = resolve(
+                    plan,
+                    DropTargetId::TabGap {
+                        surface: SURFACE,
+                        root: ROOT,
+                        tabs,
+                        index,
+                    },
+                    payload.as_ref(),
+                    &workspace,
+                )
+                .unwrap();
+                assert_eq!(
+                    feedback.action(),
+                    DockspaceDropAction::InsertTab {
+                        index,
+                        previous,
+                        next,
+                    },
+                    "items={items:?}, payload={source:?}, durable index={index}"
+                );
+                assert_eq!(feedback.selected_item(), Some(A));
+                assert_eq!(feedback.bounds(), pane(plan, tabs).bounds());
+            }
+        }
+    }
+}
+
+#[test]
+fn tab_gap_feedback_excludes_same_leaf_groups_and_retains_external_groups() {
+    let hidden = ItemId::new(99);
+    let mut builder = Workspace::builder();
+    let source = builder.insert_node(Node::tabs([C]));
+    let target = builder.insert_node(Node::tabs([A, hidden, B]));
+    let split = builder.insert_node(Node::equal_split(Axis::Horizontal, [source, target]).unwrap());
+    builder.set_root(ROOT, RootRecord::new(split).with_central(target));
+    builder.set_surface(SURFACE, SurfacePresentation::with_main(ROOT));
+    let mut workspace = builder.build().unwrap();
+    workspace.replace_hidden_items([hidden].into()).unwrap();
+    let session = measured_session(workspace.clone(), DockPolicy::default());
+    let plan = session
+        .engine
+        .scene()
+        .ready_candidate(SURFACE)
+        .unwrap()
+        .plan();
+    for (source, overlaps) in [(source, false), (target, true)] {
+        let source = workspace.capture_node_source(ROOT, source).unwrap();
+        for payload in [
+            MovePayload::Tabs(source.clone()),
+            MovePayload::Subtree(source),
+        ] {
+            for (index, previous, next) in [(2, Some(A), Some(B)), (3, Some(B), None)] {
+                let feedback = resolve(
+                    plan,
+                    DropTargetId::TabGap {
+                        surface: SURFACE,
+                        root: ROOT,
+                        tabs: target,
+                        index,
+                    },
+                    Some(&payload),
+                    &workspace,
+                )
+                .unwrap();
+                assert_eq!(
+                    feedback.action(),
+                    DockspaceDropAction::InsertTab {
+                        index,
+                        previous: previous.filter(|_| !overlaps),
+                        next: next.filter(|_| !overlaps),
+                    },
+                    "payload={payload:?}, durable index={index}"
+                );
+            }
+        }
     }
 }
 
@@ -205,6 +320,7 @@ fn hidden_bars_keep_their_selected_target_and_empty_central_has_no_representativ
                 tabs,
             },
             None,
+            session.engine.workspace(),
         )
         .unwrap();
         assert_eq!(feedback.selected_item(), selected);
@@ -220,6 +336,7 @@ fn hidden_bars_keep_their_selected_target_and_empty_central_has_no_representativ
             edge: crate::graph::command::Edge::Right,
         },
         None,
+        session.engine.workspace(),
     )
     .unwrap();
     assert_eq!(outer.scope(), DockspaceDropTargetScope::Root);
@@ -257,6 +374,7 @@ fn rootless_background_feedback_installs_a_root_without_inventing_an_item() {
         plan,
         DropTargetId::SurfaceBackground { surface: SURFACE },
         None,
+        session.engine.workspace(),
     )
     .unwrap();
     assert_eq!(feedback.scope(), DockspaceDropTargetScope::Surface);

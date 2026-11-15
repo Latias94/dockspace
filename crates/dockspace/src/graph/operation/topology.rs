@@ -54,6 +54,9 @@ pub(super) fn apply_command(
     }
     let result = match command {
         WorkspaceCommand::Select { source } => select(workspace, source),
+        WorkspaceCommand::SetItemVisibility { source, visible } => {
+            set_item_visibility(workspace, source, *visible)
+        }
         WorkspaceCommand::Reorder {
             source,
             insertion_index,
@@ -140,7 +143,7 @@ pub(super) fn select(
     validate_item_source(workspace, source)?;
     let tabs = source.tabs();
     let item = source.item();
-    let changed = select_tabs_item(workspace, tabs, item)?;
+    let changed = workspace.set_visible_tab_selection(tabs, item)?;
     if changed {
         workspace.complete_selection_change(source.root(), tabs)?;
     }
@@ -154,37 +157,36 @@ pub(super) fn select(
     })
 }
 
-/// Shares the concrete selected/MRU edit with the approved close owner, which
-/// has already picked a surviving successor from this actual tabs stack.
-pub(super) fn select_tabs_item(
+fn set_item_visibility(
     workspace: &mut Workspace,
-    tabs: NodeId,
-    item: ItemId,
-) -> Result<bool, CommandError> {
-    let node = workspace
-        .storage
-        .nodes
-        .get_mut(tabs)
-        .ok_or(CommandError::MissingNode {
-            role: ReferenceRole::Source,
-            node: tabs,
-        })?;
-    let Node::Tabs { selected, mru, .. } = node else {
-        return Err(CommandError::NodeIsNotTabs { node: tabs });
-    };
-    let changed = *selected != Some(item);
-    *selected = Some(item);
-    let index =
-        mru.iter()
-            .position(|candidate| *candidate == item)
-            .ok_or(CommandError::Invariant {
-                stage: "locate selected item in tabs MRU",
-            })?;
-    if index != 0 {
-        mru.remove(index);
-        mru.insert(0, item);
+    source: &ItemSource,
+    visible: bool,
+) -> Result<AppliedCommand, CommandError> {
+    validate_item_source(workspace, source)?;
+    let item = source.item();
+    let root = source.root();
+    let changed = workspace.item_is_hidden(item) == visible;
+    if changed {
+        workspace.begin_root_edit(root);
+        let hidden_items = Arc::make_mut(&mut workspace.storage.hidden_items);
+        if visible {
+            hidden_items.remove(&item);
+        } else {
+            hidden_items.insert(item);
+        }
+        workspace.repair_visible_tab_selection(source.tabs())?;
+        workspace.complete_root_change(root)?;
+        workspace.complete_root_structure(root)?;
     }
-    Ok(changed)
+    Ok(AppliedCommand {
+        outcome: CommandOutcome::ItemVisibilityChanged {
+            item,
+            root,
+            visible,
+            changed,
+        },
+        delta: ItemDelta::None,
+    })
 }
 
 fn reorder(
@@ -1426,6 +1428,18 @@ fn insert_items(
     selected_item: Option<ItemId>,
     source_mru: Option<&[ItemId]>,
 ) -> Result<(), CommandError> {
+    // A hidden payload retains its flag and does not displace visible focus in
+    // its destination. An entirely hidden destination keeps a legal selection.
+    let selected_item = selected_item
+        .filter(|item| !workspace.item_is_hidden(*item))
+        .or_else(|| workspace.visible_tab_selection(tabs))
+        .or_else(|| {
+            inserted
+                .iter()
+                .copied()
+                .find(|item| !workspace.item_is_hidden(*item))
+        })
+        .or(selected_item);
     let node = workspace
         .storage
         .nodes
@@ -1467,6 +1481,7 @@ fn insert_items(
             }
         }
     }
+    workspace.repair_visible_tab_selection(tabs)?;
     Ok(())
 }
 
@@ -1761,6 +1776,7 @@ pub(super) fn remove_item(
     if was_selected {
         *selected = mru.first().copied();
     }
+    workspace.repair_visible_tab_selection(tabs)?;
     Ok(())
 }
 

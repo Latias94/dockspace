@@ -1866,6 +1866,18 @@ mod tests {
     }
 
     #[test]
+    fn binding_hash_includes_visibility_even_when_the_tampered_layout_is_structurally_valid() {
+        let mut document = profile_document(&profile_preferences());
+        document.workspace.hidden_items.push(2);
+        document.workspace.build_candidate(|_| true).unwrap();
+        assert!(matches!(
+            document
+                .restore(|_, _| panic!("visibility splice must reject before application lookup")),
+            Err(DockspaceDocumentRestoreError::BindingHashMismatch)
+        ));
+    }
+
+    #[test]
     fn prepared_restore_preserves_profile_surface_and_recovery_host_identities() {
         let mut preferences = profile_preferences();
         let rect = PhysicalRect::new(-40.0, 30.0, 800.0, 600.0).expect("placement must validate");

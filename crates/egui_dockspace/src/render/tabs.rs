@@ -456,7 +456,7 @@ fn tab_id(ui: &Ui, instance_id: Id, tab: TabPaintRecord<'_>) -> Id {
     tab_id_for_visual(ui, instance_id, tab.visual_id())
 }
 
-fn tab_id_for_visual(ui: &Ui, instance_id: Id, visual: DockspaceVisualId) -> Id {
+pub(super) fn tab_id_for_visual(ui: &Ui, instance_id: Id, visual: DockspaceVisualId) -> Id {
     ui.make_persistent_id((instance_id, "tab", visual))
 }
 

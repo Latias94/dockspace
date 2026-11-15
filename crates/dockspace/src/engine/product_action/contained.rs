@@ -278,18 +278,30 @@ impl DockEngine {
             .workspace
             .root(target_root)
             .ok_or(DockspaceActionRejection::DockBackUnavailable { root: source_root })?;
-        match target.central {
-            Some(_) => Ok(DockPlacement::Center(DockAnchor::Central(target_root))),
-            None => {
-                let item = self
-                    .workspace
-                    .collect_items_in_subtree(target.node)
-                    .into_iter()
-                    .next()
-                    .ok_or(DockspaceActionRejection::DockBackUnavailable { root: source_root })?;
-                Ok(DockPlacement::Center(DockAnchor::Item(item)))
-            }
+        if target
+            .central
+            .is_some_and(|node| self.workspace.node_has_visible_content(node))
+        {
+            return Ok(DockPlacement::Center(DockAnchor::Central(target_root)));
         }
+        let items = self.workspace.collect_items_in_subtree(target.node);
+        if let Some(item) = items
+            .iter()
+            .copied()
+            .find(|item| !self.workspace.item_is_hidden(*item))
+        {
+            return Ok(DockPlacement::Center(DockAnchor::Item(item)));
+        }
+        // A completely hidden destination still owns its layout slots. An
+        // explicit center command can make one useful again with arriving content.
+        if target.central.is_some() {
+            return Ok(DockPlacement::Center(DockAnchor::Central(target_root)));
+        }
+        items
+            .first()
+            .copied()
+            .map(|item| DockPlacement::Center(DockAnchor::Item(item)))
+            .ok_or(DockspaceActionRejection::DockBackUnavailable { root: source_root })
     }
 
     pub(in crate::engine) fn compile_product_root_float(

@@ -1,6 +1,7 @@
 //! Native placement notifications share the atomic document-capture boundary.
 
 use super::*;
+use crate::runtime::HostInputOutcome;
 
 fn window_facts(x: f64, width: f64, native_scale: f64) -> NativeWindowFacts {
     NativeWindowFacts::live()
@@ -122,6 +123,44 @@ fn placement_recovered_after_hidden_motion_is_announced_only_after_commit() {
     assert!(commit(&mut session).notification().document_changed());
     assert_eq!(session.version(), version);
     assert!(commit(&mut session).notification().is_empty());
+}
+
+#[test]
+fn all_hidden_content_retains_native_binding_without_window_lifecycle_effects() {
+    let (mut session, binding) =
+        native_root_session_with_profile(NativeHostProfile::ManagedDesktop);
+    observe(&mut session, binding, &window_facts(100.0, 640.0, 1.0));
+    commit(&mut session);
+    let before = session.view().to_layout();
+
+    for visible in [false, true] {
+        let mut frame = session
+            .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+            .unwrap();
+        let action = frame.set_item_visibility_current(ITEM, visible).unwrap();
+        frame
+            .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+            .unwrap();
+        let mut report = frame.commit().unwrap();
+        assert!(matches!(
+            report.submitted_action_outcome(action),
+            Some(HostInputOutcome::ProductActionApplied(
+                crate::model::DockspaceActionOutcome::ItemVisibilityChanged {
+                    item: ITEM,
+                    visible: actual,
+                    changed: true,
+                },
+            )) if *actual == visible
+        ));
+        assert!(report.take_native_effects().is_empty());
+        assert!(report.native_admissions().is_empty());
+        assert!(session.is_current_native_binding(binding));
+        let item = session.view().item(ITEM).unwrap();
+        assert_eq!((item.root(), item.surface()), (ROOT, SURFACE));
+        assert_eq!(session.workspace().item_is_hidden(ITEM), !visible);
+        assert!(!report.notification().native_window_placement_changed());
+    }
+    assert_eq!(session.workspace(), &before.into_workspace());
 }
 
 #[cfg(feature = "serde")]

@@ -134,27 +134,37 @@ impl RootStructure {
         &self,
         root: RootId,
         central: Option<NodeId>,
+        is_visible: &mut impl FnMut(NodeId) -> bool,
         read_leaf: &mut impl FnMut(NodeId) -> Result<Constraints, LayoutError>,
         metrics: LayoutMetrics,
         minimums_only: bool,
     ) -> Result<(Vec<NodeResult>, Option<usize>), LayoutError> {
         let zero = LogicalSize::new(0.0, 0.0)?;
         let empty = NodeResult {
+            visible: false,
             rect: LogicalRect::new(0.0, 0.0, 0.0, 0.0)?,
             constraints: Constraints::new(zero, zero)?,
         };
         let mut values = vec![empty; self.nodes.len()];
         let mut central_leaf_row = None;
+        let mut central_reachable = central.is_none();
         let mut child_values = Vec::new();
         for &row in &self.postorder {
             let node = &self.nodes[row];
             values[row].constraints = match &node.kind {
                 RootNodeKind::Tabs => {
-                    let constraints = read_leaf(node.id)?;
                     if central == Some(node.id) {
-                        central_leaf_row = Some(row);
+                        central_reachable = true;
                     }
-                    constraints
+                    values[row].visible = is_visible(node.id);
+                    if values[row].visible {
+                        if central == Some(node.id) {
+                            central_leaf_row = Some(row);
+                        }
+                        read_leaf(node.id)?
+                    } else {
+                        empty.constraints
+                    }
                 }
                 RootNodeKind::Split {
                     payload, children, ..
@@ -162,7 +172,7 @@ impl RootStructure {
                     let child_rows = &self.children[children.clone()];
                     let binary_children;
                     let child_measurements: &[SubtreeMeasurement] = match child_rows {
-                        [first, second] => {
+                        [first, second] if values[*first].visible && values[*second].visible => {
                             binary_children = [
                                 SubtreeMeasurement {
                                     constraints: values[*first].constraints,
@@ -177,25 +187,32 @@ impl RootStructure {
                         }
                         _ => {
                             child_values.clear();
-                            child_values.extend(child_rows.iter().map(|&row| SubtreeMeasurement {
-                                constraints: values[row].constraints,
-                                contains_central: false,
+                            child_values.extend(child_rows.iter().filter_map(|&row| {
+                                values[row].visible.then_some(SubtreeMeasurement {
+                                    constraints: values[row].constraints,
+                                    contains_central: false,
+                                })
                             }));
                             &child_values
                         }
                     };
-                    compose_constraints(
-                        node.id,
-                        payload.axis(),
-                        child_measurements,
-                        metrics,
-                        minimums_only,
-                    )?
+                    values[row].visible = !child_measurements.is_empty();
+                    if child_measurements.is_empty() {
+                        empty.constraints
+                    } else {
+                        compose_constraints(
+                            node.id,
+                            payload.axis(),
+                            child_measurements,
+                            metrics,
+                            minimums_only,
+                        )?
+                    }
                 }
             };
         }
         if let Some(central) = central
-            && central_leaf_row.is_none()
+            && !central_reachable
         {
             return Err(LayoutError::CentralNodeNotReachable { root, central });
         }

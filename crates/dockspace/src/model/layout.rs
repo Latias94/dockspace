@@ -412,6 +412,36 @@ impl DockspaceLayout {
         }
     }
 
+    /// Replaces the set of initially hidden owned items.
+    ///
+    /// Hiding retains tab order, split weights and presentation ownership.
+    /// Selection moves to the next visible member, then the previous one. A
+    /// fully hidden stack retains a legal logical selection for later showing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DockspaceLayoutError::DuplicateHiddenItem`] for repeated input
+    /// identities or [`DockspaceLayoutError::UnknownHiddenItem`] for items that
+    /// this layout does not own.
+    pub fn with_hidden_items(
+        mut self,
+        items: impl IntoIterator<Item = ItemId>,
+    ) -> Result<Self, DockspaceLayoutError> {
+        let mut hidden_items = BTreeSet::new();
+        for item in items {
+            if !hidden_items.insert(item) {
+                return Err(DockspaceLayoutError::DuplicateHiddenItem { item });
+            }
+            if self.workspace.locate_item_by_id(item).is_none() {
+                return Err(DockspaceLayoutError::UnknownHiddenItem { item });
+            }
+        }
+        self.workspace
+            .replace_hidden_items(hidden_items)
+            .map_err(|_| DockspaceLayoutError::InvalidTopology)?;
+        Ok(self)
+    }
+
     /// Returns a read-only product view without exposing runtime graph identities.
     #[must_use]
     pub fn view(&self) -> DockspaceView<'_> {
@@ -448,6 +478,18 @@ pub enum DockspaceLayoutError {
     #[error("item {item} is declared more than once")]
     DuplicateItem {
         /// Repeated stable item identity.
+        item: ItemId,
+    },
+    /// The hidden item set repeated one identity.
+    #[error("hidden item {item} is declared more than once")]
+    DuplicateHiddenItem {
+        /// Repeated hidden identity.
+        item: ItemId,
+    },
+    /// The hidden item set references content absent from this layout.
+    #[error("hidden item {item} is not owned by the layout")]
+    UnknownHiddenItem {
+        /// Unknown hidden identity.
         item: ItemId,
     },
     /// A tabs leaf has no valid selected item.

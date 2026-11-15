@@ -6,6 +6,8 @@ use crate::platform::focus::{
     CurrentUiFocus, HostFocusObservation, HostFocusState, PaneFocusObservationRejection,
 };
 
+mod visibility;
+
 fn capture_focus_fact(
     engine: &DockEngine,
     surface: SurfaceId,

@@ -973,13 +973,17 @@ impl DockEngine {
                 };
                 let index = items.iter().position(|entry| entry == item)?;
                 items
-                    .get(index + 1)
-                    .or_else(|| items[..index].last())
+                    .iter()
+                    .skip(index + 1)
+                    .chain(items[..index].iter().rev())
+                    .find(|item| !candidate.item_is_hidden(**item))
                     .copied()
             }
             ContentCloseScope::Root { .. } => match observed {
                 PanelFocusRecord::Item(item)
-                    if !is_closed(item) && candidate.locate_item_by_id(item).is_some() =>
+                    if !is_closed(item)
+                        && !candidate.item_is_hidden(item)
+                        && candidate.locate_item_by_id(item).is_some() =>
                 {
                     Some(item)
                 }

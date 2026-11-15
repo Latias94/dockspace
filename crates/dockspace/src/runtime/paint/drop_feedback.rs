@@ -2,6 +2,7 @@
 
 use crate::geometry::LogicalRect;
 use crate::graph::command::{Edge, MovePayload};
+use crate::graph::{Node, Workspace};
 use crate::ids::{ItemId, RootId, SurfaceId};
 use crate::interaction::targeting::targets::DropTargetId;
 use crate::model::DockEdge;
@@ -28,13 +29,13 @@ pub enum DockspaceDropTargetScope {
 pub enum DockspaceDropAction {
     /// Merge the payload into the target tabs stack.
     Merge,
-    /// Insert at an exact gap in the presented target's tab sequence.
+    /// Insert at an exact gap in the target's persistent tab sequence.
     InsertTab {
-        /// Gap index before removing the source payload from its original location.
+        /// Durable gap index, including hidden members, before removing the source payload.
         index: usize,
-        /// Nearest preceding target item after excluding the complete payload.
+        /// Nearest preceding visible target item after excluding the complete payload.
         previous: Option<ItemId>,
-        /// Nearest following target item after excluding the complete payload.
+        /// Nearest following visible target item after excluding the complete payload.
         next: Option<ItemId>,
     },
     /// Split the target region; its scope distinguishes inner from outer docking.
@@ -115,6 +116,7 @@ pub(super) fn resolve(
     plan: &PresentationPlan,
     target: DropTargetId,
     payload: Option<&MovePayload>,
+    workspace: &Workspace,
 ) -> Option<DockspaceDropTargetFeedback> {
     plan.drop_target(target)?;
     let (pane, action) = match target {
@@ -126,8 +128,10 @@ pub(super) fn resolve(
         } => {
             let id = TabBarSceneId { root, tabs };
             let bars = plan.tab_bar_records();
-            let bar = &bars[bars.binary_search_by_key(&id, |bar| *bar.id()).ok()?];
-            let members = bar.members();
+            bars.binary_search_by_key(&id, |bar| *bar.id()).ok()?;
+            let Node::Tabs { items, .. } = workspace.node(tabs)? else {
+                return None;
+            };
             let excludes = |item| match payload {
                 Some(MovePayload::Item(source)) => source.item() == item,
                 Some(MovePayload::Tabs(source) | MovePayload::Subtree(source)) => {
@@ -137,17 +141,19 @@ pub(super) fn resolve(
                 }
                 None => false,
             };
-            let previous = members
+            // Scene members omit hidden items, while gap identities retain
+            // their pre-removal position in the full persistent roster.
+            let previous = items
                 .get(..index)?
                 .iter()
                 .rev()
-                .map(|member| member.tab().item)
-                .find(|item| !excludes(*item));
-            let next = members
+                .copied()
+                .find(|item| !workspace.item_is_hidden(*item) && !excludes(*item));
+            let next = items
                 .get(index..)?
                 .iter()
-                .map(|member| member.tab().item)
-                .find(|item| !excludes(*item));
+                .copied()
+                .find(|item| !workspace.item_is_hidden(*item) && !excludes(*item));
             (
                 Some(PaneSceneId { root, tabs }),
                 DockspaceDropAction::InsertTab {

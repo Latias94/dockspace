@@ -124,8 +124,9 @@ impl ContainedRecord {
         self.ordinal
     }
 
-    /// Returns whether this presentation is the frontmost member of the
-    /// complete contained roster, including members clipped from this plan.
+    /// Returns whether this is the frontmost visible member of the complete
+    /// contained roster, including visible members clipped from this plan.
+    /// Entirely hidden roots retain their roster position without participating.
     #[must_use]
     pub const fn is_frontmost(&self) -> bool {
         self.frontmost

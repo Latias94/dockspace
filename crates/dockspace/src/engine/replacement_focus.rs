@@ -76,9 +76,6 @@ impl DockEngine {
     }
 
     fn replacement_selected_item(&self, tabs: crate::ids::NodeId) -> Option<ItemId> {
-        match self.workspace.node(tabs)? {
-            Node::Tabs { selected, .. } => *selected,
-            Node::Split { .. } => None,
-        }
+        self.workspace.visible_tab_selection(tabs)
     }
 }

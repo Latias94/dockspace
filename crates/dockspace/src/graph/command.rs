@@ -81,9 +81,17 @@ impl NodeFingerprint {
                     left.id == right.id
                         && match (&left.node, &right.node) {
                             (
-                                FingerprintNode::Tabs { items: left, .. },
-                                FingerprintNode::Tabs { items: right, .. },
-                            ) => left == right,
+                                FingerprintNode::Tabs {
+                                    items: left,
+                                    hidden: left_hidden,
+                                    ..
+                                },
+                                FingerprintNode::Tabs {
+                                    items: right,
+                                    hidden: right_hidden,
+                                    ..
+                                },
+                            ) => left == right && left_hidden == right_hidden,
                             (
                                 FingerprintNode::Split {
                                     axis: left_axis,
@@ -139,6 +147,7 @@ pub(crate) struct NodeFingerprintRecord {
 pub(crate) enum FingerprintNode {
     Tabs {
         items: Arc<[ItemId]>,
+        hidden: Vec<ItemId>,
         selected: Option<ItemId>,
         mru: Arc<[ItemId]>,
     },
@@ -623,6 +632,8 @@ pub enum RootPresentationTarget {
 pub enum WorkspaceCommand {
     /// Select one item in its current tabs stack.
     Select { source: ItemSource },
+    /// Show or hide an owned item while retaining its membership and split weights.
+    SetItemVisibility { source: ItemSource, visible: bool },
     /// Reorder one item to an exact pre-removal gap in the same tabs stack.
     #[allow(
         dead_code,
@@ -753,6 +764,7 @@ impl WorkspaceCommand {
                 ..
             } => Some(*item),
             Self::Select { .. }
+            | Self::SetItemVisibility { .. }
             | Self::Reorder { .. }
             | Self::Move { .. }
             | Self::ResizeSplits { .. }
@@ -787,6 +799,13 @@ pub enum CommandOutcome {
     Selected {
         item: ItemId,
         tabs: NodeId,
+        changed: bool,
+    },
+    /// One owned item's persistent visibility was checked and optionally changed.
+    ItemVisibilityChanged {
+        item: ItemId,
+        root: RootId,
+        visible: bool,
         changed: bool,
     },
     /// One tab was checked and optionally reordered.
@@ -872,6 +891,7 @@ impl CommandOutcome {
     pub(crate) const fn changes_workspace(&self) -> bool {
         match self {
             Self::Selected { changed, .. }
+            | Self::ItemVisibilityChanged { changed, .. }
             | Self::Reordered { changed, .. }
             | Self::Moved { changed, .. }
             | Self::SplitsResized { changed, .. }

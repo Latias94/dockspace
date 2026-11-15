@@ -33,7 +33,7 @@ impl DockEngine {
                 HostPresentationEndpoint::Headless => None,
             })
             .filter(|binding| self.viewport_focus_binding(observation.surface()) == Some(*binding));
-        let items = self.surface_items(observation.surface());
+        let items = self.surface_focus_items(observation.surface());
         let transition = self.viewport_focus.publish_host_focus_observation(
             observation,
             |_| scope_is_current,
@@ -55,7 +55,7 @@ impl DockEngine {
             };
         }
         let current_binding = self.viewport_focus_binding(observation.surface());
-        let items = self.surface_items(observation.surface());
+        let items = self.surface_focus_items(observation.surface());
         let transition = self.viewport_focus.publish_pane_focus_request_observation(
             observation,
             |binding| current_binding == Some(binding),

@@ -30,7 +30,8 @@ impl Default for DockingActivation {
 /// Ordinary egui control navigation and application document shortcuts retain
 /// their own input owners. Defaults pause docking while Shift is held, cancel
 /// a drag with Escape, close tabs with a middle click, and equalize adjacent
-/// panes with a primary-button double click on their splitter.
+/// panes with a primary-button double click on their splitter. Tab cycling is
+/// opt-in through [`Self::next_tab`] and [`Self::previous_tab`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DockInputConfig {
     /// Modifier policy shared by pointer edges and modifier-only observations.
@@ -49,6 +50,16 @@ pub struct DockInputConfig {
     ///
     /// The core clamps the result to both panes' current size constraints.
     pub double_click_equalizes_splitter: bool,
+    /// Cycles forward in the group whose pane, tab, or built-in strip control owns focus.
+    ///
+    /// Disabled by default so application document shortcuts keep their input.
+    /// Unlike gesture modifiers, Shift and Alt must match this shortcut exactly.
+    /// Navigation wraps in visual order and keeps keyboard focus on the destination
+    /// tab. Press Enter or Space to activate its content. Pane widgets may consume
+    /// the shortcut first; popups, foreign focus, and pointer gestures prevent it.
+    pub next_tab: Option<KeyboardShortcut>,
+    /// Cycles backward using the same ownership and modifier rules as [`Self::next_tab`].
+    pub previous_tab: Option<KeyboardShortcut>,
 }
 
 impl Default for DockInputConfig {
@@ -58,6 +69,8 @@ impl Default for DockInputConfig {
             cancel_drag: Some(KeyboardShortcut::new(Modifiers::NONE, Key::Escape)),
             middle_click_closes_tab: true,
             double_click_equalizes_splitter: true,
+            next_tab: None,
+            previous_tab: None,
         }
     }
 }

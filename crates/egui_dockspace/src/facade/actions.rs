@@ -20,6 +20,15 @@ impl Dockspace {
         self.session.prepare_select_item(item)
     }
 
+    /// Prepares a revision-bound visibility change, retaining the item's layout.
+    pub const fn prepare_set_item_visibility(
+        &self,
+        item: ItemId,
+        visible: bool,
+    ) -> PreparedDockAction {
+        self.session.prepare_set_item_visibility(item, visible)
+    }
+
     /// Prepares a revision-bound open action.
     pub const fn prepare_open_item(
         &self,
@@ -156,6 +165,22 @@ impl Dockspace {
         item: ItemId,
     ) -> Result<DockspaceActionResult, DockspaceError> {
         self.submit_prepared_action(self.prepare_select_item(item))
+    }
+
+    /// Shows or hides an owned item while retaining its tab order and layout.
+    ///
+    /// Showing does not request focus. Inspect [`DockspaceActionResult::status`]
+    /// for policy rejection, missing items and native lifecycle conflicts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the change cannot be published atomically.
+    pub fn set_item_visibility_current(
+        &mut self,
+        item: ItemId,
+        visible: bool,
+    ) -> Result<DockspaceActionResult, DockspaceError> {
+        self.submit_prepared_action(self.prepare_set_item_visibility(item, visible))
     }
 
     /// Opens one item at a stable placement against the current revision.

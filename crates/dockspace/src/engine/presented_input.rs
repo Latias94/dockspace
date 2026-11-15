@@ -141,9 +141,11 @@ impl DockEngine {
             return false;
         }
         let item_is_current = |tab: crate::presentation::scene::TabSceneId| {
-            self.workspace
-                .locate_item_by_id(tab.item)
-                .is_some_and(|(root, tabs, _)| root == tab.root && tabs == tab.tabs)
+            !self.workspace.item_is_hidden(tab.item)
+                && self
+                    .workspace
+                    .locate_item_by_id(tab.item)
+                    .is_some_and(|(root, tabs, _)| root == tab.root && tabs == tab.tabs)
                 && self.presented_root_owner_is_current(plan, tab.root)
         };
         let bar_is_current = |bar: crate::presentation::scene::TabBarSceneId| {
@@ -154,8 +156,13 @@ impl DockEngine {
             else {
                 return false;
             };
-            matches!(self.workspace.node(bar.tabs), Some(Node::Tabs { items, .. })
-                if items.iter().copied().eq(record.members().iter().map(|member| member.tab().item)))
+            matches!(self.workspace.node(bar.tabs), Some(Node::Tabs { .. }))
+                && self
+                    .workspace
+                    .visible_tab_items(bar.tabs)
+                    .iter()
+                    .copied()
+                    .eq(record.members().iter().map(|member| member.tab().item))
                 && self.presented_root_owner_is_current(plan, bar.root)
         };
         match region.kind() {
@@ -213,8 +220,8 @@ impl DockEngine {
             },
             PresentationHitRegionKind::TabStripControl(TabStripControlId::RevealTabBar(bar)) => {
                 self.presented_root_owner_is_current(plan, bar.root)
-                    && matches!(self.workspace.node(bar.tabs), Some(Node::Tabs { items, selected, .. })
-                        if items.len() == 1 && *selected == plan.selected_in_tabs(bar.tabs))
+                    && self.workspace.visible_tab_items(bar.tabs).len() == 1
+                    && self.workspace.visible_tab_selection(bar.tabs) == plan.selected_in_tabs(bar.tabs)
             }
             PresentationHitRegionKind::TabStripControl(control) => bar_is_current(control.bar()),
             PresentationHitRegionKind::TabListMenuScroll(_)

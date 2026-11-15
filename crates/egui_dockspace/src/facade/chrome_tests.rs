@@ -14,6 +14,8 @@ use crate::{DockStyle, PaneResponse, PaneView};
 const SURFACE: SurfaceId = SurfaceId::new(1);
 
 mod splitters;
+mod tab_shortcuts;
+mod visibility;
 
 struct Panes {
     titles: Vec<String>,

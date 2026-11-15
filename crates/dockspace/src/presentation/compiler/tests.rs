@@ -20,6 +20,8 @@ use crate::presentation::scene::{
 };
 use crate::presentation::tab_strip::{TabStripControlId, TabStripStateKey};
 
+mod visibility;
+
 fn version() -> WorkspaceVersion {
     WorkspaceVersion::new(WorkspaceEpoch::new(3), WorkspaceRevision::new(5))
 }

@@ -976,6 +976,7 @@ fn deep_chain_restore_is_iterative() {
             contained: Vec::new(),
         }],
         contained_floatings: Vec::new(),
+        hidden_items: Vec::new(),
     };
 
     let restored = snapshot

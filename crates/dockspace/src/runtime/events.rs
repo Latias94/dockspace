@@ -79,6 +79,10 @@ pub enum DockspaceEventKind {
     },
     /// One previously closed item was opened.
     ItemOpened { item: ItemId, root: RootId },
+    /// An owned item changed its participation in the visible layout.
+    ///
+    /// Hiding and showing retain ownership and do not imply a content close.
+    ItemVisibilityChanged { item: ItemId, visible: bool },
     /// Existing items changed docking placement or tab order.
     ///
     /// The roots can be equal when the payload moves inside one root.
@@ -211,6 +215,12 @@ fn command_kind(
     use DockspaceEventKind as Event;
 
     Some(match command {
+        CommandOutcome::ItemVisibilityChanged { item, visible, .. } => {
+            Event::ItemVisibilityChanged {
+                item: *item,
+                visible: *visible,
+            }
+        }
         CommandOutcome::Selected { item, .. } => Event::SelectionCommitted { item: *item },
         CommandOutcome::Reordered { item, from, to, .. } => Event::TabReordered {
             item: *item,

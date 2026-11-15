@@ -67,9 +67,10 @@ pub(crate) fn candidate_tab_bar_policy(
     root: RootId,
     tabs: NodeId,
 ) -> Result<TabBarPolicy, FutureLayoutProjectionError> {
-    let Some(Node::Tabs { items, .. }) = candidate.node(tabs) else {
+    let Some(Node::Tabs { .. }) = candidate.node(tabs) else {
         return Err(FutureLayoutProjectionError::TargetIsNotTabs { root, node: tabs });
     };
+    let items = candidate.visible_tab_items(tabs);
     let central = candidate
         .root(root)
         .ok_or(FutureLayoutProjectionError::MissingRoot { root })?
@@ -79,7 +80,7 @@ pub(crate) fn candidate_tab_bar_policy(
     let declaration = policy.tab_bar_declaration(target_plan.surface(), Some(rule));
     let revealed = declaration.visibility() == TabBarVisibility::AutoHideSingle
         && items.len() == 1
-        && matches!(original.node(tabs), Some(Node::Tabs { items: previous, .. }) if previous == items)
+        && original.visible_tab_items(tabs) == items
         && target_plan
             .tab_bar_records()
             .iter()
@@ -131,10 +132,14 @@ pub(crate) fn project_future_root(
             .node(node)
             .ok_or(FutureLayoutProjectionError::MissingNode { root, node })?
         {
-            Node::Tabs { selected, .. } => {
+            Node::Tabs { .. } => {
+                if !workspace.node_has_visible_content(node) {
+                    continue;
+                }
+                let selected = workspace.visible_tab_selection(node);
                 let measured = match selected {
                     Some(item) => {
-                        candidate_pane_minimum(original, &pane_minimums, root, node, *item)?
+                        candidate_pane_minimum(original, &pane_minimums, root, node, item)?
                     }
                     None => LogicalSize::new(0.0, 0.0)?,
                 };
@@ -200,20 +205,21 @@ pub(crate) fn project_future_tab_strip(
         })?
         .bounds();
     let node_bounds = clip_rect(projected_bounds, root_bounds)?;
-    let Node::Tabs {
-        items, selected, ..
-    } = candidate
-        .node(target.tabs())
-        .ok_or(FutureLayoutProjectionError::MissingNode {
-            root: target.root(),
-            node: target.tabs(),
-        })?
+    let Node::Tabs { .. } =
+        candidate
+            .node(target.tabs())
+            .ok_or(FutureLayoutProjectionError::MissingNode {
+                root: target.root(),
+                node: target.tabs(),
+            })?
     else {
         return Err(FutureLayoutProjectionError::TargetIsNotTabs {
             root: target.root(),
             node: target.tabs(),
         });
     };
+    let items = candidate.visible_tab_items(target.tabs());
+    let selected = candidate.visible_tab_selection(target.tabs());
     let target_policy = candidate_tab_bar_policy(
         original,
         candidate,
@@ -229,7 +235,7 @@ pub(crate) fn project_future_tab_strip(
         });
     }
     let original_selected = match original.node(target.tabs()) {
-        Some(Node::Tabs { selected, .. }) => *selected,
+        Some(Node::Tabs { .. }) => original.visible_tab_selection(target.tabs()),
         Some(Node::Split { .. }) => {
             return Err(FutureLayoutProjectionError::TargetIsNotTabs {
                 root: target.root(),
@@ -328,7 +334,7 @@ pub(crate) fn project_future_tab_strip(
         requested_scroll,
         viewport.width(),
         selected_index,
-        original_selected != *selected || viewport_shrank,
+        original_selected != selected || viewport_shrank,
     );
 
     let payload_items = payload_items(original, payload);
@@ -357,7 +363,7 @@ pub(crate) fn project_future_tab_strip(
             text_layout_bounds: chrome.as_ref().map(|chrome| chrome.text_layout),
             text_bounds: chrome.as_ref().map(|chrome| chrome.text),
             close_visual_bounds: chrome.as_ref().and_then(|chrome| chrome.close),
-            selected: *selected == Some(item),
+            selected: selected == Some(item),
             payload: payload_items.contains(&item),
         });
         cursor += width;
@@ -415,9 +421,13 @@ fn future_presentation_menu_tab_bar(
     let config = target_facts.config();
     let central = root_record.central;
     let visible_menu_available = |tabs| -> Result<Option<bool>, FutureLayoutProjectionError> {
-        let Some(Node::Tabs { items, .. }) = candidate.node(tabs) else {
+        let Some(Node::Tabs { .. }) = candidate.node(tabs) else {
             return Ok(None);
         };
+        if !candidate.node_has_visible_content(tabs) {
+            return Ok(None);
+        }
+        let items = candidate.visible_tab_items(tabs);
         let tab_bar =
             candidate_tab_bar_policy(original, candidate, policy, target_plan, root, tabs)?;
         if tab_bar.visibility() == TabBarVisibility::Hidden {
@@ -521,12 +531,14 @@ fn presentation_surface(workspace: &Workspace, root: RootId) -> Option<crate::id
 }
 
 fn payload_items(original: &Workspace, payload: &MovePayload) -> Vec<ItemId> {
-    match payload {
+    let mut items = match payload {
         MovePayload::Item(source) => vec![source.item()],
         MovePayload::Tabs(source) | MovePayload::Subtree(source) => {
             original.collect_items_in_subtree(source.node())
         }
-    }
+    };
+    items.retain(|&item| !original.item_is_hidden(item));
+    items
 }
 
 fn collect_pane_minimums(

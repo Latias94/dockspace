@@ -69,6 +69,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     println!("Inspector moved into Outline's group; an abandoned edit left it selected.");
+
+    let mut frame = session.begin_host_frame()?;
+    let hidden = frame.set_item_visibility_current(INSPECTOR, false)?;
+    commit_action(frame, hidden)?;
+    assert!(session.view().item(INSPECTOR).unwrap().is_hidden());
+    assert_eq!(
+        session
+            .view()
+            .item(OUTLINE)
+            .unwrap()
+            .tabs()
+            .visible_items()
+            .collect::<Vec<_>>(),
+        [OUTLINE],
+    );
+    let mut frame = session.begin_host_frame()?;
+    let shown = frame.set_item_visibility_current(INSPECTOR, true)?;
+    commit_action(frame, shown)?;
+    assert_eq!(
+        session.view().item(OUTLINE).unwrap().tabs().items(),
+        &[OUTLINE, INSPECTOR],
+    );
+    assert!(session.view().item(OUTLINE).unwrap().is_selected());
+    println!("Inspector was hidden and restored in place without stealing selection.");
     Ok(())
 }
 

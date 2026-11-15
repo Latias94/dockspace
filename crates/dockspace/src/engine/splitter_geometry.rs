@@ -76,6 +76,7 @@ pub(super) fn prepare_resize_axis_groups(
         if *axis != record.axis()
             || split.axis != *axis
             || id.index >= children.len().checked_sub(1)?
+            || split.following_child_index(id.index) != Some(record.after_index())
             || !record
                 .child_extents()
                 .iter()
@@ -84,9 +85,9 @@ pub(super) fn prepare_resize_axis_groups(
             || record.central_index() != split.central_index
             || record.weights() != weights.as_slice()
             || record.before_minimum_extent() != split.children.get(id.index)?.minimum
-            || record.after_minimum_extent() != split.children.get(id.index + 1)?.minimum
+            || record.after_minimum_extent() != split.children.get(record.after_index())?.minimum
             || record.before_maximum_extent() != split.children.get(id.index)?.maximum
-            || record.after_maximum_extent() != split.children.get(id.index + 1)?.maximum
+            || record.after_maximum_extent() != split.children.get(record.after_index())?.maximum
         {
             return None;
         }
@@ -95,7 +96,9 @@ pub(super) fn prepare_resize_axis_groups(
             .or_default()
             .entry((id.root, id.split))
             .or_insert_with(|| vec![None; children.len() + 1]);
-        merge_edge(edges.get_mut(id.index + 1)?, 1.0)?;
+        for index in id.index + 1..=record.after_index() {
+            merge_edge(edges.get_mut(index)?, 1.0)?;
+        }
     }
 
     incidents
@@ -135,6 +138,20 @@ pub(super) fn prepare_resize_axis_groups(
                     if projected_node != node {
                         return None;
                     }
+                    if !result.visible {
+                        if incidents.contains_key(&(root, node)) {
+                            return None;
+                        }
+                        if let Node::Split { children, .. } = workspace.node(node)? {
+                            pending.extend(
+                                children
+                                    .iter()
+                                    .rev()
+                                    .map(|&child| (child, [0.0, 0.0], false)),
+                            );
+                        }
+                        continue;
+                    }
                     let rect = result.rect;
                     let incident = incidents.get(&(root, node));
                     let affected = outer_edges != [0.0, 0.0] || incident.is_some();
@@ -161,9 +178,12 @@ pub(super) fn prepare_resize_axis_groups(
                         continue;
                     };
                     let mut edges = vec![0.0; children.len() + 1];
+                    let split = projection.splits.get(&node)?;
                     if *split_axis == axis {
-                        *edges.first_mut()? = outer_edges[0];
-                        *edges.last_mut()? = outer_edges[1];
+                        let first = split.visible_child_indices().next()?;
+                        let last = split.visible_child_indices().next_back()?;
+                        edges[..=first].fill(outer_edges[0]);
+                        edges[last + 1..].fill(outer_edges[1]);
                         if let Some(incident) = incident {
                             if incident.len() != edges.len() {
                                 return None;
@@ -179,7 +199,6 @@ pub(super) fn prepare_resize_axis_groups(
                         return None;
                     }
                     if affected {
-                        let split = projection.splits.get(&node)?;
                         let bounds = rect;
                         validate_split_projection(
                             projection,
@@ -202,6 +221,7 @@ pub(super) fn prepare_resize_axis_groups(
                             intersect_split_intervals(
                                 &mut group.common_delta,
                                 &split,
+                                weights,
                                 &coefficients,
                             )?;
                         }
@@ -236,12 +256,18 @@ pub(super) fn prepare_resize_axis_groups(
                         });
                     }
                     for (index, child) in children.iter().copied().enumerate().rev() {
-                        let child_edges = if *split_axis == axis {
+                        let child_edges = if !split.children.get(index)?.visible {
+                            [0.0, 0.0]
+                        } else if *split_axis == axis {
                             [*edges.get(index)?, *edges.get(index + 1)?]
                         } else {
                             outer_edges
                         };
-                        pending.push((child, child_edges, affected));
+                        pending.push((
+                            child,
+                            child_edges,
+                            affected && split.children[index].visible,
+                        ));
                     }
                 }
                 if projected_nodes.next().is_some() {
@@ -370,16 +396,19 @@ fn validate_split_projection(
         || split.axis != axis
         || count != weights.len()
         || count != split.children.len()
-        || split
-            .children
-            .iter()
-            .enumerate()
-            .any(|(index, child)| child.following_gap.is_some() != (index + 1 < count))
+        || split.children.iter().enumerate().any(|(index, child)| {
+            child.following_gap.is_some()
+                != (child.visible
+                    && split.children[index + 1..]
+                        .iter()
+                        .any(|child| child.visible))
+        })
         || split.central_index.is_some_and(|central| central >= count)
     {
         return None;
     }
-    let gaps = std::iter::repeat_n(thickness, count - 1).sum::<f64>();
+    let visible_count = split.visible_child_indices().count();
+    let gaps = std::iter::repeat_n(thickness, visible_count.saturating_sub(1)).sum::<f64>();
     let available = split.children.iter().map(|child| child.extent).sum::<f64>();
     let extent = rect_extent(bounds, axis);
     // Child allocation and rectangle max-minus-min may differ by a few ULPs.
@@ -412,6 +441,16 @@ fn validate_split_projection(
         let actual = split.children[index].extent;
         let child_bounds = projection.nodes.get(child)?.rect;
         let projected = rect_extent(child_bounds, axis);
+        if !split.children[index].visible {
+            if actual != 0.0
+                || projected != 0.0
+                || split.children[index].minimum != 0.0
+                || split.children[index].maximum != 0.0
+            {
+                return None;
+            }
+            continue;
+        }
         if actual <= 0.0
             || (actual - projected).abs()
                 > tolerance(actual, projected).max(rect_extent_tolerance(child_bounds, axis))
@@ -433,6 +472,7 @@ fn validate_split_projection(
 fn intersect_split_intervals(
     interval: &mut ResizeDeltaInterval,
     split: &SplitProjection<'_>,
+    weights: &[SplitWeight],
     coefficients: &[f64],
 ) -> Option<()> {
     let total = split.children.iter().map(|child| child.extent).sum::<f64>();
@@ -445,7 +485,26 @@ fn intersect_split_intervals(
         total_coefficient,
         0.0,
     )?;
+    let visible_weight_total = if split.children.iter().all(|child| child.visible) {
+        1.0
+    } else {
+        crate::graph::normalized_weight_sum(
+            weights
+                .iter()
+                .zip(split.children)
+                .filter_map(|(weight, child)| child.visible.then_some(weight.get())),
+        )
+    };
+    // Hidden siblings may reserve nearly all durable weight. A positive visual
+    // fraction must still map to a representable positive durable weight.
+    let minimum_share = f64::EPSILON.max(f64::from_bits(1) / visible_weight_total);
     for (child, &coefficient) in split.children.iter().zip(coefficients) {
+        if !child.visible {
+            if coefficient != 0.0 {
+                return None;
+            }
+            continue;
+        }
         let extent = child.extent;
         intersect_extent_interval(
             interval,
@@ -457,7 +516,7 @@ fn intersect_split_intervals(
         )?;
         // Keep normalized f64 shares positive as the total changes. A smaller
         // existing share remains valid at zero displacement.
-        let share_floor = (extent / total).min(f64::EPSILON);
+        let share_floor = (extent / total).min(minimum_share);
         let margin = (extent - share_floor * total).max(0.0);
         let slope = coefficient - share_floor * total_coefficient;
         if share_floor <= 0.0 {
@@ -512,19 +571,38 @@ fn split_update(split: &FrozenResizeSplit, delta: f64) -> Option<SplitResize> {
     if !total.is_finite() || total <= 0.0 {
         return None;
     }
+    let visible_share = if split.child_extents.iter().all(|&extent| extent > 0.0) {
+        1.0
+    } else {
+        crate::graph::normalized_weight_sum(
+            split
+                .weights
+                .iter()
+                .zip(&split.child_extents)
+                .filter_map(|(weight, &extent)| (extent > 0.0).then_some(weight.get())),
+        )
+    };
     let mut shares = extents
         .iter()
-        .map(|extent| extent / total)
+        .zip(&split.child_extents)
+        .zip(&split.weights)
+        .map(|((&extent, &old_extent), weight)| {
+            if old_extent > 0.0 {
+                extent / total * visible_share
+            } else {
+                weight.get()
+            }
+        })
         .collect::<Vec<_>>();
     if let Some(central) = split.central_index {
         let mut siblings = 0.0;
         for (index, share) in shares.iter_mut().enumerate() {
-            if index != central {
+            if index != central && split.child_extents[index] > 0.0 {
                 siblings += *share;
             }
         }
         let central_share = shares.get_mut(central)?;
-        let residual = 1.0 - siblings;
+        let residual = visible_share - siblings;
         // Rounded siblings can exhaust the residual. Central layout ignores its
         // own weight, so retain the raw positive share in that case.
         if residual > 0.0 {

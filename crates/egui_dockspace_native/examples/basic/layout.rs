@@ -244,26 +244,47 @@ impl NativeExampleApp {
         for (item, title, loaded) in inventory {
             let location = self.dockspace.with_view(|view| {
                 view.item(item)
-                    .map(|pane| (pane.root(), pane.is_selected()))
+                    .map(|pane| (pane.root(), pane.is_selected(), pane.is_visible()))
             });
             let state = match location {
-                Some((_, true)) => "selected",
-                Some((_, false)) => "open",
+                Some((_, _, false)) => "hidden",
+                Some((_, true, true)) => "selected",
+                Some((_, false, true)) => "open",
                 None => "closed",
             };
             ui.push_id(item, |ui| {
                 ui.menu_button(format!("{title} — {state}"), |ui| {
                     let can_request = self.controls_available();
                     let can_arrange = can_request && !self.dockspace.arrangement_locked();
-                    if let Some((root, _)) = location {
+                    if let Some((root, _, visible)) = location {
                         if ui
-                            .add_enabled(can_request, egui::Button::new("Select"))
+                            .add_enabled(can_request && visible, egui::Button::new("Select"))
                             .clicked()
                         {
                             let request = self
                                 .dockspace
                                 .request_command(NativeCommand::SelectItem { item });
                             self.begin_layout_action("Select pane", request);
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                can_arrange,
+                                egui::Button::new(if visible { "Hide" } else { "Show" }),
+                            )
+                            .on_hover_text("Keep the pane's tab position and split proportions.")
+                            .clicked()
+                        {
+                            let request =
+                                self.dockspace
+                                    .request_command(NativeCommand::SetItemVisibility {
+                                        item,
+                                        visible: !visible,
+                                    });
+                            self.begin_layout_action(
+                                if visible { "Hide pane" } else { "Show pane" },
+                                request,
+                            );
                             ui.close();
                         }
                         ui.separator();
@@ -334,7 +355,7 @@ impl NativeExampleApp {
                 });
             });
         }
-        ui.small("Review close confirmations below the toolbar; pane content is retained.");
+        ui.small("Hide keeps the layout slot; Close removes it. Pane content is retained.");
     }
 
     fn show_pane_move_commands(&mut self, ui: &mut egui::Ui, item: ItemId) {
@@ -586,6 +607,13 @@ pub(super) fn describe_status(status: &NativeActionStatus, panes: &ExamplePanes)
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(outcome)) => match outcome {
             DockspaceActionOutcome::Selected { item, .. } => {
                 format!("Selected {}.", title(*item))
+            }
+            DockspaceActionOutcome::ItemVisibilityChanged { item, visible, .. } => {
+                format!(
+                    "{} {}; its layout position is retained.",
+                    if *visible { "Restored" } else { "Hidden" },
+                    title(*item),
+                )
             }
             DockspaceActionOutcome::Opened { item, .. } => {
                 format!("Reopened {} with its retained content.", title(*item))

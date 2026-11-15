@@ -66,6 +66,8 @@ use support::{
     complete_host_frame_with_current_outputs, measurements, publish_surface, publish_surface_with,
 };
 
+mod visibility;
+
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const ROOT: RootId = RootId::new(10);
 const TARGET_SURFACE: SurfaceId = SurfaceId::new(2);

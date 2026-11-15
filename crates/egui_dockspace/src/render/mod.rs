@@ -21,6 +21,7 @@ mod splitters;
 mod tab_chrome;
 mod tab_close;
 mod tab_customization;
+mod tab_shortcuts;
 mod tabs;
 
 use dockspace::model::ItemId;
@@ -433,6 +434,7 @@ pub(crate) fn paint_surface(
         };
         #[cfg(feature = "motion")]
         motion::begin(&context);
+        tab_shortcuts::prepare(&context);
         let completed_program = context
             .plan
             .execute_surface_program(|step| -> Result<(), DockspaceRuntimeError> {
@@ -545,6 +547,7 @@ pub(crate) fn paint_surface(
                         }
                     }
                     SurfacePaintProgramStep::SurfaceEnd { semantic_output } => {
+                        tab_shortcuts::capture(&mut context);
                         #[cfg(feature = "motion")]
                         motion::finish(&mut context);
                         terminal_semantic_output = Some(semantic_output);

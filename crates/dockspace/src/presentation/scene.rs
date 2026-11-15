@@ -382,8 +382,11 @@ impl PresentationPlan {
         let mut selection =
             slotmap::SparseSecondaryMap::with_capacity(self.facts.pane_records.len());
         for pane in &self.facts.pane_records {
-            if let Some(Node::Tabs { selected, .. }) = workspace.node(pane.id().tabs) {
-                selection.insert(pane.id().tabs, *selected);
+            if let Some(Node::Tabs { .. }) = workspace.node(pane.id().tabs) {
+                selection.insert(
+                    pane.id().tabs,
+                    workspace.visible_tab_selection(pane.id().tabs),
+                );
             }
         }
         self.selection = Arc::new(selection);

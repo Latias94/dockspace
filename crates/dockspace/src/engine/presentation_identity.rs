@@ -314,6 +314,7 @@ impl DockEngine {
                 }
             },
             WorkspaceCommand::Select { .. }
+            | WorkspaceCommand::SetItemVisibility { .. }
             | WorkspaceCommand::Reorder { .. }
             | WorkspaceCommand::Open { .. }
             | WorkspaceCommand::Move { .. }
@@ -359,6 +360,7 @@ impl DockEngine {
                 RootPresentationTarget::Main { .. } | RootPresentationTarget::Contained { .. } => {}
             },
             WorkspaceCommand::Select { .. }
+            | WorkspaceCommand::SetItemVisibility { .. }
             | WorkspaceCommand::Reorder { .. }
             | WorkspaceCommand::Open { .. }
             | WorkspaceCommand::Move { .. }

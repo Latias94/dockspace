@@ -551,6 +551,7 @@ pub fn project_root_with_overrides(
     let (values, central_leaf_row) = topology.measure_with_reader(
         root,
         record.central,
+        &mut |node| workspace.node_has_visible_content(node),
         &mut |node| read_leaf(node).ok_or(LayoutError::MissingLeafConstraints { node }),
         metrics,
         false,
@@ -658,6 +659,9 @@ fn project_measurements(
         )?;
         let mut child_values = Vec::new();
         for &row in &topology.postorder {
+            if !values[row].visible {
+                continue;
+            }
             let maximum = match &topology.nodes[row].kind {
                 RootNodeKind::Tabs => leaf_maximum,
                 RootNodeKind::Split {
@@ -666,7 +670,7 @@ fn project_measurements(
                     let child_rows = &topology.children[children.clone()];
                     let binary_children;
                     let child_measurements: &[SubtreeMeasurement] = match child_rows {
-                        [first, second] => {
+                        [first, second] if values[*first].visible && values[*second].visible => {
                             binary_children = [
                                 SubtreeMeasurement {
                                     constraints: values[*first].constraints,
@@ -681,9 +685,11 @@ fn project_measurements(
                         }
                         _ => {
                             child_values.clear();
-                            child_values.extend(child_rows.iter().map(|&row| SubtreeMeasurement {
-                                constraints: values[row].constraints,
-                                contains_central: false,
+                            child_values.extend(child_rows.iter().filter_map(|&row| {
+                                values[row].visible.then_some(SubtreeMeasurement {
+                                    constraints: values[row].constraints,
+                                    contains_central: false,
+                                })
                             }));
                             &child_values
                         }
@@ -691,7 +697,11 @@ fn project_measurements(
                     compose_maximum(
                         payload.axis(),
                         child_measurements,
-                        total_splitter_extent(topology.nodes[row].id, children.len(), metrics)?,
+                        total_splitter_extent(
+                            topology.nodes[row].id,
+                            child_measurements.len(),
+                            metrics,
+                        )?,
                     )?
                 }
             };
@@ -733,6 +743,7 @@ fn project_draft(
     let values = measurements
         .into_iter()
         .map(|value| NodeResult {
+            visible: true,
             rect: empty_rect,
             constraints: value.constraints,
         })
@@ -871,6 +882,7 @@ fn measure_root<'workspace>(
     let (values, central_leaf_row) = topology.measure_with_reader(
         root,
         record.central,
+        &mut |node| workspace.node_has_visible_content(node),
         &mut |node| leaves.get(node),
         metrics,
         minimums_only,
@@ -1127,16 +1139,20 @@ fn prepare_split_projection(
             &scratch.constraints
         }
     };
-    for (child, constraint) in projection.splits.children[child_range.clone()]
+    let mut visible_count = 0;
+    for ((child, constraint), &row) in projection.splits.children[child_range.clone()]
         .iter_mut()
         .zip(axis_constraints)
+        .zip(children)
     {
+        child.visible = projection.nodes.at_row(row).visible;
+        visible_count += usize::from(child.visible);
         child.minimum = constraint.min();
         child.maximum = constraint.max();
         child.following_gap = None;
     }
     let binary_weights;
-    let axis_weights = if let Some(overrides) = weight_overrides.get(&node_id) {
+    let stored_weights = if let Some(overrides) = weight_overrides.get(&node_id) {
         overrides.as_slice()
     } else {
         match (children, payload.weights()) {
@@ -1152,6 +1168,27 @@ fn prepare_split_projection(
                 scratch.weights.as_slice()
             }
         }
+    };
+    let visible_weights;
+    let axis_weights = if visible_count == children.len() {
+        stored_weights
+    } else {
+        let total =
+            normalized_weight_sum(stored_weights.iter().zip(children).filter_map(
+                |(&weight, &row)| projection.nodes.at_row(row).visible.then_some(weight),
+            ));
+        visible_weights = stored_weights
+            .iter()
+            .zip(children)
+            .map(|(&weight, &row)| {
+                if projection.nodes.at_row(row).visible {
+                    weight / total
+                } else {
+                    0.0
+                }
+            })
+            .collect::<Vec<_>>();
+        visible_weights.as_slice()
     };
     let central_index = match central {
         CentralRoute::Tree { leaf, next } if *next == row => {
@@ -1173,7 +1210,7 @@ fn prepare_split_projection(
         Axis::Vertical => bounds.height(),
     };
     let (splitter_extent, splitter_thickness) =
-        projected_splitter_geometry(node_id, children.len(), extent, metrics)?;
+        projected_splitter_geometry(node_id, visible_count, extent, metrics)?;
     let mut binary_sizes;
     let sizes = match children {
         [_, _] => {
@@ -1186,15 +1223,22 @@ fn prepare_split_projection(
             scratch.sizes.as_mut_slice()
         }
     };
-    let solved = solve_axis_into(
-        extent - splitter_extent,
-        axis_weights,
-        axis_constraints,
-        central_index,
-        sizes,
-        &mut scratch.eligible,
-        metrics.pane_overflow_policy,
-    )?;
+    let solved = if visible_count == 0 {
+        AxisOutcome {
+            overflow: 0.0,
+            unallocated: 0.0,
+        }
+    } else {
+        solve_axis_into(
+            extent - splitter_extent,
+            axis_weights,
+            axis_constraints,
+            central_index,
+            sizes,
+            &mut scratch.eligible,
+            metrics.pane_overflow_policy,
+        )?
+    };
     for (child, &extent) in projection.splits.children[child_range.clone()]
         .iter_mut()
         .zip(sizes.iter())
@@ -1261,7 +1305,12 @@ fn advance_split_projection(
         // Descendants cannot overwrite this acyclic parent's solved extent.
         let size = projection.splits.children[child_range.start + state.next_child - 1].extent;
         state.cursor += size;
-        if state.next_child < children.len() {
+        let previous = child_range.start + state.next_child - 1;
+        if projection.splits.children[previous].visible
+            && projection.splits.children[child_range.start + state.next_child..child_range.end]
+                .iter()
+                .any(|child| child.visible)
+        {
             let splitter = match axis {
                 Axis::Horizontal => LogicalRect::new(
                     state.cursor,
@@ -1298,9 +1347,12 @@ fn advance_split_projection(
                 weights: children.len(),
             })?;
     let size = projection.splits.children[child_range.start + state.next_child].extent;
-    let child_bounds = match axis {
-        Axis::Horizontal => LogicalRect::new(state.cursor, bounds.y(), size, bounds.height())?,
-        Axis::Vertical => LogicalRect::new(bounds.x(), state.cursor, bounds.width(), size)?,
+    let child_bounds = match (axis, projection.nodes.at_row(child).visible) {
+        (_, false) => LogicalRect::new(bounds.x(), bounds.y(), 0.0, 0.0)?,
+        (Axis::Horizontal, true) => {
+            LogicalRect::new(state.cursor, bounds.y(), size, bounds.height())?
+        }
+        (Axis::Vertical, true) => LogicalRect::new(bounds.x(), state.cursor, bounds.width(), size)?,
     };
     state.next_child += 1;
     state.pending_child = true;
@@ -1526,6 +1578,9 @@ mod override_tests;
 
 #[cfg(test)]
 mod overflow_tests;
+
+#[cfg(test)]
+mod visibility_tests;
 
 #[cfg(test)]
 mod reference;

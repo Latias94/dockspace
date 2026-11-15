@@ -99,10 +99,12 @@ fn root_leaf_minimums(
     let mut minimums = BTreeMap::new();
     for (key, measured) in pane_minimums.iter().filter(|(key, _)| key.root() == root) {
         let key = *key;
-        let Some(Node::Tabs { selected, .. }) = workspace.node(key.tabs()) else {
+        let Some(Node::Tabs { .. }) = workspace.node(key.tabs()) else {
             continue;
         };
-        if key.selected() != *selected {
+        if !workspace.node_has_visible_content(key.tabs())
+            || key.selected() != workspace.visible_tab_selection(key.tabs())
+        {
             continue;
         }
         let id = TabBarSceneId {

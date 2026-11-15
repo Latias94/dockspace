@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::BTreeSet, fmt};
 
 use crate::geometry::LogicalRect;
 use crate::graph::{Node, SplitWeight, SurfacePresentation, Workspace};
@@ -29,7 +29,7 @@ impl<'a> DockspaceView<'a> {
 
     /// Copies this view into an independent, validated logical layout.
     ///
-    /// Preserves surfaces, roots, tab order and selection, split weights, central
+    /// Preserves surfaces, roots, tab order and selection, hidden items, split weights, central
     /// regions, contained bounds and stacking order. The copy has no pane data,
     /// policy, presentation settings, document sidecars, native window bindings,
     /// queued input, gestures or output authority. Copying allocates owned graph
@@ -49,6 +49,17 @@ impl<'a> DockspaceView<'a> {
         DockspaceLayout {
             workspace: self.workspace.clone(),
         }
+    }
+
+    /// Returns whether an owned item is hidden. Unknown items are not hidden.
+    #[must_use]
+    pub fn item_is_hidden(self, item: ItemId) -> bool {
+        self.workspace.item_is_hidden(item)
+    }
+
+    /// Iterates hidden owned items in stable identity order.
+    pub fn hidden_items(self) -> impl Iterator<Item = ItemId> + 'a {
+        self.workspace.hidden_items()
     }
 
     /// Returns a logical surface by stable identity.
@@ -125,6 +136,7 @@ impl<'a> DockspaceView<'a> {
             tabs: DockspaceTabsView {
                 items,
                 selected: *selected,
+                hidden_items: &self.workspace.storage().hidden_items,
                 central: self
                     .workspace
                     .root(root)
@@ -152,6 +164,18 @@ impl<'a> DockspaceItemView<'a> {
         self.item
     }
 
+    /// Returns whether this owned item contributes visible docking content.
+    #[must_use]
+    pub fn is_visible(self) -> bool {
+        !self.is_hidden()
+    }
+
+    /// Returns whether this item remains owned but is excluded from presentation.
+    #[must_use]
+    pub fn is_hidden(self) -> bool {
+        self.tabs.hidden_items.contains(&self.item)
+    }
+
     /// Returns the logical surface presenting this item.
     #[must_use]
     pub const fn surface(self) -> SurfaceId {
@@ -170,7 +194,7 @@ impl<'a> DockspaceItemView<'a> {
         self.contained
     }
 
-    /// Returns the item's visual index within its current tabs leaf.
+    /// Returns the item's index in the complete durable tab order, including hidden members.
     #[must_use]
     pub const fn tab_index(self) -> usize {
         self.tab_index
@@ -182,10 +206,10 @@ impl<'a> DockspaceItemView<'a> {
         self.tabs
     }
 
-    /// Returns whether this item is selected in its current tabs leaf.
+    /// Returns whether this item is the selected visible content of its tabs leaf.
     #[must_use]
     pub fn is_selected(self) -> bool {
-        self.tabs.selected() == Some(self.item)
+        self.tabs.visible_selected() == Some(self.item)
     }
 }
 
@@ -461,6 +485,12 @@ impl fmt::Debug for DockspaceNodeView<'_> {
 }
 
 impl<'a> DockspaceNodeView<'a> {
+    /// Returns whether this subtree contributes visible content or an empty central target.
+    #[must_use]
+    pub fn has_visible_content(self) -> bool {
+        self.workspace.node_has_visible_content(self.node)
+    }
+
     /// Returns whether this node is the root's central tabs leaf.
     #[must_use]
     pub fn is_central(self) -> bool {
@@ -476,6 +506,7 @@ impl<'a> DockspaceNodeView<'a> {
             }) => Some(DockspaceTabsView {
                 items,
                 selected: *selected,
+                hidden_items: &self.workspace.storage().hidden_items,
                 central: self.is_central(),
             }),
             Some(Node::Split { .. }) | None => None,
@@ -507,20 +538,39 @@ impl<'a> DockspaceNodeView<'a> {
 pub struct DockspaceTabsView<'a> {
     items: &'a [ItemId],
     selected: Option<ItemId>,
+    hidden_items: &'a BTreeSet<ItemId>,
     central: bool,
 }
 
 impl<'a> DockspaceTabsView<'a> {
-    /// Returns items in visual tab order.
+    /// Returns all owned items in durable tab order, including hidden members.
     #[must_use]
     pub const fn items(self) -> &'a [ItemId] {
         self.items
     }
 
-    /// Returns the selected item, or `None` for an empty central leaf.
+    /// Returns the logical selected item, or `None` for an empty central leaf.
+    ///
+    /// A completely hidden stack retains a logical selection. Renderers should
+    /// use [`Self::visible_selected`] when deciding which content to present.
     #[must_use]
     pub const fn selected(self) -> Option<ItemId> {
         self.selected
+    }
+
+    /// Iterates visible members in their durable tab order.
+    pub fn visible_items(self) -> impl DoubleEndedIterator<Item = ItemId> + Clone + 'a {
+        self.items
+            .iter()
+            .copied()
+            .filter(move |item| !self.hidden_items.contains(item))
+    }
+
+    /// Returns the selected visible item, or `None` for empty or entirely hidden tabs.
+    #[must_use]
+    pub fn visible_selected(self) -> Option<ItemId> {
+        self.selected
+            .filter(|item| !self.hidden_items.contains(item))
     }
 
     /// Returns whether this leaf receives the root's remaining central space.

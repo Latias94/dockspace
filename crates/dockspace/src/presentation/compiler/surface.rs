@@ -144,7 +144,18 @@ fn compile_surface_scene(
         .collect::<Result<Vec<_>, SceneCompilationError>>()?;
     // Publish every projected occluder before laying out rear roots. Guide
     // placement ignores the whole-window drag source; ordinary hits retain it.
-    for &(floating, _, outer, layer) in &contained_placements {
+    for &(floating, record, outer, layer) in &contained_placements {
+        if !workspace.node_has_visible_content(
+            workspace
+                .root(record.root)
+                .ok_or(SceneCompilationError::MissingRoot {
+                    surface,
+                    root: record.root,
+                })?
+                .node,
+        ) {
+            continue;
+        }
         ready.push_drop_occlusion(DropOcclusionRecord::new(
             floating,
             HitRegion::new(outer),
@@ -194,7 +205,16 @@ fn compile_surface_scene(
         ))?;
     }
 
-    let frontmost_contained = presentation.contained.last().copied();
+    let frontmost_contained =
+        contained_placements
+            .iter()
+            .rev()
+            .find_map(|(floating, record, _, _)| {
+                workspace
+                    .root(record.root)
+                    .is_some_and(|root| workspace.node_has_visible_content(root.node))
+                    .then_some(*floating)
+            });
     for (index, (floating, record, outer, layer)) in contained_placements.into_iter().enumerate() {
         if let Some(basis) = workspace_index.root_fingerprint(record.root) {
             ready.bind_command_basis(record.root, basis.clone());
@@ -210,7 +230,16 @@ fn compile_surface_scene(
         let minimum = contained_minimum_size(config, root_measurement.layout.minimum())?;
         ready.push_contained_minimum(ContainedMinimumMeasurement::new(floating, minimum));
 
-        if intersect_rect(bounds, outer)?.is_none() {
+        if !workspace.node_has_visible_content(
+            workspace
+                .root(record.root)
+                .ok_or(SceneCompilationError::MissingRoot {
+                    surface,
+                    root: record.root,
+                })?
+                .node,
+        ) || intersect_rect(bounds, outer)?.is_none()
+        {
             continue;
         }
         let (contained, presentation_menu_anchor) = compile_contained_record(
@@ -600,6 +629,9 @@ fn compile_root(
 
     let tab_measurements = measurements.snapshot();
     for (node, projected) in &projection.nodes {
+        if !projected.visible {
+            continue;
+        }
         let rect = clip_rect(projected.rect, bounds)?;
         match workspace
             .node(*node)
@@ -609,8 +641,11 @@ fn compile_root(
                 node: *node,
             })? {
             Node::Tabs {
-                items, selected, ..
+                items: persistent_items,
+                ..
             } => {
+                let items = workspace.visible_tab_items(*node);
+                let selected = workspace.visible_tab_selection(*node);
                 let depth = *node_depths
                     .get(node)
                     .ok_or(SceneCompilationError::MissingNode {
@@ -628,8 +663,9 @@ fn compile_root(
                     *node,
                     depth,
                     rect,
-                    items,
-                    *selected,
+                    &items,
+                    persistent_items,
+                    selected,
                     layer,
                     fraction,
                     tab_strip_states,
@@ -660,7 +696,10 @@ fn compile_root(
                     && !(config.pane_overflow_policy()
                         == crate::presentation::config::PaneOverflowPolicy::Compress
                         && split.overflow > 0.0);
-                for (index, (splitter, hit)) in split.splitter_rects().zip(hit_rects).enumerate() {
+                for ((index, splitter), hit) in split.indexed_splitter_rects().zip(hit_rects) {
+                    let after_index = split.following_child_index(index).ok_or(
+                        SceneCompilationError::MissingSplitProjection { root, split: *node },
+                    )?;
                     let id = SplitterSceneId {
                         root,
                         split: *node,
@@ -688,11 +727,11 @@ fn compile_root(
                         })?;
                     let after = projection
                         .nodes
-                        .get(&children[index + 1])
+                        .get(&children[after_index])
                         .map(|result| &result.rect)
                         .ok_or(SceneCompilationError::MissingNodeProjection {
                             root,
-                            node: children[index + 1],
+                            node: children[after_index],
                         })?;
                     let before_minimum_extent =
                         split.children.get(index).map(|child| child.minimum).ok_or(
@@ -704,12 +743,12 @@ fn compile_root(
                         )?;
                     let after_minimum_extent = split
                         .children
-                        .get(index + 1)
+                        .get(after_index)
                         .map(|child| child.minimum)
                         .ok_or(SceneCompilationError::MissingSplitMinimum {
                             root,
                             split: *node,
-                            child: children[index + 1],
+                            child: children[after_index],
                         })?;
                     let before_maximum_extent =
                         split.children.get(index).map(|child| child.maximum).ok_or(
@@ -721,12 +760,12 @@ fn compile_root(
                         )?;
                     let after_maximum_extent = split
                         .children
-                        .get(index + 1)
+                        .get(after_index)
                         .map(|child| child.maximum)
                         .ok_or(SceneCompilationError::MissingSplitMaximum {
                             root,
                             split: *node,
-                            child: children[index + 1],
+                            child: children[after_index],
                         })?;
                     let (child_extents, effective_weights) =
                         resize_facts.get_or_insert_with(|| {
@@ -743,23 +782,26 @@ fn compile_root(
                                 Arc::<[SplitWeight]>::from(effective_weights),
                             )
                         });
-                    ready.push_splitter_record(SplitterRecord::new(
-                        id,
-                        splitter,
-                        HitRegion::new(hit),
-                        *axis,
-                        clip_rect(*before, bounds)?,
-                        clip_rect(*after, bounds)?,
-                        before_minimum_extent,
-                        after_minimum_extent,
-                        before_maximum_extent,
-                        after_maximum_extent,
-                        Arc::clone(child_extents),
-                        split.central_index,
-                        Arc::clone(effective_weights),
-                        layer,
-                        operable,
-                    ));
+                    ready.push_splitter_record(
+                        SplitterRecord::new(
+                            id,
+                            splitter,
+                            HitRegion::new(hit),
+                            *axis,
+                            clip_rect(*before, bounds)?,
+                            clip_rect(*after, bounds)?,
+                            before_minimum_extent,
+                            after_minimum_extent,
+                            before_maximum_extent,
+                            after_maximum_extent,
+                            Arc::clone(child_extents),
+                            split.central_index,
+                            Arc::clone(effective_weights),
+                            layer,
+                            operable,
+                        )
+                        .with_after_index(after_index),
+                    );
                     ready.push_surface_program_root_operation(
                         SurfaceProgramRootOperation::Splitter(id),
                     )?;
@@ -842,13 +884,18 @@ fn splitter_hit_rects(
                 crate::graph::Axis::Horizontal => bounds.max().x(),
                 crate::graph::Axis::Vertical => bounds.max().y(),
             };
-            let cell_min = index
-                .checked_sub(1)
-                .and_then(|previous| children[previous].following_gap.as_ref())
+            let cell_min = children[..index]
+                .iter()
+                .rev()
+                .find_map(|previous| previous.following_gap.as_ref())
                 .map_or(axis_min, |previous| (coordinate(previous) + center) * 0.5);
             let cell_max = children
-                .get(index + 1)
-                .and_then(|child| child.following_gap.as_ref())
+                .get(index + 1..)
+                .and_then(|children| {
+                    children
+                        .iter()
+                        .find_map(|child| child.following_gap.as_ref())
+                })
                 .map_or(axis_max, |next| (center + coordinate(next)) * 0.5);
             let hit_min = (center - extent * 0.5).max(cell_min);
             let hit_max = (center + extent * 0.5).min(cell_max).max(hit_min);

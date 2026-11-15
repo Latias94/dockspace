@@ -6,7 +6,7 @@ use super::DockspaceEvent;
 
 /// Durable docking-layout changes committed together in one host frame.
 ///
-/// This includes split ratios, selection/MRU, contained bounds, membership and
+/// This includes split ratios, selection/MRU, visibility, contained bounds, membership and
 /// layout replacement, including changes without a detailed lifecycle event.
 /// Rendering, focus observations, scroll position and pending native transfers
 /// do not independently change the durable docking layout. OS window geometry

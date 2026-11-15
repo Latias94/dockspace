@@ -177,6 +177,25 @@ extra modifiers do not accidentally restore docking or prevent cancellation.
 the last observed modifiers at the next input boundary, without fabricated
 motion. Explicit touch contacts use the same settings.
 
+`next_tab` and `previous_tab` optionally accept egui `KeyboardShortcut` values;
+both default to `None`, leaving application Ctrl+Tab handling unchanged. For
+example, use `KeyboardShortcut::new(Modifiers::CTRL, Key::Tab)` for forward
+cycling and `KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab)`
+for backward cycling. Unlike gesture modifiers, Shift and Alt match exactly.
+Bindings can change at runtime through `set_input`, and either direction can be
+disabled independently. If both bindings match the same event, backward wins.
+
+Cycling uses the real keyboard focus in a selected pane, tab, close button or
+built-in strip control. It never selects a group from pointer hover or a previous
+pane-focus observation. A pane with composite focus can implement
+`PaneView::focus_state`; an unknown focus scope cannot authorize a shortcut.
+Pane widgets process input before cycling, so they can consume an application
+shortcut themselves. Disabled UI, foreign focus, popups and pointer gestures
+leave the event with its existing owner. Navigation wraps in visual tab order,
+reveals a clipped destination and retains its tab focus; Enter or Space then
+activates the pane content. The same deferred navigation path handles ordinary
+tab arrow keys and repeated egui passes.
+
 `middle_click_closes_tab` defaults to true and emits an ordinary close request
 without selecting the tab. Close policy and deferred application decisions still
 apply, including when the tab's close icon is hidden or clipped. Custom tab child

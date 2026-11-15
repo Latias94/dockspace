@@ -1441,6 +1441,23 @@ impl DockEngine {
                 events,
                 interaction_events,
             ),
+            EngineInput::SetItemVisibility {
+                expected,
+                item,
+                visible,
+            } => self.reduce_product_action(
+                input.sequence,
+                cause,
+                focus_causal,
+                *expected,
+                ProductAction::SetItemVisibility {
+                    item: *item,
+                    visible: *visible,
+                },
+                tick_start.policy,
+                events,
+                interaction_events,
+            ),
             EngineInput::SelectItem { expected, item } => self.reduce_product_action(
                 input.sequence,
                 cause,

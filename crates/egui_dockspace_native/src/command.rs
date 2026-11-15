@@ -80,6 +80,16 @@ pub enum NativeCommand {
         /// Pane to select.
         item: ItemId,
     },
+    /// Show or hide an open pane while retaining its layout and native ownership.
+    ///
+    /// Showing a pane does not activate its native window or request pane focus.
+    /// Submit [`Self::SelectItem`] separately when activation is intended.
+    SetItemVisibility {
+        /// Application-owned pane identity.
+        item: ItemId,
+        /// Whether the pane participates in the visible layout.
+        visible: bool,
+    },
     /// Open a closed pane; an already-open pane keeps its location and selection.
     OpenItem {
         /// Application-owned pane identity.

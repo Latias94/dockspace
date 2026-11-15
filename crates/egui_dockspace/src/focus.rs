@@ -250,7 +250,7 @@ fn selected_panes(surface: DockspaceSurfaceView<'_>) -> impl Iterator<Item = Ite
     std::iter::from_fn(move || {
         while let Some(node) = pending.pop() {
             if let Some(tabs) = node.tabs() {
-                if let Some(item) = tabs.selected() {
+                if let Some(item) = tabs.visible_selected() {
                     return Some(item);
                 }
             } else if let Some(split) = node.split() {

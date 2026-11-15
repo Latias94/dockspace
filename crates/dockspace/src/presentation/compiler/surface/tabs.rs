@@ -56,6 +56,9 @@ pub(super) fn select_presentation_menu_tab_bar(
     tab_strip_states: &TabStripStateStore,
 ) -> Result<Option<NodeId>, SceneCompilationError> {
     let visible_menu_available = |tabs| -> Result<Option<bool>, SceneCompilationError> {
+        if !node_results.get(&tabs).is_some_and(|result| result.visible) {
+            return Ok(None);
+        }
         let id = TabBarSceneId { root, tabs };
         let requirement = requirements
             .tab_bar(id)
@@ -82,7 +85,7 @@ pub(super) fn select_presentation_menu_tab_bar(
             return Ok(None);
         }
         let items = match workspace.node(tabs) {
-            Some(Node::Tabs { items, .. }) => items,
+            Some(Node::Tabs { .. }) => workspace.visible_tab_items(tabs),
             Some(Node::Split { .. }) => return Ok(None),
             None => {
                 return Err(SceneCompilationError::MissingNode {
@@ -342,6 +345,7 @@ pub(super) fn compile_tabs_leaf(
     depth: usize,
     bounds: LogicalRect,
     items: &[crate::ids::ItemId],
+    persistent_items: &[crate::ids::ItemId],
     selected: Option<crate::ids::ItemId>,
     layer: SceneLayerKey,
     fraction: DockFraction,
@@ -384,6 +388,7 @@ pub(super) fn compile_tabs_leaf(
             tabs,
             tab_bar,
             items,
+            persistent_items,
             selected,
             layer,
             tab_strip_states,
@@ -497,6 +502,7 @@ fn compile_tab_strip(
     tabs: NodeId,
     bar: LogicalRect,
     items: &[crate::ids::ItemId],
+    persistent_items: &[crate::ids::ItemId],
     selected: Option<crate::ids::ItemId>,
     layer: SceneLayerKey,
     tab_strip_states: &TabStripStateStore,
@@ -775,13 +781,34 @@ fn compile_tab_strip(
         } else {
             viewport
         };
+        // Both rosters have the same order. Merge them once when hidden members
+        // require durable insertion indices; fully visible tabs need no mapping.
+        let durable_indices = (items.len() != persistent_items.len()).then(|| {
+            let mut indices = Vec::with_capacity(items.len());
+            let mut visible = items.iter();
+            let mut next = visible.next();
+            for (index, item) in persistent_items.iter().enumerate() {
+                if next == Some(item) {
+                    indices.push(index);
+                    next = visible.next();
+                }
+            }
+            indices
+        });
         for gap in tab_gap_geometries(gap_viewport, &full_tabs, config.splitter_thickness())? {
             ready.push_drop_target(Arc::new(DropTargetRecord::new(
                 DropTargetLocation::TabGap {
                     surface,
                     root,
                     tabs,
-                    index: gap.index,
+                    // Visible gaps name durable insertion positions. Hidden
+                    // members retain their relative order in the full roster.
+                    index: durable_indices.as_ref().map_or(gap.index, |indices| {
+                        indices
+                            .get(gap.index)
+                            .copied()
+                            .unwrap_or(persistent_items.len())
+                    }),
                 },
                 availability,
                 HitRegion::new(gap.hit),

@@ -460,8 +460,13 @@ impl DockEngine {
         else {
             return false;
         };
-        if !matches!(self.workspace.node(key.bar().tabs), Some(Node::Tabs { items, .. })
-            if items.iter().copied().eq(bar.members().iter().map(|member| member.tab().item)))
+        if !matches!(self.workspace.node(key.bar().tabs), Some(Node::Tabs { .. }))
+            || !self
+                .workspace
+                .visible_tab_items(key.bar().tabs)
+                .iter()
+                .copied()
+                .eq(bar.members().iter().map(|member| member.tab().item))
         {
             return false;
         }

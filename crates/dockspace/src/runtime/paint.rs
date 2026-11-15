@@ -2732,7 +2732,9 @@ impl<'frame> SurfacePaintPlan<'frame> {
         let target = self
             .candidate
             .presentation_dock_target_context(preview)
-            .and_then(|(plan, target, payload)| drop_feedback::resolve(plan, target, payload));
+            .and_then(|(plan, target, payload)| {
+                drop_feedback::resolve(plan, target, payload, self.candidate.workspace())
+            });
         let layout_projected = self.plan.contained_projection().is_some_and(|projection| {
             projection.owner == ContainedLayoutOwner::Drag(preview.token().session())
                 && projection.surface == self.surface

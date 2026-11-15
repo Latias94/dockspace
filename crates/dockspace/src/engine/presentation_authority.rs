@@ -763,15 +763,19 @@ impl DockEngine {
                 requirements.tab_strips().filter_map(move |strip| {
                     let bar = strip.bar();
                     match workspace.node(bar.tabs) {
-                        Some(Node::Tabs { items, .. }) => {
-                            Some((TabStripStateKey::new(surface, bar), items.as_slice()))
-                        }
+                        Some(Node::Tabs { .. }) => Some((
+                            TabStripStateKey::new(surface, bar),
+                            workspace.visible_tab_items(bar.tabs),
+                        )),
                         Some(Node::Split { .. }) | None => None,
                     }
                 })
             })
             .collect::<Vec<_>>();
-        let mut delta = states.reconcile_exact_for_surface_roster(live, surface_roster_changed)?;
+        let mut delta = states.reconcile_exact_for_surface_roster(
+            live.iter().map(|(key, items)| (*key, items.as_ref())),
+            surface_roster_changed,
+        )?;
 
         let active = states.active_menu().map(|menu| menu.session());
         let active_is_enabled = active.is_some_and(|session| {

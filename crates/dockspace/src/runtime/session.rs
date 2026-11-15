@@ -264,6 +264,18 @@ impl DockspaceSession {
         self.engine.prepare_select_item(item)
     }
 
+    /// Prepares a revision-bound show or hide request for an owned item.
+    ///
+    /// Hiding retains membership, tab order and split weights. Showing does not
+    /// request pane or native-window focus. Use selection explicitly afterward.
+    pub const fn prepare_set_item_visibility(
+        &self,
+        item: crate::ids::ItemId,
+        visible: bool,
+    ) -> PreparedDockAction {
+        self.engine.prepare_set_item_visibility(item, visible)
+    }
+
     /// Prepares one revision-bound open action from the published workspace.
     ///
     /// A newly opened item becomes selected and requests pane focus. An existing

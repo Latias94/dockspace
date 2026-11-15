@@ -867,6 +867,15 @@ impl Workspace {
                             })?;
                     FingerprintNode::Tabs {
                         items: Arc::from(items.as_slice()),
+                        hidden: if self.storage.hidden_items.is_empty() {
+                            Vec::new()
+                        } else {
+                            items
+                                .iter()
+                                .copied()
+                                .filter(|item| self.item_is_hidden(*item))
+                                .collect()
+                        },
                         selected: *selected,
                         mru: Arc::from(mru.as_slice()),
                     }

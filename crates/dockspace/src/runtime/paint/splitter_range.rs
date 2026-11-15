@@ -65,7 +65,7 @@ impl SurfacePaintPlan<'_> {
             record.axis(),
         )?;
         let before = *record.child_extents().get(id.index)?;
-        let after = *record.child_extents().get(id.index + 1)?;
+        let after = *record.child_extents().get(record.after_index())?;
         let total = before + after;
         if !total.is_finite() || total <= 0.0 {
             return None;
@@ -112,11 +112,11 @@ impl SurfacePaintPlan<'_> {
         let equalize = |id: SplitterSceneId| {
             let record = self.plan.splitter_record(id)?;
             let before = *record.child_extents().get(id.index)?;
-            let after = *record.child_extents().get(id.index + 1)?;
+            let after = *record.child_extents().get(record.after_index())?;
             let delta = (after - before) * 0.5;
             let scale = if record
                 .central_index()
-                .is_some_and(|central| central == id.index || central == id.index + 1)
+                .is_some_and(|central| central == id.index || central == record.after_index())
             {
                 record.child_extents().iter().sum::<f64>()
             } else {

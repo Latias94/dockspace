@@ -136,6 +136,46 @@ fn default_unknown_preference_animates_and_restores_dividers_at_two_hundred_mill
 }
 
 #[test]
+fn visibility_reflow_can_be_interrupted_by_showing_the_same_pane_again() {
+    let (context, mut dock) = fixture();
+    let before = sample(&mut dock).0;
+    dock.set_item_visibility_current(ItemId::new(3), false)
+        .unwrap();
+    present_frame(&context, &mut dock, 1.0);
+    assert!(dock.session.surface_motion_is_active(SurfaceId::new(1)));
+    assert_eq!(sample(&mut dock).0, before);
+    {
+        let mut frame = dock.session.begin_host_frame().unwrap();
+        let plan = frame.paint_plan(SurfaceId::new(1)).unwrap().unwrap();
+        plan.visit_surface_program(|step| {
+            if let Step::Operation {
+                operation: Operation::Pane(pane),
+                ..
+            } = step
+            {
+                assert_ne!(pane.selected(), Some(ItemId::new(3)));
+            }
+            Ok::<(), ()>(())
+        })
+        .unwrap();
+    }
+    present_frame(&context, &mut dock, 1.08);
+    let during_hide = sample(&mut dock).0;
+    assert_ne!(during_hide, before);
+    dock.set_item_visibility_current(ItemId::new(3), true)
+        .unwrap();
+    present_frame(&context, &mut dock, 1.08);
+    assert_eq!(sample(&mut dock).0, during_hide);
+    present_frame(&context, &mut dock, 2.0);
+    assert!(!dock.session.surface_motion_is_active(SurfaceId::new(1)));
+    let (restored, partition, splitters) = sample(&mut dock);
+    assert_eq!(restored, before);
+    assert!(partition);
+    assert_eq!(splitters, 2);
+    assert!(dock.view().item(ItemId::new(3)).unwrap().is_visible());
+}
+
+#[test]
 fn runtime_off_system_reduction_and_zero_egui_animation_time_settle_active_motion() {
     for (mode, preference, zero_time) in [
         (MotionMode::Off, MotionPreference::Unknown, false),

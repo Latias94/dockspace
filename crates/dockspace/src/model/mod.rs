@@ -8,6 +8,8 @@ mod action;
 mod layout;
 mod revision;
 mod view;
+#[cfg(test)]
+mod visibility_tests;
 
 pub use crate::ids::{FloatingPresentationId, ItemId, RootId, SurfaceId};
 pub use action::{

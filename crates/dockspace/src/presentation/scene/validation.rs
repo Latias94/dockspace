@@ -257,6 +257,14 @@ impl<'a> PresentationPlanValidator<'a> {
             .map(|occlusion| occlusion.floating())
             .collect();
         for floating in self.workspace_index.contained_on_surface(surface) {
+            if self
+                .workspace
+                .contained_floating(floating)
+                .and_then(|record| self.workspace.root(record.root))
+                .is_some_and(|root| !self.workspace.node_has_visible_content(root.node))
+            {
+                continue;
+            }
             if !published_occlusions.contains(&floating) {
                 return Err(SceneBuildError::MissingDropOcclusion { surface, floating });
             }
@@ -266,6 +274,11 @@ impl<'a> PresentationPlanValidator<'a> {
             if !self
                 .workspace_index
                 .contained_belongs_to_surface(surface, floating)
+                || self
+                    .workspace
+                    .contained_floating(floating)
+                    .and_then(|record| self.workspace.root(record.root))
+                    .is_none_or(|root| !self.workspace.node_has_visible_content(root.node))
             {
                 return Err(SceneBuildError::InvalidDropOcclusion { surface, floating });
             }
@@ -849,13 +862,11 @@ fn validate_contained_records(
         .flat_map(|presentation| presentation.contained.iter().copied().enumerate())
         .filter_map(|(ordinal, floating)| {
             let indexed = workspace_index.contained_records().get(&floating)?;
-            rects_overlap_with_area(ready.facts.bounds, indexed.rect).then_some((
-                floating,
-                ordinal,
-                indexed.root,
-                indexed.rect,
-                indexed.layer,
-            ))
+            (workspace
+                .root(indexed.root)
+                .is_some_and(|root| workspace.node_has_visible_content(root.node))
+                && rects_overlap_with_area(ready.facts.bounds, indexed.rect))
+            .then_some((floating, ordinal, indexed.root, indexed.rect, indexed.layer))
         })
         .collect::<Vec<_>>();
     if ready.facts.contained_records.len() != expected.len() {
@@ -1135,8 +1146,13 @@ fn expected_pane_records(
         )?];
         while let Some(node) = pending.pop() {
             match workspace.node(node) {
-                Some(Node::Tabs { selected, .. }) => {
-                    expected.insert(PaneSceneId { root, tabs: node }, (*selected, layer));
+                Some(Node::Tabs { .. }) => {
+                    if workspace.node_has_visible_content(node) {
+                        expected.insert(
+                            PaneSceneId { root, tabs: node },
+                            (workspace.visible_tab_selection(node), layer),
+                        );
+                    }
                 }
                 Some(Node::Split { children, .. }) => {
                     pending.extend(children.iter().rev().copied());
@@ -1209,10 +1225,7 @@ fn validate_tab_records(
                 .map(crate::policy::DockTargetRuleKey::Item)
                 .or(Some(crate::policy::DockTargetRuleKey::Root(pane.id().root))),
         );
-        let item_count = match workspace.node(pane.id().tabs) {
-            Some(Node::Tabs { items, .. }) => items.len(),
-            _ => 0,
-        };
+        let item_count = workspace.visible_tab_items(pane.id().tabs).len();
         let revealed = declaration.visibility() == TabBarVisibility::AutoHideSingle
             && item_count == 1
             && bars
@@ -1324,7 +1337,7 @@ fn validate_tab_records(
                     .flatten()
                 });
                 let valid = declaration.visibility() == TabBarVisibility::AutoHideSingle
-                    && matches!(workspace.node(id.tabs), Some(Node::Tabs { items, .. }) if items.len() == 1)
+                    && workspace.visible_tab_items(id.tabs).len() == 1
                     && controls.len() == 1
                     && control.is_some_and(|control| {
                         expected_bounds == Some(control.bounds())
@@ -1379,15 +1392,14 @@ fn validate_tab_records(
         });
     }
     for (bar_id, bar) in bars.iter(&ready.facts.tab_bar_records) {
-        let Some(Node::Tabs {
-            items, selected, ..
-        }) = workspace.node(bar_id.tabs)
-        else {
+        let Some(Node::Tabs { .. }) = workspace.node(bar_id.tabs) else {
             return Err(SceneBuildError::InvalidTabBarRecord {
                 surface: ready.surface,
                 id: bar_id,
             });
         };
+        let items = workspace.visible_tab_items(bar_id.tabs);
+        let selected = workspace.visible_tab_selection(bar_id.tabs);
         let group_grip_matches = match bar.group_grip_bounds() {
             None => true,
             Some(grip) => {
@@ -1516,8 +1528,8 @@ fn validate_tab_records(
         validate_tab_strip_controls_and_menu(
             ready,
             bar,
-            items,
-            *selected,
+            &items,
+            selected,
             controls_by_bar.get(&bar_id),
             menus_by_bar.get(&bar_id).copied(),
         )?;
@@ -1563,7 +1575,7 @@ fn validate_tab_records(
             if id.root != bar_id.root
                 || id.tabs != bar_id.tabs
                 || !ordinal_matches
-                || ready.tab_selected(record) != (*selected == Some(id.item))
+                || ready.tab_selected(record) != (selected == Some(id.item))
                 || record.layer() != bar.layer()
                 || !geometry_matches
                 || !workspace_index.semantic_node_exists(ready.surface, id.root, id.tabs)
@@ -1795,13 +1807,23 @@ fn validate_splitter_record_sets(
             match workspace.node(node) {
                 Some(Node::Tabs { .. }) => {}
                 Some(Node::Split { children, .. }) => {
-                    expected_splitters.extend((0..children.len().saturating_sub(1)).map(|index| {
-                        SplitterSceneId {
+                    let mut visible = children
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, &child)| {
+                            workspace.node_has_visible_content(child).then_some(index)
+                        })
+                        .peekable();
+                    while let Some(index) = visible.next() {
+                        if visible.peek().is_none() {
+                            break;
+                        }
+                        expected_splitters.insert(SplitterSceneId {
                             root,
                             split: node,
                             index,
-                        }
-                    }));
+                        });
+                    }
                     pending.extend(children.iter().rev().copied());
                 }
                 None => {
@@ -1865,7 +1887,7 @@ fn validate_splitter_geometry(
                 && std::ptr::eq(previous.child_extents(), record.child_extents())
         }) || splitter_resize_arrays_are_valid(record, children.len());
         let before_extent = record.child_extents().get(id.index).copied();
-        let after_extent = record.child_extents().get(id.index + 1).copied();
+        let after_extent = record.child_extents().get(record.after_index()).copied();
         let compressed =
             splitter_compression(ready, record).ok_or(SceneBuildError::InvalidSplitterRecord {
                 surface: ready.surface,
@@ -1873,6 +1895,13 @@ fn validate_splitter_geometry(
             })?;
         if !workspace_index.semantic_node_exists(ready.surface, id.root, id.split)
             || id.index >= children.len().saturating_sub(1)
+            || record.after_index() <= id.index
+            || record.after_index() >= children.len()
+            || !workspace.node_has_visible_content(children[id.index])
+            || !workspace.node_has_visible_content(children[record.after_index()])
+            || children[id.index + 1..record.after_index()]
+                .iter()
+                .any(|&child| workspace.node_has_visible_content(child))
             || record.axis() != *axis
             || !arrays_valid
             || !rect_has_area(record.draw_bounds())
@@ -1940,14 +1969,14 @@ fn splitter_compression(ready: &PresentationPlan, record: &SplitterRecord) -> Op
         return Some(false);
     }
     let before = split.children.get(id.index)?;
-    let after = split.children.get(id.index + 1)?;
+    let after = split.children.get(record.after_index())?;
     (record.axis() == split.axis
         && record.before_minimum_extent() == before.minimum
         && record.before_maximum_extent() == before.maximum
         && record.after_minimum_extent() == after.minimum
         && record.after_maximum_extent() == after.maximum
         && record.child_extents().get(id.index) == Some(&before.extent)
-        && record.child_extents().get(id.index + 1) == Some(&after.extent))
+        && record.child_extents().get(record.after_index()) == Some(&after.extent))
     .then_some(true)
 }
 
@@ -2533,14 +2562,17 @@ fn target_structure_is_valid(
     match record.location() {
         DropTargetLocation::TabGap { tabs, index, .. } => {
             workspace_index.contains_node(root, tabs)
+                && workspace.node_has_visible_content(tabs)
                 && matches!(workspace.node(tabs), Some(Node::Tabs { items, .. }) if index <= items.len())
         }
         DropTargetLocation::Center { tabs, .. } => {
             workspace_index.contains_node(root, tabs)
+                && workspace.node_has_visible_content(tabs)
                 && matches!(workspace.node(tabs), Some(Node::Tabs { .. }))
         }
         DropTargetLocation::InnerEdge { node, .. } => {
             workspace_index.contains_node(root, node)
+                && workspace.node_has_visible_content(node)
                 && matches!(workspace.node(node), Some(Node::Tabs { .. }))
         }
         DropTargetLocation::OuterEdge { node, .. } => workspace_index.root_node(root) == Some(node),

@@ -32,15 +32,7 @@ fn paint_control_records(
         let Some(hit) = egui_rect(control.hit_bounds()) else {
             continue;
         };
-        let id = if control.kind() == TabStripControlKind::TabListMenu {
-            tab_list_menu_trigger_id(context, control.tab_bar_visual_id())
-        } else {
-            context.ui.make_persistent_id((
-                context.instance_id,
-                "tab-strip-control",
-                control.visual_id(),
-            ))
-        };
+        let id = control_id(context, control);
         let enabled = effective_enabled(context.ui, control.enabled());
         let response = context.interact_receiver(
             hit,
@@ -77,6 +69,21 @@ fn paint_control_records(
         {
             context.push_local_action(origin, action);
         }
+    }
+}
+
+pub(super) fn control_id(
+    context: &RenderContext<'_, '_, '_>,
+    control: TabStripControlPaintRecord,
+) -> Id {
+    if control.kind() == TabStripControlKind::TabListMenu {
+        tab_list_menu_trigger_id(context, control.tab_bar_visual_id())
+    } else {
+        context.ui.make_persistent_id((
+            context.instance_id,
+            "tab-strip-control",
+            control.visual_id(),
+        ))
     }
 }
 

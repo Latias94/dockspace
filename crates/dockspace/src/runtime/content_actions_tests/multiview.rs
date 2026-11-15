@@ -212,7 +212,13 @@ impl GroupExpectation {
             let location = view.item(*item).expect(trace);
             assert_eq!(location.surface(), self.target, "{trace}");
             assert_eq!(location.tabs().items(), target_items, "{trace}");
-            assert_eq!(location.tabs().selected(), self.selected, "{trace}");
+            if let Some(selected) = self.selected {
+                assert_eq!(
+                    location.tabs().visible_selected(),
+                    Some(selected),
+                    "{trace}"
+                );
+            }
         }
         self.members.len() > 1 && self.source != self.target
     }
@@ -228,8 +234,9 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
     ] {
         let mut session = multiview_session();
         let mut expected: BTreeSet<_> = [FIRST, SECOND, THIRD, FOURTH, FIFTH].into_iter().collect();
+        let mut hidden = BTreeSet::new();
         let mut rng = ActionRng(seed);
-        let mut changed = [0; 12];
+        let mut changed = [0; 14];
         let mut rejected = 0;
         let mut migrations = [0; 2];
         let mut group_migrations = 0;
@@ -237,7 +244,7 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
         let mut reopened = 0;
 
         for step in 0..512 {
-            let kind = rng.index(12);
+            let kind = rng.index(14);
             let trace = format!("seed={seed:#x}, step={step}, operation={kind}");
             measure_surfaces(&mut session, step, &trace);
             let items: Vec<_> = expected.iter().copied().collect();
@@ -321,6 +328,7 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
                     "{trace}: {report:?}"
                 );
                 assert!(expected.remove(&source));
+                hidden.remove(&source);
                 closed_once.insert(source);
                 changed[kind] += 1;
             } else {
@@ -395,7 +403,7 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
                         let location = session.view().item(source).unwrap();
                         group_expectation = Some(GroupExpectation {
                             members: location.tabs().items().to_vec(),
-                            selected: location.tabs().selected(),
+                            selected: location.tabs().visible_selected(),
                             source: owner,
                             target: *target,
                             target_items: target_items.clone(),
@@ -420,6 +428,8 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
                         DockPlacement::Center(DockAnchor::Item(ItemId::new(999))),
                     ),
                     11 => session.prepare_bring_contained_into_view(source),
+                    12 => session.prepare_set_item_visibility(source, false),
+                    13 => session.prepare_set_item_visibility(source, true),
                     _ => session.prepare_open_item(source, placement),
                 };
                 let trace = format!("{trace}, action={prepared:?}");
@@ -431,10 +441,23 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
                             group_migrations +=
                                 usize::from(group.assert_applied(&session, &outcome, &trace));
                         }
-                        if let DockspaceActionOutcome::Opened { item, .. } = outcome {
-                            assert_eq!(Some(item), opening, "{trace}");
-                            assert!(expected.insert(item), "{trace}");
-                            reopened += usize::from(closed_once.contains(&item));
+                        match outcome {
+                            DockspaceActionOutcome::Opened { item, .. } => {
+                                assert_eq!(Some(item), opening, "{trace}");
+                                assert!(expected.insert(item), "{trace}");
+                                assert!(!hidden.contains(&item), "{trace}");
+                                reopened += usize::from(closed_once.contains(&item));
+                            }
+                            DockspaceActionOutcome::ItemVisibilityChanged {
+                                item, visible, ..
+                            } => {
+                                if visible {
+                                    hidden.remove(&item);
+                                } else {
+                                    hidden.insert(item);
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     None => rejected += 1,
@@ -442,6 +465,26 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
             }
 
             assert_multiview_invariants(&session, &expected, &trace);
+            assert_eq!(
+                session.view().hidden_items().collect::<BTreeSet<_>>(),
+                hidden,
+                "{trace}"
+            );
+            for &item in &expected {
+                let location = session.view().item(item).expect(&trace);
+                let tabs = location.tabs();
+                assert_eq!(location.is_hidden(), hidden.contains(&item), "{trace}");
+                assert_eq!(
+                    tabs.visible_selected().is_some(),
+                    tabs.visible_items().next().is_some(),
+                    "{trace}",
+                );
+                assert!(
+                    tabs.visible_selected()
+                        .is_none_or(|item| !hidden.contains(&item)),
+                    "{trace}"
+                );
+            }
             assert_eq!(session.pending_content_close_plans().count(), 0, "{trace}");
             for (item, before) in before_owners {
                 if let Some(location) = session.view().item(item) {
@@ -455,7 +498,7 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
         }
 
         // Reject-only runs and a degenerate single-tabs workload must not pass.
-        for kind in [1, 2, 3, 4, 5, 6, 7, 8, 10] {
+        for kind in [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 13] {
             assert!(
                 changed[kind] > 0,
                 "seed={seed:#x}, operation={kind} never changed state: {changed:?}"

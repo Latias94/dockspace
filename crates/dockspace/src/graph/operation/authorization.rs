@@ -13,7 +13,16 @@ pub(crate) fn authorize_workspace_command(
     }
     match command {
         // Selection is a programmatic focus semantic, not a docking mutation.
-        WorkspaceCommand::Select { .. } => Ok(()),
+        WorkspaceCommand::Select { source } => {
+            if workspace.item_is_hidden(source.item()) {
+                Err(CommandError::ItemHidden {
+                    item: source.item(),
+                })
+            } else {
+                Ok(())
+            }
+        }
+        WorkspaceCommand::SetItemVisibility { .. } => Ok(()),
         WorkspaceCommand::Reorder {
             source,
             insertion_index,

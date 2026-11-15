@@ -232,20 +232,31 @@ fn projected_payload_rect(
     }
 
     let mut nodes = std::collections::BTreeSet::new();
-    for item in items {
+    // The command retains every owned member, including hidden descendants.
+    // Only visible members contribute geometric evidence for the drag preview.
+    for item in items
+        .into_iter()
+        .filter(|&item| !candidate.item_is_hidden(item))
+    {
         nodes.insert(destination_item_node(candidate, target_root, item)?);
     }
     let mut projected = nodes.into_iter().map(|node| {
-        node_results.get(&node).map(|result| result.rect).ok_or(
-            DropPreviewProjectionError::PayloadProjectionMissing {
+        node_results
+            .get(&node)
+            .filter(|result| result.visible)
+            .map(|result| result.rect)
+            .ok_or(DropPreviewProjectionError::PayloadProjectionMissing {
                 root: target_root,
                 node,
-            },
-        )
+            })
     });
-    let mut bounds = projected
-        .next()
-        .expect("a non-empty payload resolves at least one candidate tabs node")?;
+    let mut bounds =
+        projected
+            .next()
+            .ok_or(DropPreviewProjectionError::PayloadContainsNoItems {
+                root: source_root,
+                node: source_node,
+            })??;
     for next in projected {
         bounds = union_rect(bounds, next?)?;
     }

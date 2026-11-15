@@ -182,6 +182,15 @@ pub enum DockspaceActionOutcome {
         /// Whether durable selection or MRU state changed.
         changed: bool,
     },
+    /// One owned item was shown or hidden without changing its docking placement.
+    ItemVisibilityChanged {
+        /// Item whose visibility was checked.
+        item: ItemId,
+        /// Whether the item is now visible.
+        visible: bool,
+        /// Whether durable visibility state changed.
+        changed: bool,
+    },
     /// A new item was opened into one root.
     Opened {
         /// Opened item.
@@ -333,6 +342,7 @@ impl DockspaceActionOutcome {
     pub const fn changed(&self) -> bool {
         match self {
             Self::Selected { changed, .. }
+            | Self::ItemVisibilityChanged { changed, .. }
             | Self::Docked { changed, .. }
             | Self::TabsDocked { changed, .. }
             | Self::RootDocked { changed, .. }
@@ -357,6 +367,12 @@ pub enum DockspaceActionRejection {
     #[error("item {item} is not open")]
     ItemUnavailable {
         /// Missing item.
+        item: ItemId,
+    },
+    /// The item must be shown before it can be selected.
+    #[error("item {item} is hidden")]
+    ItemHidden {
+        /// Hidden item.
         item: ItemId,
     },
     /// The item is open but its root is not presented as contained floating content.
@@ -463,6 +479,10 @@ pub(crate) struct PreparedDockActionAuthorityMismatch;
 pub(crate) enum ProductAction {
     SelectItem {
         item: ItemId,
+    },
+    SetItemVisibility {
+        item: ItemId,
+        visible: bool,
     },
     OpenItem {
         item: ItemId,

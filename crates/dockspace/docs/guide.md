@@ -5,6 +5,7 @@
 
 - [Host integration](#engine-host-integration)
 - [Logical surfaces](#incremental-logical-surfaces) and [nested splits](#nested-split-resizing)
+- [Pane visibility](#pane-visibility)
 - [Pointer input](#pointer-device-and-event-time), [stationary interaction](#stationary-interaction) and [touch](#local-touch)
 - [Native input budgets](#budgeted-native-input) and [window recovery](#native-creation-failure-and-recovery)
 - [Close decisions](#application-close-decisions) and [arrangement locking](#arrangement-locking)
@@ -66,7 +67,7 @@ belongs to that frame attempt and does not resolve against a later report.
 
 After commit, `report.notification()` exposes one application notification:
 `layout_change()` summarizes all durable layout edits, while `events()` gives
-ordered selection, membership, placement and close details. Split ratios and
+ordered selection, visibility, membership, placement and close details. Split ratios and
 contained bounds can change without a detailed event. For debounced document
 persistence, use `notification.document_changed()`: it also covers committed
 native-window placement without advancing the docking-layout version.
@@ -172,6 +173,45 @@ passes use `restart_encoding_pass` without replaying input; discarded receipts
 cannot confirm the replacement pass. `DeferredSurfaceAction` retains the
 original semantic witness for actions produced during encoding and validates
 its relevant scope in a subsequent update.
+
+## Pane visibility
+
+Use `session.prepare_set_item_visibility(item, visible)` and submit the prepared
+action, or use `frame.set_item_visibility_current(item, visible)` for the current
+candidate. Read the exact committed result through
+`report.submitted_action_outcome(submitted)`, as with other product commands.
+`DockspaceLayout::with_hidden_items` sets the initial hidden roster; hidden IDs
+must already belong to the layout and cannot be repeated.
+
+Hiding retains the complete logical tree, tab order, split proportions and root
+ownership. Visible siblings occupy the released space. A splitter between them
+adjusts only their combined share; hidden children keep their own weights for
+restoration. Entirely hidden contained groups have no frame or input regions,
+but retain their identity and bounds. An entirely hidden native surface keeps
+its window binding: pane visibility does not issue an OS hide or close request.
+
+The product view deliberately exposes both forms. `tabs.items()` and
+`tabs.selected()` describe logical membership and selection, including the valid
+logical selection retained when every member is hidden. `tabs.visible_items()`
+and `tabs.visible_selected()` describe the visible subset; the latter returns
+`None` when every member is hidden. `item.is_visible()` is independent of
+selection, clipping, minimization and OS-window visibility. Owned logical
+checkpoints and persistent documents retain hidden items.
+
+Hiding a selected item chooses the next visible tab, or the preceding visible
+tab at the end. If that item also owns pane focus, focus follows the visible
+selection, or returns to the workspace when no visible member remains. Showing
+an item does not activate a native window or request pane focus. Explicitly
+select it afterwards when that is intended; selecting a hidden item rejects
+with `DockspaceActionRejection::ItemHidden`.
+
+Visibility obeys arrangement locking and does not use close capabilities,
+confirmation plans or close callbacks. Closing a hidden item removes its layout
+slot and visibility flag; reopening it creates a visible item. Repeated requests
+for the current visibility produce no layout version change or event. A real
+change emits `DockspaceEventKind::ItemVisibilityChanged` and marks the layout as
+changed. A frozen source for a pending native transfer rejects visibility edits
+until that operation settles.
 
 ## Incremental logical surfaces
 

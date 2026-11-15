@@ -36,6 +36,10 @@ pub(super) enum ProductCommandContext {
     Select {
         item: ItemId,
     },
+    Visibility {
+        item: ItemId,
+        visible: bool,
+    },
     Open {
         item: ItemId,
     },
@@ -316,6 +320,14 @@ impl DockEngine {
         self.prepare_product_action(ProductAction::SelectItem { item })
     }
 
+    pub const fn prepare_set_item_visibility(
+        &self,
+        item: ItemId,
+        visible: bool,
+    ) -> PreparedDockAction {
+        self.prepare_product_action(ProductAction::SetItemVisibility { item, visible })
+    }
+
     /// Prepares one open action against the exact published workspace version.
     #[must_use]
     pub const fn prepare_open_item(
@@ -468,6 +480,11 @@ impl DockEngine {
             return Err(PreparedDockActionAuthorityMismatch);
         }
         Ok(match action {
+            ProductAction::SetItemVisibility { item, visible } => EngineInput::SetItemVisibility {
+                expected,
+                item,
+                visible,
+            },
             ProductAction::SelectItem { item } => EngineInput::SelectItem { expected, item },
             ProductAction::OpenItem { item, placement } => EngineInput::OpenItem {
                 expected,
@@ -551,6 +568,13 @@ impl DockEngine {
             });
         }
 
+        let hidden_focus = match &action {
+            ProductAction::SetItemVisibility {
+                item,
+                visible: false,
+            } => self.visibility_focus_successor(*item),
+            _ => None,
+        };
         let focus_item = match &action {
             ProductAction::SelectItem { item }
             | ProductAction::OpenItem { item, .. }
@@ -621,6 +645,19 @@ impl DockEngine {
                 changed,
                 version,
             } => {
+                if changed && let Some((surface, tabs)) = hidden_focus {
+                    if let Some(item) = self.workspace.visible_tab_selection(tabs) {
+                        self.request_product_item_focus(item, focus_causal)?;
+                    } else {
+                        let guard = self.viewport_focus_binding(surface);
+                        self.viewport_focus
+                            .request_local_workspace_focus(surface, guard, focus_causal)
+                            .map_err(|source| EngineError::CausedViewportFocus {
+                                cause: focus_causal.cause(),
+                                source,
+                            })?;
+                    }
+                }
                 if (changed || matches!(action, ProductAction::SelectItem { .. }))
                     && let Some(item) = focus_item
                 {
@@ -654,10 +691,25 @@ impl DockEngine {
         }
     }
 
+    fn visibility_focus_successor(&self, item: ItemId) -> Option<(SurfaceId, NodeId)> {
+        if self.workspace.item_is_hidden(item) {
+            return None;
+        }
+        let (root, tabs, _) = self.workspace.locate_item_by_id(item)?;
+        let surface = self.root_surface(root)?;
+        // A newer intent takes precedence over an older focus observation.
+        let focused = match self.viewport_focus.pending_pane_intent() {
+            Some(intent) if intent.surface() == surface => intent.item(),
+            Some(_) => None,
+            None => self.viewport_focus.current_pane_focus(surface),
+        };
+        (focused == Some(item)).then_some((surface, tabs))
+    }
+
     fn product_root_focus_item(&self, root: RootId) -> Option<ItemId> {
         let surface = self.root_surface(root)?;
         let is_visible_source = |item: &ItemId| {
-            self.workspace
+            !self.workspace.item_is_hidden(*item) && self.workspace
                 .locate_item_by_id(*item)
                 .is_some_and(|(owner, tabs, _)| {
                     owner == root
@@ -678,7 +730,7 @@ impl DockEngine {
             .or_else(|| {
                 let node = self.workspace.root(root)?.node;
                 self.workspace.collect_items_in_subtree(node).into_iter().find(|item| {
-                    self.workspace.locate_item_by_id(*item).is_some_and(|(_, tabs, _)| {
+                    !self.workspace.item_is_hidden(*item) && self.workspace.locate_item_by_id(*item).is_some_and(|(_, tabs, _)| {
                         matches!(self.workspace.node(tabs), Some(Node::Tabs { selected: Some(selected), .. }) if selected == item)
                     })
                 })
@@ -713,6 +765,9 @@ impl DockEngine {
         item: ItemId,
         causal: FocusCausalStamp,
     ) -> Result<(), EngineError> {
+        if self.workspace.item_is_hidden(item) {
+            return Ok(());
+        }
         let Some((root, _, _)) = self.workspace.locate_item_by_id(item) else {
             return Ok(());
         };
@@ -734,6 +789,13 @@ impl DockEngine {
         action: ProductAction,
     ) -> Result<ProductActionPlan, DockspaceActionRejection> {
         match action {
+            ProductAction::SetItemVisibility { item, visible } => {
+                let source = self.capture_product_item(item)?;
+                Ok(ProductActionPlan::Command {
+                    command: WorkspaceCommand::SetItemVisibility { source, visible },
+                    context: ProductCommandContext::Visibility { item, visible },
+                })
+            }
             ProductAction::SelectItem { item } => {
                 let source = self.capture_product_item(item)?;
                 Ok(ProductActionPlan::Command {
@@ -1242,6 +1304,7 @@ pub(super) const fn product_presentation_transition_root(action: &ProductAction)
             ..
         } => Some(group.source.root()),
         ProductAction::SelectItem { .. }
+        | ProductAction::SetItemVisibility { .. }
         | ProductAction::OpenItem { .. }
         | ProductAction::DockItem { .. }
         | ProductAction::FloatItem { .. }
@@ -1261,6 +1324,20 @@ impl ProductCommandContext {
         changed: bool,
     ) -> Result<DockspaceActionOutcome, EngineError> {
         match (self, outcome) {
+            (
+                Self::Visibility { item, visible },
+                CommandOutcome::ItemVisibilityChanged {
+                    item: actual,
+                    visible: actual_visible,
+                    ..
+                },
+            ) if actual == item && actual_visible == visible => {
+                Ok(DockspaceActionOutcome::ItemVisibilityChanged {
+                    item,
+                    visible,
+                    changed,
+                })
+            }
             (
                 Self::DockTabs {
                     source_root,
@@ -1719,6 +1796,9 @@ pub(super) fn product_command_rejection(
 ) -> Result<DockspaceActionRejection, EngineError> {
     match error {
         CommandError::Policy(_) => Ok(DockspaceActionRejection::PolicyDenied),
+        CommandError::ItemHidden { item } => {
+            Ok(DockspaceActionRejection::ItemHidden { item: *item })
+        }
         CommandError::RetiredRootId { .. }
         | CommandError::RootIdCollision { .. }
         | CommandError::RetiredSurfaceId { .. }

@@ -583,6 +583,34 @@ impl<'session> DockspaceHostFrame<'session> {
         ))
     }
 
+    /// Shows or hides an owned item without removing its layout membership.
+    ///
+    /// Hiding frees its layout space while preserving tab order and split
+    /// weights. A focused hidden pane yields to its group's visible selection,
+    /// or the workspace when its group has none. Showing does not steal focus.
+    /// Inspect the committed submitted-action outcome for missing items, policy
+    /// rejection and lifecycle conflicts. Native window ownership is retained.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the frame cannot accept another semantic input.
+    pub fn set_item_visibility_current(
+        &mut self,
+        item: crate::ids::ItemId,
+        visible: bool,
+    ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
+        let frame_attempt = self.frame.presentation_attempt();
+        let source_sequence = self.append_identified(EngineInput::SetItemVisibility {
+            expected: self.frame.view().version(),
+            item,
+            visible,
+        })?;
+        Ok(DockspaceSubmittedAction::new(
+            frame_attempt,
+            source_sequence,
+        ))
+    }
+
     /// Opens one item at a stable product placement.
     ///
     /// A newly opened item becomes selected and requests pane focus. Opening an

@@ -5,9 +5,9 @@ use crate::model::WorkspaceVersion;
 use crate::platform::registry::ViewportAdmission;
 use crate::presentation::tab_strip::PopupPlaneRequirement;
 use crate::runtime::{
-    SurfaceMeasurementAnswer, SurfaceMeasurementRequest, SurfacePaintProgramOperation,
-    TabListMenuMetrics, TabStripControlKind, TabStripControlMetric, TabStripControlMetrics,
-    TabStripControlPlacement, TabStripMetrics,
+    HostInputOutcome, SurfaceMeasurementAnswer, SurfaceMeasurementRequest,
+    SurfacePaintProgramOperation, TabListMenuMetrics, TabStripControlKind, TabStripControlMetric,
+    TabStripControlMetrics, TabStripControlPlacement, TabStripMetrics,
 };
 
 #[inline(never)]
@@ -149,6 +149,31 @@ fn pending_first_live_native_create()
 #[test]
 fn prepared_host_cannot_publish_native_item_ownership_or_workspace_revision() {
     let _ = pending_first_live_native_create();
+}
+
+#[test]
+fn changing_visibility_cannot_invalidate_a_pending_native_source_proof() {
+    let (mut session, root, child) = pending_first_live_native_create();
+    let version = session.version();
+    let mut frame = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    let hide = frame
+        .set_item_visibility_current(SECOND_ITEM, false)
+        .unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let report = frame.commit().unwrap();
+    assert_eq!(
+        report.submitted_action_outcome(hide),
+        Some(&HostInputOutcome::ProductActionRejected(
+            crate::model::DockspaceActionRejection::Conflict,
+        )),
+    );
+    assert!(report.notification().is_empty());
+    assert!(!session.workspace().item_is_hidden(SECOND_ITEM));
+    assert_pending_first_live_source(&session, root, child, version);
 }
 
 fn assert_pending_first_live_source(

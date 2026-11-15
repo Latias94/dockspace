@@ -81,7 +81,8 @@ pub(crate) fn materialize_presentation_sample(
                     ResolvedSurfaceProgramOperation::Pane(pane) => {
                         let id = pane.id();
                         let Some(Node::Tabs {
-                            items, selected, ..
+                            items: persistent_items,
+                            ..
                         }) = workspace.node(id.tabs)
                         else {
                             return Err(SceneCompilationError::MissingNode {
@@ -90,6 +91,8 @@ pub(crate) fn materialize_presentation_sample(
                                 node: id.tabs,
                             });
                         };
+                        let items = workspace.visible_tab_items(id.tabs);
+                        let selected = workspace.visible_tab_selection(id.tabs);
                         let root_layout =
                             layout
                                 .root(id.root)
@@ -121,8 +124,9 @@ pub(crate) fn materialize_presentation_sample(
                             id.tabs,
                             0,
                             bounds,
-                            items,
-                            *selected,
+                            &items,
+                            persistent_items,
+                            selected,
                             pane.layer(),
                             fraction,
                             tab_strip_states,

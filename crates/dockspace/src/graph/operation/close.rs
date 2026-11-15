@@ -285,13 +285,20 @@ pub(crate) fn prepare_content_close(
                 }) if *selected == Some(item) => items
                     .iter()
                     .position(|entry| *entry == item)
-                    .and_then(|index| items.get(index + 1).or_else(|| items[..index].last()))
-                    .copied(),
+                    .and_then(|index| {
+                        items[index + 1..]
+                            .iter()
+                            .chain(items[..index].iter().rev())
+                            .copied()
+                            .find(|item| !candidate.item_is_hidden(*item))
+                    }),
                 _ => None,
             };
             remove_item(&mut candidate, source.tabs(), item).map_err(close_command_error)?;
+            Arc::make_mut(&mut candidate.storage.hidden_items).remove(&item);
             if let Some(successor) = successor {
-                select_tabs_item(&mut candidate, source.tabs(), successor)
+                candidate
+                    .set_visible_tab_selection(source.tabs(), successor)
                     .map_err(close_command_error)?;
             }
             cleanup_empty_source_root(&mut candidate, root).map_err(close_command_error)?;

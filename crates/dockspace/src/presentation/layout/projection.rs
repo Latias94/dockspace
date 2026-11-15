@@ -11,6 +11,8 @@ use super::{Axis, Constraints, LogicalRect, NodeId, RootNodeKind, RootStructure}
 /// Complete geometry and composed constraints for one reachable node.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NodeResult {
+    /// Whether this node contributes to the visible layout.
+    pub visible: bool,
     /// Logical rectangle assigned to this node.
     pub rect: LogicalRect,
     /// Composed minimum and maximum logical sizes for this node.
@@ -165,13 +167,15 @@ impl<T> FusedIterator for NodeIter<'_, T> {}
 /// Materialized allocation and following gap for one parent-child edge.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ChildProjection {
+    /// Whether this persistent edge contributes to the visible layout.
+    pub visible: bool,
     /// Minimum projected extent along the parent split's axis.
     pub minimum: f64,
     /// Maximum projected extent along the parent split's axis.
     pub maximum: f64,
     /// Actual projected extent along the parent split's axis.
     pub extent: f64,
-    /// Stored separator after this child; absent for the final child.
+    /// Separator before the next visible child, which may skip hidden siblings.
     pub following_gap: Option<LogicalRect>,
 }
 
@@ -191,6 +195,33 @@ pub struct SplitProjection<'a> {
 }
 
 impl<'a> SplitProjection<'a> {
+    /// Visits persistent child indices which participate in this projection.
+    pub fn visible_child_indices(self) -> impl DoubleEndedIterator<Item = usize> + 'a {
+        self.children
+            .iter()
+            .enumerate()
+            .filter_map(|(index, child)| child.visible.then_some(index))
+    }
+
+    /// Resolves the visible child immediately after one projected separator.
+    pub fn following_child_index(self, index: usize) -> Option<usize> {
+        self.children.get(index)?.following_gap?;
+        self.children[index + 1..]
+            .iter()
+            .position(|child| child.visible)
+            .map(|offset| index + 1 + offset)
+    }
+
+    /// Visits separators together with their persistent preceding-child index.
+    pub fn indexed_splitter_rects(
+        self,
+    ) -> impl DoubleEndedIterator<Item = (usize, LogicalRect)> + 'a {
+        self.children
+            .iter()
+            .enumerate()
+            .filter_map(|(index, child)| child.following_gap.map(|rect| (index, rect)))
+    }
+
     /// Visits the already computed separators in child order.
     pub fn splitter_rects(self) -> impl DoubleEndedIterator<Item = LogicalRect> + 'a {
         self.children.iter().filter_map(|child| child.following_gap)

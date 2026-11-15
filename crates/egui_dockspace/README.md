@@ -257,6 +257,14 @@ let input = DockInputConfig {
         egui::Modifiers::NONE,
         egui::Key::Escape,
     )),
+    next_tab: Some(egui::KeyboardShortcut::new(
+        egui::Modifiers::CTRL,
+        egui::Key::Tab,
+    )),
+    previous_tab: Some(egui::KeyboardShortcut::new(
+        egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+        egui::Key::Tab,
+    )),
     ..Default::default()
 };
 ```
@@ -266,6 +274,15 @@ behavior. Additional held modifiers are allowed. Use `Modifiers::COMMAND` for
 the platform's primary shortcut modifier, or set `cancel_drag: None` to let the
 application own cancellation. Standard egui focus navigation and document
 shortcuts remain with their existing input owners.
+
+`next_tab` and `previous_tab` are disabled by default. When configured, they
+cycle in visual order within the group whose pane content, tab, close button or
+built-in strip control owns keyboard focus. Hovering another group does not
+change the destination. Cycling wraps and reveals the destination tab while
+keeping keyboard focus on it; Enter or Space activates its content. Pane widgets
+can consume the shortcut first. Popups, foreign focus and pointer gestures block
+cycling. Shift and Alt must match exactly, so Ctrl+Shift+Tab does not also match
+Ctrl+Tab. Set either binding to `None` to disable it independently.
 
 Middle-clicking an enabled, closable tab requests closure without selecting it;
 the application still decides whether to allow, deny or defer the request. This

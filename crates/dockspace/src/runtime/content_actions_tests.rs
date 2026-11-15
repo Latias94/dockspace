@@ -15,6 +15,7 @@ use crate::policy::{CloseCapability, DockPolicy};
 mod deferred_move;
 mod multiview;
 mod tab_body_close;
+mod visibility;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const OTHER_SURFACE: SurfaceId = SurfaceId::new(2);

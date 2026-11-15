@@ -3,6 +3,8 @@
 use super::*;
 use crate::platform::focus::unknown_focus_observation;
 
+mod visibility;
+
 #[test]
 fn auto_hidden_single_bar_reveals_through_its_exact_presented_corner_control() {
     let surface = SurfaceId::new(801);

@@ -24,6 +24,8 @@ cargo run --manifest-path integration/egui-fork-workspace/Cargo.toml -p egui_doc
 ```
 
 Use **Move to New Window** and **Dock Back** to explore the native lifecycle.
+Use **Pane inventory → Hide / Show** to temporarily remove panes while keeping
+their layout slots. **Close** removes a slot; pane data remains in the inventory.
 Add `--features serde` for application-owned named layout presets. These presets
 live in the example process; pane data stays separate from layout documents.
 
@@ -80,6 +82,11 @@ Submit `NativeCommand` through `request_command`. Acceptance queues one command;
 consume its exact committed result with `take_action_status` before submitting
 another. Use the returned close tokens for deferred saving. Apply completed pane
 data through `with_panes_mut` and request repaint on the affected egui viewport.
+
+`NativeCommand::SetItemVisibility { item, visible }` retains the pane's tab order,
+split proportions and window ownership. Showing does not activate the window or
+request focus; submit `SelectItem` separately when needed. Entirely hidden roots
+keep their native windows until an explicit host lifecycle action changes them.
 
 This crate uses the separate [fork workspace](../../integration/egui-fork-workspace/Cargo.toml).
 Do not patch the official adapter workspace to run it. Current dependency pins

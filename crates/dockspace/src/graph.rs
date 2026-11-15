@@ -16,6 +16,7 @@ pub(crate) mod root_structure;
 mod shared_storage;
 pub(crate) mod transaction;
 pub(crate) mod validation;
+mod visibility;
 pub(crate) mod workspace;
 
 pub use authority::RootReference;
@@ -422,6 +423,7 @@ pub(crate) struct WorkspaceData {
     pub(crate) roots: Arc<BTreeMap<RootId, RootRecord>>,
     pub(crate) surfaces: BTreeMap<SurfaceId, SurfacePresentation>,
     pub(crate) contained_floatings: BTreeMap<FloatingPresentationId, ContainedFloating>,
+    pub(crate) hidden_items: Arc<BTreeSet<ItemId>>,
 }
 
 impl PartialEq for WorkspaceData {
@@ -429,6 +431,7 @@ impl PartialEq for WorkspaceData {
         self.roots == other.roots
             && self.surfaces == other.surfaces
             && self.contained_floatings == other.contained_floatings
+            && self.hidden_items == other.hidden_items
             && self.nodes.len() == other.nodes.len()
             && self
                 .nodes

@@ -15,7 +15,7 @@ pub struct SplitterSceneId {
     pub root: RootId,
     /// Split node owning the separator.
     pub split: NodeId,
-    /// Gap before child `index + 1`.
+    /// Persistent index of the visible child preceding this separator.
     pub index: usize,
 }
 
@@ -23,6 +23,7 @@ pub struct SplitterSceneId {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SplitterRecord {
     id: SplitterSceneId,
+    after_index: usize,
     draw_bounds: LogicalRect,
     hit: HitRegion,
     axis: Axis,
@@ -41,7 +42,8 @@ pub struct SplitterRecord {
 
 /// Presentation availability for one structural splitter gap.
 ///
-/// Every gap in a compiled root is inventoried exactly once. A collapsed gap
+/// Every visible adjacency in a compiled root is inventoried exactly once. Hidden
+/// children keep their persistent positions without creating gaps. A collapsed gap
 /// has no positive-area draw or hit rectangle and therefore cannot be painted
 /// or interacted with, but remains explicit rather than silently disappearing
 /// from the semantic plan.
@@ -246,6 +248,7 @@ impl SplitterRecord {
     ) -> Self {
         Self {
             id,
+            after_index: id.index + 1,
             draw_bounds,
             hit,
             axis,
@@ -261,6 +264,17 @@ impl SplitterRecord {
             layer,
             operable,
         }
+    }
+
+    pub(crate) fn with_after_index(mut self, after_index: usize) -> Self {
+        self.after_index = after_index;
+        self
+    }
+
+    /// Returns the persistent index of the next visible child.
+    #[must_use]
+    pub const fn after_index(&self) -> usize {
+        self.after_index
     }
 
     /// Returns the stable split-gap identity.

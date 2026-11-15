@@ -384,6 +384,7 @@ impl DockEngine {
             WorkspaceCommand::CreateContainedRoot { .. }
             | WorkspaceCommand::UpdateContainedRect { .. }
             | WorkspaceCommand::Select { .. }
+            | WorkspaceCommand::SetItemVisibility { .. }
             | WorkspaceCommand::Reorder { .. }
             | WorkspaceCommand::Open { .. }
             | WorkspaceCommand::Move { .. }

@@ -151,12 +151,16 @@ fn derive_root_requirements(
             Node::Tabs {
                 items, selected, ..
             } => {
+                if !workspace.node_has_visible_content(node) {
+                    continue;
+                }
+                let visible_items = workspace.visible_tab_items(node);
                 if items.is_empty() {
                     debug_assert!(selected.is_none());
                     pane_minimums.insert(PaneMinimumKey::new(root, node, None));
                 } else {
                     pane_minimums.extend(
-                        items
+                        visible_items
                             .iter()
                             .copied()
                             .map(|item| PaneMinimumKey::new(root, node, Some(item))),
@@ -189,7 +193,7 @@ fn derive_root_requirements(
                     TabBarRequirement::new(
                         id,
                         tab_bar_policy,
-                        items
+                        visible_items
                             .iter()
                             .copied()
                             .map(|item| (item, policy.pane_close_capability(item)))
@@ -204,7 +208,7 @@ fn derive_root_requirements(
                 if tab_bar_policy.visibility() != TabBarVisibility::Hidden
                     || tab_bar_policy.interaction() == TabBarInteraction::Enabled
                 {
-                    tab_intrinsics.extend(items.iter().copied().map(|item| {
+                    tab_intrinsics.extend(visible_items.iter().copied().map(|item| {
                         TabIntrinsicKey::new(
                             surface,
                             TabSceneId {

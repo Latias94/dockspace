@@ -292,3 +292,36 @@ fn skipped_pane_focus_requires_the_current_selected_target_and_never_requests_fo
     assert!(!context.memory(|memory| memory.has_focus(old_target)));
     assert_eq!(context.memory(|memory| memory.focused()), None);
 }
+
+#[test]
+fn hidden_logical_selection_cannot_claim_or_retain_pane_focus() {
+    let context = test_context();
+    let selected = session(EDITOR);
+    let hidden = DockspaceSession::from_layout(
+        selected
+            .view()
+            .to_layout()
+            .with_hidden_items([EDITOR, OTHER])
+            .unwrap(),
+        Default::default(),
+    )
+    .unwrap();
+    let mut pane = EditorPane::new();
+    focus_editor(&context, &mut pane);
+    assert_eq!(
+        hidden.view().item(EDITOR).unwrap().tabs().selected(),
+        Some(EDITOR)
+    );
+
+    run(&context, input(ViewportId::ROOT), |_| {
+        for retained in [&[][..], &[(EDITOR, pane.target)][..]] {
+            assert_eq!(
+                sample(&context, &hidden, &pane, retained),
+                DockspaceHostFocus::Unknown,
+                "a prior widget registration or presented binding cannot reveal hidden content"
+            );
+        }
+        retain_skipped_pane_focus(&context, hidden.view().surface(SURFACE).unwrap(), &pane);
+    });
+    assert_eq!(context.memory(|memory| memory.focused()), None);
+}

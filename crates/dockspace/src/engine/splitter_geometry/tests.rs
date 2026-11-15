@@ -104,6 +104,7 @@ impl Fixture {
             unreachable!();
         };
         let split = self.projection.splits.get(&node).unwrap();
+        let after = split.following_child_index(index).unwrap();
         let draw = split.children[index].following_gap.unwrap();
         let record = SplitterRecord::new(
             SplitterSceneId {
@@ -115,11 +116,11 @@ impl Fixture {
             HitRegion::new(draw),
             *axis,
             self.projection.nodes[&children[index]].rect,
-            self.projection.nodes[&children[index + 1]].rect,
+            self.projection.nodes[&children[after]].rect,
             split.children[index].minimum,
-            split.children[index + 1].minimum,
+            split.children[after].minimum,
             split.children[index].maximum,
-            split.children[index + 1].maximum,
+            split.children[after].maximum,
             split
                 .children
                 .iter()
@@ -129,7 +130,8 @@ impl Fixture {
             weights.clone(),
             SceneLayerKey::surface_base(),
             true,
-        );
+        )
+        .with_after_index(after);
         (
             self.workspace.capture_node_source(ROOT, node).unwrap(),
             record,
@@ -355,6 +357,288 @@ fn adjacent_incident_gaps_merge_before_solving_an_nary_split() {
     close(projected.nodes[&c].rect.width(), 230.0);
     let mut edge = Some(1.0);
     assert!(merge_edge(&mut edge, -1.0).is_none());
+}
+
+#[test]
+fn resize_across_hidden_siblings_preserves_their_weight_and_restoration_share() {
+    let mut builder = Workspace::builder();
+    let a = tabs(&mut builder, 1);
+    let b = tabs(&mut builder, 2);
+    let c = tabs(&mut builder, 3);
+    let split =
+        builder.insert_node(Node::split(Axis::Horizontal, [a, b, c], [0.2, 0.3, 0.5]).unwrap());
+    builder.set_hidden_items([ItemId::new(2)].into());
+    let fixture = Fixture::new(
+        finish(builder, split, None),
+        rect(1001.0, 300.0),
+        [a, b, c]
+            .into_iter()
+            .map(|node| (node, constraints(20.0, 2000.0)))
+            .collect(),
+        1.0,
+    );
+    let groups = fixture.groups(&[(split, 0)]);
+    let frozen = groups[0]
+        .splits
+        .iter()
+        .find(|value| value.source.node() == split)
+        .unwrap();
+    assert_eq!(frozen.child_coefficients, [1.0, 0.0, -1.0]);
+    let updates = resize_axis_group_updates(&groups, [50.0, 0.0]).unwrap();
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].weights()[1].get().to_bits(), 0.3_f64.to_bits());
+    close(updates[0].weights()[0].get(), 0.235);
+    close(updates[0].weights()[2].get(), 0.465);
+    let projected = fixture.project_updates(&updates);
+    close(
+        projected.nodes[&a].rect.width(),
+        fixture.projection.nodes[&a].rect.width() + 50.0,
+    );
+    close(
+        projected.nodes[&c].rect.width(),
+        fixture.projection.nodes[&c].rect.width() - 50.0,
+    );
+    assert!(!projected.nodes[&b].visible);
+    let unchanged = resize_axis_group_updates(&groups, [0.0, 0.0]).unwrap();
+    assert_eq!(unchanged[0].weights(), frozen.weights.as_slice());
+}
+
+#[test]
+fn hidden_constraints_do_not_limit_the_visible_frontier_but_visible_maxima_still_do() {
+    let mut builder = Workspace::builder();
+    let a = tabs(&mut builder, 1);
+    let hidden = tabs(&mut builder, 2);
+    let c = tabs(&mut builder, 3);
+    let split = builder
+        .insert_node(Node::split(Axis::Horizontal, [a, hidden, c], [0.2, 0.3, 0.5]).unwrap());
+    builder.set_hidden_items([ItemId::new(2)].into());
+    let fixture = Fixture::new(
+        finish(builder, split, None),
+        rect(1001.0, 300.0),
+        BTreeMap::from([
+            (a, constraints(20.0, 300.0)),
+            (hidden, constraints(10000.0, 20000.0)),
+            (c, constraints(20.0, 2000.0)),
+        ]),
+        1.0,
+    );
+    let groups = fixture.groups(&[(split, 0)]);
+    close(groups[0].common_delta.maximum, 300.0 - 1000.0 * 2.0 / 7.0);
+    let updates = resize_axis_group_updates(&groups, [1000.0, 0.0]).unwrap();
+    let projected = fixture.project_updates(&updates);
+    close(projected.nodes[&a].rect.width(), 300.0);
+    close(projected.nodes[&c].rect.width(), 700.0);
+    assert_eq!(updates[0].weights()[1].get().to_bits(), 0.3_f64.to_bits());
+}
+
+#[test]
+fn resize_limits_keep_subnormal_visible_weights_representable_when_a_hidden_sibling_dominates() {
+    let mut builder = Workspace::builder();
+    let a = tabs(&mut builder, 1);
+    let hidden = tabs(&mut builder, 2);
+    let c = tabs(&mut builder, 3);
+    let split = builder
+        .insert_node(Node::split(Axis::Horizontal, [a, hidden, c], [1e-310, 1.0, 1e-310]).unwrap());
+    builder.set_hidden_items([ItemId::new(2)].into());
+    let fixture = Fixture::new(
+        finish(builder, split, None),
+        rect(1001.0, 300.0),
+        [a, hidden, c]
+            .into_iter()
+            .map(|node| (node, constraints(0.0, 2000.0)))
+            .collect(),
+        1.0,
+    );
+    let groups = fixture.groups(&[(split, 0)]);
+    for delta in [-1e6, 1e6] {
+        let updates = resize_axis_group_updates(&groups, [delta, 0.0])
+            .expect("every advertised endpoint must keep positive durable weights");
+        assert_eq!(updates[0].weights()[1].get().to_bits(), 1.0_f64.to_bits());
+        assert!(updates[0].weights()[0].get() > 0.0);
+        assert!(updates[0].weights()[2].get() > 0.0);
+        let projected = fixture.project_updates(&updates);
+        assert!(projected.nodes[&a].rect.width() > 0.0);
+        assert!(projected.nodes[&c].rect.width() > 0.0);
+    }
+}
+
+#[test]
+fn hidden_boundary_children_do_not_break_nested_touching_frontier() {
+    let mut builder = Workspace::builder();
+    let hidden_leading = tabs(&mut builder, 1);
+    let left = tabs(&mut builder, 2);
+    let hidden_trailing = tabs(&mut builder, 3);
+    let right = tabs(&mut builder, 4);
+    let hidden_lower = tabs(&mut builder, 5);
+    let nested = builder.insert_node(
+        Node::split(
+            Axis::Horizontal,
+            [hidden_leading, left, hidden_trailing],
+            [0.2, 0.5, 0.3],
+        )
+        .unwrap(),
+    );
+    // A perpendicular level keeps canonicalization from merging both horizontal
+    // splits, while its hidden sibling leaves the nested frontier fully exposed.
+    let across = builder
+        .insert_node(Node::split(Axis::Vertical, [nested, hidden_lower], [0.5, 0.5]).unwrap());
+    let outer =
+        builder.insert_node(Node::split(Axis::Horizontal, [across, right], [0.5, 0.5]).unwrap());
+    builder.set_hidden_items([ItemId::new(1), ItemId::new(3), ItemId::new(5)].into());
+    let fixture = Fixture::new(
+        finish(builder, outer, None),
+        rect(1001.0, 300.0),
+        [hidden_leading, left, hidden_trailing, right, hidden_lower]
+            .into_iter()
+            .map(|node| (node, constraints(20.0, 2000.0)))
+            .collect(),
+        1.0,
+    );
+    assert!(matches!(
+        fixture.workspace.node(nested),
+        Some(Node::Split { .. })
+    ));
+    let groups = fixture.groups(&[(outer, 0)]);
+    let updates = resize_axis_group_updates(&groups, [40.0, 0.0]).unwrap();
+    let nested_update = updates
+        .iter()
+        .find(|update| update.split().node() == nested)
+        .unwrap();
+    assert_eq!(
+        nested_update
+            .weights()
+            .iter()
+            .map(|weight| weight.get())
+            .collect::<Vec<_>>(),
+        [0.2, 0.5, 0.3]
+    );
+    let projected = fixture.project_updates(&updates);
+    close(projected.nodes[&left].rect.width(), 540.0);
+    close(projected.nodes[&right].rect.width(), 460.0);
+}
+
+#[test]
+fn nonadjacent_four_arm_junction_keeps_both_axes_and_central_routes_consistent() {
+    for central_choice in 0..5 {
+        let mut builder = Workspace::builder();
+        let leaves = std::array::from_fn::<_, 7, _>(|index| {
+            tabs(&mut builder, u64::try_from(index + 1).unwrap())
+        });
+        let north = builder.insert_node(
+            Node::split(
+                Axis::Horizontal,
+                [leaves[0], leaves[1], leaves[2]],
+                [0.25, 0.5, 0.25],
+            )
+            .unwrap(),
+        );
+        let south = builder.insert_node(
+            Node::split(
+                Axis::Horizontal,
+                [leaves[3], leaves[4], leaves[5]],
+                [0.25, 0.5, 0.25],
+            )
+            .unwrap(),
+        );
+        let outer = builder.insert_node(
+            Node::split(Axis::Vertical, [north, leaves[6], south], [0.25, 0.5, 0.25]).unwrap(),
+        );
+        builder.set_hidden_items([ItemId::new(2), ItemId::new(5), ItemId::new(7)].into());
+        let central = match central_choice {
+            1 => Some(leaves[0]),
+            2 => Some(leaves[5]),
+            3 => Some(leaves[6]),
+            4 => Some(leaves[1]),
+            _ => None,
+        };
+        let fixture = Fixture::new(
+            finish(builder, outer, central),
+            rect(1001.0, 701.0),
+            leaves
+                .into_iter()
+                .map(|node| (node, constraints(20.0, 2000.0)))
+                .collect(),
+            1.0,
+        );
+        let handles = [north, south, outer].map(|node| fixture.handle(node, 0));
+        let junctions =
+            crate::presentation::scene::junction_index::derive_splitter_junction_candidates(
+                handles.iter().map(|(_, record)| record),
+            )
+            .unwrap();
+        assert_eq!(junctions.len(), 1);
+        assert_eq!(junctions[0].id().arm_count(), 4);
+        assert_eq!(junctions[0].id().splitters().len(), 3);
+        assert!(handles.iter().all(|(_, record)| record.after_index() == 2));
+        let groups = fixture.groups(&[(north, 0), (south, 0), (outer, 0)]);
+        assert_eq!(groups.len(), 2);
+        let updates = resize_axis_group_updates(&groups, [30.0, 40.0]).unwrap();
+        assert_eq!(updates.len(), 3);
+        for update in &updates {
+            assert_eq!(update.weights()[1].get().to_bits(), 0.5_f64.to_bits());
+        }
+        let projected = fixture.project_updates(&updates);
+        for (leaf, dx, dy) in [
+            (leaves[0], 30.0, 40.0),
+            (leaves[2], -30.0, 40.0),
+            (leaves[3], 30.0, -40.0),
+            (leaves[5], -30.0, -40.0),
+        ] {
+            close(
+                projected.nodes[&leaf].rect.width(),
+                fixture.projection.nodes[&leaf].rect.width() + dx,
+            );
+            close(
+                projected.nodes[&leaf].rect.height(),
+                fixture.projection.nodes[&leaf].rect.height() + dy,
+            );
+        }
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn visible_resize_frontiers_preserve_hidden_shares_for_arbitrary_masks(
+        count in 2_usize..10,
+        hidden_mask in 0_u16..1024,
+        delta in -100_i16..100,
+        central in proptest::prelude::any::<bool>(),
+    ) {
+        let mut builder = Workspace::builder();
+        let children = (0..count).map(|index| {
+            tabs(&mut builder, u64::try_from(index + 1).unwrap())
+        }).collect::<Vec<_>>();
+        let visible = (0..count).filter(|&index| hidden_mask & (1 << index) == 0).collect::<Vec<_>>();
+        proptest::prop_assume!(visible.len() >= 2);
+        let split = builder.insert_node(Node::equal_split(Axis::Horizontal, children.iter().copied()).unwrap());
+        builder.set_hidden_items((0..count)
+            .filter(|&index| hidden_mask & (1 << index) != 0)
+            .map(|index| ItemId::new(u64::try_from(index + 1).unwrap())).collect());
+        let central_leaf = central.then_some(children[count / 2]);
+        let fixture = Fixture::new(
+            finish(builder, split, central_leaf),
+            rect(1000.0 + f64::from(u16::try_from(visible.len() - 1).unwrap()), 300.0),
+            children.iter().copied().map(|node| (node, constraints(20.0, 2000.0))).collect(),
+            1.0,
+        );
+        let handles = visible[..visible.len() - 1].iter().copied().map(|index| (split, index)).collect::<Vec<_>>();
+        let groups = fixture.groups(&handles);
+        let updates = resize_axis_group_updates(&groups, [f64::from(delta), 0.0]).unwrap();
+        proptest::prop_assert_eq!(updates.len(), 1);
+        let Node::Split { weights, .. } = fixture.workspace.node(split).unwrap() else { unreachable!() };
+        for index in 0..count {
+            if hidden_mask & (1 << index) != 0 {
+                proptest::prop_assert_eq!(updates[0].weights()[index].get().to_bits(), weights[index].get().to_bits());
+            }
+        }
+        let projected = fixture.project_updates(&updates);
+        let requested = f64::from(delta).clamp(groups[0].common_delta.minimum, groups[0].common_delta.maximum);
+        for (ordinal, &index) in visible.iter().enumerate() {
+            let old = fixture.projection.nodes[&children[index]].rect.width();
+            let change = if ordinal == 0 { requested } else if ordinal + 1 == visible.len() { -requested } else { 0.0 };
+            proptest::prop_assert!((projected.nodes[&children[index]].rect.width() - old - change).abs() < 1e-8);
+        }
+    }
 }
 
 fn constrained() -> (Fixture, NodeId) {

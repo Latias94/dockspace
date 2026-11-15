@@ -18,6 +18,9 @@ use crate::graph::{
 };
 use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
 
+#[cfg(test)]
+mod visibility_tests;
+
 /// A complete renderer-neutral workspace snapshot.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,6 +33,9 @@ pub struct WorkspaceSnapshot {
     pub surfaces: Vec<SnapshotSurfaceRecord>,
     /// Contained-floating presentations.
     pub contained_floatings: Vec<SnapshotContainedFloatingRecord>,
+    /// Owned items excluded from presentation while retaining their placement.
+    #[serde(default)]
+    pub hidden_items: Vec<u64>,
 }
 
 /// One node and its snapshot-local integer identity.
@@ -207,6 +213,18 @@ pub enum SnapshotRestoreError {
         /// Missing stable application item identity.
         item: ItemId,
     },
+    /// One item was repeated in the persistent hidden item set.
+    #[error("hidden item {item} is declared more than once")]
+    DuplicateHiddenItem {
+        /// Repeated hidden item identity.
+        item: ItemId,
+    },
+    /// Visibility metadata references content absent from all tabs leaves.
+    #[error("hidden item {item} is not owned by the snapshot")]
+    UnknownHiddenItem {
+        /// Unknown hidden item identity.
+        item: ItemId,
+    },
     /// A contained-floating record has invalid logical geometry.
     #[error("floating presentation {floating} has invalid geometry: {source}")]
     InvalidFloatingGeometry {
@@ -290,6 +308,7 @@ impl WorkspaceSnapshot {
             roots,
             surfaces,
             contained_floatings,
+            hidden_items: workspace.hidden_items().map(ItemId::get).collect(),
         })
     }
 
@@ -321,6 +340,7 @@ impl WorkspaceSnapshot {
         populate_roots(self, &runtime_nodes, &mut builder)?;
         populate_surfaces(self, &mut builder);
         populate_contained_floatings(self, &mut builder)?;
+        builder.set_hidden_items(self.hidden_items.iter().copied().map(ItemId::new).collect());
 
         builder
             .validate()
@@ -459,6 +479,30 @@ fn preflight_references_and_scalars(
     snapshot: &WorkspaceSnapshot,
     index: &SnapshotIndex,
 ) -> Result<(), SnapshotRestoreError> {
+    if !snapshot.hidden_items.is_empty() {
+        let owned_items: HashSet<_> = snapshot
+            .nodes
+            .iter()
+            .flat_map(|record| match &record.node {
+                SnapshotNode::Tabs { items, .. } => items.as_slice(),
+                SnapshotNode::Split { .. } => &[],
+            })
+            .copied()
+            .collect();
+        let mut hidden_items = HashSet::with_capacity(snapshot.hidden_items.len());
+        for &item in &snapshot.hidden_items {
+            if !hidden_items.insert(item) {
+                return Err(SnapshotRestoreError::DuplicateHiddenItem {
+                    item: ItemId::new(item),
+                });
+            }
+            if !owned_items.contains(&item) {
+                return Err(SnapshotRestoreError::UnknownHiddenItem {
+                    item: ItemId::new(item),
+                });
+            }
+        }
+    }
     for record in &snapshot.nodes {
         if let SnapshotNode::Split {
             children, weights, ..

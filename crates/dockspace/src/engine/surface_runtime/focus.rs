@@ -678,10 +678,16 @@ impl DockEngine {
             .collect()
     }
 
+    pub(in crate::engine) fn surface_focus_items(&self, surface: SurfaceId) -> BTreeSet<ItemId> {
+        let mut items = self.surface_items(surface);
+        items.retain(|item| !self.workspace.item_is_hidden(*item));
+        items
+    }
+
     fn focus_item_snapshot(&self) -> BTreeMap<crate::ids::SurfaceId, BTreeSet<crate::ids::ItemId>> {
         self.workspace
             .surfaces()
-            .map(|(surface, _)| (surface, self.surface_items(surface)))
+            .map(|(surface, _)| (surface, self.surface_focus_items(surface)))
             .collect()
     }
 

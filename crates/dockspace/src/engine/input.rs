@@ -741,6 +741,15 @@ pub enum EngineInput {
         /// Stable application item.
         item: ItemId,
     },
+    /// Changes whether one owned item participates in presentation layout.
+    SetItemVisibility {
+        /// Exact workspace version against which the request was prepared.
+        expected: WorkspaceVersion,
+        /// Owned application item, including one currently hidden.
+        item: ItemId,
+        /// Whether this item should participate in layout.
+        visible: bool,
+    },
     /// Open one item at a stable product placement.
     OpenItem {
         /// Exact workspace version from which this product action was derived.
@@ -1145,6 +1154,7 @@ impl EngineInput {
             | Self::RetireEmptySurface { .. }
             | Self::WorkspaceCommand { .. }
             | Self::SelectItem { .. }
+            | Self::SetItemVisibility { .. }
             | Self::OpenItem { .. }
             | Self::DockItem { .. }
             | Self::DockTabs { .. }

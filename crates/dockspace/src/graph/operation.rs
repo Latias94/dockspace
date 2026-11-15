@@ -57,7 +57,7 @@ pub(crate) use topology::validate_split_resizes;
 use topology::validate_split_resizes_structure;
 use topology::{
     apply_command, floating_presentation_mismatch, moves_central_tab_contents, remove_item, select,
-    select_tabs_item, validate_contained,
+    validate_contained,
 };
 
 /// A completed candidate paired with the report frozen by its prepare owner.

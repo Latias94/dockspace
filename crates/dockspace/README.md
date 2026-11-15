@@ -80,6 +80,10 @@ close decisions and persistence contracts, and the
   the core and persistence. Convert to your renderer's coordinate type at the
   adapter boundary.
 - Resolve close requests immediately or retain a deferred token while saving.
+- Use `frame.set_item_visibility_current(item, false)` to hide an open pane and
+  `true` to restore it. Hidden panes keep their tab order, split proportions and
+  window ownership; close removes their layout slot. Query `is_visible()` on an
+  item view or `visible_items()` on its tabs view. Showing does not request focus.
 - Enable `serde` to save and restore a complete layout document with stable pane
   keys. The application chooses storage and serializes its own pane data.
 - The default `motion` feature provides interruptible presentation geometry.

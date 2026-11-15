@@ -67,6 +67,9 @@ pub enum CommandError {
     /// Opening an item would duplicate application ownership.
     #[error("item {item} is already open")]
     ItemAlreadyOpen { item: ItemId },
+    /// A hidden item cannot receive explicit selection.
+    #[error("item {item} is hidden")]
+    ItemHidden { item: ItemId },
     /// A tab gap index is outside `0..=len`.
     #[error("tab insertion index {index} exceeds tabs {tabs:?} length {len}")]
     TabIndexOutOfBounds {
@@ -260,6 +263,7 @@ impl CommandError {
             | Self::NodeIsNotSplit { .. }
             | Self::ItemNotInTabs { .. }
             | Self::ItemAlreadyOpen { .. }
+            | Self::ItemHidden { .. }
             | Self::TabIndexOutOfBounds { .. }
             | Self::SplitPayloadIntoTabs { .. }
             | Self::EmptyPayload { .. }

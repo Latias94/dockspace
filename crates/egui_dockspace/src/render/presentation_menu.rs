@@ -290,6 +290,7 @@ const fn unavailable_text(reason: DockspacePresentationCommandUnavailable) -> &'
 
 const fn action_unavailable_text(reason: DockspaceActionRejection) -> &'static str {
     match reason {
+        DockspaceActionRejection::ItemHidden { .. } => "Show the pane before selecting it.",
         DockspaceActionRejection::PolicyDenied => {
             "This command is disabled by the current docking policy."
         }

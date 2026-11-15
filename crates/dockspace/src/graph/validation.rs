@@ -79,6 +79,20 @@ pub enum WorkspaceValidationError {
         /// Invalid selected item, or `None` when a populated node has no selection.
         selected: Option<ItemId>,
     },
+    /// A tabs leaf selects hidden content despite owning a visible alternative.
+    #[error("tabs node {tabs:?} selects hidden item {item} while other items are visible")]
+    HiddenSelection {
+        /// Tabs leaf with an invisible selection.
+        tabs: NodeId,
+        /// Hidden selected item.
+        item: ItemId,
+    },
+    /// Visibility metadata names an item absent from durable ownership.
+    #[error("hidden item {item} is not owned by the workspace")]
+    HiddenItemNotOwned {
+        /// Unknown hidden item.
+        item: ItemId,
+    },
     /// A tabs MRU permutation has a different length from its visual item order.
     #[error("tabs node {tabs:?} has {items} items but {mru} MRU entries")]
     TabMruLengthMismatch {
@@ -365,6 +379,7 @@ pub(crate) fn validate_workspace_data(
     crate::interaction::targeting::resolver::structural_work::record_workspace_full_validation();
     let mut validator = Validator::new(workspace);
     validator.validate_graph();
+    validator.validate_hidden_items();
     validator.validate_central_regions();
     validator.validate_presentations();
 
@@ -476,6 +491,15 @@ impl<'workspace> Validator<'workspace> {
         for orphan in orphans {
             if !self.visits.contains_key(orphan) {
                 self.walk(orphan, None);
+            }
+        }
+    }
+
+    fn validate_hidden_items(&mut self) {
+        for item in self.workspace.hidden_items.iter() {
+            if !self.items.contains_key(item) {
+                self.errors
+                    .push(WorkspaceValidationError::HiddenItemNotOwned { item: *item });
             }
         }
     }
@@ -606,6 +630,15 @@ impl<'workspace> Validator<'workspace> {
         } else if selected.is_none() || selected.is_some_and(|item| !items.contains(&item)) {
             self.errors
                 .push(WorkspaceValidationError::InvalidSelection { tabs, selected });
+        }
+        if let Some(item) = selected
+            && self.workspace.hidden_items.contains(&item)
+            && items
+                .iter()
+                .any(|item| !self.workspace.hidden_items.contains(item))
+        {
+            self.errors
+                .push(WorkspaceValidationError::HiddenSelection { tabs, item });
         }
 
         self.validate_tab_mru(tabs, items, selected, mru);
