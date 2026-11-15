@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish an existing version tag using crates.io Trusted Publishing
+        type: boolean
+        default: false
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 2
+
+jobs:
+  source:
+    name: Validate release source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a matching main-history tag for publication
+        if: inputs.publish
+        run: |
+          python3 - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          manifest = tomllib.loads(Path("Cargo.toml").read_text())
+          version = manifest["workspace"]["package"]["version"]
+          expected = f"refs/tags/v{version}"
+          if os.environ["GITHUB_REF"] != expected:
+              raise SystemExit(f"Publication requires dispatching this workflow at {expected}")
+          PY
+          git merge-base --is-ancestor HEAD origin/main
+
+  checks:
+    name: Release checks
+    needs: source
+    uses: ./.github/workflows/ci.yml
+
+  packages:
+    name: Verify registry packages
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Package and build the public dependency chain without uploading
+        run: >-
+          cargo publish --dry-run --locked --all-features
+          --package dockspace --package dockspace_winit --package egui_dockspace
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: crates-${{ github.sha }}
+          path: |
+            target/package/dockspace-*.crate
+            target/package/dockspace_winit-*.crate
+            target/package/egui_dockspace-*.crate
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish to crates.io
+    if: inputs.publish
+    needs: [checks, packages]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: false
+      - name: Obtain a short-lived registry token
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+      - name: Publish only the three public crates in dependency order
+        run: >-
+          cargo publish --locked --all-features
+          --package dockspace --package dockspace_winit --package egui_dockspace
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

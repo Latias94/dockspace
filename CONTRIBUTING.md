@@ -127,4 +127,7 @@ environment. Record durable architectural trade-offs in short ADRs; temporary
 plans and session logs do not belong in the maintained documentation.
 
 Release and repository maintenance are documented in
-[Maintaining](docs/MAINTAINING.md).
+[Maintaining](docs/MAINTAINING.md#registry-releases). The manual Release workflow
+defaults to verification only: it reuses CI and builds the three registry
+packages without publishing. Ordinary CI runs remain the development gate;
+package verification belongs to release rehearsals.

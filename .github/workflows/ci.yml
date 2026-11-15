@@ -7,6 +7,7 @@ on:
   pull_request:
     paths-ignore: ["docs/**", "**/*.md"]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -33,6 +34,8 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Format
         run: cargo fmt --all --check
       - name: Check core dependency boundary
@@ -83,6 +86,7 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: integration/dockspace-host-harness -> target
       - name: Format public host consumer
         run: >-
@@ -114,6 +118,7 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: |
             integration/egui-official-harness -> target
             integration/egui-product-harness -> target
@@ -145,6 +150,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: integration/egui-fork-workspace -> target
       - name: Check native adapter library
         run: >-
@@ -166,6 +172,7 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: native-linux
           workspaces: |
             . -> target

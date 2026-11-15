@@ -77,36 +77,86 @@ and must not widen production visibility just to keep it compiling.
   source tree. Attach relevant source/environment details to CI artifacts or
   releases. Results do not silently expand platform or performance claims.
 
-## First registry release
+## Registry releases
 
-The public crates are currently source-only. Do not advertise a crates.io
-installation command or docs.rs version badge until that release exists.
+The first registry release includes `dockspace`, `dockspace_winit` and
+`egui_dockspace`. Their versions follow `[workspace.package].version`; project
+dependencies declare both a local path and the matching registry version. Keep
+installation commands and version badges out of user documentation until those
+packages actually exist on crates.io.
 
-1. Finalize naming and package metadata, include the declared license texts in
-   each distributable package, check third-party notices, and write user-facing
-   release notes for the selected source revision.
-2. Run the CI gates and applicable native qualification. Check both default and
-   persistence consumers and keep the documented platform limits accurate.
-3. Inspect package contents. `dockspace` must include its command example and
-   host guide; `dockspace_winit` must include its host setup README;
-   `egui_dockspace` must include its application examples and guide.
-4. Publish `dockspace` first, then verify and publish `dockspace_winit`, then
-   `egui_dockspace` against those exact released versions. A local package test
-   does not prove registry publication.
-5. Add installation/version links and release notes after verifying the registry
-   packages and generated documentation. Keep the native adapter unpublished
-   until it has a separate release decision.
+Use the pinned Rust 1.100 toolchain for release packaging. Cargo can verify and
+publish multiple workspace packages in dependency order, including dependencies
+not yet published to the registry. Do not maintain a separate temporary registry
+or bypass package verification.
 
-Useful package inspection commands:
+### Prepare and verify
 
-```sh
-cargo package -p dockspace --all-features --locked --list
-cargo package -p dockspace_winit --all-features --locked --list
-cargo package -p egui_dockspace --all-features --locked --list
-```
+1. Finalize package metadata, check declared license texts and third-party
+   notices, and prepare release notes for the selected revision.
+2. Pass the normal CI gates and the applicable
+   [native qualification](PLATFORM_SUPPORT.md). Default and persistence consumers
+   must both pass; keep platform claims within the verified scope.
+3. Inspect archive contents with `cargo package -p <crate> --all-features
+   --locked --list`. Include the core example and guide, the winit host README,
+   and the egui application examples and guide.
+4. Run the joint dry run from a clean checkout:
 
-Package verification is a separate step from listing. Before registry release,
-each adapter needs its matching dependencies to resolve successfully. Publish and
-verify in dependency order, running `cargo package -p <crate> --all-features
---locked` before publishing each adapter. Listing archive contents alone does not
-verify a package's build.
+   ```sh
+   cargo publish --dry-run --locked --all-features \
+     -p dockspace -p dockspace_winit -p egui_dockspace
+   ```
+
+The [Release workflow](../.github/workflows/release.yml) also runs this dry run,
+uploads the verified `.crate` archives and reuses the full CI workflow. Dispatch
+it on `main` with `publish=false` for a release rehearsal. This default mode does
+not request a registry token or upload packages to crates.io.
+
+### First publication and Trusted Publishing
+
+[crates.io currently requires an initial API-token publication](https://crates.io/docs/trusted-publishing)
+before a crate owner can configure Trusted Publishing. For the first release,
+use a short-lived token with the required publication permissions locally and
+run the joint command above without `--dry-run`. Do not commit or log the token.
+Verify all three registry packages and their generated documentation before
+announcing the release or adding installation links.
+
+After the first publication, configure a trusted publisher for **each** crate:
+
+| crates.io setting | Value |
+| --- | --- |
+| Repository owner | `Latias94` |
+| Repository name | `dockspace` |
+| Workflow filename | `release.yml` |
+| Environment | `crates-io` |
+
+Create the matching GitHub environment with the desired reviewer and deployment
+rules. The workflow grants `id-token: write` only to the publication job and
+exchanges its OIDC identity through the pinned official
+[`rust-lang/crates-io-auth-action`](https://github.com/rust-lang/crates-io-auth-action).
+The action revokes the short-lived token when the job finishes. No long-lived
+registry secret is required for subsequent releases.
+
+To publish a subsequent version, update the shared version and matching project
+dependency versions, commit, and create `v<version>` on the verified revision.
+Dispatch Release at that tag with `publish=true`. The workflow requires the tag
+to match the manifest version and its commit to belong to `main` history, then
+passes CI and package verification before entering the `crates-io` environment.
+Only the three public crates are selected for publication. Tag creation alone
+does not publish anything.
+
+### Experimental native adapter
+
+`egui_dockspace_native` remains unpublished because it depends on pinned
+egui/eframe and winit host contracts absent from the official registry packages.
+These include raw event facts, completed-pass hit authority and renderer output
+settlement. Workspace patches are application-level configuration and are not
+inherited by downstream consumers.
+
+Removing `publish = false` requires a separate distribution decision, a fully
+registry-resolvable dependency graph, an explicit egui/winit type-compatibility
+policy, and verification from a clean external consumer without patches. Either
+maintaining a renamed fork distribution or replacing the host backend is a
+separate project; changing package metadata alone cannot provide that support.
+Keep the locked native workspace and platform qualification while evaluating
+those routes. The first Dockspace registry release does not include this adapter.
