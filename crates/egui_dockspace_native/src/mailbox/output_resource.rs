@@ -83,6 +83,8 @@ pub(super) struct NativeOutputResource {
     // An admitted old pass may temporarily hold its outputs outside this lock.
     // Later passes in the same live window do not inherit that retirement pin.
     pub(super) retains_detached_placements: bool,
+    #[cfg(feature = "motion")]
+    pub(super) animation_continuation: bool,
     budget: Option<NativeInputBudget>,
 }
 
@@ -335,6 +337,8 @@ impl NativeOutputResource {
             terminal_ingress: None,
             submitted: false,
             retains_detached_placements: false,
+            #[cfg(feature = "motion")]
+            animation_continuation: false,
             budget: Some(budget),
         }
     }

@@ -71,6 +71,13 @@ pub(super) fn sample(
         motion.sample(frame.now)
     });
     if sample.is_active() {
+        *context.motion_needs_repaint = true;
+        #[cfg(feature = "native-render-support")]
+        if context.pointer_authority == super::PointerActionAuthority::ExternalJournal {
+            // The native host arms continuation on this exact output's terminal,
+            // rather than repainting through an in-flight capacity barrier.
+            return geometry::egui_rect(sample.rect()).unwrap_or(target);
+        }
         context.ui.ctx().request_repaint();
     }
     geometry::egui_rect(sample.rect()).unwrap_or(target)

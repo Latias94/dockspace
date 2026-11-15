@@ -966,6 +966,8 @@ mod persistence {
             close_policy: NativeWindowClosePolicy::CloseContent,
             root_context: None,
             shutdown: None,
+            #[cfg(feature = "motion")]
+            motion: Default::default(),
         };
         let context = egui::Context::default();
         let registration = commit_native_prefix(&mut state);

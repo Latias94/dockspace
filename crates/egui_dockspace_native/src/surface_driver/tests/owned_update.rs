@@ -3,6 +3,8 @@
 #![cfg(target_os = "linux")]
 
 use crate::NativeCommand;
+#[cfg(feature = "motion")]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
@@ -72,6 +74,10 @@ struct Probe {
     previous: Option<PresentedDockspaceSurface>,
     rejection_finalized: bool,
     done: bool,
+    #[cfg(feature = "motion")]
+    frozen_motion: Option<dockspace::motion::MotionFrame>,
+    #[cfg(feature = "motion")]
+    motion_terminal_seen: bool,
 }
 
 type State = NativeRuntimeState<CountingPanes>;
@@ -231,6 +237,16 @@ impl NativeOutputPassFinalizer for Finalizer {
                     );
                 }
                 probe.published = true;
+                #[cfg(feature = "motion")]
+                {
+                    // Qualify the mailbox's animation-only continuation on a
+                    // real output token, independently of its semantic action.
+                    let bridge = state.coordinator.dispatch_bridge();
+                    assert!(bridge.require_animation_wake_after_current(token));
+                    assert!(!bridge.with_viewports(|viewports| {
+                        viewports.semantic_viewport_blocked(token.viewport_id())
+                    }));
+                }
                 return NativeHostWake::RepaintRootAfterCurrent;
             }
         }
@@ -260,6 +276,8 @@ impl NativeOutputPassFinalizer for Finalizer {
 struct OutputProbeHost {
     inner: Arc<dyn NativeHostHandler>,
     probe: Arc<Mutex<Probe>>,
+    #[cfg(feature = "motion")]
+    state: Weak<Mutex<State>>,
 }
 
 impl NativeHostHandler for OutputProbeHost {
@@ -370,7 +388,25 @@ impl NativeHostHandler for OutputProbeHost {
             probe.done = true;
         }
         drop(probe);
-        self.inner.on_output(terminal)
+        let wake = self.inner.on_output(terminal);
+        #[cfg(feature = "motion")]
+        {
+            let tracked = lock(&self.probe).token == Some(terminal.token());
+            if tracked {
+                let state = self.state.upgrade().unwrap();
+                let state = lock(&state);
+                assert!(
+                    state
+                        .coordinator
+                        .dispatch_bridge()
+                        .with_viewports(|viewports| {
+                            viewports.semantic_viewport_blocked(terminal.token().viewport_id())
+                        })
+                );
+                lock(&self.probe).motion_terminal_seen = true;
+            }
+        }
+        wake
     }
 }
 
@@ -380,6 +416,8 @@ struct DriverApp {
     reports: Arc<AtomicUsize>,
     calls: Arc<AtomicUsize>,
     started: Instant,
+    #[cfg(feature = "motion")]
+    clock: Arc<AtomicU64>,
 }
 
 impl eframe::App for DriverApp {
@@ -392,6 +430,8 @@ impl eframe::App for DriverApp {
         let mut state = lock(&self.state);
         let mut probe = lock(&self.probe);
         if probe.token.is_none() && state.is_surface_presented(SURFACE) {
+            #[cfg(feature = "motion")]
+            self.clock.store(100, Ordering::SeqCst);
             if probe.style_change {
                 state
                     .request_style(DockStyle {
@@ -414,6 +454,31 @@ impl eframe::App for DriverApp {
                 .then(|| ui.available_rect_before_wrap().top() + 44.0);
         let update = state.update_surface(ui, SURFACE).unwrap();
         if probe.token == Some(token) && !probe.published {
+            #[cfg(feature = "motion")]
+            {
+                // Inspect the actual driver's suspended candidate without
+                // replacing it. A second-pass set_motion would expose 173 ms.
+                let owned = state.owned_update.take().unwrap();
+                let mut host = state.coordinator.resume_host_update(owned.host).unwrap();
+                let frozen = host
+                    .frame
+                    .paint_plan(SURFACE)
+                    .unwrap()
+                    .unwrap()
+                    .motion_frame()
+                    .unwrap();
+                state.owned_update = Some(super::super::NativeOwnedUpdate {
+                    host: host.suspend(),
+                    run: owned.run,
+                    publication: owned.publication,
+                });
+                assert_eq!(frozen.now, Duration::from_millis(100));
+                if let Some(first) = probe.frozen_motion {
+                    assert_eq!(first, frozen);
+                } else {
+                    probe.frozen_motion = Some(frozen);
+                }
+            }
             assert_eq!(state.style.tab_bar_height, 28.0);
             assert_eq!(
                 state
@@ -442,6 +507,8 @@ impl eframe::App for DriverApp {
             );
             assert!(state.owned_update.is_some());
             if probe.passes == 1 {
+                #[cfg(feature = "motion")]
+                self.clock.store(173, Ordering::SeqCst);
                 ui.ctx()
                     .request_discard("exercise the same native candidate across actual passes");
             }
@@ -482,7 +549,8 @@ fn run_owned_update(style_change: bool) {
     )])
     .unwrap();
     let session =
-        DockspaceSession::from_layout(layout, dockspace::policy::DockPolicy::default()).unwrap();
+        DockspaceSession::from_layout(layout.clone(), dockspace::policy::DockPolicy::default())
+            .unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let reports = Arc::new(AtomicUsize::new(0));
     let mut state = NativeRuntimeState::new(
@@ -497,6 +565,24 @@ fn run_owned_update(style_change: bool) {
         NativeWindowClosePolicy::RetainLayout,
     )
     .unwrap();
+    #[cfg(feature = "motion")]
+    let clock = {
+        let clock = Arc::new(AtomicU64::new(0));
+        let observed = Arc::clone(&clock);
+        state.coordinator = crate::coordinator::NativeCoordinator::new_with_clock(
+            DockspaceSession::from_layout(layout, dockspace::policy::DockPolicy::default())
+                .unwrap(),
+            dockspace::runtime::NativeMonotonicClock::new(move || {
+                Duration::from_millis(observed.load(Ordering::SeqCst))
+            }),
+        )
+        .unwrap();
+        state
+            .coordinator
+            .register_native_root(SURFACE, super::super::ROOT_WINDOW_TOKEN)
+            .unwrap();
+        clock
+    };
     state.coordinator.observe_reports_for_test({
         let reports = Arc::clone(&reports);
         move |_| {
@@ -520,6 +606,8 @@ fn run_owned_update(style_change: bool) {
         native_host: Some(Arc::new(OutputProbeHost {
             inner: host,
             probe: Arc::clone(&probe),
+            #[cfg(feature = "motion")]
+            state: Arc::downgrade(&state),
         })),
         renderer: eframe::Renderer::Glow,
         event_loop_builder: Some(Box::new(|builder| {
@@ -546,9 +634,13 @@ fn run_owned_update(style_change: bool) {
                 reports,
                 calls,
                 started: Instant::now(),
+                #[cfg(feature = "motion")]
+                clock,
             }))
         }),
     )
     .unwrap();
     assert!(lock(&completed).done);
+    #[cfg(feature = "motion")]
+    assert!(lock(&completed).motion_terminal_seen);
 }

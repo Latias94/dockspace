@@ -20,6 +20,8 @@ fn unready_paint(surface: SurfaceId) -> NativeSurfacePaint {
         local_actions: Vec::new(),
         pane_focus_observation: None,
         pane_focus_needs_repaint: false,
+        #[cfg(feature = "motion")]
+        motion_needs_repaint: false,
         pane_focus_bindings: Vec::new(),
     }
 }

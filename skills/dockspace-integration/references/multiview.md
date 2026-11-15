@@ -111,6 +111,12 @@ request/layout that retains the fixed host. Stored tabs groups retain their
 captured session/version through retries. Semantic action completion and
 `is_surface_presented()` answer different questions.
 
+The default `motion` feature uses the shared core geometry and egui decoration
+tracks. Configure `with_motion` before attachment, or queue `request_motion`
+through the same application slot and consume `MotionChanged`. Supply an
+observed reduced-motion preference explicitly. Do not add a second interpolation
+layer or bypass output-terminal backpressure to drive animation frames.
+
 Use `pending_work()` to diagnose blocked progress and `output_backlog()` to
 inspect outstanding output owners. Drain obligations according to the native
 lifecycle rather than closing every window immediately during shutdown.

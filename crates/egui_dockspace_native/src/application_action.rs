@@ -188,6 +188,12 @@ pub enum NativeActionStatus {
         /// Whether the bindings differed from their previous value.
         changed: bool,
     },
+    /// Shared motion settings and the supplied system preference committed.
+    #[cfg(feature = "motion")]
+    MotionChanged {
+        /// Whether settings or preference differed from their previous values.
+        changed: bool,
+    },
     /// An application default or preset replaced the logical layout.
     ///
     /// Native bindings and output authority still require their fresh observations.
@@ -248,6 +254,11 @@ pub(crate) enum NativeApplicationCommand {
     },
     Input {
         input: DockInputConfig,
+        changed: bool,
+    },
+    #[cfg(feature = "motion")]
+    Motion {
+        configuration: Box<crate::surface_driver::NativeMotionConfiguration>,
         changed: bool,
     },
     LayoutReset(Box<PreparedDockspaceLayoutReset>),
@@ -346,6 +357,16 @@ impl NativeApplicationAction {
             NativeApplicationCommand::Input { input, changed } => {
                 return Ok(NativeApplicationSubmission::InputConfiguration { input, changed });
             }
+            #[cfg(feature = "motion")]
+            NativeApplicationCommand::Motion {
+                configuration,
+                changed,
+            } => {
+                return Ok(NativeApplicationSubmission::Motion {
+                    configuration,
+                    changed,
+                });
+            }
             NativeApplicationCommand::LayoutReset(reset) => {
                 return Ok(NativeApplicationSubmission::Replacement(
                     NativeWorkspaceReplacement::Layout(reset),
@@ -395,6 +416,8 @@ impl NativeApplicationAction {
             } => NativeActionExpectation::Policy(*arrangement_lock),
             NativeApplicationCommand::Style { .. } => NativeActionExpectation::Style,
             NativeApplicationCommand::Input { .. } => NativeActionExpectation::Input,
+            #[cfg(feature = "motion")]
+            NativeApplicationCommand::Motion { .. } => NativeActionExpectation::Motion,
             NativeApplicationCommand::LayoutReset(_)
             | NativeApplicationCommand::LayoutResetRebindingRoot { .. } => {
                 NativeActionExpectation::LayoutReset
@@ -430,6 +453,11 @@ pub(crate) enum NativeApplicationSubmission {
         input: DockInputConfig,
         changed: bool,
     },
+    #[cfg(feature = "motion")]
+    Motion {
+        configuration: Box<crate::surface_driver::NativeMotionConfiguration>,
+        changed: bool,
+    },
     Replacement(NativeWorkspaceReplacement),
     Terminal(NativeActionStatus),
 }
@@ -459,6 +487,11 @@ pub(crate) enum NativeSubmittedApplicationAction {
     },
     InputConfiguration {
         input: DockInputConfig,
+        changed: bool,
+    },
+    #[cfg(feature = "motion")]
+    Motion {
+        configuration: Box<crate::surface_driver::NativeMotionConfiguration>,
         changed: bool,
     },
     LayoutReset,
@@ -558,6 +591,14 @@ impl NativeApplicationSubmission {
                 }
                 Ok(NativeSubmittedApplicationAction::InputConfiguration { input, changed })
             }
+            #[cfg(feature = "motion")]
+            Self::Motion {
+                configuration,
+                changed,
+            } => Ok(NativeSubmittedApplicationAction::Motion {
+                configuration,
+                changed,
+            }),
             Self::Replacement(NativeWorkspaceReplacement::Layout(reset)) => {
                 frame.submit_layout_reset(&reset)?;
                 Ok(NativeSubmittedApplicationAction::LayoutReset)
@@ -628,6 +669,8 @@ enum NativeActionExpectation {
     Policy(Option<bool>),
     Style,
     Input,
+    #[cfg(feature = "motion")]
+    Motion,
     LayoutReset,
     #[cfg(feature = "serde")]
     DocumentRestore,
@@ -745,6 +788,8 @@ impl NativeApplicationActions {
                 NativeSubmittedApplicationAction::Style { .. }
                 | NativeSubmittedApplicationAction::InputConfiguration { .. },
             ) => return Err(()),
+            #[cfg(feature = "motion")]
+            Some(NativeSubmittedApplicationAction::Motion { .. }) => return Err(()),
             Some(NativeSubmittedApplicationAction::LayoutReset) => report
                 .inputs()
                 .iter()
@@ -772,6 +817,10 @@ impl NativeApplicationActions {
                     }
                     NativeActionStatus::InputChanged { .. } => {
                         matches!(kind, NativeActionExpectation::Input)
+                    }
+                    #[cfg(feature = "motion")]
+                    NativeActionStatus::MotionChanged { .. } => {
+                        matches!(kind, NativeActionExpectation::Motion)
                     }
                     _ => false,
                 };

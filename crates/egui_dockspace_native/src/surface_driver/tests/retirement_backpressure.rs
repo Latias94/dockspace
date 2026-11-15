@@ -83,6 +83,8 @@ fn state() -> NativeRuntimeState<TestPanes> {
         close_policy: NativeWindowClosePolicy::Cancel,
         root_context: None,
         shutdown: None,
+        #[cfg(feature = "motion")]
+        motion: Default::default(),
     }
 }
 

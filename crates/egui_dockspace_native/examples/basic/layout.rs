@@ -738,6 +738,10 @@ pub(super) fn describe_status(status: &NativeActionStatus, panes: &ExamplePanes)
         NativeActionStatus::InputChanged { changed } => {
             format!("Docking input bindings applied; changed={changed}.")
         }
+        #[cfg(feature = "motion")]
+        NativeActionStatus::MotionChanged { changed } => {
+            format!("Pane motion settings applied; changed={changed}.")
+        }
         NativeActionStatus::LayoutReset { previous, current } => format!(
             "Default layout applied ({previous:?} → {current:?}); waiting for the windows to display their panes and be ready for editing."
         ),

@@ -31,6 +31,8 @@ use crate::{
     NativeLayoutRequestError,
 };
 
+#[cfg(feature = "motion")]
+mod motion;
 #[cfg(all(test, target_os = "linux"))]
 mod native_boundary_x11;
 

@@ -126,6 +126,10 @@ return it; the default Child-close policy recovers its content. Programmatic
 window commands and physical drag-out have different platform requirements.
 Check [platform support](PLATFORM_SUPPORT.md) before testing cross-window input.
 
+Pane motion is enabled by default. Add `--no-default-features` to run without
+motion, or use `with_motion` / `request_motion` to configure timing, curves and
+reduced motion at runtime; see the [native integration guide](../crates/egui_dockspace_native/README.md#integrate).
+
 This workspace pins eframe/winit forks and remains separate from the official
 egui adapter. It does not require changes to the official workspace's dependency
 sources.

@@ -98,6 +98,18 @@ impl NativeHostState {
         reservation.reservation.require_wake_after_current()
     }
 
+    #[cfg(feature = "motion")]
+    fn require_animation_wake_after_current(&mut self, token: NativeOutputToken) -> bool {
+        let Some(resource) = self.output_resources.get_mut(&token) else {
+            return false;
+        };
+        if resource.reservation.abandoned || !resource.reservation.require_wake_after_current() {
+            return false;
+        }
+        resource.animation_continuation = true;
+        true
+    }
+
     pub(super) fn record_output(&mut self, result: NativeOutputResult) -> OutputRecordDisposition {
         if !self.mode.accepts_terminal_callbacks() {
             return OutputRecordDisposition::Inactive;
@@ -137,6 +149,13 @@ impl NativeHostState {
             reservation.retain_terminal_ingress(ingress),
             "the validated output retains its exact terminal reservation"
         );
+        #[cfg(feature = "motion")]
+        if reservation.animation_continuation {
+            // Do not expose a repaint to unrelated service commits before this
+            // exact terminal exists. Its ordered commit releases the viewport.
+            self.viewports
+                .block_semantic_viewport(result.token().viewport_id());
+        }
         if wake_after_current {
             OutputRecordDisposition::RecordedAfterCurrent
         } else if !requires_service {
@@ -619,6 +638,11 @@ impl NativeHostBridge {
 
     pub(crate) fn require_output_wake_after_current(&self, token: NativeOutputToken) -> bool {
         self.lock().require_output_wake_after_current(token)
+    }
+
+    #[cfg(feature = "motion")]
+    pub(crate) fn require_animation_wake_after_current(&self, token: NativeOutputToken) -> bool {
+        self.lock().require_animation_wake_after_current(token)
     }
 
     pub(crate) fn mark_output_submitted(&self, token: NativeOutputToken) -> bool {

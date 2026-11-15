@@ -512,6 +512,21 @@ impl NativeCoordinator {
         )
     }
 
+    #[cfg(all(test, feature = "motion"))]
+    pub(crate) fn new_with_clock(
+        session: DockspaceSession,
+        clock: dockspace::runtime::NativeMonotonicClock,
+    ) -> Result<Self, NativeRuntimeError> {
+        Self::new_with_storage_allowance(
+            session,
+            NativePointerRoster::Unknown,
+            None,
+            None,
+            None,
+            Some(clock),
+        )
+    }
+
     fn new_with_storage_allowance(
         session: DockspaceSession,
         initial_pointer_roster: NativePointerRoster,
@@ -2342,13 +2357,21 @@ impl NativeCoordinator {
         {
             return Err((NativeOutputBindingErrorKind::BindingMismatch, outputs));
         }
-        let requires_commit_wake = outputs.iter().any(|output| {
-            self.session.presented_surface(output.surface()).is_none()
-                || self.session.surface_requires_presentation(output.surface())
-                || self
-                    .session
-                    .native_pointer_continuation_awaits_presentation(output.surface())
-        });
+        #[cfg(feature = "motion")]
+        let motion_needs_repaint = outputs
+            .iter()
+            .any(|output| self.session.surface_motion_is_active(output.surface()))
+            || paints.iter().any(|paint| paint.motion_needs_repaint());
+        #[cfg(not(feature = "motion"))]
+        let motion_needs_repaint = false;
+        let requires_commit_wake = motion_needs_repaint
+            || outputs.iter().any(|output| {
+                self.session.presented_surface(output.surface()).is_none()
+                    || self.session.surface_requires_presentation(output.surface())
+                    || self
+                        .session
+                        .native_pointer_continuation_awaits_presentation(output.surface())
+            });
         let Ok(pass) = crate::receiver::NativeReceiverPass::capture(
             context,
             token.viewport_id(),
@@ -2368,6 +2391,11 @@ impl NativeCoordinator {
             return Err((NativeOutputBindingErrorKind::BindingMismatch, outputs));
         }
         if requires_commit_wake && !self.bridge.require_output_wake_after_current(token) {
+            self.receivers.abandon(token);
+            return Err((NativeOutputBindingErrorKind::BindingMismatch, outputs));
+        }
+        #[cfg(feature = "motion")]
+        if motion_needs_repaint && !self.bridge.require_animation_wake_after_current(token) {
             self.receivers.abandon(token);
             return Err((NativeOutputBindingErrorKind::BindingMismatch, outputs));
         }

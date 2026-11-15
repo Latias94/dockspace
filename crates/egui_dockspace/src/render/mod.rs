@@ -140,6 +140,8 @@ struct RenderContext<'ui, 'plan, 'scroll> {
     pointer_authority: PointerActionAuthority,
     #[cfg(feature = "motion")]
     decoration_seen: [bool; 2],
+    #[cfg(feature = "motion")]
+    motion_needs_repaint: &'ui mut bool,
 }
 
 impl RenderContext<'_, '_, '_> {
@@ -326,6 +328,8 @@ pub(crate) struct ProductPaintOutput {
     pub(crate) pane_focus_observation: Option<PreparedPaneFocusObservation>,
     pub(crate) pane_focus_pending: Option<PendingPaneFocusObservation>,
     pub(crate) pane_focus_needs_repaint: bool,
+    #[cfg(all(feature = "motion", feature = "native-render-support"))]
+    pub(crate) motion_needs_repaint: bool,
     pub(crate) pane_focus_capability: DockspaceCapability,
     pub(crate) pane_focus_bindings: Vec<(ItemId, Id)>,
     pub(crate) missing_items: BTreeSet<ItemId>,
@@ -367,6 +371,8 @@ pub(crate) fn paint_surface(
     let mut scroll_receivers = Vec::new();
     let mut defer_measurement = false;
     let mut transient_visuals_complete = true;
+    #[cfg(feature = "motion")]
+    let mut motion_needs_repaint = false;
     let mut terminal_semantic_output = None;
     let execution_receipt;
     if let Some(bounds) = geometry::egui_rect(plan.bounds()) {
@@ -431,6 +437,8 @@ pub(crate) fn paint_surface(
             pointer_authority,
             #[cfg(feature = "motion")]
             decoration_seen: [false; 2],
+            #[cfg(feature = "motion")]
+            motion_needs_repaint: &mut motion_needs_repaint,
         };
         #[cfg(feature = "motion")]
         motion::begin(&context);
@@ -686,6 +694,8 @@ pub(crate) fn paint_surface(
         defer_measurement,
         #[cfg(feature = "native-render-support")]
         transient_visuals_complete,
+        #[cfg(all(feature = "motion", feature = "native-render-support"))]
+        motion_needs_repaint,
     })
 }
 

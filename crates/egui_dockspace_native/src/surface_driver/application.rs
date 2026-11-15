@@ -260,7 +260,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
         self.coordinator.save_document_json().map_err(Into::into)
     }
 
-    fn ensure_application_slot_available(&self) -> Result<(), NativeActionRequestError> {
+    pub(super) fn ensure_application_slot_available(&self) -> Result<(), NativeActionRequestError> {
         if self.shutdown.is_some() {
             return Err(NativeActionRequestError::stopped());
         }
@@ -528,7 +528,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
             .collect()
     }
 
-    fn enqueue_application_action(
+    pub(super) fn enqueue_application_action(
         &mut self,
         action: impl Into<NativeApplicationAction>,
     ) -> Result<(), NativeActionRequestError> {

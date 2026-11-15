@@ -224,6 +224,8 @@ pub struct NativeSurfacePaint {
     local_actions: Vec<EguiSurfaceAction>,
     pane_focus_observation: Option<PreparedPaneFocusObservation>,
     pane_focus_needs_repaint: bool,
+    #[cfg(feature = "motion")]
+    motion_needs_repaint: bool,
     pane_focus_bindings: Vec<(ItemId, Id)>,
 }
 
@@ -468,6 +470,15 @@ impl NativeSurfacePaint {
     pub const fn pane_focus_needs_repaint(&self) -> bool {
         self.pane_focus_needs_repaint
     }
+
+    /// Whether a decoration track needs another sample after this exact output
+    /// settles. Native hosts must use their presentation-terminal wakeup rather
+    /// than poll while output capacity is unavailable.
+    #[cfg(feature = "motion")]
+    #[must_use]
+    pub const fn motion_needs_repaint(&self) -> bool {
+        self.motion_needs_repaint
+    }
 }
 
 /// Paints one ready surface using the same renderer as the ordinary product
@@ -514,6 +525,8 @@ pub fn paint_surface(
             local_actions: Vec::new(),
             pane_focus_observation: None,
             pane_focus_needs_repaint: false,
+            #[cfg(feature = "motion")]
+            motion_needs_repaint: false,
             pane_focus_bindings: Vec::new(),
         });
     };
@@ -570,6 +583,8 @@ pub fn paint_surface(
         local_actions: painted.local_actions,
         pane_focus_observation: painted.pane_focus_observation,
         pane_focus_needs_repaint: painted.pane_focus_needs_repaint,
+        #[cfg(feature = "motion")]
+        motion_needs_repaint: painted.motion_needs_repaint,
         pane_focus_bindings: painted.pane_focus_bindings,
     })
 }

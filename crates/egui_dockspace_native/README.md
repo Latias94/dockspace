@@ -7,10 +7,11 @@ adds native window creation and recovery, per-window output reporting and
 multiview input integration. The core remains the sole docking-state owner;
 your application owns pane content.
 
-Pane rearrangements in this adapter are immediate. The official egui adapter's
-configurable layout motion is not yet connected to this native driver. Native
-window movement, including the solar-system example, follows its own application
-clock and the desktop compositor.
+The default `motion` feature uses the same core pane geometry and egui decoration
+tracks as the official adapter. Same-root survivor reflow uses the shared 200 ms
+tween; pointer-driven resizing remains immediate. New and removed panes do not
+use entry or exit snapshots. Native window movement, including the solar-system
+example, follows its own application clock and the desktop compositor.
 
 For one OS window using official egui, start with
 [`egui_dockspace`](../egui_dockspace) and its complete-output editor instead.
@@ -97,6 +98,39 @@ as the official adapter. It controls hold-to-enable/disable docking and the
 gesture-cancel shortcut; default bindings are Shift and Escape. Queue runtime
 changes through `request_input` and consume their result through
 `take_action_status`, like other application commands.
+
+Use `with_motion(settings, preference)` before host attachment, or
+`request_motion(settings, preference)` at runtime. Both use the core's
+`motion::{MotionSettings, MotionPreference}`. Runtime changes share the application
+command slot; consume `NativeActionStatus::MotionChanged` before submitting more.
+For example, disable geometry motion with:
+
+```rust,ignore
+use egui_dockspace_native::motion::{MotionMode, MotionPreference, MotionSettings};
+
+app.request_motion(
+    MotionSettings { mode: MotionMode::Off, ..Default::default() },
+    MotionPreference::Unknown,
+)?;
+```
+
+Tune each effect with `Transition::Instant`, `Tween { duration, curve }`, or
+`CriticalSpring { response }`; custom validated Bezier curves use `CubicBezier`.
+The preference defaults to `Unknown`: no portable OS preference is inferred.
+Supply `Reduced` from application platform integration, or enable
+`unknown_prefers_reduced_motion` for a conservative fallback. A zero egui
+animation time also disables geometry motion. Off and Reduced settle immediately
+and schedule no motion continuation. To omit motion entirely, use
+`default-features = false` for this crate, or `--no-default-features` when running
+its examples.
+
+Each native outer update samples the existing monotonic clock once; repeated egui
+passes retain the same sample. Motion settings do not invalidate measurements.
+Animations wait for exact output terminal callbacks and stop requesting frames
+after settlement. A pending output or capacity barrier does not start a polling
+timer. Prospective native first-live output stays static until the existing
+ownership barrier admits it. This does not animate OS-window bounds or promise
+atomic cross-window content flights.
 
 Use `with_notification_handler` to observe the same `DockspaceNotification`
 as headless hosts and the single-surface egui adapter. Each notification combines

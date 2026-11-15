@@ -11,7 +11,8 @@ repository = "https://github.com/Latias94/dockspace"
 publish = false
 
 [features]
-default = []
+default = ["motion"]
+motion = ["dockspace/motion", "egui_dockspace/motion"]
 serde = ["dockspace/serde", "egui_dockspace/serde"]
 
 [dependencies]

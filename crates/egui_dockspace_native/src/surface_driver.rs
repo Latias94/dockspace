@@ -31,11 +31,15 @@ use crate::pass_actions::{NativeFinalPass, NativePassActionError, NativePassActi
 
 mod application;
 mod composition;
+#[cfg(feature = "motion")]
+mod motion;
 #[path = "native_owned_update.rs"]
 mod native_owned_update;
 mod root_placements;
 
 use composition::NativePaintMapping;
+#[cfg(feature = "motion")]
+pub(crate) use motion::NativeMotionConfiguration;
 use native_owned_update::{NativeOwnedUpdate, NativeUpdatePublication, NativeUpdateRun};
 #[cfg(test)]
 use root_placements::root_placements_match_frame;
@@ -247,6 +251,8 @@ pub(crate) struct NativeRuntimeState<P> {
     close_policy: NativeWindowClosePolicy,
     root_context: Option<egui::Context>,
     shutdown: Option<NativeShutdownState>,
+    #[cfg(feature = "motion")]
+    motion: NativeMotionConfiguration,
 }
 
 #[derive(Debug)]
@@ -664,6 +670,8 @@ impl<P: PaneView> NativeRuntimeState<P> {
             close_policy,
             root_context: None,
             shutdown: None,
+            #[cfg(feature = "motion")]
+            motion: NativeMotionConfiguration::default(),
         })
     }
 
@@ -1142,6 +1150,18 @@ impl<P: PaneView> NativeRuntimeState<P> {
             } else {
                 None
             };
+            #[cfg(feature = "motion")]
+            if !native_input_pending && !control_output {
+                let configuration = application_submission
+                    .as_ref()
+                    .and_then(
+                        crate::application_action::NativeApplicationSubmission::encoding_motion,
+                    )
+                    .unwrap_or(self.motion);
+                host_frame
+                    .frame
+                    .set_motion(configuration.frame(bridge.observation_time(), ui))?;
+            }
             let application_action = application_submission
                 .map(|submission| submission.finish(&mut host_frame.frame))
                 .transpose()?;
@@ -1677,6 +1697,18 @@ impl<P: PaneView> NativeRuntimeState<P> {
             .and_then(NativeSubmittedApplicationAction::commit_input)
         {
             self.coordinator.set_input(input);
+            for surface in self.view().surfaces() {
+                if let Some(viewport) = self.coordinator.surface_viewport(surface.id()) {
+                    context.request_repaint_once_of(viewport);
+                }
+            }
+        }
+        #[cfg(feature = "motion")]
+        if let Some(configuration) = submitted
+            .as_mut()
+            .and_then(NativeSubmittedApplicationAction::commit_motion)
+        {
+            self.motion = configuration;
             for surface in self.view().surfaces() {
                 if let Some(viewport) = self.coordinator.surface_viewport(surface.id()) {
                     context.request_repaint_once_of(viewport);

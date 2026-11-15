@@ -474,6 +474,8 @@ fn elapsed_service_refill_preserves_release_close_and_ready_bootstrap_owners() {
         close_policy: NativeWindowClosePolicy::CloseContent,
         root_context: None,
         shutdown: None,
+        #[cfg(feature = "motion")]
+        motion: Default::default(),
     };
     let context = egui::Context::default();
     let registered = commit_native_prefix(&mut state);

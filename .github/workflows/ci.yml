@@ -181,6 +181,10 @@ jobs:
         run: >-
           cargo fmt --manifest-path integration/egui-fork-workspace/Cargo.toml
           --all --check
+      - name: Check native adapter without optional features
+        run: >-
+          cargo check --manifest-path integration/egui-fork-workspace/Cargo.toml
+          --package egui_dockspace_native --lib --no-default-features --locked
       - name: Run native workspace and smoke unit tests
         run: >-
           cargo nextest run --manifest-path integration/egui-fork-workspace/Cargo.toml

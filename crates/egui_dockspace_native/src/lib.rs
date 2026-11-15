@@ -48,6 +48,8 @@ pub use application_action::{
 pub use close_control::NativeWindowClosePolicy;
 pub use command::{NativeCommand, NativeCommandRequestError};
 pub use coordinator::NativeStorageLimit;
+#[cfg(feature = "motion")]
+pub use dockspace::motion;
 pub use dockspace::runtime::{
     DockspaceEvent, DockspaceEventId, DockspaceEventKind, DockspaceLayoutChange,
     DockspaceNotification, NativeSurfacePlacement,
