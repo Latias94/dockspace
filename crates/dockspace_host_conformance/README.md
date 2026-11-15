@@ -38,13 +38,22 @@ coordinates, or output authority. The OGC cases above remain `core-host`
 evidence only and do not claim native-window coverage.
 
 The independent
-[public host consumer](../../integration/dockspace-host-harness/tests/shared_local_scenario.rs)
+[public host consumer](../../integration/dockspace-host-harness/tests/shared_local_scenario/main.rs)
 also executes this L08 scenario using prepared actions from public paint plans
 and the complete recording sink. The shared `scenario` module supplies semantic
 data and capability admission; executors in this crate remain private tests.
 It is not an external adapter runner. The
 [adapter testing guide](../../docs/ADAPTER_TESTING.md) explains how another
 framework can supply its own thin executor and actual input observations.
+
+`LocalPaneVisibility` adds another L08 scenario: hide the selected tab, hide its
+entire group, show one member, adjust the restored splitter, and hide/show a
+contained pane. Both the core host and independent recording host read actual
+committed outcomes and verify durable membership, selection, split weights, and
+contained bounds. Hidden items supply neither paint/hit records nor measurement
+metadata. The independent host also retains old outputs across visibility
+changes, reports both presentation results, and restores hidden layouts through
+the document API when its `serde` feature is enabled.
 
 The fixed `JOURNEY_CATALOG` names L01-L08, N01, and P01 plus their cadence
 and admission requirements. It is deliberately not a GUI driver language.

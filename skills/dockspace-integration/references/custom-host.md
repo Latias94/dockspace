@@ -66,7 +66,7 @@ runtime is an application choice.
 Reuse applicable `dockspace_host_conformance` scenario descriptions and provide
 a thin executor through the host's real controls. Its existing core executors
 are private tests; the catalog is not an external adapter runner. Start with
-`integration/dockspace-host-harness/tests/shared_local_scenario.rs` for that seam.
+`integration/dockspace-host-harness/tests/shared_local_scenario/main.rs` for that seam.
 For a deferred renderer, verify commit failure leaves installed UI intact,
 dropped/out-of-order outputs settle correctly, and new hit records gain authority
 only after their presentation report commits. Test capture between two surfaces

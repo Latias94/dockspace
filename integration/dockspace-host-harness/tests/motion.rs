@@ -9,7 +9,7 @@ use dockspace::model::{
     DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout,
     FloatingPresentationId, ItemId, RootId, SurfaceId,
 };
-use dockspace::motion::{MotionFrame, MotionPreference, MotionSettings};
+use dockspace::motion::{MotionFrame, MotionMode, MotionPreference, MotionSettings};
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
     DockspaceManipulationStatus, DockspaceReceiverDescriptor, DockspaceSession, HostFrameReport,
@@ -175,6 +175,144 @@ fn independent_host_uses_core_sampled_geometry_and_restores_structural_receivers
             .bind_presented_receiver(&end.receivers[&B])
             .is_some()
     );
+}
+
+fn set_visibility(session: &mut DockspaceSession, item: ItemId, visible: bool) {
+    let mut frame = session.begin_host_frame().unwrap();
+    let submitted = frame.set_item_visibility_current(item, visible).unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let report = frame.commit().unwrap();
+    assert!(matches!(
+        report.submitted_action_outcome(submitted),
+        Some(dockspace::runtime::HostInputOutcome::ProductActionApplied(
+            dockspace::model::DockspaceActionOutcome::ItemVisibilityChanged {
+                item: changed,
+                visible: actual,
+                changed: true,
+            },
+        )) if *changed == item && *actual == visible
+    ));
+}
+
+#[test]
+fn visibility_retargets_from_the_sampled_pose_while_earlier_outputs_are_unsettled() {
+    let (mut session, before) = fixture();
+    let original_weights = session
+        .view()
+        .root(ROOT)
+        .unwrap()
+        .content()
+        .unwrap()
+        .split()
+        .unwrap()
+        .weights()
+        .collect::<Vec<_>>();
+    set_visibility(&mut session, C, false);
+    let (start, first_output) = paint(&mut session, motion(1000));
+    assert!(!start.panes.contains_key(&C));
+    assert_eq!(start.panes[&A], before.panes[&A]);
+    assert!(session.view().item(C).unwrap().is_hidden());
+    let (middle, second_output) = paint(&mut session, motion(1080));
+    assert_ne!(middle.panes[&A], before.panes[&A]);
+    assert!(session.surface_motion_is_active(SURFACE));
+
+    // A new semantic target must continue the running pose even while the host
+    // still owns both earlier artifacts. Sampling never grants input authority.
+    set_visibility(&mut session, C, true);
+    let (redirected, third_output) = paint(&mut session, motion(1080));
+    assert_eq!(redirected.panes[&A], middle.panes[&A]);
+    assert!(redirected.panes.contains_key(&C));
+    assert!(
+        session
+            .bind_presented_receiver(&redirected.receivers[&C])
+            .is_none()
+    );
+    let latest = third_output.presentation_artifact();
+    for (output, result) in [
+        (first_output, SurfacePresentationResult::Presented),
+        (second_output, SurfacePresentationResult::Dropped),
+        (third_output, SurfacePresentationResult::Presented),
+    ] {
+        session.report_surface_presentation(output, result).unwrap();
+    }
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let report = frame.commit().unwrap();
+    assert!(
+        report
+            .surface_presentation_commits()
+            .iter()
+            .any(|commit| commit.presents(latest))
+    );
+    assert!(!session.view().item(C).unwrap().is_hidden());
+    assert!(
+        session
+            .bind_presented_receiver(&redirected.receivers[&C])
+            .is_some()
+    );
+    assert!(
+        session
+            .bind_presented_receiver(&start.receivers[&A])
+            .is_none()
+    );
+
+    let (end, output) = paint(&mut session, motion(2000));
+    assert_eq!(end.panes, before.panes);
+    assert!(end.partition);
+    assert_eq!(end.splitters, 2);
+    assert!(!session.surface_motion_is_active(SURFACE));
+    present(&mut session, output);
+    let restored_weights = session
+        .view()
+        .root(ROOT)
+        .unwrap()
+        .content()
+        .unwrap()
+        .split()
+        .unwrap()
+        .weights()
+        .collect::<Vec<_>>();
+    assert_eq!(restored_weights, original_weights);
+}
+
+#[test]
+fn disabling_or_reducing_motion_settles_a_visibility_reflow_with_fresh_receivers() {
+    for reduced in [false, true] {
+        let (mut session, _) = fixture();
+        set_visibility(&mut session, C, false);
+        let (_, output) = paint(&mut session, motion(1000));
+        present(&mut session, output);
+        let (moving, output) = paint(&mut session, motion(1040));
+        assert!(session.surface_motion_is_active(SURFACE));
+        present(&mut session, output);
+        let mut immediate = motion(1040);
+        if reduced {
+            immediate.preference = MotionPreference::Reduced;
+        } else {
+            immediate.settings.mode = MotionMode::Off;
+        }
+        let (settled, output) = paint(&mut session, immediate);
+        assert!(!session.surface_motion_is_active(SURFACE));
+        assert!(settled.partition);
+        assert_eq!(settled.splitters, 1);
+        assert_eq!(settled.panes.len(), 2);
+        assert_ne!(settled.panes[&A], moving.panes[&A]);
+        assert!(session.view().item(C).unwrap().is_hidden());
+        present(&mut session, output);
+        assert!(
+            session
+                .bind_presented_receiver(&settled.receivers[&A])
+                .is_some()
+        );
+        let (later, output) = paint(&mut session, immediate);
+        assert_eq!(later.panes, settled.panes);
+        assert!(!session.surface_motion_is_active(SURFACE));
+        present(&mut session, output);
+    }
 }
 
 const PREVIEW: ItemId = ItemId::new(20);

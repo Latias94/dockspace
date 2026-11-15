@@ -1,4 +1,4 @@
-//! Retained, headless public-contract consumption of the shared L08 scenario.
+//! Retained, headless public-contract consumption of the shared L08 scenarios.
 //! The recording sink does not qualify a UI framework, GPU, or physical host.
 
 use dockspace::close::ClosePlanTarget;
@@ -29,6 +29,8 @@ const FIRST: ItemId = ItemId::new(1);
 const SECOND: ItemId = ItemId::new(2);
 const THIRD: ItemId = ItemId::new(3);
 const CONTAINED: ItemId = ItemId::new(4);
+
+mod visibility;
 
 fn item(alias: ItemAlias) -> ItemId {
     match alias {

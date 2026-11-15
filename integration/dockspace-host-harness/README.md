@@ -4,13 +4,21 @@ This independent workspace uses `dockspace`'s public API as its only production 
 Its optional `serde` and `motion` features forward to the corresponding core
 features; it has no UI or platform dependencies.
 
-`tests/shared_local_scenario.rs` consumes the same L08 semantic scenario as the
+`tests/shared_local_scenario/main.rs` consumes the same L08 semantic scenario as the
 core conformance and egui product executors. It resolves prepared actions from
 the current public paint plan, checks real selection/close/resize results and
 settles exact recorded outputs. The conformance crate is a test-only dependency;
 production integration still depends only on `dockspace`. See the
 [adapter testing guide](../../docs/ADAPTER_TESTING.md) for the boundary between
 these recording checks and qualification of a concrete UI framework.
+
+The shared visibility journey preserves logical membership while checking the
+visible measurement, paint and receiver inventories. Hidden groups release their
+space without losing tab order, split weights or contained bounds. Late output
+results cannot restore hidden receivers; showing content establishes fresh
+controls. With `serde`, document restoration retains hidden groups. With
+`motion`, interrupted hide/show reflow also runs while earlier outputs remain
+unsettled, and Off or Reduced settles the geometry immediately.
 
 `RecordingRenderer` accepts the complete ordered surface program, copies geometry,
 opaque identity, receiver descriptors, and pane-content requests into owned records,

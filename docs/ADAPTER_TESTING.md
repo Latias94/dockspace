@@ -151,7 +151,7 @@ existing core executors are private tests, not a generic external adapter runner
 The journey catalog names coverage requirements; not every entry is a directly
 reusable executable scenario.
 
-The [external L08 consumer](../integration/dockspace-host-harness/tests/shared_local_scenario.rs)
+The [external L08 consumer](../integration/dockspace-host-harness/tests/shared_local_scenario/main.rs)
 is a small example for a new adapter. It consumes
 `LOCAL_TAB_CLOSE_SPLITTER_AND_CONTAINED`, resolves controls in the current public
 paint plan, applies prepared actions and checks selection, close requests,
@@ -161,6 +161,15 @@ local capabilities and rejects `NATIVE_CREATE_REDOCK_RETIREMENT` before input.
 The egui executor consumes the same semantic scenario through actual accessibility
 controls and keyboard input. Neither executor shares runtime IDs or output authority.
 
+`LOCAL_PANE_VISIBILITY` adds a second L08 scenario. It hides selected content,
+hides the complete tab group, restores it, adjusts its splitter, and hides and
+restores a contained presentation. The recording host checks measurement,
+painting and receiver inventories; the egui executor drives application-owned
+Hide/Show buttons and checks actual content, accessibility and restored bounds.
+Both verify durable tab order, split weights and contained placement. Visibility
+is an application command, so an adapter need not add built-in Hide/Show chrome.
+Declare `LocalItemVisibility` before executing this scenario.
+
 For a new framework, keep the semantic scenario and replace the thin execution
 layer with that framework's real controls. An early headless consumer can use
 prepared actions, but UI qualification must also drive the actual input bridge.
@@ -169,12 +178,15 @@ observations into the result without checking the behavior.
 
 Extend coverage in this order:
 
-1. Run L08 through real tab, close, splitter and contained-resize controls.
+1. Run L08 through real tab, close, splitter and contained-resize controls, then
+   run `LOCAL_PANE_VISIBILITY` through the application's visibility controls.
 2. Run `MAGNETIC_DOCKING_BASINS` (L03): five basins, three normalized inset samples
    and four cadences, for 60 cases. Resolve points against current framework
    bounds rather than copying egui coordinates.
 3. Exercise rollback, stale or foreign receivers, dropped and late outputs,
    overlay occlusion, independent source/hover routing and deferred consumption.
+   A late output containing a now-hidden pane must not restore that pane's input
+   authority. After showing it, require a fresh output and successful interaction.
 4. Verify continuation scheduling and pane-focus observations through the actual
    framework. Add N01 lifecycle and physical journeys when native support exists.
 

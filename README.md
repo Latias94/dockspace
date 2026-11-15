@@ -54,6 +54,7 @@ explain the difference before you integrate.
 - Drag docking with center/edge guides, tab reordering and overflow menus.
 - Floating groups within a surface, with move, resize and Dock Back actions.
 - Application-controlled close decisions, including background saving.
+- Hide and restore panes without losing their tab positions or split proportions.
 - Saved layouts with stable pane keys, restored independently of pane data.
 - Custom pane drawing, minimum sizes, styling, focus and docking policies.
 

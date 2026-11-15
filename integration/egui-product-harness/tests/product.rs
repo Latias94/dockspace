@@ -36,6 +36,8 @@ mod overflow_ownership;
 mod presentation_menu;
 #[path = "product/self_docking.rs"]
 mod self_docking;
+#[path = "product/visibility.rs"]
+mod visibility;
 
 use dockspace::policy::DockPolicy;
 use dockspace_host_conformance::scenario::{
@@ -4701,6 +4703,9 @@ fn shared_local_interaction_scenario_maps_to_egui_product_headless_semantics() {
             | SemanticSelector::TabClose(ItemAlias::Contained) => (FOURTH, "Fourth"),
             SemanticSelector::Splitter(_) | SemanticSelector::ContainedResize { .. } => {
                 (FOURTH, "Fourth")
+            }
+            SemanticSelector::Item(_) => {
+                panic!("the interaction scenario does not contain visibility commands")
             }
         };
         match (step.selector(), step.action()) {

@@ -40,6 +40,8 @@ use dockspace::runtime::{
     UniformSurfaceMetrics,
 };
 
+mod pane_visibility;
+
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const SECOND_SURFACE: SurfaceId = SurfaceId::new(2);
 const ROOT: RootId = RootId::new(1);
@@ -1061,11 +1063,14 @@ fn shared_local_interaction_scenario_maps_to_core_host_semantics() {
 
     for step in LOCAL_TAB_CLOSE_SPLITTER_AND_CONTAINED.steps() {
         let item = match step.selector() {
-            SemanticSelector::Tab(ItemAlias::Primary)
+            SemanticSelector::Item(ItemAlias::Primary)
+            | SemanticSelector::Tab(ItemAlias::Primary)
             | SemanticSelector::TabClose(ItemAlias::Primary) => A,
-            SemanticSelector::Tab(ItemAlias::Secondary)
+            SemanticSelector::Item(ItemAlias::Secondary)
+            | SemanticSelector::Tab(ItemAlias::Secondary)
             | SemanticSelector::TabClose(ItemAlias::Secondary) => B,
-            SemanticSelector::Tab(ItemAlias::Contained)
+            SemanticSelector::Item(ItemAlias::Contained)
+            | SemanticSelector::Tab(ItemAlias::Contained)
             | SemanticSelector::TabClose(ItemAlias::Contained) => X,
             SemanticSelector::Splitter(_) | SemanticSelector::ContainedResize { .. } => X,
         };

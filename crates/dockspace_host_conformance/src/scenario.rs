@@ -107,6 +107,8 @@ pub enum ScenarioId {
     MagneticDockingBasins,
     /// Exercise local tab, close, splitter, and contained semantics.
     LocalTabCloseSplitterAndContained,
+    /// Exercise durable pane visibility through local presentation changes.
+    LocalPaneVisibility,
     /// Exercise one managed native create, first-live, redock, and retirement lifecycle.
     NativeCreateRedockRetirement,
 }
@@ -213,6 +215,8 @@ pub enum ScenarioActionTerminality {
 /// Semantic product control selected by one scenario step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SemanticSelector {
+    /// A logical item, including one absent from the current presentation.
+    Item(ItemAlias),
     /// The tab body representing an item.
     Tab(ItemAlias),
     /// The close control representing an item.
@@ -235,6 +239,8 @@ pub enum SemanticAction {
     Activate,
     /// Increase the selected splitter or contained edge by one semantic step.
     Increment,
+    /// Set the logical item's presentation visibility without removing it.
+    SetVisible(bool),
 }
 
 /// Product observation reported after a scenario step settles.
@@ -242,6 +248,13 @@ pub enum SemanticAction {
 pub enum SemanticObservation {
     /// The named item became selected.
     ItemSelected(ItemAlias),
+    /// The named item's current visibility matches the committed action.
+    ItemVisibilityChanged {
+        /// Logical item whose visibility was observed.
+        item: ItemAlias,
+        /// Whether the item is currently visible.
+        visible: bool,
+    },
     /// The product emitted a close request for the named item.
     CloseRequested(ItemAlias),
     /// The selected splitter advanced along its semantic axis.
@@ -292,6 +305,8 @@ pub enum ScenarioCapability {
     TouchLongPress,
     /// The executor can activate local tab semantics.
     LocalTabSelection,
+    /// The executor can change visibility while preserving logical layout membership.
+    LocalItemVisibility,
     /// The executor can activate and observe local close semantics.
     LocalItemClose,
     /// The executor can adjust an exact local splitter semantically.
@@ -833,6 +848,81 @@ pub const LOCAL_TAB_CLOSE_SPLITTER_AND_CONTAINED: SemanticScenario = SemanticSce
     JourneyId::L08,
     LOCAL_INTERACTION_CAPABILITIES,
     LOCAL_INTERACTION_STEPS,
+);
+
+const LOCAL_VISIBILITY_CAPABILITIES: &[ScenarioCapability] = &[
+    ScenarioCapability::LocalTabSelection,
+    ScenarioCapability::LocalItemVisibility,
+    ScenarioCapability::LocalSplitterAdjustment,
+    ScenarioCapability::FullContainedProjection,
+];
+const LOCAL_VISIBILITY_STEPS: &[SemanticStep] = &[
+    SemanticStep::new(
+        SemanticSelector::Tab(ItemAlias::Secondary),
+        SemanticAction::Activate,
+        SemanticObservation::ItemSelected(ItemAlias::Secondary),
+    ),
+    SemanticStep::new(
+        SemanticSelector::Item(ItemAlias::Secondary),
+        SemanticAction::SetVisible(false),
+        SemanticObservation::ItemVisibilityChanged {
+            item: ItemAlias::Secondary,
+            visible: false,
+        },
+    ),
+    SemanticStep::new(
+        SemanticSelector::Item(ItemAlias::Primary),
+        SemanticAction::SetVisible(false),
+        SemanticObservation::ItemVisibilityChanged {
+            item: ItemAlias::Primary,
+            visible: false,
+        },
+    ),
+    SemanticStep::new(
+        SemanticSelector::Item(ItemAlias::Secondary),
+        SemanticAction::SetVisible(true),
+        SemanticObservation::ItemVisibilityChanged {
+            item: ItemAlias::Secondary,
+            visible: true,
+        },
+    ),
+    SemanticStep::new(
+        SemanticSelector::Splitter(ScenarioAxis::Horizontal),
+        SemanticAction::Increment,
+        SemanticObservation::SplitterAdjusted(ScenarioAxis::Horizontal),
+    ),
+    SemanticStep::new(
+        SemanticSelector::Item(ItemAlias::Primary),
+        SemanticAction::SetVisible(true),
+        SemanticObservation::ItemVisibilityChanged {
+            item: ItemAlias::Primary,
+            visible: true,
+        },
+    ),
+    SemanticStep::new(
+        SemanticSelector::Item(ItemAlias::Contained),
+        SemanticAction::SetVisible(false),
+        SemanticObservation::ItemVisibilityChanged {
+            item: ItemAlias::Contained,
+            visible: false,
+        },
+    ),
+    SemanticStep::new(
+        SemanticSelector::Item(ItemAlias::Contained),
+        SemanticAction::SetVisible(true),
+        SemanticObservation::ItemVisibilityChanged {
+            item: ItemAlias::Contained,
+            visible: true,
+        },
+    ),
+];
+
+/// Shared L08 visibility journey retaining tab order, split weights, and contained bounds.
+pub const LOCAL_PANE_VISIBILITY: SemanticScenario = SemanticScenario::new(
+    ScenarioId::LocalPaneVisibility,
+    JourneyId::L08,
+    LOCAL_VISIBILITY_CAPABILITIES,
+    LOCAL_VISIBILITY_STEPS,
 );
 
 const NATIVE_LIFECYCLE_CAPABILITIES: &[ScenarioCapability] = &[
