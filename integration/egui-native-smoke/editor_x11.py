@@ -48,7 +48,7 @@ def windows(pid: int, kind: str) -> set[str]:
     for window_id in result.stdout.splitlines():
         title = xdotool("getwindowname", window_id)
         if kind == "child":
-            if title.endswith(" — Dockspace") or re.fullmatch(r"Dockspace panel(?: [0-9]+)?", title):
+            if title in {"Inspector", "Assets"} or re.fullmatch(r"Panel [0-9]+", title):
                 matches.add(window_id)
         elif title == "Dockspace native editor":
             matches.add(window_id)
@@ -184,6 +184,7 @@ def run(binary: Path) -> None:
     input_target: str | None = None
     os_close_sent = False
     complete = False
+    eof_seen = False
     original_root: str | None = None
     root_observer: RootWindow | None = None
     root_verified = False
@@ -210,15 +211,16 @@ def run(binary: Path) -> None:
             except queue.Empty:
                 if root_observer is not None and not root_verified:
                     root_observer.check()
-                if process.poll() is not None:
-                    break
                 continue
             if line is None:
+                eof_seen = True
                 break
             print(line, end="", flush=True)
             if root_observer is not None and not root_verified:
                 root_observer.check()
-            if "editor-smoke: FAIL" in line:
+            if any(marker in line for marker in (
+                "editor-smoke: FAIL", "Native dockspace stopped", "panicked at",
+            )):
                 raise RuntimeError(line.strip())
             if "editor-smoke: profile=" in line:
                 match = re.search(r"editor-smoke: profile=(basic|serde) edits=(\d+)", line)
@@ -346,7 +348,7 @@ def run(binary: Path) -> None:
                         f"actual widget window {target} is not a live {kind} owned by the app"
                     )
                 if marker == "CHILD_EDIT":
-                    assert_window_title(target, "Inspector — Dockspace")
+                    assert_window_title(target, "Inspector")
                     children.append(target)
                 if not (
                     float(left) < float(x) < float(right)
@@ -511,7 +513,7 @@ def run(binary: Path) -> None:
                         raise RuntimeError("both old children need exact presented OS window IDs")
                     old_children = list(match.groups())
                     for child, title in zip(old_children, ("Inspector", "Assets")):
-                        assert_window_title(child, f"{title} — Dockspace")
+                        assert_window_title(child, title)
                     if len(set(old_children)) != 2 or set(old_children) & set(children):
                         raise RuntimeError("the multi-surface predecessors reused earlier window IDs")
                     if windows(process.pid, "child") != set(old_children):
@@ -602,6 +604,8 @@ def run(binary: Path) -> None:
                 if not os_close_sent or len(children) != lifetimes or len(set(children)) != lifetimes:
                     raise RuntimeError(f"the workflow did not exercise {lifetimes} distinct child lifetimes")
                 complete = True
+        if not eof_seen:
+            raise RuntimeError("editor workflow timed out before console EOF")
         code = process.wait(timeout=5)
         if not complete or code != 0:
             raise RuntimeError(

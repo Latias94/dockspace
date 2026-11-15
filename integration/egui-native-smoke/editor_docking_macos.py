@@ -1,0 +1,294 @@
+"""Drive the existing eight-pane docking observer with real macOS mouse events.
+
+Build the native basic example separately and pass its executable. Completed-pass
+diagnostics locate input; the application verifies committed layout and content.
+The current process needs Accessibility permission. This finite driver owns only
+its editor processes and restores the pointer after releasing any held button.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import os
+from pathlib import Path
+import queue
+import re
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+
+class Point(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+
+
+class Size(ctypes.Structure):
+    _fields_ = [("width", ctypes.c_double), ("height", ctypes.c_double)]
+
+
+class Rect(ctypes.Structure):
+    _fields_ = [("origin", Point), ("size", Size)]
+
+
+class Mouse:
+    def __init__(self) -> None:
+        self.cg = ctypes.CDLL(
+            "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"
+        )
+        self.cf = ctypes.CDLL(
+            "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
+        )
+        for name, arguments, result in [
+            ("CGPreflightPostEventAccess", [], ctypes.c_bool),
+            ("CGEventCreate", [ctypes.c_void_p], ctypes.c_void_p),
+            ("CGEventGetLocation", [ctypes.c_void_p], Point),
+            ("CGEventCreateMouseEvent",
+             [ctypes.c_void_p, ctypes.c_uint32, Point, ctypes.c_uint32],
+             ctypes.c_void_p),
+            ("CGEventPost", [ctypes.c_uint32, ctypes.c_void_p], None),
+            ("CGMainDisplayID", [], ctypes.c_uint32),
+            ("CGDisplayBounds", [ctypes.c_uint32], Rect),
+        ]:
+            function = getattr(self.cg, name)
+            function.argtypes = arguments
+            function.restype = result
+        self.cf.CFRelease.argtypes = [ctypes.c_void_p]
+        self.cf.CFRelease.restype = None
+        self.cf.CFRunLoopRunInMode.argtypes = [
+            ctypes.c_void_p, ctypes.c_double, ctypes.c_bool,
+        ]
+        self.cf.CFRunLoopRunInMode.restype = ctypes.c_int32
+        self.default_run_loop_mode = ctypes.c_void_p.in_dll(
+            self.cf, "kCFRunLoopDefaultMode",
+        )
+        if not self.cg.CGPreflightPostEventAccess():
+            raise RuntimeError("enable Accessibility permission for the input driver")
+        event = self.cg.CGEventCreate(None)
+        if not event:
+            raise RuntimeError("could not read the current macOS pointer location")
+        try:
+            self.original = self.cg.CGEventGetLocation(event)
+        finally:
+            self.cf.CFRelease(event)
+        self.held = False
+        self.last = self.original
+
+    def activate(self, pid: int) -> None:
+        ctypes.CDLL("/System/Library/Frameworks/AppKit.framework/AppKit")
+        objc = ctypes.CDLL("/usr/lib/libobjc.A.dylib")
+        objc.objc_getClass.argtypes = [ctypes.c_char_p]
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+        objc.sel_registerName.restype = ctypes.c_void_p
+        receiver = objc.objc_getClass(b"NSRunningApplication")
+        selector = objc.sel_registerName
+        application = ctypes.CFUNCTYPE(
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int,
+        )(("objc_msgSend", objc))(
+            receiver, selector(b"runningApplicationWithProcessIdentifier:"), pid,
+        )
+        activate = ctypes.CFUNCTYPE(
+            ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong,
+        )(("objc_msgSend", objc))
+        active = ctypes.CFUNCTYPE(
+            ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p,
+        )(("objc_msgSend", objc))
+        if not application or not activate(
+            application, selector(b"activateWithOptions:"), 2,
+        ):
+            raise RuntimeError(f"could not activate the owned editor process {pid}")
+        deadline = time.monotonic() + 3
+        while not active(application, selector(b"isActive")):
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"the owned editor process {pid} did not become active")
+            self.cf.CFRunLoopRunInMode(self.default_run_loop_mode, 0.02, False)
+
+    def post(self, kind: int, point: Point) -> None:
+        event = self.cg.CGEventCreateMouseEvent(None, kind, point, 0)
+        if not event:
+            raise RuntimeError("could not create a macOS mouse event")
+        try:
+            self.cg.CGEventPost(0, event)
+            self.last = point
+        finally:
+            self.cf.CFRelease(event)
+
+    def move(self, point: Point) -> None:
+        self.post(6 if self.held else 5, point)  # leftMouseDragged / mouseMoved
+
+    def press(self) -> None:
+        self.post(1, self.last)
+        self.held = True
+
+    def release(self) -> None:
+        if self.held:
+            self.post(2, self.last)
+            self.held = False
+
+    def restore(self) -> None:
+        self.release()
+        self.move(self.original)
+
+    def leave_and_return(self, frame: tuple[float, ...], point: Point) -> None:
+        left, top, right, bottom = frame
+        display = self.cg.CGDisplayBounds(self.cg.CGMainDisplayID())
+        for x, y in [
+            (display.origin.x + 80, display.origin.y + display.size.height - 80),
+            (display.origin.x + display.size.width - 80, display.origin.y + 80),
+        ]:
+            if not (left <= x < right and top <= y < bottom):
+                self.move(Point(x, y))
+                time.sleep(0.15)
+                self.move(point)
+                time.sleep(0.15)
+                return
+        raise RuntimeError("the desktop needs space outside the editor client area")
+
+
+def coordinates(log: Path) -> tuple[float, tuple[float, ...]]:
+    latest = None
+    for line in log.read_text().splitlines():
+        if '\tviewport\tid="FFFF"' not in line:
+            continue
+        zoom = re.search(r"\bzoom=([\d.]+)", line)
+        scale = re.search(r"native_pixels_per_point: Some\(([\d.]+)\)", line)
+        bounds = re.search(
+            r"inner_rect: Some\(\[\[([-\d.]+) ([-\d.]+)\] - "
+            r"\[([-\d.]+) ([-\d.]+)\]\]\)", line,
+        )
+        if zoom and scale and bounds:
+            latest = (
+                float(zoom[1]), float(scale[1]), tuple(map(float, bounds.groups())),
+            )
+    if latest is None or latest[1] <= 0:
+        raise RuntimeError("the editor has not supplied its real client geometry")
+    if latest[0] != 1.0:
+        raise RuntimeError("this finite docking profile requires egui zoom 1.0")
+    return latest[1], latest[2]
+
+
+def run_case(binary: Path, case: str, artifacts: Path, mouse: Mouse) -> None:
+    log = artifacts / f"{case}-events.log"
+    process = subprocess.Popen(
+        [str(binary), "--docking-smoke", "--event-log", str(log)],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+        env=dict(os.environ, EGUI_DOCKSPACE_DOCKING_CASE=case),
+    )
+    assert process.stdout is not None
+    lines: queue.Queue[str | None] = queue.Queue()
+
+    def read_output() -> None:
+        with (artifacts / f"{case}-console.log").open("w") as output:
+            for line in process.stdout:
+                output.write(line)
+                output.flush()
+                lines.put(line)
+        lines.put(None)
+
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
+    completed = False
+    failed = False
+    eof_seen = False
+    drags = 0
+    try:
+        deadline = time.monotonic() + (45 if case.startswith("drain-") else 20)
+        while time.monotonic() < deadline:
+            try:
+                line = lines.get(timeout=1)
+            except queue.Empty:
+                continue
+            if line is None:
+                eof_seen = True
+                break
+            print(f"{case}: {line}", end="", flush=True)
+            failed |= "Native dockspace stopped" in line or "panicked at" in line
+            if line.startswith((
+                "editor-docking-select-target:",
+                "editor-docking-ready:", "editor-docking-resize-ready:",
+            )):
+                _, *arguments = line.split(":", 1)[1].split()
+                values = list(map(float, arguments))
+                scale, frame = coordinates(log)
+                mouse.activate(process.pid)
+
+                def point(x: float, y: float) -> Point:
+                    return Point(frame[0] + x / scale, frame[1] + y / scale)
+
+                if line.startswith("editor-docking-select-target:"):
+                    mouse.move(point(*values))
+                    time.sleep(0.12)
+                    mouse.press()
+                    mouse.release()
+                    continue
+                sx, sy, tx, ty = values
+                is_tab = line.startswith("editor-docking-ready:")
+                reenter = is_tab and drags == 0 and case.startswith("drain-")
+                drags += int(is_tab)
+                mouse.move(point(sx, sy))
+                time.sleep(0.12)
+                mouse.press()
+                time.sleep(0.12)
+                for step in range(1, 13):
+                    current = point(
+                        sx + (tx - sx) * step / 12,
+                        sy + (ty - sy) * step / 12,
+                    )
+                    mouse.move(current)
+                    time.sleep(0.025)
+                    if reenter and step == 4:
+                        mouse.leave_and_return(frame, current)
+                time.sleep(0.2)
+                mouse.release()
+            elif line.startswith("editor-docking-complete:"):
+                completed = True
+        if not eof_seen:
+            raise RuntimeError(f"editor docking timed out for {case}; artifacts={artifacts}")
+        status = process.wait(timeout=5)
+        failed |= "\tfatal\t" in log.read_text()
+        if status or not completed or failed:
+            raise RuntimeError(
+                f"editor docking failed for {case}: exit={status}, "
+                f"completed={completed}, runtime_failed={failed}; "
+                f"artifacts={artifacts}"
+            )
+    finally:
+        try:
+            mouse.release()
+        finally:
+            try:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
+            finally:
+                reader.join(timeout=3)
+                process.stdout.close()
+
+
+def main() -> None:
+    if sys.platform != "darwin" or len(sys.argv) != 2:
+        raise SystemExit("usage (on macOS): python3 editor_docking_macos.py /path/to/basic")
+    binary = Path(sys.argv[1]).resolve(strict=True)
+    mouse = Mouse()
+    artifacts = Path(tempfile.mkdtemp(prefix="dockspace-macos-docking-"))
+    print(f"macOS docking artifacts: {artifacts}", flush=True)
+    try:
+        for case in [
+            "outline", "console", "inspector", "preview", "profiler",
+            "drain-inspector-first", "drain-preview-first",
+        ]:
+            run_case(binary, case, artifacts, mouse)
+    finally:
+        mouse.restore()
+    print("editor-macos: PASS; seven real-input docking and divider journeys", flush=True)
+
+
+if __name__ == "__main__":
+    main()

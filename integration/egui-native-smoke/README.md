@@ -8,6 +8,8 @@ Passing a simplified smoke application does not qualify this editor composition.
 [`qualify_editor.py`](qualify_editor.py) invokes the two existing finite drivers
 sequentially and fails if either fails. It does not build anything, submit
 programmatic docking commands, infer Rust behavior or replace their assertions.
+Fatal runtime diagnostics fail the editor drivers even if a completion marker
+was already printed and the application subsequently exits with status zero.
 
 | Driver | Required behavior |
 | --- | --- |
@@ -76,6 +78,32 @@ dirty inventory, dependency pins, build features and display environment with
 the release evidence. A success line is printed only after both drivers pass.
 These are X11 reference-backend results; other platforms require their own
 physical-input qualification.
+
+## Run docking input on macOS
+
+The same seven application-observed docking and divider journeys can run on a
+dedicated macOS desktop using [`editor_docking_macos.py`](editor_docking_macos.py):
+
+```text
+python3 integration/egui-native-smoke/editor_docking_macos.py integration/egui-fork-workspace/target/debug/examples/basic
+```
+
+Build the editor first with the command above. Grant the launching process
+Accessibility permission in **System Settings → Privacy & Security → Accessibility**.
+This driver uses CoreGraphics mouse events and needs Python 3.10 or later; no
+additional Python packages are required. Leave the desktop available while it
+owns mouse input and keep egui zoom at its default 1.0; other UI zoom factors
+are rejected before sending input. It releases the primary button, restores the
+pointer and terminates only its own remaining editor processes during cleanup.
+Console and operation logs are retained in the temporary directory printed at
+startup.
+
+This qualifies same-window tab merges, contained-root retirement, divider hit
+padding and leaving/re-entering the client with primary held. It does not emulate
+a remote desktop disconnect, suppress a release callback, or qualify physical
+cross-window dragging, mixed-monitor DPI or the separate X11 lifecycle driver.
+macOS native-window commands remain available independently of physical dragging;
+see the [platform capability matrix](../../docs/PLATFORM_SUPPORT.md#macos-and-windows).
 
 ## Fatal teardown and fresh-host recovery
 

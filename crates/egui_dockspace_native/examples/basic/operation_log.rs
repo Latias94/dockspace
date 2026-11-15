@@ -126,15 +126,16 @@ impl egui::plugin::Plugin for InputLog {
         "native-editor-operation-log"
     }
 
-    fn input_hook(&mut self, _: &egui::Context, input: &mut egui::RawInput) {
+    fn input_hook(&mut self, context: &egui::Context, input: &mut egui::RawInput) {
         let mut log = self
             .0
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let geometry = format!(
-            "screen={:?} viewport={:?}",
+            "screen={:?} zoom={} viewport={:?}",
             input.screen_rect,
+            context.zoom_factor(),
             input.viewports.get(&input.viewport_id)
         );
         if log.viewport_geometry.get(&input.viewport_id) != Some(&geometry) {

@@ -69,6 +69,8 @@ def run_case(binary: Path, case: str) -> None:
     reader = threading.Thread(target=read_output, daemon=True)
     reader.start()
     completed = False
+    failed = False
+    eof_seen = False
     held = False
     tab_drags = 0
     try:
@@ -79,8 +81,10 @@ def run_case(binary: Path, case: str) -> None:
             except queue.Empty:
                 continue
             if line is None:
+                eof_seen = True
                 break
             print(f"{case}: {line}", end="", flush=True)
+            failed |= "Native dockspace stopped" in line or "panicked at" in line
             if line.startswith("editor-docking-select-target:"):
                 window, x, y = map(int, line.split(":", 1)[1].split())
                 xdotool("windowactivate", "--sync", window)
@@ -112,10 +116,13 @@ def run_case(binary: Path, case: str) -> None:
                 held = False
             elif line.startswith("editor-docking-complete:"):
                 completed = True
+        if not eof_seen:
+            raise RuntimeError(f"actual editor docking timed out for {case}")
         status = process.wait(timeout=3)
-        if status or not completed:
+        if status or not completed or failed:
             raise RuntimeError(
-                f"actual editor docking failed for {case}: exit={status}, completed={completed}"
+                f"actual editor docking failed for {case}: exit={status}, "
+                f"completed={completed}, runtime_failed={failed}"
             )
     finally:
         if held:

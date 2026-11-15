@@ -84,12 +84,18 @@ Cloned, overlapping or transformed configurations and missing authority remain
 
 ### macOS and Windows
 
-Both backends have compile coverage for the native adapter. macOS also supports
-programmatic lifecycle and same-window observations, but has no authoritative
-button-state capability. Windows lacks hovered-window, desktop-pointer and
-button-state authority. Neither backend currently has complete physical
-cross-window drag qualification. Keep those paths unavailable when their required
-facts are missing.
+Both backends have compile coverage for the native adapter. macOS also has
+real-window programmatic lifecycle coverage and a [physical same-window docking
+driver](../integration/egui-native-smoke/README.md#run-docking-input-on-macos).
+Its seven journeys cover tab merges, contained-root retirement, held-button
+client re-entry and subsequent divider resizing. They do not emulate remote
+desktop disconnects or qualify mixed-monitor DPI.
+
+macOS has no authoritative button-state capability. Windows lacks hovered-window,
+desktop-pointer and button-state authority. Neither backend currently has
+complete physical cross-window drag qualification. Keep those paths unavailable
+when their required facts are missing; granting Accessibility permission to a
+test driver does not add missing backend observations.
 
 The [solar-system example](../crates/egui_dockspace_native/examples/solar_system.rs)
 provides a finite programmatic check: three real children present and move,
