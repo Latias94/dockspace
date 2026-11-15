@@ -40,7 +40,7 @@ use crate::platform::{
     CloseEffectAcknowledgement, ObservedWindow, WindowCloseObservation, WindowCloseState,
     WindowInputState, WindowPresentationState,
 };
-pub use crate::platform::{NativeCreateReadiness, NativeDragSourceInput};
+pub use crate::platform::{NativeCreateReadiness, NativeDragSourceInput, NativeLocalReadiness};
 pub use budget::{NativeInputBudget, NativeMonotonicClock};
 use compiler::{
     NativeSnapshotEntry, compile_focus_observation, compile_platform_snapshot,
@@ -593,6 +593,7 @@ pub struct NativeWindowFacts {
     presentation_scale_factor: Option<ScaleFactor>,
     input: Option<NativeInputFact>,
     presentation: Option<NativePresentationFact>,
+    local_readiness: Option<NativeLocalReadiness>,
     create_readiness: Option<NativeCreateReadinessFact>,
     close: Option<NativeCloseFact>,
 }
@@ -641,6 +642,7 @@ impl NativeWindowFacts {
             presentation_scale_factor: None,
             input: None,
             presentation: None,
+            local_readiness: None,
             create_readiness: None,
             close: None,
         }
@@ -704,6 +706,18 @@ impl NativeWindowFacts {
         self
     }
 
+    /// Admits work in the client coordinate system independently of OS visibility.
+    ///
+    /// Ready does not prove that output was presented, that another window is
+    /// exposed, or that desktop routing is available. Complete snapshots must
+    /// withdraw this fact when the host stops accepting local work. Known hidden
+    /// or minimized presentation always prevents local input, even when Ready.
+    #[must_use]
+    pub const fn with_local_readiness(mut self, readiness: NativeLocalReadiness) -> Self {
+        self.local_readiness = Some(readiness);
+        self
+    }
+
     /// Reports exact creation or renderer preparation using the create request's capability.
     ///
     /// Omission explicitly leaves preparation Unknown in this complete snapshot.
@@ -757,6 +771,7 @@ impl NativeWindowFacts {
             presentation_scale_factor: None,
             input: None,
             presentation: None,
+            local_readiness: None,
             create_readiness: None,
             close: None,
         }
@@ -776,6 +791,7 @@ impl NativeWindowFacts {
             presentation_scale_factor: None,
             input: None,
             presentation: None,
+            local_readiness: None,
             create_readiness: None,
             close: None,
         }

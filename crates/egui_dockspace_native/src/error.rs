@@ -28,10 +28,6 @@ enum NativeRuntimeErrorSource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub(crate) enum NativeHostProtocolError {
-    #[error(
-        "the fork-backed native adapter cannot establish Wayland window presentation authority; use the official egui_dockspace winit host for local and contained docking"
-    )]
-    WaylandPresentationUnsupported,
     #[error("the native app update is not running inside an eframe output callback")]
     OutputTokenUnavailable,
     #[error("the current native output has no available dispatch budget")]
@@ -133,7 +129,6 @@ pub(crate) enum NativeHostProtocolError {
 impl NativeHostProtocolError {
     const fn kind(&self) -> NativeRuntimeErrorKind {
         match self {
-            Self::WaylandPresentationUnsupported => NativeRuntimeErrorKind::Unsupported,
             Self::OutputTokenUnavailable
             | Self::RootSurfaceUnavailable(_)
             | Self::StylePresentationMismatch { .. }

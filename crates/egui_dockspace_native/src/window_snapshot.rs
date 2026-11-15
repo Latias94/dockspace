@@ -3,7 +3,8 @@
 use dockspace::geometry::{PhysicalRect, PhysicalSize, ScaleFactor};
 use dockspace::runtime::{
     NativeCreateEffectAcknowledgement, NativeCreateReadiness, NativeInputEffectAcknowledgement,
-    NativeSurfaceBinding, NativeWindowFacts, NativeWindowInputState, NativeWindowPresentationState,
+    NativeLocalReadiness, NativeSurfaceBinding, NativeWindowFacts, NativeWindowInputState,
+    NativeWindowPresentationState,
 };
 use eframe::{
     NativePhysicalRect, NativeWindowInputState as EframeNativeWindowInputState,
@@ -150,8 +151,11 @@ pub(crate) fn compile_window_observation(
     snapshot: NativeWindowSnapshot,
 ) -> Result<CompiledWindowObservation, NativeHostProtocolError> {
     let snapshot = SnapshotParts::from(snapshot);
-    let focus_reportable = presentation_state(snapshot.visible, snapshot.minimized)
-        == Some(NativeWindowPresentationState::Visible);
+    let focus_reportable = local_readiness(snapshot) == NativeLocalReadiness::Ready
+        && !matches!(
+            presentation_state(snapshot.visible, snapshot.minimized),
+            Some(NativeWindowPresentationState::Hidden | NativeWindowPresentationState::Minimized)
+        );
     compile_window_facts(snapshot).map(|facts| CompiledWindowObservation {
         binding,
         facts,
@@ -178,6 +182,7 @@ fn compile_window_facts(
         .with_content_size(content_size)
         .with_native_scale_factor(native_scale_factor)
         .with_presentation_scale_factor(presentation_scale_factor)
+        .with_local_readiness(local_readiness(snapshot))
         .with_input(input_state(snapshot.input_state), None);
     if let Some(rect) = snapshot.inner_rect {
         let content = physical_rect(rect)?;
@@ -193,6 +198,21 @@ fn compile_window_facts(
         facts = facts.with_presentation(presentation);
     }
     Ok(facts)
+}
+
+fn local_readiness(snapshot: SnapshotParts) -> NativeLocalReadiness {
+    // This live, same-callback window has completed its initial configure. The
+    // host admits encoding and real client input for its current positive tuple.
+    // This does not claim OS visibility or successful renderer presentation.
+    if snapshot
+        .content_size
+        .into_iter()
+        .all(|dimension| dimension > 0)
+    {
+        NativeLocalReadiness::Ready
+    } else {
+        NativeLocalReadiness::Unavailable
+    }
 }
 
 const fn input_state(state: EframeNativeWindowInputState) -> NativeWindowInputState {
@@ -302,6 +322,7 @@ mod tests {
             )
             .with_native_scale_factor(ScaleFactor::new(2.0).expect("scale validates"))
             .with_presentation_scale_factor(ScaleFactor::new(2.5).expect("scale validates"))
+            .with_local_readiness(NativeLocalReadiness::Ready)
             .with_input(NativeWindowInputState::ReceivesInput, None)
             .with_presentation(NativeWindowPresentationState::Visible);
         let observation = CompiledWindowObservation::new(
@@ -333,6 +354,7 @@ mod tests {
                 .with_content_size(PhysicalSize::new(640.0, 480.0).unwrap())
                 .with_native_scale_factor(ScaleFactor::new(1.5).expect("scale validates"))
                 .with_presentation_scale_factor(ScaleFactor::new(1.25).expect("scale validates"),)
+                .with_local_readiness(NativeLocalReadiness::Ready)
                 .with_input(NativeWindowInputState::ReceivesInput, None)
         );
     }
@@ -378,6 +400,7 @@ mod tests {
             )
             .with_native_scale_factor(ScaleFactor::new(2.0).expect("scale validates"))
             .with_presentation_scale_factor(ScaleFactor::new(2.5).expect("scale validates"))
+            .with_local_readiness(NativeLocalReadiness::Ready)
             .with_input(NativeWindowInputState::PassThrough, None)
             .with_presentation(NativeWindowPresentationState::Visible);
 
@@ -399,6 +422,7 @@ mod tests {
             )
             .with_native_scale_factor(ScaleFactor::new(2.0).expect("scale validates"))
             .with_presentation_scale_factor(ScaleFactor::new(2.5).expect("scale validates"))
+            .with_local_readiness(NativeLocalReadiness::Ready)
             .with_input(NativeWindowInputState::ReceivesInput, None)
             .with_presentation(NativeWindowPresentationState::Minimized);
 

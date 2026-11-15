@@ -181,6 +181,10 @@ jobs:
         run: >-
           cargo build --package egui_dockspace --example workbench
           --features wgpu,accesskit --locked
+      - name: Build native local docking editor
+        run: >-
+          cargo build --manifest-path integration/egui-fork-workspace/Cargo.toml
+          --package egui_dockspace_native --example basic --all-features --locked
       - name: Build real Wayland pointer device
         run: >-
           cargo build --manifest-path integration/egui-fork-workspace/Cargo.toml
@@ -201,6 +205,16 @@ jobs:
             python3 integration/egui-native-smoke/editor_docking_wayland.py \
             target/debug/examples/workbench --change-scale --artifacts "$QUALIFICATION_LOG_DIR/wayland-scale/editor" \
             2>&1 | tee "$QUALIFICATION_LOG_DIR/wayland-scale.log"
+      - name: Exercise seven native local docking journeys
+        timeout-minutes: 5
+        run: |
+          python3 integration/egui-native-smoke/with_sway.py --timeout 240 \
+            --artifacts "$QUALIFICATION_LOG_DIR/wayland-native" \
+            --seat-helper integration/egui-fork-workspace/target/debug/wayland_seat -- \
+            python3 integration/egui-native-smoke/native_docking_wayland.py \
+            integration/egui-fork-workspace/target/debug/examples/basic \
+            --artifacts "$QUALIFICATION_LOG_DIR/wayland-native/editor" \
+            2>&1 | tee "$QUALIFICATION_LOG_DIR/wayland-native.log"
       - name: Upload Wayland qualification evidence
         if: always()
         uses: actions/upload-artifact@v4

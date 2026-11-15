@@ -10,6 +10,17 @@ use crate::input::receiver::{NativeWindowHitReceipt, NativeWindowPointerProbe};
 use crate::interaction::targeting::targets::DropSourceSuppression;
 use crate::platform::viewport::WindowBinding;
 
+fn native_edge_is_routeable(
+    record: crate::platform::registry::ViewportRecord<'_>,
+    edge: &PointerEdge,
+) -> bool {
+    match edge.location() {
+        PointerEdgeLocation::NativeLocal { .. } => record.is_locally_routeable(),
+        PointerEdgeLocation::Desktop { .. } => record.is_routeable(),
+        _ => false,
+    }
+}
+
 fn owned_host_local_route(
     engine: &DockEngine,
     route: Authority<HostLocalPointerRoute>,
@@ -90,7 +101,7 @@ fn native_source_route(
         .viewport
         .registry()
         .placement_record(binding)
-        .filter(|record| record.is_routeable())?;
+        .filter(|record| native_edge_is_routeable(*record, edge))?;
     let coordinates = record.coordinates()?;
     if coordinates.window_coordinates().coordinate_generation() != probe.coordinate_generation()
         || engine
@@ -127,7 +138,8 @@ pub(super) fn native_window_pointer_probe(
         PointerEdgeLocation::NativeLocal {
             route: Authority::Known(route),
         } => {
-            let coordinates = engine.native_window_coordinate_snapshot(host, route.binding())?;
+            let coordinates =
+                engine.native_local_window_coordinate_snapshot(host, route.binding())?;
             if coordinates.coordinate_generation() != route.coordinate_generation() {
                 return None;
             }
@@ -202,7 +214,7 @@ fn validated_native_local_hover(
         .viewport
         .registry()
         .placement_record(route.binding())
-        .filter(|record| record.is_routeable())?;
+        .filter(|record| native_edge_is_routeable(*record, edge))?;
     let coordinates = record.coordinates()?;
     let projection = engine.interaction_projection(route.binding().surface())?;
     (coordinates.window_coordinates().coordinate_generation() == probe.coordinate_generation()
@@ -239,7 +251,7 @@ pub(super) fn resolve_native_pointer_edge(
             .viewport
             .registry()
             .placement_record(route.binding())
-            .filter(|record| record.is_routeable());
+            .filter(|record| native_edge_is_routeable(*record, edge));
         let valid = record
             .and_then(|record| record.coordinates())
             .is_some_and(|coordinates| {
@@ -815,6 +827,18 @@ impl DockEngine {
         host: PresentationHostLease,
         window: WindowBinding,
     ) -> Option<crate::platform::coordinates::WindowCoordinateSnapshot> {
+        self.viewport
+            .registry()
+            .window(window)
+            .filter(|record| record.is_routeable())?;
+        self.native_local_window_coordinate_snapshot(host, window)
+    }
+
+    pub(crate) fn native_local_window_coordinate_snapshot(
+        &self,
+        host: PresentationHostLease,
+        window: WindowBinding,
+    ) -> Option<crate::platform::coordinates::WindowCoordinateSnapshot> {
         let provider = self.backend_ingress_provider()?;
         if provider.presentation_host() != host
             || provider.pointer_provider().scope() != PointerProviderScope::NativeJoined(host)
@@ -825,7 +849,7 @@ impl DockEngine {
             .viewport
             .registry()
             .window(window)
-            .filter(|record| record.is_routeable())?
+            .filter(|record| record.is_locally_routeable())?
             .coordinates()?;
         (coordinates.content_size().width() > 0.0 && coordinates.content_size().height() > 0.0)
             .then_some(coordinates)
@@ -836,7 +860,7 @@ impl DockEngine {
         host: PresentationHostLease,
         binding: ViewportBinding,
     ) -> Option<CoordinateSnapshot> {
-        self.native_window_coordinate_snapshot(host, binding.window())?;
+        self.native_local_window_coordinate_snapshot(host, binding.window())?;
         let (_, owner, endpoint) = self
             .presentation_authority
             .presentation
@@ -847,7 +871,7 @@ impl DockEngine {
         self.viewport
             .registry()
             .placement_record(binding)
-            .filter(|record| record.is_routeable())?
+            .filter(|record| record.is_locally_routeable())?
             .coordinates()
     }
 

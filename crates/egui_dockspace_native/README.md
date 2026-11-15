@@ -55,11 +55,13 @@ authority on macOS. Physical drag-out to create a new window, Windows cross-wind
 dragging and arbitrary mixed-monitor DPI are not qualified by this macOS profile;
 see the matrix for the precise limits.
 
-The fork-backed native adapter currently rejects Wayland with `Unsupported`:
-its presentation contract requires window visibility that winit cannot query
-there. Use the official `egui_dockspace` winit host for local and contained
-docking on Wayland; its headless Sway qualification covers real pointer,
-keyboard, wheel input and an output scale change.
+On Wayland, configured client-local readiness permits local and contained docking
+without inventing OS visibility or desktop coordinates. Exact renderer presentation
+still precedes receiver interaction. The headless Sway profile covers seven
+native editor docking journeys, including contained-window retirement, held
+client re-entry and subsequent divider resizing. The official `egui_dockspace`
+host also covers text, wheel input and a real output scale change. Managed
+native lifecycle and physical cross-window docking remain unavailable on Wayland.
 
 For a small multiview demonstration with a central Sun and three orbiting OS
 windows:

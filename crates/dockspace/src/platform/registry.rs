@@ -159,6 +159,11 @@ impl WindowRecordView<'_> {
     pub(crate) fn is_routeable(self) -> bool {
         self.record.lifecycle == ViewportLifecycle::Ready
             && window_has_coordinate_authority(self.record)
+            && window_has_local_coordinate_authority(self.record)
+    }
+    pub(crate) fn is_locally_routeable(self) -> bool {
+        self.record.lifecycle == ViewportLifecycle::Ready
+            && window_has_local_coordinate_authority(self.record)
     }
     pub(crate) fn can_report_focus_fact(self) -> bool {
         self.record.ever_observed
@@ -172,8 +177,7 @@ impl WindowRecordView<'_> {
                 .record
                 .presentation_observations
                 .current()
-                .and_then(WindowPresentationObservation::known_state)
-                == Some(WindowPresentationState::Visible)
+                .is_some_and(WindowPresentationObservation::allows_local_work)
     }
     pub(crate) const fn input_observation(self) -> Option<WindowInputObservation> {
         self.record.input_observations.current()
@@ -245,11 +249,23 @@ impl ViewportRecord<'_> {
             )
     }
 
+    /// Client geometry can authorize local work without native desktop visibility.
+    pub(crate) const fn has_local_coordinate_authority(self) -> bool {
+        self.placement.coordinates.is_some() && window_has_local_coordinate_authority(self.window)
+    }
+
+    pub(crate) fn is_locally_routeable(self) -> bool {
+        self.placement.admission == ViewportAdmission::Admitted
+            && self.is_ready()
+            && self.has_local_coordinate_authority()
+    }
+
     /// Returns whether the window is eligible for authoritative pointer routing.
     #[must_use]
     pub(crate) fn is_routeable(self) -> bool {
         self.placement.admission == ViewportAdmission::Admitted
             && self.is_ready()
+            && self.has_local_coordinate_authority()
             && self
                 .window
                 .presentation_observations
@@ -276,9 +292,7 @@ impl ViewportRecord<'_> {
                 .window
                 .presentation_observations
                 .current()
-                .is_some_and(|observation| {
-                    observation.known_state() == Some(WindowPresentationState::Visible)
-                })
+                .is_some_and(WindowPresentationObservation::allows_local_work)
     }
 
     /// Returns whether a reported focus fact may drive admitted docking semantics.
@@ -908,12 +922,11 @@ impl ViewportRegistry {
                 .iter_mut()
                 .filter(|(_, record)| record.binding.window() == binding)
             {
-                if (ViewportRecord {
+                let view = ViewportRecord {
                     placement: record,
                     window: &before,
-                })
-                .has_coordinate_authority()
-                {
+                };
+                if view.has_coordinate_authority() || view.has_local_coordinate_authority() {
                     authority_lost.push(*surface);
                 }
                 record.coordinates = None;
@@ -1061,7 +1074,9 @@ impl ViewportRegistry {
                 _ => true,
             };
             let physical_authority_changed = window_has_coordinate_authority(&previous)
-                != window_has_coordinate_authority(window);
+                != window_has_coordinate_authority(window)
+                || window_has_local_coordinate_authority(&previous)
+                    != window_has_local_coordinate_authority(window);
             if physical_changed || physical_authority_changed || destroyed {
                 next_authority = next_authority
                     .checked_next()
@@ -1084,6 +1099,11 @@ impl ViewportRegistry {
                     window: &previous,
                 }
                 .has_coordinate_authority();
+                let before_local_authority = ViewportRecord {
+                    placement: record,
+                    window: &previous,
+                }
+                .has_local_coordinate_authority();
                 if destroyed {
                     record.admission = ViewportAdmission::Retiring;
                 }
@@ -1123,6 +1143,11 @@ impl ViewportRegistry {
                     window,
                 }
                 .has_coordinate_authority();
+                let has_local_authority = ViewportRecord {
+                    placement: record,
+                    window,
+                }
+                .has_local_coordinate_authority();
                 if (changed || !before_authority)
                     && has_authority
                     && record.admission == ViewportAdmission::Admitted
@@ -1140,6 +1165,7 @@ impl ViewportRegistry {
                 }
                 if changed
                     || before_authority != has_authority
+                    || before_local_authority != has_local_authority
                     || destroyed
                     || previous.lifecycle != window.lifecycle
                         && window.lifecycle == ViewportLifecycle::Missing
@@ -2029,6 +2055,15 @@ fn window_has_coordinate_authority(window: &WindowRecord) -> bool {
             .current()
             .and_then(WindowPresentationObservation::known_state)
             == Some(WindowPresentationState::Visible)
+}
+
+const fn window_has_local_coordinate_authority(window: &WindowRecord) -> bool {
+    matches!(
+        window.lifecycle,
+        ViewportLifecycle::Ready | ViewportLifecycle::CloseRequested
+    ) && window.coordinates.is_some()
+        && matches!(window.presentation_observations.current(),
+            Some(observation) if observation.allows_local_work())
 }
 
 fn reduce_window_close_observation(

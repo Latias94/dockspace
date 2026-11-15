@@ -1297,7 +1297,7 @@ impl DockEngine {
                         record.binding().window() == binding
                             && record.coordinate_generation()
                                 == owner.endpoint.coordinate_generation()
-                            && record.has_coordinate_authority()
+                            && record.has_local_coordinate_authority()
                     })
                     .and_then(|record| record.coordinates())
                     .filter(|coordinates| {
@@ -1329,7 +1329,7 @@ impl DockEngine {
                         record.binding() == binding
                             && record.coordinate_generation()
                                 == owner.endpoint.coordinate_generation()
-                            && record.has_coordinate_authority()
+                            && record.has_local_coordinate_authority()
                     })
                     .and_then(|record| record.coordinates())
                     .ok_or_else(|| {
@@ -1467,7 +1467,7 @@ impl DockEngine {
                 if !current.is_some_and(|record| {
                     record.binding() == binding
                         && record.coordinate_generation() == endpoint.coordinate_generation()
-                        && record.has_coordinate_authority()
+                        && record.has_local_coordinate_authority()
                 }) {
                     return Some(ScrollTerminationReason::BindingRetired);
                 }

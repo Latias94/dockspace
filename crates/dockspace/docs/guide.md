@@ -754,6 +754,22 @@ The cancellation API does not itself impose ingress record/byte/age caps or
 reserve a host overload latch. Those adapter responsibilities, release latency,
 and physical OS behavior remain separate qualification work.
 
+## Native local readiness
+
+Use `NativeWindowFacts::with_local_readiness(NativeLocalReadiness::Ready)` when
+the host can measure, encode and accept real client callbacks for a live,
+configured window, but cannot observe OS visibility. This admits local work
+without claiming `Visible`. `Hidden`, `Minimized` or explicit local
+`Unavailable` facts veto that permission. Actual local focus observations may
+be reported; readiness itself does not claim focus or permit activation.
+
+Local readiness does not prove an output was displayed. Client-local receivers
+still require fresh coordinates and exact renderer `Presented` settlement.
+Revoking readiness invalidates the old coordinate generation and cancels its
+local gesture. Even if geometry is numerically unchanged after recovery, a new
+presentation is required. Desktop routes, cross-window handoff and managed
+Child preparation retain their independent authority requirements.
+
 ## Native creation failure and recovery
 
 The host owns window and renderer preparation. Native enrollment no longer

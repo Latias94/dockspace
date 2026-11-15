@@ -276,7 +276,7 @@ impl DockEngine {
             None => SurfaceCoordinateCapture::Headless {
                 authority_generation,
             },
-            Some(record) if record.has_coordinate_authority() => match record.coordinates() {
+            Some(record) if record.has_local_coordinate_authority() => match record.coordinates() {
                 Some(coordinates) => SurfaceCoordinateCapture::NativeReady {
                     coordinates,
                     authority_generation,
@@ -311,7 +311,7 @@ impl DockEngine {
             } => {
                 authority_generation == current_authority
                     && current.is_some_and(|record| {
-                        !record.has_coordinate_authority()
+                        !record.has_local_coordinate_authority()
                             && record.binding() == binding
                             && record.lifecycle() == lifecycle
                             && record.coordinate_generation() == authority_generation
@@ -323,7 +323,7 @@ impl DockEngine {
             } => {
                 authority_generation == current_authority
                     && current.is_some_and(|record| {
-                        record.has_coordinate_authority()
+                        record.has_local_coordinate_authority()
                             && record.coordinate_generation() == authority_generation
                             && record.coordinates().is_some_and(|current| {
                                 current.binding() == coordinates.binding()

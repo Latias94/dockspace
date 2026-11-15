@@ -200,7 +200,7 @@ impl DockspaceSession {
         }
         let snapshot = self
             .engine
-            .native_window_coordinate_snapshot(backend.presentation_host(), binding.window)?;
+            .native_local_window_coordinate_snapshot(backend.presentation_host(), binding.window)?;
         Some(NativeLocalCoordinates::new(backend, binding, snapshot))
     }
 

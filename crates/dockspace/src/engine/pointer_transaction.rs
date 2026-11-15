@@ -87,7 +87,7 @@ impl DockEngine {
             .viewport
             .registry()
             .window(window)
-            .is_some_and(|record| record.is_routeable());
+            .is_some_and(|record| record.is_locally_routeable());
         let keyboard_focus = self
             .viewport_focus
             .focus_observation()

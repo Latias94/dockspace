@@ -47,8 +47,8 @@ The adapter currently advertises the following capabilities in
 An advertised capability means the backend can supply that class of fact;
 individual observations can still be unavailable or `Unknown`.
 The matrix describes available observations, not end-to-end adapter support.
-In particular, the fork-backed native adapter currently rejects Wayland at
-startup because it cannot establish native presentation authority.
+Client-local readiness is a separate fact and does not add any of the global
+capabilities in this matrix.
 
 | Capability | Linux X11 | macOS | Windows | Wayland | Other |
 | --- | --- | --- | --- | --- | --- |
@@ -157,14 +157,25 @@ See the [Wayland qualification commands](../integration/egui-native-smoke/README
 These software-rendered, single-output checks do not qualify native multiview,
 mixed-monitor DPI or fractional output scaling.
 
-The fork-backed `egui_dockspace_native` adapter currently returns `Unsupported`
-for Wayland before waiting for its first Ready output. Winit cannot query
-Wayland window visibility, and the adapter's native-coordinate and focus
-contracts require known presentation authority. Renderer `Presented` reports
-cannot replace OS visibility. Native Wayland needs a separate local render/input
-readiness contract before this adapter can support it; it also lacks managed
-lifecycle, global placement and work-area authority. Use the official host for
-local and contained docking in the meantime.
+The fork-backed `egui_dockspace_native` adapter uses `NativeLocalReadiness` to
+admit work in a live, configured client's coordinate system. `Ready` permits
+local measurement and encoding without claiming OS visibility. Local input
+receivers still require fresh geometry and an exact renderer `Presented` report;
+readiness alone cannot make an encoded output interactive. Unknown visibility
+remains `Unknown`, and neither readiness nor renderer presentation supplies
+desktop placement, another window's hover route or global routing authority.
+Explicit `Hidden`, `Minimized` or local `Unavailable` observations veto local
+work. Revoked authority invalidates old receivers, including when the numeric
+geometry is unchanged, and readmission requires fresh presentation.
+
+A separate native `basic` profile is available for physical Wayland qualification.
+Its seven journeys require five tab merges, both contained-root drain orders,
+held-button client exit/re-entry and resizing on both axes. They also check all
+eight panes and application text, using real seat input and the application's
+committed state. This finite headless Sway profile uses real xdg-shell windows
+with XWayland disabled. The adapter still lacks managed native lifecycle,
+global placement and work-area authority
+on Wayland, so this local/contained profile does not qualify native multiview.
 
 Other backends retain only the common observations shown above. New backend
 support needs actual input and presentation tests as well as compile coverage.
@@ -175,8 +186,9 @@ The default [CI workflow](../.github/workflows/ci.yml) checks core behavior,
 independent consumers, feature combinations, native compilation/tests and a
 small real-renderer publication/backpressure smoke.
 The separate [native qualification workflow](../.github/workflows/native-qualification.yml)
-runs the real-window, X11 and Wayland input journeys on demand. Run it before a release
-or when changing native input, output ownership, lifecycle or dependency pins.
+runs the real-window, X11 and Wayland input journeys on demand, including separate
+official-host and fork-backed native local-docking profiles. Run it before a
+release or when changing native input, output ownership, lifecycle or dependency pins.
 The [native qualification guide](../integration/egui-native-smoke/README.md)
 contains the local commands and environment requirements.
 

@@ -28,6 +28,7 @@ const WINDOW: u64 = 11;
 const CAPTURED_AT: Duration = Duration::from_millis(40);
 
 mod drain_resize;
+mod local_readiness;
 mod random_journey;
 mod reentry;
 
@@ -250,6 +251,35 @@ fn fixture_with_capabilities(
     Scene,
     Arc<AtomicU64>,
 ) {
+    let geometry = geometry();
+    let mut facts = NativeWindowFacts::live()
+        .with_content_size(geometry.content_size())
+        .with_native_scale_factor(geometry.native_scale_factor())
+        .with_presentation_scale_factor(ScaleFactor::new(1.5).unwrap())
+        .with_input(NativeWindowInputState::ReceivesInput, None)
+        .with_presentation(NativeWindowPresentationState::Visible);
+    if desktop {
+        facts = facts.with_content_bounds(PhysicalRect::new(400.0, -300.0, 1200.0, 900.0).unwrap());
+    }
+    let (mut native, binding, now) = measured_fixture(facts, capabilities, initial_pointer_roster);
+    let scene = paint_and_present(&mut native, binding);
+    let cap = native.session.native_local_coordinates(binding).unwrap();
+    assert_eq!(cap.geometry(), geometry);
+    assert_eq!(
+        native.bridge.with_viewports(|routes| routes
+            .local_coordinates_for_event(WindowId::from(WINDOW), Some(ViewportId::ROOT))),
+        Some(cap)
+    );
+    assert!(native.session.view().item(FIRST).unwrap().is_selected());
+    assert!(!native.session.has_pending_native_input());
+    (native, binding, scene, now)
+}
+
+fn measured_fixture(
+    facts: NativeWindowFacts,
+    capabilities: NativeHostCapabilities,
+    initial_pointer_roster: NativePointerRoster,
+) -> (NativeCoordinator, NativeSurfaceBinding, Arc<AtomicU64>) {
     let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
         FIRST_SURFACE,
         DockspaceRootLayout::new(
@@ -279,16 +309,6 @@ fn fixture_with_capabilities(
     native
         .bind_viewport(ViewportId::ROOT, WindowId::from(WINDOW), binding)
         .unwrap();
-    let geometry = geometry();
-    let mut facts = NativeWindowFacts::live()
-        .with_content_size(geometry.content_size())
-        .with_native_scale_factor(geometry.native_scale_factor())
-        .with_presentation_scale_factor(ScaleFactor::new(1.5).unwrap())
-        .with_input(NativeWindowInputState::ReceivesInput, None)
-        .with_presentation(NativeWindowPresentationState::Visible);
-    if desktop {
-        facts = facts.with_content_bounds(PhysicalRect::new(400.0, -300.0, 1200.0, 900.0).unwrap());
-    }
     native
         .report_snapshot(
             [(binding, facts)],
@@ -313,17 +333,8 @@ fn fixture_with_capabilities(
         .unwrap();
     let report = finish(frame);
     native.settle_host_frame_report(&report).unwrap();
-    let scene = paint_and_present(&mut native, binding);
-    let cap = native.session.native_local_coordinates(binding).unwrap();
-    assert_eq!(cap.geometry(), geometry);
-    assert_eq!(
-        native.bridge.with_viewports(|routes| routes
-            .local_coordinates_for_event(WindowId::from(WINDOW), Some(ViewportId::ROOT))),
-        Some(cap)
-    );
-    assert!(native.session.view().item(FIRST).unwrap().is_selected());
-    assert!(!native.session.has_pending_native_input());
-    (native, binding, scene, now)
+    assert!(native.session.presented_surface(FIRST_SURFACE).is_none());
+    (native, binding, now)
 }
 
 fn order(native: &NativeCoordinator) -> Vec<ItemId> {

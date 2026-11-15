@@ -18,6 +18,7 @@ use super::{
 mod content;
 mod drain;
 mod native;
+mod wayland;
 
 #[derive(Default)]
 struct EditorObservations {
@@ -112,9 +113,13 @@ impl egui::plugin::Plugin for EditorProbe {
                 egui::Event::PointerCancelled => tabs.cancellations += 1,
                 egui::Event::PointerMoved(point)
                     if tabs.primary_down
-                        && tabs.client_rect.is_some_and(|rect| point.y > rect.max.y) =>
+                        && tabs.client_rect.is_some_and(|rect| !rect.contains(*point)) =>
                 {
-                    tabs.held_below_client = true;
+                    // An implicit Wayland grab keeps delivering motion outside
+                    // the client without emitting PointerGone until release.
+                    tabs.left_while_pressed = true;
+                    tabs.held_below_client |=
+                        tabs.client_rect.is_some_and(|rect| point.y > rect.max.y);
                 }
                 egui::Event::PointerGone if tabs.primary_down => {
                     tabs.left_while_pressed = true;
@@ -289,6 +294,9 @@ struct MergeSmoke {
     expected_target: Vec<ItemId>,
     remaining_source: Vec<ItemId>,
     reentries_before: usize,
+    wayland_source: Option<wayland::SourcePress>,
+    wayland_guide_sent: bool,
+    original_text: Option<BTreeMap<ItemId, String>>,
 }
 
 impl MergeSmoke {
@@ -302,6 +310,9 @@ impl MergeSmoke {
             expected_target: Vec::new(),
             remaining_source: Vec::new(),
             reentries_before: 0,
+            wayland_source: None,
+            wayland_guide_sent: false,
+            original_text: None,
         }
     }
 
@@ -312,6 +323,10 @@ impl MergeSmoke {
         tabs: &Arc<Mutex<EditorObservations>>,
     ) -> bool {
         assert!(app.dockspace.error_kind().is_none());
+        self.original_text.get_or_insert_with(|| drain::text(app));
+        if let Some(source) = &mut self.wayland_source {
+            source.advance(context);
+        }
         assert!(
             self.started.elapsed() < Duration::from_secs(15),
             "actual editor docking failed; view={:?}",
@@ -348,6 +363,7 @@ impl MergeSmoke {
             let point = rect.min + rect.size() * 0.35;
             let scale = context.pixels_per_point();
             let token = eframe::current_native_output_token().unwrap();
+            self.wayland_source = wayland::SourcePress::from_env(point * scale, scale);
             eprintln!(
                 "editor-docking-select-target: {} {} {}",
                 u64::from(token.window_id()),
@@ -366,6 +382,8 @@ impl MergeSmoke {
         if !self.announced
             && ready
             && target_selected
+            && (self.wayland_source.is_none()
+                || !context.input(|input| input.pointer.primary_down()))
             && let Some(source) = source
             && let Some((target, scale)) = app
                 .dockspace
@@ -387,6 +405,7 @@ impl MergeSmoke {
                 .filter(|item| *item != self.source)
                 .collect();
             let token = eframe::current_native_output_token().unwrap();
+            self.wayland_source = wayland::SourcePress::from_env(source, scale);
             eprintln!(
                 "editor-docking-ready: {} {} {} {} {}",
                 u64::from(token.window_id()),
@@ -398,7 +417,54 @@ impl MergeSmoke {
             self.reentries_before = reentries_before;
             self.announced = true;
         }
+        if self.announced
+            && !self.wayland_guide_sent
+            && self
+                .wayland_source
+                .as_ref()
+                .is_some_and(wayland::SourcePress::dragging)
+            && context.input(|input| input.pointer.primary_down())
+            && let Some((target, scale)) = app
+                .dockspace
+                .with_panes(|panes| panes.panes[&self.target].content)
+        {
+            let observed = tabs.lock().unwrap();
+            if let Some(guide) = observed
+                .root()
+                .center_guides
+                .iter()
+                .filter(|guide| target.contains(guide.center()))
+                .min_by(|a, b| {
+                    a.center()
+                        .distance_sq(target.center())
+                        .total_cmp(&b.center().distance_sq(target.center()))
+                })
+            {
+                let point = guide.center() * scale;
+                eprintln!(
+                    "editor-wayland-target: {} {}",
+                    point.x.round(),
+                    point.y.round()
+                );
+                self.wayland_guide_sent = true;
+            }
+        }
         if self.announced && self.docked(app) && app.dockspace.is_quiescent() {
+            assert_eq!(self.original_text.as_ref().unwrap(), &drain::text(app));
+            assert_eq!(self.original_text.as_ref().unwrap().len(), 8);
+            assert!(app.dockspace.with_view(|view| {
+                self.original_text
+                    .as_ref()
+                    .unwrap()
+                    .keys()
+                    .all(|item| view.item(*item).is_some())
+            }));
+            if self.wayland_source.is_some() {
+                assert!(
+                    self.wayland_guide_sent,
+                    "the real center guide must precede release"
+                );
+            }
             eprintln!(
                 "editor-docking-merged: {source_title} docked into the actual {target_title} content"
             );

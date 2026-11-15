@@ -1,5 +1,7 @@
 use super::*;
 
+mod local_readiness;
+
 fn shared_placements() -> [NativeSurfacePlacement; 2] {
     [
         NativeSurfacePlacement::new(

@@ -80,7 +80,7 @@ impl DockEngine {
             return true;
         }
         if self.viewport.viewport(surface).is_some_and(|target| {
-            target.binding().window() == source.window() && target.is_routeable()
+            target.binding().window() == source.window() && target.is_locally_routeable()
         }) {
             return true;
         }

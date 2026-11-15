@@ -1236,6 +1236,20 @@ impl DockEngine {
         let owner_scene_authority_lost = invalidated_scene_bindings
             .iter()
             .any(|binding| dependencies.owner_bindings.contains(binding));
+        if let Some(owner) = self.interaction.active_owner()
+            && let GestureLane::NativeLocal { binding, .. } = owner.lane()
+            && !self
+                .viewport
+                .registry()
+                .window(binding)
+                .is_some_and(|record| record.is_locally_routeable())
+        {
+            // A new coordinate envelope can continue a local drag, but the
+            // host withdrawing local admission terminates the original press.
+            return PlatformInteractionReconciliation::Cancel(
+                InteractionCancelReason::SceneUnavailable,
+            );
+        }
         target_authority_lost |= owner_scene_authority_lost;
         target_authority_lost |= invalidated_scene_bindings
             .iter()

@@ -28,6 +28,7 @@ enum Phase {
     AwaitResize {
         axis: DockspaceAxis,
         before: [egui::Rect; 2],
+        source: Option<super::wayland::SourcePress>,
     },
     Complete,
 }
@@ -86,6 +87,7 @@ impl DrainSmoke {
                     let scale = context.pixels_per_point();
                     let (source, target) = resize_points(hit, *axis, scale);
                     let token = eframe::current_native_output_token().unwrap();
+                    let handshake = super::wayland::SourcePress::from_env(source, scale);
                     eprintln!(
                         "editor-docking-resize-ready: {} {} {} {} {}",
                         u64::from(token.window_id()),
@@ -97,10 +99,18 @@ impl DrainSmoke {
                     self.phase = Phase::AwaitResize {
                         axis: *axis,
                         before,
+                        source: handshake,
                     };
                 }
             }
-            Phase::AwaitResize { axis, before } => {
+            Phase::AwaitResize {
+                axis,
+                before,
+                source,
+            } => {
+                if let Some(source) = source {
+                    source.advance(context);
+                }
                 if ready(app, tabs)
                     && let Some(after) = pane_bounds(app, *axis)
                     && resize_completed(*axis, *before, after)

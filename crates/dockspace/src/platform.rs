@@ -957,6 +957,19 @@ pub enum WindowPresentationState {
     Minimized,
 }
 
+/// Host admission for work in one native window's client coordinate system.
+///
+/// This is independent of OS visibility, desktop placement and renderer output
+/// settlement. Ready allows measurement and client-local input to use current
+/// geometry; interaction still requires the exact output to be presented.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NativeLocalReadiness {
+    /// The host accepts local work for this live client.
+    Ready,
+    /// The host currently cannot accept local work for this client.
+    Unavailable,
+}
+
 /// Binding-scoped, causally versioned presentation observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowPresentationObservation {
@@ -964,6 +977,7 @@ pub struct WindowPresentationObservation {
     generation: PresentationObservationGeneration,
     inventory_generation: InventoryGeneration,
     state: Authority<WindowPresentationState>,
+    local_readiness: Authority<NativeLocalReadiness>,
 }
 
 impl WindowPresentationObservation {
@@ -978,7 +992,18 @@ impl WindowPresentationObservation {
             generation,
             inventory_generation: InventoryGeneration::new(0),
             state,
+            local_readiness: Authority::Unknown(AuthorityUnavailableReason::NotReported),
         }
+    }
+
+    /// Reports local host admission without asserting OS visibility.
+    #[must_use]
+    pub const fn with_local_readiness(
+        mut self,
+        readiness: Authority<NativeLocalReadiness>,
+    ) -> Self {
+        self.local_readiness = readiness;
+        self
     }
 
     pub(crate) const fn with_inventory_generation(
@@ -1019,10 +1044,35 @@ impl WindowPresentationObservation {
         }
     }
 
+    pub(crate) const fn has_known_fact(self) -> bool {
+        matches!(self.state, Authority::Known(_))
+            || matches!(self.local_readiness, Authority::Known(_))
+    }
+
+    pub(crate) const fn allows_local_work(self) -> bool {
+        if matches!(
+            self.state,
+            Authority::Known(WindowPresentationState::Hidden | WindowPresentationState::Minimized)
+        ) || matches!(
+            self.local_readiness,
+            Authority::Known(NativeLocalReadiness::Unavailable)
+        ) {
+            return false;
+        }
+        matches!(
+            self.state,
+            Authority::Known(WindowPresentationState::Visible)
+        ) || matches!(
+            self.local_readiness,
+            Authority::Known(NativeLocalReadiness::Ready)
+        )
+    }
+
     fn same_provider_envelope(self, other: Self) -> bool {
         self.binding.window() == other.binding.window()
             && self.generation == other.generation
             && self.state == other.state
+            && self.local_readiness == other.local_readiness
     }
 }
 
@@ -1068,11 +1118,11 @@ impl WindowPresentationObservationStream {
         }
         self.last_generation = Some(observation.generation());
         self.last_envelope = Some(observation);
-        if self.requires_tombstone && observation.known_state().is_some() {
+        if self.requires_tombstone && observation.has_known_fact() {
             self.current = None;
             return;
         }
-        self.current = observation.known_state().map(|_| observation);
+        self.current = observation.has_known_fact().then_some(observation);
         self.requires_tombstone = false;
     }
 

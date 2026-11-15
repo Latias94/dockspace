@@ -320,15 +320,18 @@ pub(super) fn compile_window_fact(
                         }),
                         input_acknowledgement(provider, binding, facts.input, reason)?,
                     ))
-                    .with_presentation_observation(WindowPresentationObservation::new(
-                        binding,
-                        presentation_generation,
-                        facts
-                            .presentation
-                            .map_or(Authority::Unknown(reason), |presentation| {
-                                Authority::Known(presentation.state.into())
-                            }),
-                    ))
+                    .with_presentation_observation(
+                        WindowPresentationObservation::new(
+                            binding,
+                            presentation_generation,
+                            facts
+                                .presentation
+                                .map_or(Authority::Unknown(reason), |presentation| {
+                                    Authority::Known(presentation.state.into())
+                                }),
+                        )
+                        .with_local_readiness(fact_authority(facts.local_readiness, reason)),
+                    )
                     .with_create_preparation(WindowCreatePreparationObservation::new(
                         binding,
                         coordinate_generation,
@@ -360,6 +363,7 @@ pub(super) fn compile_window_fact(
                 || facts.presentation_scale_factor.is_some()
                 || facts.input.is_some()
                 || facts.presentation.is_some()
+                || facts.local_readiness.is_some()
                 || facts.create_readiness.is_some()
                 || facts.close.is_some()
             {

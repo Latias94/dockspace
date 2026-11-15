@@ -174,6 +174,8 @@ capture or delivery continuity; see the
 
 ## Run physical input on Wayland
 
+### Official winit workbench
+
 The official `egui_dockspace` workbench has a separate finite profile for local
 and contained docking under headless Sway/wlroots. It runs on Linux, including
 a Docker Desktop Linux VM on macOS, without a physical display or GPU passthrough.
@@ -221,10 +223,45 @@ window/output inventories and screenshots in its printed artifact directories;
 use `--artifacts` on each driver to choose them explicitly.
 
 This profile qualifies the official local/contained host, not native multiview.
-The fork-backed native adapter returns `Unsupported` on Wayland because it
-cannot establish OS window presentation authority from unknown visibility.
-It no longer waits indefinitely for a first Ready output. The deterministic
-regression also requires quarantine cleanup to consume retained Wayland rosters.
+
+### Fork-backed native editor
+
+The fork-backed adapter admits configured client-local work through
+`NativeLocalReadiness`. This does not turn unknown OS visibility into `Visible`,
+claim renderer `Presented`, or grant desktop placement and global input routing.
+Local receivers require the exact output to be presented before they can
+interact. Explicit hidden, minimized or local-unavailable observations veto
+readiness and invalidate old receiver authority. See the
+[Wayland platform contract](../../docs/PLATFORM_SUPPORT.md#wayland-and-other-backends).
+
+With the same Linux dependencies and `wayland_seat` helper built above, build the
+native editor and run its separate seven-journey driver:
+
+```sh
+cargo build --manifest-path integration/egui-fork-workspace/Cargo.toml -p egui_dockspace_native --example basic --all-features --locked -j2
+python3 integration/egui-native-smoke/with_sway.py --timeout 240 \
+  --seat-helper integration/egui-fork-workspace/target/debug/wayland_seat -- \
+  python3 integration/egui-native-smoke/native_docking_wayland.py \
+  integration/egui-fork-workspace/target/debug/examples/basic
+```
+
+The default cases are `outline`, `console`, `inspector`, `preview`, `profiler`,
+`drain-inspector-first` and `drain-preview-first`. Use `--case NAME` on the native
+driver for one case, or repeat that option to select several. The five merge
+cases require their exact committed tab order and selection. Both drain cases
+require retirement of the contained Inspector root, held-button client
+exit/re-entry, and actual divider resizing on both axes. The application checks
+all eight original panes and unchanged text. Source hover, held press and the
+presented center guide are observed before the driver advances the real input;
+no programmatic docking action replaces a drag.
+
+Each case retains application stdout, its own operation log, an owned
+`xdg_shell` window snapshot and preview screenshots. Pass `--artifacts` to the
+native driver to select the output directory. The driver requires completion,
+clean exit and EOF without fatal diagnostics, and disappearance of the exact
+owned toplevel after exit. This finite headless Sway profile exercises local and
+contained docking only, without granting the adapter
+managed native lifecycle or cross-window routing authority.
 
 ## Fatal teardown and fresh-host recovery
 
@@ -275,8 +312,9 @@ the applications once in the native workspace's target directory and runs:
 - Programmatic native redock and all three native close policies.
 - Fatal multiwindow teardown followed by a new host and fresh docking commands.
 - Physical X11/XTest drag-out and redock.
-- A separate isolated Sway job exercises official-host physical docking,
-  content input and a real output scale change, retaining logs and screenshots.
+- A separate isolated Sway job runs official-host physical docking, content
+  input and a real output scale change, plus the fork-backed native editor's
+  seven local/contained docking journeys. It retains logs and screenshots.
 
 The workflow uploads run logs with the source revision and toolchain as an
 artifact. Dependency pins and enabled features are available from that source

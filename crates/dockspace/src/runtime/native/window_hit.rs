@@ -116,7 +116,7 @@ pub(super) fn validate_window_hit(
         .viewport()
         .registry()
         .placement_record(binding)
-        .filter(|record| record.is_routeable())
+        .filter(|record| record.is_locally_routeable())
     else {
         return NativeWindowHitReceipt::Unknown;
     };

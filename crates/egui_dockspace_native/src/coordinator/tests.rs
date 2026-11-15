@@ -1787,7 +1787,7 @@ fn complete_root_roster_publishes_one_exact_platform_snapshot() {
 }
 
 #[test]
-fn wayland_roster_rejects_missing_native_presentation_support_before_bootstrap_wait() {
+fn wayland_local_readiness_prepares_the_first_output_without_native_visibility() {
     let mut native = coordinator();
     let (first, second) = register_roots(&mut native);
     let version = native.session.version();
@@ -1795,6 +1795,7 @@ fn wayland_roster_rejects_missing_native_presentation_support_before_bootstrap_w
         .with_content_size(dockspace::geometry::PhysicalSize::new(1280.0, 820.0).unwrap())
         .with_native_scale_factor(ScaleFactor::new(1.0).unwrap())
         .with_presentation_scale_factor(ScaleFactor::new(1.0).unwrap())
+        .with_local_readiness(dockspace::runtime::NativeLocalReadiness::Ready)
         .with_input(NativeWindowInputState::ReceivesInput, None);
     let roster = NativeViewportRosterRecord::for_test_with_backend_and_work_areas(
         [first, second]
@@ -1803,33 +1804,33 @@ fn wayland_roster_rejects_missing_native_presentation_support_before_bootstrap_w
         eframe::NativeWindowingBackend::Wayland,
     );
     native.bridge.push_viewport_roster(roster);
-    let error = native.reduce_next_viewport_roster().expect_err(
-        "native Wayland must return a specific error instead of waiting forever for Visible",
-    );
-    assert_eq!(error.kind(), crate::NativeRuntimeErrorKind::Unsupported);
+    assert!(native.reduce_next_viewport_roster().unwrap());
+    let mut frame = native
+        .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame
+        .frame
+        .measure_surface(
+            FIRST_SURFACE,
+            UniformSurfaceMetrics::new(
+                LogicalRect::new(0.0, 0.0, 1280.0, 820.0).unwrap(),
+                LogicalSize::new(32.0, 24.0).unwrap(),
+                96.0,
+            )
+            .unwrap(),
+        )
+        .unwrap();
     assert!(
-        std::error::Error::source(&error)
-            .unwrap()
-            .to_string()
-            .contains("egui_dockspace")
+        frame.frame.paint_plan(FIRST_SURFACE).unwrap().is_some(),
+        "the first client output must not wait for Wayland OS visibility"
     );
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    frame.commit().unwrap();
     assert_eq!(native.session.version(), version);
     assert!(native.session.is_current_native_binding(first));
     assert!(native.session.is_current_native_binding(second));
-    assert!(native.session.presented_surface(FIRST_SURFACE).is_none());
-    native.bridge.enter_quarantine();
-    assert!(
-        native.reduce_next_viewport_roster().unwrap(),
-        "fatal cleanup must still consume the unsupported backend's retained roster"
-    );
-    let mut cleanup = native
-        .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
-        .unwrap();
-    cleanup
-        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
-        .unwrap();
-    cleanup.commit().unwrap();
-    assert_eq!(native.session.version(), version);
     assert!(native.session.presented_surface(FIRST_SURFACE).is_none());
 }
 
