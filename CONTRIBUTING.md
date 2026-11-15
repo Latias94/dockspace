@@ -18,6 +18,8 @@ to reproduce behavior in the appropriate host. Public crates retain Rust 1.95 as
 | `integration/egui-product-harness` | Official egui behavior tests |
 | `integration/egui-fork-workspace` | Separate native adapter/test workspace |
 | `integration/egui-native-smoke` | Native applications and physical-input drivers |
+| `integration/egui-web-demo` | Wasm workbench and real-browser interaction tests |
+| `site` | Static GitHub Pages homepage and demo route |
 | `integration/gpui-harness` | Local Open GPUI retained adapter and interaction tests |
 | `docs` | Integration guides, platform limits and architecture decisions |
 | `scripts` | Core dependency boundary and opt-in performance comparisons |
@@ -105,6 +107,11 @@ cargo nextest run --manifest-path integration/egui-fork-workspace/Cargo.toml -p 
 ```
 
 ## Reports and changes
+
+For browser-host changes, build the site and run the single-worker Chromium
+journeys in [the Web demo](integration/egui-web-demo/README.md). The independent
+Pages workflow owns that build and its deployable artifact. Its local build
+script requires Python 3.11+ to read Cargo's lockfile with `tomllib`.
 
 For a bug report, include the source revision, example/host, OS/backend, enabled
 features, reproduction steps and observed result. Distinguish a committed text

@@ -1,0 +1,32 @@
+[workspace]
+resolver = "3"
+
+[package]
+name = "dockspace-egui-web-demo"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["motion"]
+motion = ["egui_dockspace/motion"]
+
+[dependencies]
+egui = { version = "=0.37.0", default-features = false, features = ["default_fonts"] }
+egui_dockspace = { path = "../../crates/egui_dockspace", default-features = false, features = ["web"] }
+serde_json = "1.0.149"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "EventTarget", "HtmlCanvasElement", "Location", "MediaQueryList", "MediaQueryListEvent"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

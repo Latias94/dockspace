@@ -12,6 +12,7 @@ need a desktop session and a working graphics backend.
 | Connect a custom renderer to winit | [Software host](../crates/dockspace_winit/examples/software.rs) | Caller-owned event loop, software drawing, pointer routing and actual presentation; no UI framework |
 | Manage native windows without egui | [Winit multiview](../crates/dockspace_winit/examples/multiview.rs) | Core window bindings, renderer preparation, exact presentation, Dock Back, close recovery and shutdown |
 | Try full docking with official egui | [Workbench](../crates/egui_dockspace/examples/workbench.rs) | Drag docking, splitters, contained Inspector, themes and retained document data |
+| Try docking in a browser | [Web workbench](../integration/egui-web-demo) | The same panes and configurable motion in one WebAssembly canvas |
 | Start a small winit editor | [Winit editor](../crates/egui_dockspace/examples/winit.rs) | Application panes with the optional complete-output runner; no custom event-loop code |
 | Start from an eframe callback | [Basic](../crates/egui_dockspace/examples/basic.rs) | Pane rendering, close decisions and theme/font/density controls; callback capabilities |
 | Save before closing a tab | [Background save](../crates/egui_dockspace/examples/background_save.rs) | Background worker, exact deferred token, failure recovery and stale completion |
@@ -71,7 +72,6 @@ Full docking, with official crates.io dependencies:
 
 ```sh
 cargo run -p egui_dockspace --example winit --features wgpu --locked
-cargo run -p egui_dockspace --example workbench --features wgpu --locked
 cargo run -p egui_dockspace --example workbench --features wgpu --locked
 ```
 

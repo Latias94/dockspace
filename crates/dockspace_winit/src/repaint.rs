@@ -1,4 +1,4 @@
-use std::time::Instant;
+use web_time::Instant;
 
 /// Retains the earliest requested repaint deadline for one host window.
 ///

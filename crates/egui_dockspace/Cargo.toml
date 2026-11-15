@@ -13,7 +13,8 @@ readme = "README.md"
 default = ["motion", "x11", "wayland", "wayland-csd-adwaita"]
 example-app = ["dep:eframe", "dep:winit"]
 winit = ["dep:dockspace_winit", "dep:egui-winit", "dep:winit"]
-wgpu = ["winit", "dep:egui-wgpu", "dep:pollster", "egui/default_fonts"]
+wgpu = ["winit", "dep:egui-wgpu", "dep:pollster", "dep:web-time", "egui/default_fonts"]
+web = ["wgpu", "dep:wasm-bindgen-futures", "dep:web-sys"]
 accesskit = ["winit", "egui-winit/accesskit"]
 x11 = ["dockspace_winit?/x11", "egui-winit?/x11", "egui-wgpu?/x11", "eframe?/x11", "winit?/x11"]
 wayland = ["dockspace_winit?/wayland", "egui-winit?/wayland", "egui-wgpu?/wayland", "eframe?/wayland", "winit?/wayland", "winit?/wayland-dlopen"]
@@ -31,10 +32,18 @@ dockspace_winit = { workspace = true, optional = true, default-features = false 
 eframe = { workspace = true, optional = true, features = ["default_fonts", "glow"] }
 egui.workspace = true
 egui-wgpu = { version = "=0.37.0", optional = true, features = ["winit"] }
-egui-winit = { version = "=0.37.0", optional = true, default-features = false, features = ["clipboard", "links"] }
-pollster = { version = "1.0.1", optional = true }
+egui-winit = { version = "=0.37.0", optional = true, default-features = false, features = ["links"] }
 thiserror.workspace = true
+web-time = { version = "1.1", optional = true }
 winit = { workspace = true, optional = true, features = ["rwh_06"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+egui-winit = { version = "=0.37.0", optional = true, default-features = false, features = ["clipboard"] }
+pollster = { version = "1.0.1", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = { version = "0.4", optional = true }
+web-sys = { version = "0.3", optional = true, features = ["HtmlCanvasElement"] }
 
 [dev-dependencies]
 dockspace = { workspace = true, default-features = false }

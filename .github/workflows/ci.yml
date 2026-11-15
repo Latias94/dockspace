@@ -30,12 +30,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --all --check
       - name: Check core dependency boundary
         run: python3 scripts/check_core_dependencies.py
+      - name: Check portable core and egui libraries
+        run: >-
+          cargo check --package dockspace --package egui_dockspace --lib
+          --target wasm32-unknown-unknown --features egui_dockspace/serde --locked
       - name: Check selectable egui host backends
         run: |
           cargo check --package egui_dockspace --no-default-features --features winit,x11 --lib --locked

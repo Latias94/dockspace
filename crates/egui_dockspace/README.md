@@ -34,6 +34,21 @@ pointer directly. New panes appear at their destination; surviving panes in
 the same root move from their previous geometry. Native OS window movement and
 cross-window content flights are outside this first delivery.
 
+## Run in a browser
+
+Enable `web` to use the complete-output winit/WGPU host with an existing HTML
+canvas. `run_web` starts asynchronous GPU initialization and returns after
+installing event dispatch. Implement the same `NativeApp` callbacks as the
+desktop runner; the host owns rendering and exact output settlement.
+`WebOptions::new(canvas)` configures the canvas and background color.
+
+The repository's [browser workbench](../../integration/egui-web-demo) reuses the
+desktop pane code and motion toolbar. It supports local docking and contained
+floating groups; it does not open additional browser windows. The demo observes
+the browser's `prefers-reduced-motion` preference and keeps manual toolbar
+choices until that system preference changes again. Browser applications should
+make the same observation when configuring motion on their own Dockspace.
+
 ## Configure motion
 
 The default `motion` feature adds interruptible layout and drop-preview motion.
@@ -121,6 +136,9 @@ egui = "=0.37.0"
   automatically; an existing event loop calls `init_accesskit` and forwards its
   user events through `on_accesskit_event`. Create the window hidden, initialize
   the adapter, then show it for the first time.
+- `web` adds `run_web` and `WebOptions` on `wasm32-unknown-unknown`, using the
+  same full-output frame pipeline with asynchronous browser startup. Disable
+  default features and enable `web,motion` for a focused browser dependency.
 
 The default backend features support X11 and Wayland. To build only one Linux
 backend, disable defaults and select it explicitly:

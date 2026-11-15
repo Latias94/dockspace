@@ -19,12 +19,13 @@ pub(super) fn controls(
                 MotionMode::Off
             };
             let mut reduced = *preference == MotionPreference::Reduced;
-            ui.checkbox(&mut reduced, "Reduce motion");
-            *preference = if reduced {
-                MotionPreference::Reduced
-            } else {
-                MotionPreference::Unknown
-            };
+            if ui.checkbox(&mut reduced, "Reduce motion").changed() {
+                *preference = if reduced {
+                    MotionPreference::Reduced
+                } else {
+                    MotionPreference::Unknown
+                };
+            }
             let spring = matches!(settings.layout, Transition::CriticalSpring { .. });
             let mut use_spring = spring;
             ui.selectable_value(&mut use_spring, true, "Spring");

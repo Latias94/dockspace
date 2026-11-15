@@ -12,6 +12,22 @@ egui/eframe and winit forks. Its dependency revisions are defined in the
 [native workspace](../integration/egui-fork-workspace/Cargo.toml) and lockfile.
 Keep those patches out of the official workspace.
 
+## Browser
+
+`dockspace` and `egui_dockspace` build for `wasm32-unknown-unknown`, including
+motion and optional layout serialization. The opt-in `egui_dockspace/web`
+feature provides a complete-output winit/WGPU host for one existing HTML canvas.
+It initializes the GPU asynchronously, prefers WebGPU and falls back to WebGL2
+when WebGPU is unavailable. A browser with one of these graphics backends and
+WebAssembly is required.
+
+The [browser workbench](../integration/egui-web-demo) reuses the desktop panes
+and docking controls. It supports local tabs, splits, contained floating groups
+and configurable motion. It observes `prefers-reduced-motion`, including live
+changes. Separate browser windows and native multiview are outside its scope.
+The [Pages workflow](../.github/workflows/pages.yml) builds the site and runs
+real Chromium input journeys before producing the deployable artifact.
+
 ## Logical surfaces and native windows
 
 A logical surface is not an OS window. One external Root window may host several

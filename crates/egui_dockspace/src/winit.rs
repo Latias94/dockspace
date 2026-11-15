@@ -371,8 +371,20 @@ mod tests {
 }
 
 #[cfg(feature = "wgpu")]
+mod frame;
+#[cfg(feature = "wgpu")]
+mod host;
+#[cfg(all(feature = "wgpu", not(target_arch = "wasm32")))]
 mod native;
 #[cfg(feature = "wgpu")]
-pub use native::{
-    AppResult, FrameControl, NativeApp, NativeError, NativeFrameReport, NativeOptions, run_native,
-};
+mod renderer;
+#[cfg(feature = "wgpu")]
+mod repaint;
+#[cfg(feature = "wgpu")]
+pub use host::{AppResult, FrameControl, NativeApp, NativeError, NativeFrameReport};
+#[cfg(all(feature = "wgpu", not(target_arch = "wasm32")))]
+pub use native::{NativeOptions, run_native};
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+mod web;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+pub use web::{WebOptions, run_web};

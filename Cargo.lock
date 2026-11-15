@@ -867,6 +867,7 @@ dependencies = [
  "font8x8",
  "softbuffer",
  "thiserror 2.0.21",
+ "web-time",
  "winit",
 ]
 
@@ -1021,6 +1022,9 @@ dependencies = [
  "pollster",
  "tempfile",
  "thiserror 2.0.21",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
  "winit",
 ]
 

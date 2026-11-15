@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Dockspace is a renderer-neutral Rust library for tabs, split layouts, floating groups, and docking interactions. Try the egui workbench in your browser.">
+    <meta name="theme-color" content="#f7f7f2">
+    <title>Dockspace — Docking layouts for Rust editors</title>
+    <link rel="icon" href="./icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="./site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header wrap">
+      <a class="wordmark" href="./" aria-label="Dockspace home">
+        <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="2" y="2" width="20" height="20" rx="3" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M9 2v20M9 14h13" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+        dockspace
+      </a>
+      <nav class="site-nav" aria-label="Main navigation">
+        <a href="#integrate">Get started</a>
+        <a href="./demo/egui/">Live demo <span aria-hidden="true">↗</span></a>
+        <a href="https://github.com/Latias94/dockspace">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero wrap" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> A renderer-neutral Rust library</p>
+          <h1 id="hero-title">Docking layouts<br>for <em>your editor.</em></h1>
+          <p class="hero-description">Tabs, nested splits, floating groups, and motion. Dockspace manages the layout and interactions. Your application owns the pane content and chooses how to draw it.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="./demo/egui/">Try the egui demo <span aria-hidden="true">↗</span></a>
+            <a class="text-link" href="https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md">Read the integration guide <span aria-hidden="true">→</span></a>
+          </div>
+          <p class="release-note"><span class="release-tag">Pre-release</span> Use from source. The API may change.</p>
+        </div>
+
+        <figure class="workspace-figure">
+          <div class="figure-heading"><span>One logical surface</span><span class="figure-label">Layout illustration</span></div>
+          <div class="workspace-map" role="img" aria-label="Layout illustration: an Outline beside Editor and Preview tabs, a Console underneath, and an Inspector floating within the same surface.">
+            <div class="map-pane map-outline">
+              <div class="map-tabs"><span class="map-tab is-selected">Outline</span></div>
+              <div class="map-tree"><span>Workspace</span><span class="tree-child">Scene</span><span class="tree-child">Camera</span><span class="tree-child tree-selected">Player</span></div>
+            </div>
+            <div class="map-pane map-editor">
+              <div class="map-tabs"><span class="map-tab is-selected">Editor</span><span class="map-tab">Preview</span></div>
+              <div class="map-code"><span class="code-comment">// Your application content</span><br><span class="code-keyword">fn</span> update() {<br>&nbsp; scene.update();<br>}</div>
+              <div class="map-cursor" aria-hidden="true"></div>
+            </div>
+            <div class="map-pane map-console">
+              <div class="map-tabs"><span class="map-tab is-selected">Console</span><span class="map-tab">History</span></div>
+              <div class="map-log"><span class="log-dot"></span> Scene ready.</div>
+            </div>
+            <div class="map-floating">
+              <div class="floating-heading"><span class="grip" aria-hidden="true">⠿</span> Inspector <span class="floating-close" aria-hidden="true">×</span></div>
+              <div class="floating-content"><span class="inspector-title">Player</span><span class="inspector-label">Position</span><div class="inspector-values"><span>X&nbsp; 0</span><span>Y&nbsp; 24</span><span>Z&nbsp; 0</span></div></div>
+            </div>
+          </div>
+          <figcaption>Arrange the space. Keep the content yours.</figcaption>
+        </figure>
+      </section>
+
+      <section class="capabilities wrap" aria-label="Core capabilities">
+        <article>
+          <span class="section-number">01 / Layout</span>
+          <h2>A place for every pane.</h2>
+          <p>Compose tabs and nested splits. Reorder, merge, resize, or float a group within the same surface.</p>
+        </article>
+        <article>
+          <span class="section-number">02 / Ownership</span>
+          <h2>Your content stays yours.</h2>
+          <p>Keep documents, editor state, drawing, and close decisions in your application. The core owns docking state.</p>
+        </article>
+        <article>
+          <span class="section-number">03 / Motion</span>
+          <h2>Make changes easy to follow.</h2>
+          <p>Interruptible layout and drop-preview motion, with configurable timing, curves, and reduced-motion support.</p>
+        </article>
+      </section>
+
+      <section class="integration wrap" id="integrate" aria-labelledby="integration-title">
+        <div class="section-intro">
+          <p class="eyebrow">Choose your starting point</p>
+          <h2 id="integration-title">A small core.<br>A clear place to connect.</h2>
+          <p>Start with egui, or bring your own UI framework. Pane identity and layout stay independent of rendering.</p>
+        </div>
+        <div class="integration-list">
+          <a class="integration-row" href="https://github.com/Latias94/dockspace/tree/main/crates/dockspace">
+            <code>dockspace</code><span>The renderer-neutral layout and interaction engine.</span><span aria-hidden="true">↗</span>
+          </a>
+          <a class="integration-row" href="https://github.com/Latias94/dockspace/tree/main/crates/egui_dockspace">
+            <code>egui_dockspace</code><span>Pane rendering, styling, and docking in one egui surface.</span><span aria-hidden="true">↗</span>
+          </a>
+          <a class="integration-row" href="https://github.com/Latias94/dockspace/tree/main/crates/dockspace_winit">
+            <code>dockspace_winit</code><span>Optional input and repaint helpers for winit hosts.</span><span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="source-section wrap" aria-labelledby="source-title">
+        <div>
+          <p class="eyebrow">Run the desktop workbench</p>
+          <h2 id="source-title">Try it with your own hands.</h2>
+          <p>The browser demo uses egui in one canvas. Run the desktop workbench for the same local docking model with winit and WGPU.</p>
+          <a class="text-link" href="https://github.com/Latias94/dockspace/blob/main/docs/EXAMPLES.md">More examples and run commands <span aria-hidden="true">→</span></a>
+        </div>
+        <div class="terminal">
+          <div class="terminal-heading"><span>From the repository root</span><span>Rust 1.95+</span></div>
+          <pre tabindex="0" aria-label="Commands to clone Dockspace and run the desktop workbench"><code><span class="terminal-prompt">$</span> git clone https://github.com/Latias94/dockspace
+<span class="terminal-prompt">$</span> cd dockspace
+<span class="terminal-prompt">$</span> cargo run -p egui_dockspace \
+    --example workbench --features wgpu --locked</code></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer wrap">
+      <p>Dockspace <span class="footer-divider" aria-hidden="true">/</span> Built in Rust. Open source.</p>
+      <div><a href="https://github.com/Latias94/dockspace/blob/main/CONTRIBUTING.md">Contribute</a><a href="https://github.com/Latias94/dockspace">Source <span aria-hidden="true">↗</span></a></div>
+    </footer>
+  </body>
+</html>

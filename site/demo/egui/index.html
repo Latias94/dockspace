@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Try Dockspace's egui docking workbench: move tabs, split panes, float groups, and configure layout motion in a browser canvas.">
+    <meta name="theme-color" content="#f7f7f2">
+    <title>egui demo — Dockspace</title>
+    <link rel="icon" href="../../icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../../site.css">
+  </head>
+  <body class="demo-page">
+    <header class="demo-header">
+      <a class="wordmark" href="../../" aria-label="Back to Dockspace home">
+        <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="2" y="2" width="20" height="20" rx="3" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M9 2v20M9 14h13" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+        dockspace <span aria-hidden="true">/</span>
+      </a>
+      <span class="demo-label">egui workbench</span>
+      <p id="demo-status" class="demo-status" role="status" aria-live="polite" aria-atomic="true">Loading the workbench…</p>
+      <button id="demo-fullscreen" class="demo-fullscreen" type="button" hidden>Fullscreen</button>
+    </header>
+    <main class="demo-stage" aria-label="Interactive egui workbench">
+      <canvas id="dockspace-canvas" tabindex="0" aria-label="Dockspace editor with draggable tabs, resizable panes, and floating groups" aria-describedby="demo-help">This interactive demo requires a browser with WebAssembly and WebGL support.</canvas>
+      <noscript><p class="demo-noscript">Enable JavaScript to load the WebAssembly workbench. <a href="../../">Return to Dockspace.</a></p></noscript>
+    </main>
+    <footer class="demo-help">
+      <p id="demo-help">Drag a tab onto a pane to dock. Drag a divider to resize. Hold <kbd>Shift</kbd> while dragging to float. Use the toolbar to adjust motion.</p>
+      <a href="https://github.com/Latias94/dockspace">View source <span aria-hidden="true">↗</span></a>
+    </footer>
+    <script type="module">
+      const status = document.getElementById('demo-status');
+      const canvas = document.getElementById('dockspace-canvas');
+      const fullscreen = document.getElementById('demo-fullscreen');
+
+      if (document.fullscreenEnabled) {
+        fullscreen.hidden = false;
+        fullscreen.addEventListener('click', async () => {
+          try {
+            if (document.fullscreenElement) {
+              await document.exitFullscreen();
+            } else {
+              await document.documentElement.requestFullscreen();
+            }
+            canvas.focus({ preventScroll: true });
+          } catch (error) {
+            console.error('Fullscreen could not be opened.', error);
+          }
+        });
+        document.addEventListener('fullscreenchange', () => {
+          fullscreen.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
+        });
+      }
+
+      try {
+        const { default: init } = await import('./pkg/egui_web_demo.js');
+        await init();
+      } catch (error) {
+        status.textContent = `The workbench could not start: ${error instanceof Error ? error.message : String(error)}`;
+        status.dataset.state = 'error';
+        console.error(error);
+      }
+    </script>
+  </body>
+</html>

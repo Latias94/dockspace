@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use crate::SurfacePresentationResult;
 use egui_wgpu::wgpu;
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
 #[derive(Clone, Copy)]
@@ -67,13 +67,14 @@ impl WgpuRenderer {
     }
 
     pub(super) async fn new(
-        event_loop: &ActiveEventLoop,
+        display: OwnedDisplayHandle,
         window: Arc<Window>,
         clear_color: egui::Color32,
     ) -> Result<Self, egui_wgpu::WgpuError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(
-            Box::new(event_loop.owned_display_handle()),
-        ));
+        let instance = wgpu::util::new_instance_with_webgpu_detection(
+            wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display)),
+        )
+        .await;
         let surface = instance.create_surface(Arc::clone(&window))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {

@@ -3,3 +3,6 @@ target/
 __pycache__/
 *.py[cod]
 /dockspace-layout.json
+/integration/egui-web-demo/node_modules/
+/integration/egui-web-demo/test-results/
+/integration/egui-web-demo/playwright-report/

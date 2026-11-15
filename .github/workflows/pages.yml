@@ -1,0 +1,108 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - integration/egui-web-demo/**
+      - crates/dockspace/Cargo.toml
+      - crates/dockspace/src/**
+      - crates/dockspace_winit/Cargo.toml
+      - crates/dockspace_winit/src/**
+      - crates/egui_dockspace/Cargo.toml
+      - crates/egui_dockspace/src/**
+      - crates/egui_dockspace/examples/workbench/**
+      - Cargo.toml
+      - scripts/build_site.py
+      - .github/workflows/pages.yml
+  pull_request:
+    paths:
+      - site/**
+      - integration/egui-web-demo/**
+      - crates/dockspace/Cargo.toml
+      - crates/dockspace/src/**
+      - crates/dockspace_winit/Cargo.toml
+      - crates/dockspace_winit/src/**
+      - crates/egui_dockspace/Cargo.toml
+      - crates/egui_dockspace/src/**
+      - crates/egui_dockspace/examples/workbench/**
+      - Cargo.toml
+      - scripts/build_site.py
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_BUILD_JOBS: 2
+  CARGO_TARGET_DIR: target
+
+jobs:
+  build:
+    name: Build and exercise the browser demo
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: rustfmt
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: integration/egui-web-demo -> ../../target
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.130
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check browser source formatting
+        run: cargo fmt --manifest-path integration/egui-web-demo/Cargo.toml --all --check
+      - name: Build static site
+        run: python3 scripts/build_site.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: integration/egui-web-demo/package-lock.json
+      - name: Install browser test dependencies
+        working-directory: integration/egui-web-demo
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Test docking, motion and project subpaths
+        working-directory: integration/egui-web-demo
+        run: npm test
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failures
+          path: integration/egui-web-demo/test-results
+          if-no-files-found: ignore
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/site
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Deploy site
+        id: deployment
+        uses: actions/deploy-pages@v4

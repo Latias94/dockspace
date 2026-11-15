@@ -1,9 +1,8 @@
 //! Repaint delivery and surface-recovery pacing for the single-window runner.
 
-use std::time::Instant;
-
 use dockspace_winit::RepaintScheduler;
 use egui::{Context, RequestRepaintInfo, ViewportId};
+use web_time::Instant;
 
 pub(super) struct RepaintRequest {
     pub(super) deadline: Instant,
