@@ -1,4 +1,4 @@
-# Dockspace
+# <img src="site/icon.svg" width="48" height="48" alt=""> Dockspace
 
 Docking layouts for Rust editor UIs, independent of the UI framework.
 
@@ -27,7 +27,11 @@ Inspector. Edit a document, close it, then use **Restore layout** to reopen it
 with its application data intact. This example uses one OS window and needs no
 engine or dependency fork.
 
-![Dockspace workbench: tabs, split panes, Preview and Inspector](screenshots/docking.gif)
+![Dockspace native multiview: tabs dock between two OS windows with motion enabled](screenshots/docking.gif)
+
+The recording uses the experimental [native multiview editor](docs/EXAMPLES.md#experimental-native-windows)
+with motion enabled. Tabs dock in both directions, and the empty child window
+retires after its final tab returns.
 
 For a small terminal-only introduction to the core:
 
