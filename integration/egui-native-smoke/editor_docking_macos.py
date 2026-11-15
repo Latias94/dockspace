@@ -50,9 +50,12 @@ class Mouse:
             ("CGEventCreateMouseEvent",
              [ctypes.c_void_p, ctypes.c_uint32, Point, ctypes.c_uint32],
              ctypes.c_void_p),
+            ("CGEventCreateKeyboardEvent",
+             [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool], ctypes.c_void_p),
             ("CGEventPost", [ctypes.c_uint32, ctypes.c_void_p], None),
             ("CGMainDisplayID", [], ctypes.c_uint32),
             ("CGDisplayBounds", [ctypes.c_uint32], Rect),
+            ("CGSessionCopyCurrentDictionary", [], ctypes.c_void_p),
             ("CGWindowListCopyWindowInfo", [ctypes.c_uint32, ctypes.c_uint32], ctypes.c_void_p),
         ]:
             function = getattr(self.cg, name)
@@ -75,6 +78,23 @@ class Mouse:
         self.default_run_loop_mode = ctypes.c_void_p.in_dll(
             self.cf, "kCFRunLoopDefaultMode",
         )
+        session = self.cg.CGSessionCopyCurrentDictionary()
+        if not session:
+            raise RuntimeError("physical docking requires an interactive macOS desktop session")
+        data = None
+        try:
+            data = self.cf.CFPropertyListCreateData(None, session, 200, 0, None)
+            if not data:
+                raise RuntimeError("could not observe the macOS desktop session")
+            properties = plistlib.loads(ctypes.string_at(
+                self.cf.CFDataGetBytePtr(data), self.cf.CFDataGetLength(data),
+            ))
+            if properties.get("CGSSessionScreenIsLocked", False):
+                raise RuntimeError("unlock the macOS desktop before running physical docking input")
+        finally:
+            if data:
+                self.cf.CFRelease(data)
+            self.cf.CFRelease(session)
         if not self.cg.CGPreflightPostEventAccess():
             raise RuntimeError("enable Accessibility permission for the input driver")
         event = self.cg.CGEventCreate(None)
@@ -87,7 +107,7 @@ class Mouse:
         self.held = False
         self.last = self.original
 
-    def activate(self, pid: int) -> None:
+    def application(self, pid: int) -> tuple:
         ctypes.CDLL("/System/Library/Frameworks/AppKit.framework/AppKit")
         objc = ctypes.CDLL("/usr/lib/libobjc.A.dylib")
         objc.objc_getClass.argtypes = [ctypes.c_char_p]
@@ -101,13 +121,19 @@ class Mouse:
         )(("objc_msgSend", objc))(
             receiver, selector(b"runningApplicationWithProcessIdentifier:"), pid,
         )
+        if not application:
+            raise RuntimeError(f"the owned editor process {pid} is unavailable")
+        return objc, selector, application
+
+    def activate(self, pid: int) -> None:
+        objc, selector, application = self.application(pid)
         activate = ctypes.CFUNCTYPE(
             ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong,
         )(("objc_msgSend", objc))
         active = ctypes.CFUNCTYPE(
             ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p,
         )(("objc_msgSend", objc))
-        if not application or not activate(
+        if not activate(
             application, selector(b"activateWithOptions:"), 2,
         ):
             raise RuntimeError(f"could not activate the owned editor process {pid}")
@@ -116,6 +142,30 @@ class Mouse:
             if time.monotonic() >= deadline:
                 raise RuntimeError(f"the owned editor process {pid} did not become active")
             self.cf.CFRunLoopRunInMode(self.default_run_loop_mode, 0.02, False)
+
+    def hide(self, pid: int) -> None:
+        objc, selector, application = self.application(pid)
+        send = ctypes.CFUNCTYPE(
+            ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p,
+        )(("objc_msgSend", objc))
+        if not send(application, selector(b"hide")):
+            raise RuntimeError("could not hide the owned editor for deactivation")
+        deadline = time.monotonic() + 3
+        while (not send(application, selector(b"isHidden"))
+               or send(application, selector(b"isActive"))):
+            if time.monotonic() >= deadline:
+                raise RuntimeError("the owned editor did not become hidden and inactive")
+            self.cf.CFRunLoopRunInMode(self.default_run_loop_mode, 0.02, False)
+
+    def escape(self) -> None:
+        for pressed in [True, False]:
+            event = self.cg.CGEventCreateKeyboardEvent(None, 53, pressed)
+            if not event:
+                raise RuntimeError("could not create a native Escape event")
+            try:
+                self.cg.CGEventPost(0, event)
+            finally:
+                self.cf.CFRelease(event)
 
     def windows(self, pid: int) -> list[dict]:
         info = self.cg.CGWindowListCopyWindowInfo(0, 0)
@@ -267,6 +317,9 @@ def run_case(binary: Path, case: str, artifacts: Path, mouse: Mouse) -> None:
     native_windows: dict[str, int] = {}
     native_retired = False
     native_target: Point | None = None
+    interrupt_case = case.startswith("native-cancel-")
+    interrupt_verified = False
+    interrupt_tail = False
     try:
         deadline = time.monotonic() + (45 if case.startswith(("drain-", "native-")) else 20)
         while time.monotonic() < deadline:
@@ -305,6 +358,10 @@ def run_case(binary: Path, case: str, artifacts: Path, mouse: Mouse) -> None:
                 time.sleep(0.12)
                 mouse.move(Point(source.x + 24, source.y + 4))
                 time.sleep(0.12)
+                if interrupt_case and not interrupt_verified:
+                    mouse.move(target)
+                    native_target = target
+                    continue
                 if drags == 0:
                     display = mouse.cg.CGDisplayBounds(mouse.cg.CGMainDisplayID())
                     outside = Point(display.origin.x + 50, display.origin.y + display.size.height - 50)
@@ -321,6 +378,36 @@ def run_case(binary: Path, case: str, artifacts: Path, mouse: Mouse) -> None:
                 time.sleep(0.2)
                 mouse.release()
                 drags += 1
+            elif line.startswith("editor-native-interrupt:"):
+                if not interrupt_case or not mouse.held or native_target is None:
+                    raise RuntimeError("the interrupt must follow a held native drop preview")
+                action = line.split(":", 1)[1].split()[0]
+                if action == "escape" and case == "native-cancel-escape":
+                    mouse.escape()
+                elif action == "deactivate" and case == "native-cancel-deactivate":
+                    mouse.hide(process.pid)
+                    # Wait while the real applicationDidResignActive callback runs.
+                    time.sleep(0.2)
+                    mouse.activate(process.pid)
+                else:
+                    raise RuntimeError("the interruption does not match the selected case")
+            elif line.startswith("editor-native-interrupt-cancelled:"):
+                if native_target is None or not mouse.held or interrupt_tail:
+                    raise RuntimeError("the cancellation must precede the original release")
+                mouse.move(Point(native_target.x - 25, native_target.y))
+                time.sleep(0.12)
+                mouse.move(native_target)
+                time.sleep(0.12)
+                mouse.release()
+                assert process.stdin is not None
+                process.stdin.write("native-interrupt-tail-sent\n")
+                process.stdin.flush()
+                native_target = None
+                interrupt_tail = True
+            elif line.startswith("editor-native-interrupt-verified:"):
+                if not interrupt_tail or interrupt_verified:
+                    raise RuntimeError("native interruption verification is out of order")
+                interrupt_verified = True
             elif line.startswith("editor-native-outside-observed:"):
                 if native_target is None or not mouse.held or drags:
                     raise RuntimeError("held outside receipt does not match the initial native drag")
@@ -334,7 +421,8 @@ def run_case(binary: Path, case: str, artifacts: Path, mouse: Mouse) -> None:
             elif line.startswith("editor-native-empty-central:"):
                 viewport, _ = shlex.split(line.split(":", 1)[1])
                 child = native_windows[viewport]
-                if case != "native-inspector-first" or drags != 4:
+                if (case not in ("native-inspector-first", "native-cancel-escape", "native-cancel-deactivate")
+                        or drags != 4):
                     raise RuntimeError("only the drained central Child may request native close")
                 current = {window["kCGWindowNumber"] for window in mouse.windows(process.pid)}
                 if child not in current or native_windows["FFFF"] not in current:
@@ -404,6 +492,8 @@ def run_case(binary: Path, case: str, artifacts: Path, mouse: Mouse) -> None:
         failed |= "\tfatal\t" in log.read_text()
         if case.startswith("native-") and (drags != 4 or not native_retired):
             failed = True
+        if interrupt_case and not interrupt_verified:
+            failed = True
         if status or not completed or failed:
             raise RuntimeError(
                 f"editor docking failed for {case}: exit={status}, "
@@ -436,6 +526,7 @@ def main() -> None:
         "outline", "console", "inspector", "preview", "profiler",
         "drain-inspector-first", "drain-preview-first",
         "native-inspector-first", "native-preview-first",
+        "native-cancel-escape", "native-cancel-deactivate",
     ]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)

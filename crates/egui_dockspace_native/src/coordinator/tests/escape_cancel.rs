@@ -128,6 +128,8 @@ fn assert_native_escape_cancels_drag(keyboard_surface: SurfaceId) {
             .unwrap();
     }
     let cancelled = finish(apply);
+    assert!(cancelled.repaint_surfaces().contains(&FIRST_SURFACE));
+    assert!(cancelled.repaint_surfaces().contains(&SECOND_SURFACE));
     assert!(
         !native.session.has_active_gesture(),
         "Escape delivered to native surface {keyboard_surface:?} must cancel the source drag"

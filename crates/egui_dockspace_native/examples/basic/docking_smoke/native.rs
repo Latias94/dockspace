@@ -4,13 +4,17 @@ use dockspace::geometry::PhysicalRect;
 use dockspace::model::{DockspaceActionOutcome, SurfaceId};
 use dockspace::runtime::NativeWindowPlacement;
 use egui_dockspace_native::{NativeActionStatus, NativeCommand};
-use std::io;
+use std::io::{self, BufRead as _};
 use std::sync::mpsc::{self, Receiver};
 
 use egui_dockspace::DockspaceActionStatus;
 
 use super::super::{INSPECTOR_FLOATING, INSPECTOR_ROOT, MAIN_ROOT};
 use super::*;
+
+mod interrupt;
+use interrupt::InterruptedDrag;
+pub(super) use interrupt::Interruption;
 
 pub(super) struct NativeSmoke {
     started: Instant,
@@ -28,15 +32,18 @@ pub(super) struct NativeSmoke {
     close_announced: bool,
     retirement_announced: bool,
     external_observation: Receiver<String>,
+    interruption: Option<InterruptedDrag>,
 }
 
 impl NativeSmoke {
     pub(super) fn new(order: [ItemId; 2], retains_empty_central: bool) -> Self {
         let (send, external_observation) = mpsc::channel();
         std::thread::spawn(move || {
-            let mut line = String::new();
-            if io::stdin().read_line(&mut line).is_ok() {
-                let _ = send.send(line);
+            for line in io::stdin().lock().lines() {
+                let Ok(line) = line else { break };
+                if send.send(line).is_err() {
+                    break;
+                }
             }
         });
         Self {
@@ -55,7 +62,13 @@ impl NativeSmoke {
             close_announced: false,
             retirement_announced: false,
             external_observation,
+            interruption: None,
         }
+    }
+
+    pub(super) fn with_interruption(mut self, kind: Interruption) -> Self {
+        self.interruption = Some(InterruptedDrag::new(kind));
+        self
     }
 
     pub(super) fn advance(
@@ -66,16 +79,24 @@ impl NativeSmoke {
         assert!(app.dockspace.error_kind().is_none());
         assert!(
             self.started.elapsed() < Duration::from_secs(30),
-            "native physical journey timed out at step {}; pending={:?}; view={:?}; observations={:?}",
+            "native physical journey timed out at step {}; pending={:?}; view={:?}; interruption={:?}; observations={:?}",
             self.step,
             app.dockspace.pending_work(),
             app.dockspace.with_view(|view| format!("{view:?}")),
+            self.interruption,
             observations
                 .lock()
                 .unwrap()
                 .viewports
                 .iter()
-                .map(|(id, sample)| (id, sample.window, sample.tabs.keys().collect::<Vec<_>>()))
+                .map(|(id, sample)| (
+                    id,
+                    sample.window,
+                    sample.preview_tabs.as_ref(),
+                    sample.escape_presses,
+                    sample.focus_losses,
+                    sample.releases
+                ))
                 .collect::<Vec<_>>()
         );
         if let Some(result) = app.dockspace.take_action_status() {
@@ -91,7 +112,8 @@ impl NativeSmoke {
             );
             self.setup_completed = true;
         }
-        if self.announced && self.step == 0 && !self.outside_observed {
+        if self.announced && self.step == 0 && self.interruption.is_none() && !self.outside_observed
+        {
             let observed = observations.lock().unwrap();
             if observed.root().primary_down && observed.root().held_below_client {
                 self.outside_observed = true;
@@ -226,6 +248,21 @@ impl NativeSmoke {
             _ => unreachable!(),
         };
         if self.announced {
+            if let Some(interruption) = &mut self.interruption {
+                if interruption.advance(
+                    app,
+                    observations,
+                    self.child.unwrap().0,
+                    &self.expected,
+                    &self.external_observation,
+                ) {
+                    self.interruption = None;
+                    self.announced = false;
+                    self.expected.clear();
+                    self.remaining.clear();
+                }
+                return false;
+            }
             let completed = app.dockspace.with_view(|view| {
                 let source = view.item(source).unwrap();
                 let target = view.item(target).unwrap();

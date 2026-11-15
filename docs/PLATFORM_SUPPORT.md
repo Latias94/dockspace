@@ -87,13 +87,18 @@ Cloned, overlapping or transformed configurations and missing authority remain
 Both backends have compile coverage for the native adapter. macOS also has
 real-window programmatic lifecycle coverage and a [physical docking
 driver](../integration/egui-native-smoke/README.md#run-docking-input-on-macos).
-Its nine journeys cover tab merges, contained-root retirement, held-button
-client re-entry, subsequent divider resizing and physical Root/Child round trips.
+Its nine physically qualified journeys cover tab merges, contained-root retirement,
+held-button client re-entry, subsequent divider resizing and physical Root/Child round trips.
 The cross-window profile uses nonoverlapping windows on a 1920 × 1080 desktop
 at native scale and egui zoom 1. It verifies ordinary empty-child retirement,
 empty central-area retention and native close through presentation recovery.
-All eight panes and their text survive; the original Root's OS window identity
-remains unchanged. These checks do not emulate remote desktop disconnects or
+Two additional journeys require Escape and application deactivation to cancel a
+visible cross-window preview before the real release, reject late movement/release,
+and allow fresh native round trips. They await an unlocked-desktop run; deterministic
+cancellation/repaint regressions alone do not qualify physical delivery. In the
+original journeys all eight panes and their text survive, and the original Root's
+OS window identity remains unchanged.
+These checks do not emulate remote desktop disconnects or
 qualify mixed-monitor DPI, arbitrary tear-off or third-party windows.
 
 macOS assigns a view-scoped identity to each real primary press. Current pointer
@@ -103,6 +108,17 @@ release or drop. A held button alone cannot prove uninterrupted capture or
 delivery: stationary observations keep those facts `Unknown`, and explicit
 capture acquisition remains unsupported. Stationary cross-window dwell and
 autoscroll are therefore not qualified by these moving-pointer journeys.
+
+Native capture revocation cancels the affected viewport's egui content input as
+well as docking. It does not synthesize a physical release, and a focus transfer
+between application windows alone does not cancel input. Button callbacks use
+their own surface position, including after cursor exit, instead of requiring a
+preceding move. A replacement macOS press precedes its position callback so that
+the position cannot advance the old gesture. Windows suppresses only the
+synchronous no-owner capture notification caused by its own final button release;
+external capture loss still cancels. These event-ordering and content-input
+contracts have deterministic regression coverage; Windows has cross-compile
+coverage rather than physical qualification.
 
 Windows lacks hovered-window, desktop-pointer and button-state authority and
 does not have physical cross-window qualification. Keep paths unavailable when

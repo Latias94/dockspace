@@ -81,9 +81,10 @@ physical-input qualification.
 
 ## Run docking input on macOS
 
-Nine application-observed journeys run on a dedicated macOS desktop using
-[`editor_docking_macos.py`](editor_docking_macos.py): the same seven local docking
-and divider cases, plus two real Root/Child docking journeys.
+On a dedicated macOS desktop,
+[`editor_docking_macos.py`](editor_docking_macos.py) provides eleven
+application-observed journeys: the same seven local docking and divider cases,
+plus four real Root/Child docking journeys.
 
 ```text
 python3 integration/egui-native-smoke/editor_docking_macos.py integration/egui-fork-workspace/target/debug/examples/basic
@@ -93,13 +94,13 @@ Build the editor first with the command above. Grant the launching process
 Accessibility permission in **System Settings → Privacy & Security → Accessibility**.
 This driver uses CoreGraphics mouse events and needs Python 3.10 or later; no
 additional Python packages are required. Leave the desktop available while it
-owns mouse input and keep egui zoom at its default 1.0; other UI zoom factors
-are rejected before sending input. It releases the primary button, restores the
+owns mouse input, unlock it, and keep egui zoom at its default 1.0. Other UI zoom
+factors are rejected before sending input. It releases the primary button, restores the
 pointer and terminates only its own remaining editor processes during cleanup.
 Console and operation logs are retained in the temporary directory printed at
 startup.
 
-The two native cases require a 1920 × 1080 desktop at native scale 1. They place
+The four native cases require a 1920 × 1080 desktop at native scale 1. They place
 nonoverlapping windows and verify each input point against the owned OS window
 inventory. Setup creates the Inspector child with the public Move to New Window
 command. All four subsequent docking moves use CoreGraphics mouse input:
@@ -117,6 +118,20 @@ Both require the exact Child OS window to disappear while the original Root
 survives, and preserve all eight pane identities, tab order, selection and text.
 The application waits for that independent OS observation before it exits.
 Use repeated `--case` options to select individual journeys.
+
+`native-cancel-escape` and `native-cancel-deactivate` begin with a held cross-window
+drag and an application-observed drop preview. They respectively press Escape
+and hide/reactivate the owned application. The preview must disappear before
+the real mouse release, with all eight pane placements unchanged. Late movement
+and release must remain inert. Each case then repeats the four successful native
+docking moves and the central-root close/recovery checks from
+`native-inspector-first`. A same-application focus transfer during normal docking
+must continue to work; losing one window's keyboard focus is not application
+deactivation.
+
+The original nine journeys have physical qualification. The two cancellation
+journeys currently await an unlocked-desktop run; deterministic cancellation and
+repaint regressions pass, but do not replace those physical checks.
 
 This qualifies local tab merges, contained-root retirement, divider hit padding,
 held-button client re-entry and the specified moving-pointer cross-window paths.

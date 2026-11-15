@@ -155,6 +155,8 @@ fn main() -> eframe::Result {
             }
             if let Some(smoke) = &app.docking_smoke {
                 smoke.install(&creation.egui_ctx);
+                app.dockspace
+                    .with_panes_mut(|panes| panes.preview_probe = Some(smoke.preview_probe()));
             }
             Ok(Box::new(app))
         }),
@@ -730,12 +732,14 @@ impl ExamplePane {
 struct ExamplePanes {
     panes: BTreeMap<ItemId, ExamplePane>,
     text_editable: bool,
+    preview_probe: Option<docking_smoke::PreviewProbe>,
 }
 
 impl ExamplePanes {
     fn new() -> Self {
         Self {
             text_editable: true,
+            preview_probe: None,
             panes: [
                 (OUTLINE, "pane/outline", "Outline", "Scene\n  Camera\n  Directional light\n  Player\n    Mesh\n    Controller"),
                 (EDITOR, "pane/document", "Document", "fn update(scene: &mut Scene) {\n    scene.player.translate([1.0, 0.0, 0.0]);\n}\n"),
@@ -825,6 +829,13 @@ fn paint_canvas(pane: &mut ExamplePane, ui: &mut egui::Ui, content: PaneResponse
 impl PaneView for ExamplePanes {
     fn title(&self, item: ItemId) -> Option<egui::WidgetText> {
         self.panes.get(&item).map(|pane| pane.title.into())
+    }
+
+    fn drop_preview_ui(&mut self, ui: &egui::Ui, preview: &egui_dockspace::DropPreview) {
+        preview.paint(ui);
+        if let Some(probe) = &self.preview_probe {
+            probe.observe(ui, preview);
+        }
     }
 
     fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> PaneResponse {

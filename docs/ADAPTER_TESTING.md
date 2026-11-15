@@ -90,6 +90,15 @@ fresh press after each case. Check that the terminal is emitted at most once and
 the next interaction succeeds. Random seeds cannot cover a callback sequence
 which the generator's grammar excludes.
 
+Cancellation must also repaint the old preview, guides and drag decoration when
+the layout version and scene stamps stay unchanged. Verify both source and target,
+including a blocked target which paints only a pointer ghost. An unrelated window
+must stay idle, and the next unchanged frame must not request another repaint.
+Exercise pane content through the framework too: cancellation must clear held
+controls without synthesizing clicks or releases, preserve another viewport's drag
+payload, and reject an old button's release during a new button's interaction.
+Cursor exit and a same-application focus transfer alone do not prove capture loss.
+
 For pointer resizing, check pane and handle geometry in the move frame before
 release, while the durable workspace version remains unchanged. Also send a
 release at a new position without a preceding move, and a complete gesture in

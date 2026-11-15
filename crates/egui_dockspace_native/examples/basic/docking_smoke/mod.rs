@@ -40,9 +40,28 @@ struct ViewportObservations {
     window: Option<u64>,
     scale: f32,
     held_below_client: bool,
+    preview_tabs: Option<Vec<ItemId>>,
+    escape_presses: usize,
+    focus_losses: usize,
+    releases: usize,
 }
 
 struct EditorProbe(Arc<Mutex<EditorObservations>>, egui::ViewportId);
+
+#[derive(Clone)]
+pub(super) struct PreviewProbe(Arc<Mutex<EditorObservations>>);
+
+impl PreviewProbe {
+    pub(super) fn observe(&self, ui: &egui::Ui, preview: &egui_dockspace::DropPreview) {
+        self.0
+            .lock()
+            .unwrap()
+            .viewports
+            .entry(ui.ctx().viewport_id())
+            .or_default()
+            .preview_tabs = Some(preview.tabs.iter().map(|tab| tab.item).collect());
+    }
+}
 
 impl egui::plugin::Plugin for EditorProbe {
     fn debug_name(&self) -> &'static str {
@@ -53,6 +72,7 @@ impl egui::plugin::Plugin for EditorProbe {
         self.1 = input.viewport_id;
         let mut observations = self.0.lock().unwrap();
         let tabs = observations.viewports.entry(input.viewport_id).or_default();
+        tabs.preview_tabs = None;
         tabs.window =
             eframe::current_native_output_token().map(|token| u64::from(token.window_id()));
         if let Some(rect) = input.screen_rect {
@@ -69,8 +89,17 @@ impl egui::plugin::Plugin for EditorProbe {
                     tabs.left_while_pressed = false;
                     if *pressed {
                         tabs.held_below_client = false;
+                    } else {
+                        tabs.releases += 1;
                     }
                 }
+                egui::Event::Key {
+                    key: egui::Key::Escape,
+                    pressed: true,
+                    repeat: false,
+                    ..
+                } => tabs.escape_presses += 1,
+                egui::Event::WindowFocused(false) => tabs.focus_losses += 1,
                 egui::Event::PointerMoved(point)
                     if tabs.primary_down
                         && tabs.client_rect.is_some_and(|rect| point.y > rect.max.y) =>
@@ -174,6 +203,14 @@ impl DockingSmoke {
             Ok("native-preview-first") => {
                 Journey::Native(native::NativeSmoke::new([PREVIEW, INSPECTOR], false))
             }
+            Ok("native-cancel-escape") => Journey::Native(
+                native::NativeSmoke::new([INSPECTOR, PREVIEW], true)
+                    .with_interruption(native::Interruption::Escape),
+            ),
+            Ok("native-cancel-deactivate") => Journey::Native(
+                native::NativeSmoke::new([INSPECTOR, PREVIEW], true)
+                    .with_interruption(native::Interruption::Deactivate),
+            ),
             Ok(value) => panic!("unknown editor docking case: {value}"),
         };
         Self {
@@ -185,6 +222,10 @@ impl DockingSmoke {
     pub(super) fn install(&self, context: &egui::Context) {
         context.enable_accesskit();
         context.add_plugin(EditorProbe(Arc::clone(&self.tabs), egui::ViewportId::ROOT));
+    }
+
+    pub(super) fn preview_probe(&self) -> PreviewProbe {
+        PreviewProbe(Arc::clone(&self.tabs))
     }
 
     pub(super) fn advance(&mut self, app: &NativeExampleApp, context: &egui::Context) {
