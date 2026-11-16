@@ -512,7 +512,7 @@ impl NativeCoordinator {
         )
     }
 
-    #[cfg(all(test, feature = "motion"))]
+    #[cfg(test)]
     pub(crate) fn new_with_clock(
         session: DockspaceSession,
         clock: dockspace::runtime::NativeMonotonicClock,

@@ -1,10 +1,44 @@
 //! Fatal cleanup must make progress after rendering has stopped.
 
 use super::*;
+use dockspace::runtime::NativeMonotonicClock;
+use std::sync::atomic::AtomicU64;
+use std::time::Duration;
+
+fn shutdown_state(clock: NativeMonotonicClock) -> NativeRuntimeState<TestPanes> {
+    let mut coordinator = NativeCoordinator::new_with_clock(test_session(), clock).unwrap();
+    coordinator
+        .register_native_root(SURFACE, ROOT_WINDOW_TOKEN)
+        .unwrap();
+    NativeRuntimeState {
+        coordinator,
+        root_surface: SURFACE,
+        instance_id: Id::unique("controlled-shutdown-service"),
+        style: DockStyle::default(),
+        panes: TestPanes,
+        application_actions: Default::default(),
+        pass_actions: Default::default(),
+        owned_update: None,
+        root_placements: Default::default(),
+        pending_service: false,
+        close_policy: NativeWindowClosePolicy::Cancel,
+        root_context: None,
+        shutdown: None,
+        #[cfg(feature = "motion")]
+        motion: Default::default(),
+    }
+}
 
 #[test]
 fn standalone_service_drains_fatal_native_work_without_an_output_scope() {
-    let mut state = test_state();
+    let ticks = Arc::new(AtomicU64::new(0));
+    let step = Arc::new(AtomicU64::new(0));
+    let observed = Arc::clone(&ticks);
+    let increment = Arc::clone(&step);
+    let clock = NativeMonotonicClock::new(move || {
+        Duration::from_nanos(observed.fetch_add(increment.load(Ordering::SeqCst), Ordering::SeqCst))
+    });
+    let mut state = shutdown_state(clock);
     let context = egui::Context::default();
     let mut frame = state
         .coordinator
@@ -51,9 +85,18 @@ fn standalone_service_drains_fatal_native_work_without_an_output_scope() {
         !state.is_shutdown_drained(),
         "Destroyed still requires a fresh complete roster"
     );
+    step.store(2_000_000, Ordering::SeqCst);
     assert_eq!(
         state.service_native_events(&context).unwrap(),
-        NativeHostWake::Wait
+        NativeHostWake::ServiceAfterCurrent,
+        "an exhausted service budget yields without inventing roster authority"
+    );
+    assert!(!state.is_shutdown_drained());
+    step.store(0, Ordering::SeqCst);
+    assert_eq!(
+        state.service_native_events(&context).unwrap(),
+        NativeHostWake::Wait,
+        "with budget remaining, missing terminal facts wait for a real host callback"
     );
     assert!(
         !state.is_shutdown_drained(),
@@ -94,7 +137,7 @@ fn fatal_service_commits_the_first_queued_backend_roster_before_terminal_invento
     use dockspace::runtime::{NativeWindowFacts, NativeWindowPresentationState};
 
     for valid_geometry in [false, true] {
-        let mut state = test_state();
+        let mut state = shutdown_state(NativeMonotonicClock::new(|| Duration::ZERO));
         let context = egui::Context::default();
         let mut frame = state
             .coordinator
