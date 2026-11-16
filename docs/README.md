@@ -32,6 +32,8 @@
   and [product comparisons](../integration/product-comparison/README.md):
   reproducible workloads and interpretation limits.
 - [Third-party sources](../THIRD_PARTY.md): prior art and fixture attribution.
+- [Docking reliability and ImGui design research](research/docking-testing-and-imgui.md):
+  preserved source material, verified references and open design questions.
 
 ## Architecture decisions
 
