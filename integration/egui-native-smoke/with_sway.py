@@ -59,8 +59,7 @@ def main() -> int:
         parser.error("run on Linux as an unprivileged user; headless Sway does not need root")
     artifacts = args.artifacts or Path(tempfile.mkdtemp(prefix="dockspace-wayland-"))
     artifacts.mkdir(parents=True, exist_ok=True)
-    runtime = Path(tempfile.mkdtemp(prefix="runtime-", dir=artifacts)).resolve()
-    configuration = runtime / "sway.conf"
+    configuration = artifacts / "sway.conf"
     configuration.write_text(
         "xwayland disable\n"
         "output HEADLESS-1 mode 1600x1200 scale 1\n"
@@ -74,7 +73,7 @@ def main() -> int:
     for name in ("DISPLAY", "WAYLAND_DISPLAY", "SWAYSOCK"):
         environment.pop(name, None)
     environment.update(
-        XDG_RUNTIME_DIR=str(runtime), XDG_SESSION_TYPE="wayland",
+        XDG_SESSION_TYPE="wayland",
         WINIT_UNIX_BACKEND="wayland", WLR_BACKENDS="headless",
         WLR_RENDERER="pixman", WLR_HEADLESS_OUTPUTS="1",
         LIBGL_ALWAYS_SOFTWARE="1", LP_NUM_THREADS="1",
@@ -83,7 +82,14 @@ def main() -> int:
     print(f"Wayland artifacts: {artifacts.resolve()}", flush=True)
     child = None
     keyboard = None
-    with (artifacts / "sway.log").open("w") as log:
+    # Wayland's Unix sockets must fit the kernel's short pathname limit even
+    # when the caller stores evidence in a deeply nested checkout directory.
+    with (
+        tempfile.TemporaryDirectory(prefix="dockspace-wl-") as runtime_path,
+        (artifacts / "sway.log").open("w") as log,
+    ):
+        runtime = Path(runtime_path).resolve()
+        environment["XDG_RUNTIME_DIR"] = str(runtime)
         compositor = subprocess.Popen(
             ["sway", "--unsupported-gpu", "--config", str(configuration)],
             env=environment, stdout=log, stderr=subprocess.STDOUT,
