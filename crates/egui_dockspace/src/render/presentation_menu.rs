@@ -63,7 +63,7 @@ pub(super) fn paint(
                 Sense::hover()
             },
         )
-        .on_hover_text("Window actions");
+        .on_hover_text("Actions for the entire layout, including all split groups");
     let ui_enabled = effective_enabled(context.ui, operable);
     if ui_enabled && touch_requested {
         Popup::open_id(context.ui.ctx(), popup_id);
@@ -85,7 +85,8 @@ pub(super) fn paint(
     context.ui.ctx().accesskit_node_builder(id, |node| {
         node.set_role(Role::Button);
         node.set_bounds(accesskit_bounds(bounds));
-        node.set_label("Presentation commands");
+        node.set_label("Layout actions");
+        node.set_description("Applies to the entire layout, including all split groups");
         node.set_has_popup(HasPopup::Menu);
         node.set_expanded(menu_open);
         if ui_enabled {
@@ -108,7 +109,7 @@ pub(super) fn paint(
         .flatten()
         .collect::<Vec<_>>();
     let mut activated = None;
-    let mut close_group = None;
+    let mut close_layout = None;
     let popup = popup::show(
         context.ui,
         context.instance_id,
@@ -121,8 +122,10 @@ pub(super) fn paint(
             let mut entries = Vec::with_capacity(COMMANDS.len() + 1);
             ui.ctx().accesskit_node_builder(ui.unique_id(), |node| {
                 node.set_role(Role::Menu);
-                node.set_label("Presentation commands");
+                node.set_label("Layout actions");
             });
+            ui.weak("Entire layout");
+            ui.separator();
             for command in commands {
                 let label = command_label(command.kind());
                 let enabled = ui_enabled && command.is_ready();
@@ -162,18 +165,18 @@ pub(super) fn paint(
             ui.separator();
             let response = ui
                 .scope_builder(
-                    UiBuilder::new().scope_id(popup_id.with("close-group")),
+                    UiBuilder::new().scope_id(popup_id.with("close-layout")),
                     |ui| {
                         ui.add_enabled(
                             ui_enabled && context.plan.prepare_root_close(anchor.root()).is_some(),
-                            Button::new("Close Group"),
+                            Button::new("Close Layout"),
                         )
                     },
                 )
                 .inner;
             ui.ctx().accesskit_node_builder(response.id, |node| {
                 node.set_role(Role::MenuItem);
-                node.set_label("Close Group");
+                node.set_label("Close Layout");
                 if response.enabled() {
                     node.add_action(Action::Click);
                     node.add_action(Action::Focus);
@@ -183,7 +186,7 @@ pub(super) fn paint(
                 }
             });
             if let Some(origin) = clicked_response_origin(ui, &response) {
-                close_group = Some(origin);
+                close_layout = Some(origin);
                 ui.close();
             }
             if response.enabled() {
@@ -195,7 +198,7 @@ pub(super) fn paint(
 
     if ui_enabled
         && activated.is_none()
-        && close_group.is_none()
+        && close_layout.is_none()
         && popup.is_some_and(|popup| popup.response.should_close())
         && context
             .ui
@@ -209,7 +212,7 @@ pub(super) fn paint(
     {
         context.push_local_action(origin, action);
     }
-    if let Some(origin) = close_group
+    if let Some(origin) = close_layout
         && let Some(action) = context.plan.prepare_root_close(anchor.root())
     {
         context.push_local_action(origin, action);
@@ -265,7 +268,7 @@ fn paint_anchor_icon(
 
 const fn command_label(kind: DockspacePresentationCommandKind) -> &'static str {
     match kind {
-        DockspacePresentationCommandKind::Float => "Float",
+        DockspacePresentationCommandKind::Float => "Float Layout",
         DockspacePresentationCommandKind::MoveToNewWindow => "Move to New Window",
         DockspacePresentationCommandKind::DockBack => "Dock Back",
         DockspacePresentationCommandKind::DockLeft => "Dock Left",

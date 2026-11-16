@@ -51,8 +51,7 @@ use crate::interaction::targeting::field::{
     MagneticEdgeTargets, MagneticTargetCandidate, MagneticTargetField,
 };
 use crate::interaction::targeting::guide::{
-    DropGuideClusterId, DropGuideClusterRecord, DropGuideScope, DropGuideSlot,
-    DropGuideTargetRecord,
+    DropGuideClusterId, DropGuideClusterRecord, DropGuideSlot, DropGuideTargetRecord,
 };
 use crate::interaction::targeting::targets::{
     DropOcclusionRecord, DropTargetAvailability, DropTargetId, DropTargetKind, DropTargetLocation,
@@ -256,7 +255,7 @@ struct SurfaceFacts {
     splitter_junction_records: Vec<SplitterJunctionRecord>,
     contained_records: Vec<ContainedRecord>,
     contained_minimums: Vec<ContainedMinimumMeasurement>,
-    surface_background: Option<DropTargetRecord>,
+    surface_background: Option<Arc<DropTargetRecord>>,
     drop_occlusions: Vec<DropOcclusionRecord>,
     drop_guide_clusters: Vec<DropGuideClusterRecord>,
     drop_targets: Vec<Arc<DropTargetRecord>>,
@@ -691,8 +690,9 @@ impl PresentationPlan {
     /// or this ready surface already contains one.
     pub(crate) fn set_surface_background(
         &mut self,
-        background: DropTargetRecord,
+        background: impl Into<Arc<DropTargetRecord>>,
     ) -> Result<(), SceneBuildError> {
+        let background = background.into();
         if !matches!(
             background.location(),
             DropTargetLocation::SurfaceBackground { .. }
@@ -917,7 +917,7 @@ impl PresentationPlan {
     /// Returns the sole explicit background authority of a rootless ready surface.
     #[must_use]
     pub fn surface_background(&self) -> Option<&DropTargetRecord> {
-        self.facts.surface_background.as_ref()
+        self.facts.surface_background.as_deref()
     }
 
     /// Returns contained-floating occlusions in stable identity order after sealing.
@@ -947,7 +947,7 @@ impl PresentationPlan {
     pub(crate) fn drop_target(&self, id: DropTargetId) -> Option<&DropTargetRecord> {
         self.facts
             .surface_background
-            .as_ref()
+            .as_deref()
             .filter(|record| record.id() == id)
             .or_else(|| {
                 self.facts

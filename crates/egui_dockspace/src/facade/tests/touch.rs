@@ -276,7 +276,7 @@ fn explicit_touch_long_press_opens_the_existing_semantic_menu_once() {
             .as_ref()
             .is_some_and(|tree| {
                 tree.nodes.iter().any(|(_, node)| {
-                    node.role() == Role::Menu && node.label() == Some("Presentation commands")
+                    node.role() == Role::Menu && node.label() == Some("Layout actions")
                 })
             })
         {
@@ -301,7 +301,7 @@ fn explicit_touch_long_press_opens_the_existing_semantic_menu_once() {
             .nodes
             .iter()
             .any(|(_, node)| {
-                node.role() == Role::Menu && node.label() == Some("Presentation commands")
+                node.role() == Role::Menu && node.label() == Some("Layout actions")
             })
     );
     let float = output
@@ -312,7 +312,7 @@ fn explicit_touch_long_press_opens_the_existing_semantic_menu_once() {
         .nodes
         .iter()
         .find_map(|(_, node)| {
-            (node.role() == Role::MenuItem && node.label() == Some("Float"))
+            (node.role() == Role::MenuItem && node.label() == Some("Float Layout"))
                 .then(|| node.bounds())
                 .flatten()
         })

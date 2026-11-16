@@ -164,6 +164,49 @@ test('blur cancels a held drag, and fresh input can float and dock again', async
   await mergeLeft(page, 'Preview', [3, 2]);
 });
 
+test('a menu-floated layout moves over blank canvas and docks through an explicit guide', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await open(page);
+  const original = topology(await state(page));
+  await clickControl(page, 'Layout actions');
+  await expect.poll(async () => (await state(page)).controls.some(node => node.label === 'Float Layout')).toBe(true);
+  await clickControl(page, 'Float Layout');
+  const title = snapshot => snapshot.controls.find(node => node.role === 'TitleBar' && node.label === 'Outline');
+  await expect.poll(async () => Boolean(title(await state(page)))).toBe(true);
+
+  const blank = await point(page, [150, 500, 150, 500]);
+  const dragWindow = async () => {
+    const source = await point(page, title(await state(page)).rect);
+    await page.mouse.move(source.x, source.y);
+    await presentedPointer(page, source, false);
+    await page.mouse.down();
+    await presentedPointer(page, source, true);
+    await page.mouse.move(blank.x, blank.y, { steps: 12 });
+    await presentedPointer(page, blank, true);
+    await expect.poll(async () => (await state(page)).activeGesture).toBe(true);
+    await expect.poll(async () => (await state(page)).centerGuides.length).toBe(1);
+  };
+
+  await dragWindow();
+  await page.mouse.up();
+  await presentedPointer(page, blank, false);
+  await expect.poll(async () => (await state(page)).activeGesture).toBe(false);
+  expect(title(await state(page)), 'blank canvas keeps the complete layout floating').toBeTruthy();
+  expect(topology(await state(page))).toEqual(original);
+
+  await dragWindow();
+  const guide = await point(page, (await state(page)).centerGuides[0].rect);
+  await page.mouse.move(guide.x, guide.y, { steps: 12 });
+  await presentedPointer(page, guide, true);
+  await page.mouse.up();
+  await presentedPointer(page, guide, false);
+  await expect.poll(async () => (await state(page)).activeGesture).toBe(false);
+  await expect.poll(async () => Boolean(title(await state(page)))).toBe(false);
+  expect(topology(await state(page))).toEqual(original);
+  expect(errors).toEqual([]);
+});
+
 test('motion produces intermediate pane geometry, accepts tuning and settles to idle', async ({ page }) => {
   await open(page);
   await page.evaluate(() => {

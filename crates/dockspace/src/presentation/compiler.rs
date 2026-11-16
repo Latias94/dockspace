@@ -17,9 +17,10 @@ use crate::ids::{EngineAuthorityDomainId, FloatingPresentationId, NodeId, RootId
 use crate::interaction::targeting::field::MagneticEdgeTargets;
 use crate::interaction::targeting::guide::DropGuideClusterId;
 use crate::interaction::targeting::targets::{
-    DropOcclusionRecord, DropTargetAvailability, DropTargetId, DropTargetRecord,
-    DropTargetUnavailable, DropVisual, SceneLayerKey, SurfaceBackground,
+    DropOcclusionRecord, DropTargetAvailability, DropTargetId, DropTargetUnavailable, SceneLayerKey,
 };
+#[cfg(test)]
+use crate::interaction::targeting::targets::{DropTargetRecord, DropVisual};
 use crate::policy::{DockPolicySnapshot, TabBarInteraction, TabBarVisibility};
 use crate::presentation::config::{DockPresentationConfig, PresentationConfigRevision};
 use crate::presentation::hit::region::HitRegion;

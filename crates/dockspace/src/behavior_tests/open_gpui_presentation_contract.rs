@@ -332,7 +332,7 @@ fn root_central_leaf_keeps_inner_center_separate_from_outer_four_way_guides() {
     let inner = ready
         .drop_guide_clusters()
         .iter()
-        .find(|cluster| cluster.id().scope == DropGuideScope::Inner(tabs))
+        .find(|cluster| cluster.id().scope() == DropGuideScope::Inner(tabs))
         .expect("central root leaf has an inner cluster");
     assert_eq!(
         inner.targets().map(|(slot, _)| slot).collect::<Vec<_>>(),
@@ -343,7 +343,7 @@ fn root_central_leaf_keeps_inner_center_separate_from_outer_four_way_guides() {
     let outer = ready
         .drop_guide_clusters()
         .iter()
-        .find(|cluster| cluster.id().scope == DropGuideScope::Outer)
+        .find(|cluster| cluster.id().scope() == DropGuideScope::Outer)
         .expect("the complete root has an independent outer cluster");
     assert_eq!(
         outer.targets().map(|(slot, _)| slot).collect::<Vec<_>>(),
@@ -403,7 +403,7 @@ fn nested_central_leaf_retains_center_and_all_four_inner_edges() {
     let inner = ready
         .drop_guide_clusters()
         .iter()
-        .find(|cluster| cluster.id().scope == DropGuideScope::Inner(central))
+        .find(|cluster| cluster.id().scope() == DropGuideScope::Inner(central))
         .expect("nested central leaf has an inner cluster");
     assert_eq!(inner.targets().count(), 5);
     assert!(inner.target(DropGuideSlot::Center).is_some());
@@ -419,7 +419,7 @@ fn nested_central_leaf_retains_center_and_all_four_inner_edges() {
     let outer = ready
         .drop_guide_clusters()
         .iter()
-        .find(|cluster| cluster.id().scope == DropGuideScope::Outer)
+        .find(|cluster| cluster.id().scope() == DropGuideScope::Outer)
         .expect("root keeps its independent outer cluster");
     assert_eq!(outer.targets().count(), 4);
 }

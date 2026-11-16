@@ -291,7 +291,7 @@ fn typed_stack_keys_encode_chrome_and_guide_precedence_without_vector_order() {
                 .drop_guide_clusters()
                 .iter()
                 .any(|cluster| {
-                    cluster.id().scope == DropGuideScope::Outer
+                    cluster.id().scope() == DropGuideScope::Outer
                         && cluster.targets().any(|(_, entry)| entry.id() == target)
                 })
         })
@@ -313,7 +313,7 @@ fn typed_stack_keys_encode_chrome_and_guide_precedence_without_vector_order() {
                 .drop_guide_clusters()
                 .iter()
                 .any(|cluster| {
-                    matches!(cluster.id().scope, DropGuideScope::Inner(_))
+                    matches!(cluster.id().scope(), DropGuideScope::Inner(_))
                         && cluster.targets().any(|(_, entry)| entry.id() == target)
                 })
         })
@@ -358,7 +358,18 @@ fn rootless_background_is_one_output_bound_hover_drop_receiver() {
             .contains(PresentationPointerLane::HoverDrop)
     );
     assert!(!backgrounds[0].is_passive());
-    assert_eq!(backgrounds[0].hit().rect(), bounds());
+    let cluster = interaction
+        .plan()
+        .drop_guide_clusters()
+        .iter()
+        .find(|cluster| cluster.id().scope() == DropGuideScope::Surface)
+        .expect("an empty surface exposes one explicit center guide");
+    assert_eq!(cluster.id().root(), None);
+    let targets = cluster.targets().collect::<Vec<_>>();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(backgrounds[0].hit(), targets[0].1.hit());
+    assert_ne!(backgrounds[0].hit().rect(), bounds());
+    assert_eq!(targets[0].1.preview(), bounds());
     assert_exact_manifest(interaction.plan(), interaction.hit_manifest());
 }
 

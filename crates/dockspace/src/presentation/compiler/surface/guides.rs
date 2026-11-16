@@ -15,7 +15,7 @@ use crate::interaction::targeting::guide::{
 };
 use crate::interaction::targeting::targets::{
     DropOcclusionRecord, DropTargetAvailability, DropTargetLocation, DropTargetRecord, DropVisual,
-    SceneLayerKey,
+    SceneLayerKey, SurfaceBackground,
 };
 use crate::policy::DockPolicySnapshot;
 use crate::presentation::config::DockPresentationConfig;
@@ -101,6 +101,70 @@ impl GuideEdgeGeometry {
             Edge::Bottom => &mut self.bottom,
         } = button;
     }
+}
+
+pub(super) fn compile_surface_background(
+    config: &DockPresentationConfig,
+    surface: SurfaceId,
+    bounds: LogicalRect,
+    emit_guides: bool,
+    ready: &mut PresentationPlan,
+) -> Result<(), SceneCompilationError> {
+    let cluster = DropGuideClusterId::surface(surface);
+    let reference_span = config.guide_extent() + 2.0 * config.guide_hit_padding();
+    let metrics = GuideMetrics::compact(config, bounds, reference_span)
+        .ok_or(SceneCompilationError::UnrepresentableGuideGeometry { cluster, bounds })?;
+    let center = LogicalPoint::new(
+        midpoint(bounds.x(), bounds.max().x()),
+        midpoint(bounds.y(), bounds.max().y()),
+    )?;
+    let half_span = metrics.half_extent + metrics.hit_padding;
+    let placement = guide_placement(
+        cluster,
+        bounds,
+        half_span,
+        half_span,
+        center,
+        guide_placement_occlusions(ready)
+            .map(|occlusion| occlusion.region().rect())
+            .filter(|occlusion| !rect_contains(*occlusion, bounds)),
+    )?;
+    // A fully covered surface keeps latent geometry behind its occluders.
+    // Whole-window drag sources are excluded before placement, so the button
+    // does not follow the source window as it moves under the pointer.
+    let (cell, center_x, center_y, scale) = placement
+        .map(|placement| {
+            (
+                placement.cell,
+                placement.center_x,
+                placement.center_y,
+                placement.scale,
+            )
+        })
+        .unwrap_or((bounds, center.x(), center.y(), 1.0));
+    let button = guide_button(
+        cell,
+        center_x,
+        center_y,
+        metrics.half_extent * scale,
+        metrics.half_extent * scale,
+        metrics.hit_padding * scale,
+    )?;
+    ensure_complete_guide_geometry(cluster, bounds, &[button])?;
+    let target = Arc::new(DropTargetRecord::surface_background(
+        SurfaceBackground::new(surface),
+        HitRegion::new(button.hit),
+        DropVisual::new(bounds),
+    ));
+    ready.set_surface_background(Arc::clone(&target))?;
+    if emit_guides {
+        ready.push_drop_guide_cluster(DropGuideClusterRecord::surface(
+            surface,
+            HitRegion::new(bounds),
+            DropGuideTargetRecord::new(target, button.draw),
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn outer_guide_geometry(

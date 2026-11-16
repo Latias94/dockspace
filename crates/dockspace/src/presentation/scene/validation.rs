@@ -716,7 +716,7 @@ fn validate_semantic_uniqueness(
     }
     let target_catalog = DropTargetCatalog::new(
         &ready.facts.drop_targets,
-        ready.facts.surface_background.as_ref(),
+        ready.facts.surface_background.as_deref(),
     )
     .map_err(|id| SceneBuildError::DuplicateDropTarget { id })?;
     let guide_targets = ready
@@ -2126,6 +2126,12 @@ fn canonicalize_ready(
         let canonical_targets = &facts.drop_targets;
         for cluster in &mut facts.drop_guide_clusters {
             cluster.for_each_target_mut(|guide| {
+                if let Some(background) = facts.surface_background.as_ref()
+                    && background.id() == guide.id()
+                {
+                    guide.rebind_target(Arc::clone(background));
+                    return;
+                }
                 let index = canonical_targets
                     .binary_search_by_key(&guide.id(), |target| target.id())
                     .expect("validated guide target remains in the canonical catalog");
@@ -2163,12 +2169,17 @@ fn validate_drop_guide_cluster(
 ) -> Result<(), SceneBuildError> {
     let cluster_id = cluster.id();
     validate_drop_guide_cluster_identity(ready, cluster_id, workspace, workspace_index)?;
-    let expected_layer = workspace_index.root_layer(cluster_id.root).ok_or(
-        SceneBuildError::InvalidDropGuideCluster {
-            surface: ready.surface,
-            cluster: cluster_id,
-        },
-    )?;
+    let expected_layer = match cluster_id {
+        DropGuideClusterId::Surface { .. } => SceneLayerKey::surface_base(),
+        DropGuideClusterId::Inner { root, .. } | DropGuideClusterId::Outer { root, .. } => {
+            workspace_index
+                .root_layer(root)
+                .ok_or(SceneBuildError::InvalidDropGuideCluster {
+                    surface: ready.surface,
+                    cluster: cluster_id,
+                })?
+        }
+    };
     if cluster.layer() != expected_layer {
         return Err(SceneBuildError::DropGuideClusterLayerMismatch {
             surface: ready.surface,
@@ -2199,20 +2210,23 @@ fn validate_drop_guide_cluster_identity(
     workspace: &Workspace,
     workspace_index: &SceneWorkspaceIndex,
 ) -> Result<(), SceneBuildError> {
-    let scope_is_valid = match cluster.scope {
-        DropGuideScope::Inner(node) => {
-            workspace_index.semantic_node_exists(ready.surface, cluster.root, node)
+    let scope_is_valid = match cluster {
+        DropGuideClusterId::Surface { .. } => workspace
+            .surface(ready.surface)
+            .is_some_and(|presentation| presentation.main_root.is_none()),
+        DropGuideClusterId::Inner { root, node, .. } => {
+            workspace_index.semantic_node_exists(ready.surface, root, node)
                 && matches!(workspace.node(node), Some(Node::Tabs { .. }))
         }
-        DropGuideScope::Outer => {
-            workspace_index.root_belongs_to_surface(ready.surface, cluster.root)
+        DropGuideClusterId::Outer { root, .. } => {
+            workspace_index.root_belongs_to_surface(ready.surface, root)
                 && workspace_index
-                    .root_node(cluster.root)
+                    .root_node(root)
                     .and_then(|node| workspace.node(node))
                     .is_some()
         }
     };
-    if cluster.surface != ready.surface || !scope_is_valid {
+    if cluster.surface_id() != ready.surface || !scope_is_valid {
         return Err(SceneBuildError::InvalidDropGuideCluster {
             surface: ready.surface,
             cluster,
@@ -2254,7 +2268,15 @@ fn validate_drop_guide_target(
 ) -> Result<(), SceneBuildError> {
     let cluster_id = cluster.id();
     let target_id = guide_target.id();
-    let Some(target) = target_coverage.get(&target_id) else {
+    let target = match target_id {
+        DropTargetId::SurfaceBackground { .. } => ready
+            .facts
+            .surface_background
+            .as_ref()
+            .filter(|target| target.id() == target_id),
+        _ => target_coverage.get(&target_id),
+    };
+    let Some(target) = target else {
         return Err(SceneBuildError::TargetSemanticMismatch {
             surface: ready.surface,
             target: target_id,
@@ -2363,36 +2385,54 @@ fn drop_guide_slot_matches(
     workspace: &Workspace,
     workspace_index: &SceneWorkspaceIndex,
 ) -> bool {
-    match (cluster.scope, slot) {
-        (DropGuideScope::Inner(node), DropGuideSlot::Center) => {
+    match (cluster, slot) {
+        (DropGuideClusterId::Surface { surface }, DropGuideSlot::Center) => {
+            target == DropTargetId::SurfaceBackground { surface }
+        }
+        (DropGuideClusterId::Surface { .. }, DropGuideSlot::Edge(_)) => false,
+        (
+            DropGuideClusterId::Inner {
+                surface,
+                root,
+                node,
+            },
+            DropGuideSlot::Center,
+        ) => {
             target
                 == (DropTargetId::Center {
-                    surface: cluster.surface,
-                    root: cluster.root,
+                    surface,
+                    root,
                     tabs: node,
                 })
         }
-        (DropGuideScope::Inner(node), DropGuideSlot::Edge(edge)) => {
-            let is_root_central = workspace_index.root_node(cluster.root) == Some(node)
+        (
+            DropGuideClusterId::Inner {
+                surface,
+                root,
+                node,
+            },
+            DropGuideSlot::Edge(edge),
+        ) => {
+            let is_root_central = workspace_index.root_node(root) == Some(node)
                 && workspace
-                    .root(cluster.root)
+                    .root(root)
                     .is_some_and(|root| root.central == Some(node));
             !is_root_central
                 && target
                     == (DropTargetId::InnerEdge {
-                        surface: cluster.surface,
-                        root: cluster.root,
+                        surface,
+                        root,
                         node,
                         edge,
                     })
         }
-        (DropGuideScope::Outer, DropGuideSlot::Center) => false,
-        (DropGuideScope::Outer, DropGuideSlot::Edge(edge)) => {
-            workspace_index.root_node(cluster.root).is_some_and(|node| {
+        (DropGuideClusterId::Outer { .. }, DropGuideSlot::Center) => false,
+        (DropGuideClusterId::Outer { surface, root }, DropGuideSlot::Edge(edge)) => {
+            workspace_index.root_node(root).is_some_and(|node| {
                 target
                     == (DropTargetId::OuterEdge {
-                        surface: cluster.surface,
-                        root: cluster.root,
+                        surface,
+                        root,
                         node,
                         edge,
                     })

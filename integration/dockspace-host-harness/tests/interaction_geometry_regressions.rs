@@ -113,7 +113,7 @@ struct Snapshot {
     splitters: Vec<SplitterVisual>,
     junctions: Vec<JunctionVisual>,
     guides: Vec<(
-        RootId,
+        Option<RootId>,
         DockspaceGuideScope,
         DockspaceDropDirection,
         LogicalRect,

@@ -152,7 +152,7 @@ fn every_visible_guide_center_keeps_its_identity_in_compact_scaled_and_occluded_
             assert!(draw.width() > 0.0 && draw.height() > 0.0);
             let aim = center(*draw);
             assert!(hit.contains(aim));
-            if occluded && *root == main_root {
+            if occluded && *root == Some(main_root) {
                 assert!(
                     hit.max().x() <= covered.x()
                         || hit.x() >= covered.max().x()

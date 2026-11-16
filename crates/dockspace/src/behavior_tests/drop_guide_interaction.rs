@@ -149,7 +149,9 @@ fn outer_edge_guide(fixture: &Fixture, edge: Edge) -> GuideFact {
     let guide = target_plan(fixture)
         .drop_guide_clusters()
         .iter()
-        .find(|cluster| cluster.id().root == ROOT && cluster.id().scope == DropGuideScope::Outer)
+        .find(|cluster| {
+            cluster.id().root() == Some(ROOT) && cluster.id().scope() == DropGuideScope::Outer
+        })
         .and_then(|cluster| cluster.target(DropGuideSlot::Edge(edge)))
         .expect("compiled target plan must expose every outer edge guide");
     GuideFact {
@@ -164,7 +166,7 @@ fn activation_without_button_hit(fixture: &Fixture) -> LogicalPoint {
     let activation = plan
         .drop_guide_clusters()
         .iter()
-        .find(|cluster| matches!(cluster.id().scope, DropGuideScope::Inner(_)))
+        .find(|cluster| matches!(cluster.id().scope(), DropGuideScope::Inner(_)))
         .expect("compiled target plan must expose an inner activation")
         .activation();
     for row in 0..16 {
@@ -460,10 +462,10 @@ fn activation_without_button_hit_acquires_magnetic_target_and_keeps_complete_aff
     let inner = affordance
         .clusters()
         .iter()
-        .find(|cluster| matches!(cluster.id().scope, DropGuideScope::Inner(_)))
+        .find(|cluster| matches!(cluster.id().scope(), DropGuideScope::Inner(_)))
         .expect("central target must publish its inner center guide");
     assert!(matches!(
-        inner.id().scope,
+        inner.id().scope(),
         DropGuideScope::Inner(node) if node == fixture.tabs
     ));
     assert_eq!(
@@ -477,7 +479,7 @@ fn activation_without_button_hit_acquires_magnetic_target_and_keeps_complete_aff
     let outer = affordance
         .clusters()
         .iter()
-        .find(|cluster| cluster.id().scope == DropGuideScope::Outer)
+        .find(|cluster| cluster.id().scope() == DropGuideScope::Outer)
         .expect("central target must publish its separate outer guide");
     assert_eq!(
         outer

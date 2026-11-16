@@ -411,7 +411,7 @@ mod tests {
                 .iter()
                 .find(|(_, node)| {
                     node.role() == egui::accesskit::Role::Button
-                        && node.label() == Some("Presentation commands")
+                        && node.label() == Some("Layout actions")
                 })
                 .unwrap();
             anchor = Some(*anchor_id);
@@ -420,7 +420,7 @@ mod tests {
                     .iter()
                     .find(|(_, node)| {
                         node.role() == egui::accesskit::Role::MenuItem
-                            && node.label() == Some("Float")
+                            && node.label() == Some("Float Layout")
                     })
                     .expect("the actual product Float command must be visible");
                 let accessible = accessibility_transform(nodes, *item_id)
@@ -476,7 +476,21 @@ mod tests {
                 );
                 let anchor = accessibility_transform(nodes, *anchor_id)
                     .transform_rect_bbox(anchor_node.bounds().unwrap());
-                final_geometry = Some((physical, anchor));
+                let menu = egui::AreaState::load(&context, hit.layer_id().id)
+                    .expect("the product command belongs to its actual menu area");
+                let popup_bounds = transform * menu.rect();
+                assert!(popup_bounds.contains_rect(physical));
+                // AreaState rounds its rect to the local pixel grid before
+                // the layer's scale is applied.
+                assert!(
+                    viewport
+                        .expand(transform.scaling * 0.5)
+                        .contains_rect(popup_bounds),
+                    "popup {popup_bounds:?} must fit viewport {viewport:?} in phase {phase}"
+                );
+                // Placement belongs to the complete popup, including its scope
+                // heading; command rows may be lower within that same popup.
+                final_geometry = Some((physical, popup_bounds, anchor));
             }
             assert_eq!(
                 paint.take_local_actions().len(),
@@ -488,7 +502,7 @@ mod tests {
                 assert!(
                     !nodes.iter().any(|(_, node)| {
                         node.role() == egui::accesskit::Role::MenuItem
-                            && node.label() == Some("Float")
+                            && node.label() == Some("Float Layout")
                     }),
                     "the committed click closes the product menu"
                 );
@@ -499,10 +513,10 @@ mod tests {
                 .report_surface_presentations(outputs, SurfacePresentationResult::Presented)
                 .unwrap();
         }
-        let (bounds, anchor) = final_geometry.unwrap();
+        let (command_bounds, bounds, anchor) = final_geometry.unwrap();
         if at_edge {
-            assert!(f64::from(bounds.bottom()) < anchor.y1);
-            assert!(bounds.left() < origin.x + 180.0 * 1.5);
+            assert!(f64::from(command_bounds.bottom()) < anchor.y1);
+            assert!(command_bounds.left() < origin.x + 180.0 * 1.5);
         } else {
             assert!(f64::from(bounds.left()) >= anchor.x0);
             assert!(f64::from(bounds.left()) < anchor.x1 + 30.0);

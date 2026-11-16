@@ -21,6 +21,7 @@ use crate::presentation::scene::{
 use crate::presentation::tab_strip::{TabStripControlId, TabStripStateKey};
 
 mod contained_geometry;
+mod rootless_guides;
 mod tab_strip_geometry;
 mod visibility;
 
@@ -983,7 +984,7 @@ fn popup_hit_authority_cannot_resurrect_from_flat_records() {
 }
 
 #[test]
-fn drop_target_hit_authority_cannot_resurrect_from_flat_records() {
+fn drop_guide_hit_authority_cannot_resurrect_from_flat_records() {
     let surface = SurfaceId::new(871);
     let root = RootId::new(872);
     let floating = FloatingPresentationId::new(873);
@@ -1012,8 +1013,8 @@ fn drop_target_hit_authority_cannot_resurrect_from_flat_records() {
         .expect("a rootless surface should compile one background target")
         .id();
     assert!(
-        plan.remove_surface_program_drop_target_for_test(target),
-        "the test must remove the exact drop-target program operation"
+        plan.remove_surface_program_guide_for_test(DropGuideClusterId::surface(surface)),
+        "the test must remove the guide that owns the background target"
     );
     assert_eq!(
         plan.surface_background().map(|record| record.id()),
@@ -1610,7 +1611,7 @@ fn measured_future_drop_preview_does_not_reindex_the_candidate_workspace() {
             .iter()
             .find(|cluster| {
                 matches!(
-                    cluster.id().scope,
+                    cluster.id().scope(),
                     crate::interaction::targeting::guide::DropGuideScope::Outer
                 )
             })

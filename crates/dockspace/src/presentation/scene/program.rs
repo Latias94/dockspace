@@ -638,13 +638,15 @@ impl SurfaceProgram {
             blocks.push(SurfaceProgramBlock::RootEnd { root: root.root });
         }
         blocks.push(SurfaceProgramBlock::DragPreview);
-        if let Some(id) = self.deferred_surface_background.take() {
-            blocks.push(SurfaceProgramBlock::DropTarget(id));
-        }
         let deferred_guide_targets = std::mem::take(&mut self.deferred_guide_targets);
         let mut guide_targets =
             std::collections::HashSet::<&DropTargetId>::with_capacity(deferred_guide_targets.len());
         guide_targets.extend(deferred_guide_targets.iter());
+        if let Some(id) = self.deferred_surface_background.take()
+            && !guide_targets.contains(&id)
+        {
+            blocks.push(SurfaceProgramBlock::DropTarget(id));
+        }
         blocks.extend(
             std::mem::take(&mut self.deferred_drop_targets)
                 .into_iter()
@@ -920,7 +922,7 @@ impl PresentationPlan {
                 SurfaceProgramInstruction::DropTarget(target) => {
                     let record = match target {
                         LinkedSurfaceProgramDropTarget::Background => {
-                            self.facts.surface_background.as_ref()
+                            self.facts.surface_background.as_deref()
                         }
                         LinkedSurfaceProgramDropTarget::Record(row) => {
                             self.facts.drop_targets.get(row.0).map(AsRef::as_ref)
@@ -1057,12 +1059,12 @@ impl PresentationPlan {
     }
 
     #[cfg(test)]
-    pub(crate) fn remove_surface_program_drop_target_for_test(
+    pub(crate) fn remove_surface_program_guide_for_test(
         &mut self,
-        target: DropTargetId,
+        cluster: DropGuideClusterId,
     ) -> bool {
         self.remove_surface_program_block_for_test(
-            |block| matches!(block, SurfaceProgramBlock::DropTarget(current) if *current == target),
+            |block| matches!(block, SurfaceProgramBlock::DropGuide(current) if *current == cluster),
         )
     }
 }

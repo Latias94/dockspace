@@ -276,7 +276,7 @@ fn moving_root_has_no_structural_drop_authority_and_other_roots_keep_theirs() {
         sampled
             .drop_guide_clusters()
             .iter()
-            .all(|cluster| cluster.id().root != ROOT)
+            .all(|cluster| cluster.id().root() != Some(ROOT))
     );
     let retained = |plan: &PresentationPlan| {
         plan.drop_targets()
@@ -303,7 +303,7 @@ fn moving_root_has_no_structural_drop_authority_and_other_roots_keep_theirs() {
             .iter()
             .all(|block| match block {
                 SurfaceProgramBlock::DropTarget(id) => id.root() != Some(ROOT),
-                SurfaceProgramBlock::DropGuide(id) => id.root != ROOT,
+                SurfaceProgramBlock::DropGuide(id) => id.root() != Some(ROOT),
                 _ => true,
             })
     );

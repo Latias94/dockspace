@@ -769,7 +769,7 @@ fn retained_facts_use_current_drop_policy_without_reauthorizing_old_output() {
         .plan()
         .drop_guide_clusters()
         .iter()
-        .find(|cluster| cluster.id().scope == DropGuideScope::Inner(tabs))
+        .find(|cluster| cluster.id().scope() == DropGuideScope::Inner(tabs))
         .unwrap()
         .target(DropGuideSlot::Center)
         .unwrap();

@@ -214,7 +214,14 @@ fn engine_presented_drop_reuses_the_requirement_workspace_index() {
         .interaction_projection(TARGET_SURFACE)
         .expect("rootless target projection must be receiver-authoritative");
     let presentation = JournalSurfacePresentation::from_interaction(projection);
-    let point = LogicalPoint::new(10.0, 10.0).expect("background point must be finite");
+    let hit = projection
+        .plan()
+        .surface_background()
+        .unwrap()
+        .region()
+        .rect();
+    let point = LogicalPoint::new(hit.x() + hit.width() * 0.5, hit.y() + hit.height() * 0.5)
+        .expect("the explicit background guide center must be finite");
 
     crate::interaction::targeting::resolver::structural_work::reset();
     let query = fixture
@@ -4584,4 +4591,143 @@ fn stale_roster_precondition_is_a_nonpublishing_recovery_rejection() {
     assert_eq!(engine.workspace(), &before);
     assert_eq!(engine.version(), version);
     assert!(events.is_empty());
+}
+
+#[test]
+fn product_native_root_docks_into_empty_main_after_target_presentation() {
+    let mut policy = DockPolicy::default();
+    policy.set_allow_native_surfaces(true);
+    let mut fixture = background_fixture(policy);
+    let root = RootId::new(94);
+    let request = install_pending_native_root_reservation(&mut fixture, root);
+    let _ = fixture.engine.viewport.take_new_effects();
+    let _ = advance_pending_native_root_to_first_live(&mut fixture, request);
+    let measurements = surface_measurements(&fixture.engine, TARGET_SURFACE, background_bounds());
+    let _ = publish_surface_projection_with_output(
+        &mut fixture.engine,
+        fixture.presentation_host,
+        TARGET_SURFACE,
+        measurements,
+    );
+    let _ = fixture.engine.viewport.take_new_effects();
+    assert!(
+        fixture
+            .engine
+            .workspace()
+            .surface(TARGET_SURFACE)
+            .unwrap()
+            .main_root
+            .is_none()
+    );
+    let _ = fixture
+        .engine
+        .prepare_product_action_if_available(crate::model::ProductAction::DockRoot {
+            root,
+            placement: DockPlacement::Main(TARGET_SURFACE),
+        })
+        .expect("the root action availability query succeeds")
+        .expect("the native root can dock into the presented empty main surface");
+    let source_version = fixture.engine.version();
+    let source_owner = fixture.engine.workspace().presentation_for_root(root);
+    let staged = submit_test_input(
+        &mut fixture.engine,
+        fixture.presentation_host,
+        EngineInput::DockRoot {
+            expected: source_version,
+            root,
+            placement: DockPlacement::Main(TARGET_SURFACE),
+        },
+    )
+    .expect("native-to-main docking reduces");
+    assert!(
+        matches!(
+            staged.reduced_inputs()[0].outcome(),
+            InputOutcome::ProductActionProcessed {
+                outcome: DockspaceActionOutcome::RootDockRequested {
+                    root: actual_root,
+                    source_surface,
+                    target_root,
+                    items,
+                },
+                ..
+            } if *actual_root == root
+                && *source_surface == request.binding().surface()
+                && *target_root == root
+                && items == &[ItemId::new(1)]
+        ),
+        "an available native root dock must stage its target preview: {:?}",
+        staged.reduced_inputs()[0].outcome()
+    );
+    assert_eq!(fixture.engine.version(), source_version);
+    assert_eq!(
+        fixture.engine.workspace().presentation_for_root(root),
+        source_owner
+    );
+    assert!(
+        fixture
+            .engine
+            .pending_mutation
+            .as_ref()
+            .and_then(PendingMutation::rehome)
+            .is_some()
+    );
+    assert!(matches!(
+        fixture.engine.presentation_preview().map(|preview| preview.visual()),
+        Some(PreviewVisual::Dock { surface: TARGET_SURFACE, target, rect })
+            if *target == crate::interaction::targeting::targets::DropTargetId::SurfaceBackground {
+                surface: TARGET_SURFACE,
+            } && *rect == background_bounds()
+    ));
+    assert!(staged.platform_effects().iter().all(|effect| !matches!(
+        effect.effect(),
+        PlatformEffect::ReleaseChild { binding } if *binding == request.binding()
+    )));
+
+    let measurements = surface_measurements(&fixture.engine, TARGET_SURFACE, background_bounds());
+    let (_, _, transferred) = publish_surface_projection_with_output(
+        &mut fixture.engine,
+        fixture.presentation_host,
+        TARGET_SURFACE,
+        measurements,
+    );
+    assert_eq!(
+        fixture.engine.workspace().presentation_for_root(root),
+        Some(crate::graph::workspace::RootPresentationOwner::Main {
+            surface: TARGET_SURFACE,
+        })
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .workspace()
+            .collect_items_in_subtree(fixture.engine.workspace().root(root).unwrap().node),
+        [ItemId::new(1)]
+    );
+    assert!(
+        fixture
+            .engine
+            .workspace()
+            .surface(request.binding().surface())
+            .is_none()
+    );
+    assert!(
+        fixture
+            .engine
+            .pending_mutation
+            .as_ref()
+            .and_then(PendingMutation::rehome)
+            .is_none()
+    );
+    assert_eq!(
+        transferred
+            .platform_effects()
+            .iter()
+            .filter(|effect| matches!(
+                effect.effect(),
+                PlatformEffect::ReleaseChild { binding } if *binding == request.binding()
+            ))
+            .count(),
+        1,
+        "only the successfully presented target may retire the source child"
+    );
 }

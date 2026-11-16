@@ -172,8 +172,8 @@ fn inner_edge_guide(fixture: &Fixture, edge: Edge) -> GuideFact {
         .drop_guide_clusters()
         .iter()
         .find(|cluster| {
-            cluster.id().root == TARGET_ROOT
-                && cluster.id().scope == DropGuideScope::Inner(fixture.target_tabs)
+            cluster.id().root() == Some(TARGET_ROOT)
+                && cluster.id().scope() == DropGuideScope::Inner(fixture.target_tabs)
         })
         .and_then(|cluster| cluster.target(DropGuideSlot::Edge(edge)))
         .expect("core compiler must expose all four inner-edge guides for the target leaf");

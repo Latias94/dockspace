@@ -204,7 +204,11 @@ impl DockEngine {
                 })
             }
             PresentationHitRegionKind::DropGuideActivation(cluster) => {
-                self.presented_root_structure_is_current(plan, cluster.root)
+                cluster.root().map_or_else(
+                    || self.workspace.surface(cluster.surface_id())
+                        .is_some_and(|presentation| presentation.main_root.is_none()),
+                    |root| self.presented_root_structure_is_current(plan, root),
+                )
             }
             PresentationHitRegionKind::DropTarget(target) => match target {
                 crate::interaction::targeting::targets::DropTargetId::SurfaceBackground { surface } => self

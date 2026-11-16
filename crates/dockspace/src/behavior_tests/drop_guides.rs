@@ -87,7 +87,7 @@ fn cluster(ready: &PresentationPlan, scope: DropGuideScope) -> &DropGuideCluster
     ready
         .drop_guide_clusters()
         .iter()
-        .find(|cluster| cluster.id().scope == scope)
+        .find(|cluster| cluster.id().scope() == scope)
         .unwrap_or_else(|| panic!("expected {scope:?} guide cluster"))
 }
 
@@ -206,7 +206,10 @@ fn published_plans_keep_clusters_and_slots_in_canonical_order() {
 
     for cluster in ready.drop_guide_clusters() {
         let slots = cluster.targets().map(|(slot, _)| slot).collect::<Vec<_>>();
-        match cluster.id().scope {
+        match cluster.id().scope() {
+            DropGuideScope::Surface => {
+                panic!("a populated surface must not expose a background guide")
+            }
             DropGuideScope::Inner(_) => assert_eq!(slots, canonical_inner_slots()),
             DropGuideScope::Outer => assert_eq!(slots, canonical_outer_slots()),
         }

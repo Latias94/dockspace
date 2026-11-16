@@ -250,9 +250,9 @@ fn overflow_menu_selection_uses_the_same_committed_event_contract() {
 #[test]
 fn presentation_menu_float_returns_one_actual_placement_change() {
     let mut harness = Harness::new(DockStyle::default());
-    let mut events = harness.activate(Role::Button, "Presentation commands");
+    let mut events = harness.activate(Role::Button, "Layout actions");
     events.extend(harness.settle());
-    events.extend(harness.activate(Role::MenuItem, "Float"));
+    events.extend(harness.activate(Role::MenuItem, "Float Layout"));
     events.extend(harness.settle());
     let placements: Vec<_> = events
         .iter()

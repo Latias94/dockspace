@@ -613,7 +613,7 @@ fn contained_presentation_menu_close_group_requests_a_root_close_plan() {
         .iter()
         .find(|(_, node)| {
             node.role() == Role::Button
-                && node.label() == Some("Presentation commands")
+                && node.label() == Some("Layout actions")
                 && contained_bounds.contains(accesskit_node_rect(node).center())
         })
         .expect("the contained group exposes its own presentation menu");
@@ -627,7 +627,7 @@ fn contained_presentation_menu_close_group_requests_a_root_close_plan() {
     assert!(sizing.close_requests.is_empty());
     let opened = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert!(opened.close_requests.is_empty());
-    let (close, close_node) = accesskit_node(&opened.output, Role::MenuItem, "Close Group");
+    let (close, close_node) = accesskit_node(&opened.output, Role::MenuItem, "Close Layout");
     let (_, dock_back_node) = accesskit_node(&opened.output, Role::MenuItem, "Dock Back");
     assert!(!close_node.is_disabled());
     assert!(close_node.supports_action(Action::Click));
@@ -671,7 +671,7 @@ fn contained_presentation_menu_close_group_requests_a_root_close_plan() {
         let location = dockspace
             .view()
             .item(item)
-            .expect("Close Group waits for the application");
+            .expect("Close Layout waits for the application");
         assert_eq!(location.root(), FLOATING_ROOT);
         assert_eq!(location.contained(), Some(FLOATING));
         assert_eq!(location.tabs().items(), &[SECOND, THIRD]);

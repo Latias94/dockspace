@@ -16,7 +16,8 @@ pub use error::{PresentationCompilationError, SceneCompilationError};
 #[cfg(test)]
 pub(super) use guides::edge_preview;
 use guides::{
-    compile_outer_targets_and_guide, compile_outer_targets_without_guide, outer_guide_geometry,
+    compile_outer_targets_and_guide, compile_outer_targets_without_guide,
+    compile_surface_background, outer_guide_geometry,
 };
 use measurement::{RootLayoutMeasurement, measure_root_layout};
 pub(crate) use measurement::{
@@ -198,11 +199,7 @@ fn compile_surface_scene(
         )?;
         ready.end_surface_program_root(root)?;
     } else {
-        ready.set_surface_background(DropTargetRecord::surface_background(
-            SurfaceBackground::new(surface),
-            HitRegion::new(bounds),
-            DropVisual::new(bounds),
-        ))?;
+        compile_surface_background(config, surface, bounds, emit_guides, &mut ready)?;
     }
 
     let frontmost_contained =

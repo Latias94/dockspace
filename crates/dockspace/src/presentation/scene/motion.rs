@@ -73,9 +73,12 @@ impl PresentationPlan {
                 .root()
                 .is_none_or(|root| !unavailable_partitions.contains(&root))
         });
-        facts
-            .drop_guide_clusters
-            .retain(|cluster| !unavailable_partitions.contains(&cluster.id().root));
+        facts.drop_guide_clusters.retain(|cluster| {
+            cluster
+                .id()
+                .root()
+                .is_none_or(|root| !unavailable_partitions.contains(&root))
+        });
         facts
             .magnetic_target_field
             .retain_roots(|root| !unavailable_partitions.contains(&root));

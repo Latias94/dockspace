@@ -245,7 +245,7 @@ fn presented_target_preview_survives_unpresented_measurements_without_borrowing_
         .plan()
         .drop_guide_clusters()
         .iter()
-        .filter(|guide| guide.id().root == MAIN_ROOT)
+        .filter(|guide| guide.id().root() == Some(MAIN_ROOT))
         .find_map(|guide| {
             guide.target(crate::interaction::targeting::guide::DropGuideSlot::Edge(
                 crate::graph::command::Edge::Left,

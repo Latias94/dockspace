@@ -16,6 +16,8 @@ use super::{DockspacePaintLayer, DockspaceVisualId, VisualIdentity};
 /// Public guide-cluster class without the internal target-node identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DockspaceGuideScope {
+    /// Center guide that installs a root into an empty logical surface.
+    Surface,
     /// Guide cluster local to one tabs leaf.
     Inner,
     /// Guide cluster spanning one root edge.
@@ -197,16 +199,17 @@ impl<'plan> DropAffordanceClusterPaintRecord<'plan> {
         DockspaceVisualId(VisualIdentity::DropGuide(self.cluster.id()))
     }
 
-    /// Returns the stable root containing this cluster.
+    /// Returns the owning root, or `None` for an empty-surface guide.
     #[must_use]
-    pub const fn root(self) -> RootId {
-        self.cluster.id().root
+    pub const fn root(self) -> Option<RootId> {
+        self.cluster.id().root()
     }
 
-    /// Returns whether the cluster is local to a leaf or spans the root edge.
+    /// Returns the empty-surface, leaf, or root-edge scope of this cluster.
     #[must_use]
     pub const fn scope(self) -> DockspaceGuideScope {
-        match self.cluster.id().scope {
+        match self.cluster.id().scope() {
+            DropGuideScope::Surface => DockspaceGuideScope::Surface,
             DropGuideScope::Inner(_) => DockspaceGuideScope::Inner,
             DropGuideScope::Outer => DockspaceGuideScope::Outer,
         }
@@ -301,16 +304,17 @@ impl<'plan> DropGuidePaintRecord<'plan> {
         DockspaceVisualId(VisualIdentity::DropGuide(self.record.id()))
     }
 
-    /// Returns the stable root containing this cluster.
+    /// Returns the owning root, or `None` for an empty-surface guide.
     #[must_use]
-    pub const fn root(self) -> RootId {
-        self.record.id().root
+    pub const fn root(self) -> Option<RootId> {
+        self.record.id().root()
     }
 
-    /// Returns whether the cluster is local to a leaf or spans the root edge.
+    /// Returns the empty-surface, leaf, or root-edge scope of this cluster.
     #[must_use]
     pub const fn scope(self) -> DockspaceGuideScope {
-        match self.record.id().scope {
+        match self.record.id().scope() {
+            DropGuideScope::Surface => DockspaceGuideScope::Surface,
             DropGuideScope::Inner(_) => DockspaceGuideScope::Inner,
             DropGuideScope::Outer => DockspaceGuideScope::Outer,
         }

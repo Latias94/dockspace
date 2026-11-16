@@ -251,7 +251,7 @@ fn inner_cluster(plan: &PresentationPlan, root: RootId, tabs: NodeId) -> &DropGu
     plan.drop_guide_clusters()
         .iter()
         .find(|cluster| {
-            cluster.id().root == root && cluster.id().scope == DropGuideScope::Inner(tabs)
+            cluster.id().root() == Some(root) && cluster.id().scope() == DropGuideScope::Inner(tabs)
         })
         .expect("core compiler emitted the requested inner cluster")
 }
@@ -259,7 +259,9 @@ fn inner_cluster(plan: &PresentationPlan, root: RootId, tabs: NodeId) -> &DropGu
 fn outer_cluster(plan: &PresentationPlan, root: RootId) -> &DropGuideClusterRecord {
     plan.drop_guide_clusters()
         .iter()
-        .find(|cluster| cluster.id().root == root && cluster.id().scope == DropGuideScope::Outer)
+        .find(|cluster| {
+            cluster.id().root() == Some(root) && cluster.id().scope() == DropGuideScope::Outer
+        })
         .expect("core compiler emitted the requested outer cluster")
 }
 
@@ -271,7 +273,7 @@ fn guide(
 ) -> &DropGuideTargetRecord {
     plan.drop_guide_clusters()
         .iter()
-        .find(|cluster| cluster.id().root == root && cluster.id().scope == scope)
+        .find(|cluster| cluster.id().root() == Some(root) && cluster.id().scope() == scope)
         .and_then(|cluster| cluster.target(slot))
         .expect("core compiler emitted the requested guide target")
 }
@@ -371,7 +373,7 @@ fn assert_affordance_root(fixture: &Fixture, payload: MovePayload, expected: Roo
         affordance
             .clusters()
             .iter()
-            .all(|cluster| cluster.id().root == expected),
+            .all(|cluster| cluster.id().root() == Some(expected)),
         "unexpected visible guide roots: {affordance:?}"
     );
 }
@@ -432,18 +434,18 @@ fn selected_inner_and_matching_outer_clusters_are_complete_and_owned() {
     let inner = affordance
         .clusters()
         .iter()
-        .find(|cluster| cluster.id().scope == DropGuideScope::Inner(fixture.target_tabs))
+        .find(|cluster| cluster.id().scope() == DropGuideScope::Inner(fixture.target_tabs))
         .expect("selected inner cluster is visible");
     let outer = affordance
         .clusters()
         .iter()
-        .find(|cluster| cluster.id().scope == DropGuideScope::Outer)
+        .find(|cluster| cluster.id().scope() == DropGuideScope::Outer)
         .expect("matching outer cluster is visible");
 
     assert_eq!(inner.targets().len(), 5);
     assert_eq!(outer.targets().len(), 4);
     assert!(affordance.clusters().iter().all(|cluster| {
-        cluster.id().root == TARGET_ROOT
+        cluster.id().root() == Some(TARGET_ROOT)
             && cluster
                 .targets()
                 .iter()
@@ -466,8 +468,8 @@ fn outer_cluster_resolves_without_an_active_inner_cluster() {
         .drop_guide_clusters()
         .iter()
         .filter(|cluster| {
-            cluster.id().root == TARGET_ROOT
-                && matches!(cluster.id().scope, DropGuideScope::Inner(_))
+            cluster.id().root() == Some(TARGET_ROOT)
+                && matches!(cluster.id().scope(), DropGuideScope::Inner(_))
         })
         .map(|cluster| cluster.activation().rect())
         .collect::<Vec<_>>();
@@ -491,7 +493,7 @@ fn outer_cluster_resolves_without_an_active_inner_cluster() {
         affordance
             .clusters()
             .iter()
-            .all(|cluster| cluster.id().scope == DropGuideScope::Outer)
+            .all(|cluster| cluster.id().scope() == DropGuideScope::Outer)
     );
     assert_eq!(active.slot(), DropGuideSlot::Edge(Edge::Top));
     assert!(matches!(
@@ -696,7 +698,7 @@ fn payload_specific_prevalidation_marks_center_without_hiding_other_guides() {
         .expect("cluster remains visible")
         .clusters()
         .iter()
-        .find(|cluster| cluster.id().scope == DropGuideScope::Inner(fixture.target_tabs))
+        .find(|cluster| cluster.id().scope() == DropGuideScope::Inner(fixture.target_tabs))
         .expect("target inner cluster remains visible");
     let center = cluster
         .targets()
@@ -743,7 +745,7 @@ fn contained_occlusion_selects_only_the_frontmost_floating_cluster() {
         affordance
             .clusters()
             .iter()
-            .all(|cluster| cluster.id().root == FLOATING_ROOT)
+            .all(|cluster| cluster.id().root() == Some(FLOATING_ROOT))
     );
     assert!(matches!(
         result.resolution(),
@@ -781,7 +783,7 @@ fn central_tabs_root_exposes_center_only_inner_and_distinct_outer_cluster() {
         affordance
             .clusters()
             .iter()
-            .all(|cluster| cluster.id().root == FLOATING_ROOT)
+            .all(|cluster| cluster.id().root() == Some(FLOATING_ROOT))
     );
     assert!(matches!(
         result.resolution(),
@@ -877,7 +879,7 @@ fn suppressing_source_occlusion_keeps_the_frontmost_sibling_floating_authoritati
         affordance
             .clusters()
             .iter()
-            .all(|cluster| cluster.id().root == OTHER_FLOATING_ROOT)
+            .all(|cluster| cluster.id().root() == Some(OTHER_FLOATING_ROOT))
     );
     assert!(matches!(
         result.resolution(),
@@ -932,7 +934,7 @@ fn full_surface_source_reveals_latent_guides_without_suppressing_a_sibling() {
             affordance
                 .clusters()
                 .iter()
-                .all(|cluster| cluster.id().root == expected)
+                .all(|cluster| cluster.id().root() == Some(expected))
         );
         let DropResolution::Resolved(resolved) = result.resolution() else {
             panic!("the visible non-source guide must resolve: {result:?}");
@@ -953,7 +955,7 @@ fn full_surface_source_reveals_latent_guides_without_suppressing_a_sibling() {
                 affordance
                     .clusters()
                     .iter()
-                    .all(|cluster| cluster.id().root != TARGET_ROOT)
+                    .all(|cluster| cluster.id().root() != Some(TARGET_ROOT))
             }),
             "an unrelated drag must not expose covered main-root guides"
         );

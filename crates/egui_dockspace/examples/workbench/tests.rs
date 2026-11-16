@@ -583,7 +583,7 @@ fn closing_all_groups_keeps_the_empty_editor_and_restore_button_usable() {
             let label = if dock.view().item(INSPECTOR).is_some() {
                 "Close floating Inspector"
             } else {
-                "Close Group"
+                "Close Layout"
             };
             pending_click = nodes
                 .iter()
@@ -596,7 +596,7 @@ fn closing_all_groups_keeps_the_empty_editor_and_restore_button_usable() {
                 .or_else(|| {
                     nodes.iter().find_map(|(id, node)| {
                         (node.role() == Role::Button
-                            && node.label() == Some("Presentation commands")
+                            && node.label() == Some("Layout actions")
                             && node.supports_action(Action::Click))
                         .then_some(*id)
                     })

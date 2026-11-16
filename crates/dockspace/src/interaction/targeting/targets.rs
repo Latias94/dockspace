@@ -80,9 +80,11 @@ impl DropSourceSuppression {
     }
 
     pub(crate) fn excludes_cluster(self, cluster: DropGuideClusterId) -> bool {
-        self.excludes_root(cluster.root)
-            || matches!(cluster.scope, DropGuideScope::Inner(node)
-                if self.leaf == Some((cluster.root, node)))
+        cluster.root().is_some_and(|root| {
+            self.excludes_root(root)
+                || matches!(cluster.scope(), DropGuideScope::Inner(node)
+                    if self.leaf == Some((root, node)))
+        })
     }
 
     pub(crate) fn excludes_target(self, target: DropTargetId) -> bool {

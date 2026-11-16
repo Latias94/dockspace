@@ -202,7 +202,7 @@ fn boxed_custom_guides_keep_stable_receivers_accessibility_and_docking() {
             .unwrap();
         let guide = panes.guides[&center.widget_id];
         assert_eq!(guide.scope, DockspaceGuideScope::Inner);
-        assert_eq!(guide.root, ROOT);
+        assert_eq!(guide.root, Some(ROOT));
         assert_eq!(guide.eligibility, DockspaceDropEligibility::Eligible);
         assert!(guide.rect.contains_rect(guide.cue_rect));
         assert!(guide.cue_rect.contains_rect(guide.emphasis_rect));
@@ -218,7 +218,7 @@ fn boxed_custom_guides_keep_stable_receivers_accessibility_and_docking() {
         for receiver in &preview.drop_targets {
             let painted = panes.guides[&receiver.widget_id];
             assert_eq!(painted.direction, receiver.direction);
-            assert_eq!(painted.root, ROOT);
+            assert_eq!(painted.root, Some(ROOT));
         }
         let point = guide.rect.center();
         run_frame(

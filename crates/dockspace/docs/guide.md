@@ -924,7 +924,7 @@ cleanup, input-restore and retirement work owned by the host.
 
 ## Application Close Decisions
 
-A tab close requests that item; a contained-window close or `Close Group`
+A tab close requests that item; a contained-window close or `Close Layout`
 requests the complete root. A close request never docks the root back or deletes
 content before application approval. The independent public consumer in
 `integration/dockspace-host-harness/tests/close_commands.rs` shows the complete

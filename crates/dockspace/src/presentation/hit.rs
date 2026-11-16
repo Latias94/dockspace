@@ -1077,7 +1077,8 @@ fn push_guide_regions(
             PresentationHitBehavior::PassiveAffordance,
         ),
     );
-    let precedence = match cluster.id().scope {
+    let precedence = match cluster.id().scope() {
+        DropGuideScope::Surface => PresentationHitPrecedence::StandaloneSurfaceBackground,
         DropGuideScope::Inner(_) => PresentationHitPrecedence::InnerGuideTarget,
         DropGuideScope::Outer => PresentationHitPrecedence::OuterGuideTarget,
     };

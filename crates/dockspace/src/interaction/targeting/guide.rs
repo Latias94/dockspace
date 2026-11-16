@@ -11,6 +11,8 @@ use crate::presentation::hit::region::HitRegion;
 /// Structural scope of one docking-guide cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DropGuideScope {
+    /// Center guide that installs a root into an empty logical surface.
+    Surface,
     /// Guide cluster local to one tabs node.
     Inner(NodeId),
     /// Guide cluster at the boundary of the complete docking root.
@@ -19,33 +21,68 @@ pub enum DropGuideScope {
 
 /// Stable structural identity of one docking-guide cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DropGuideClusterId {
-    /// Owning logical surface.
-    pub surface: SurfaceId,
-    /// Owning docking root.
-    pub root: RootId,
-    /// Structural scope within the root.
-    pub scope: DropGuideScope,
+pub enum DropGuideClusterId {
+    /// An empty surface has no owning root until a drop commits.
+    Surface { surface: SurfaceId },
+    /// A guide cluster local to one tabs node.
+    Inner {
+        surface: SurfaceId,
+        root: RootId,
+        node: NodeId,
+    },
+    /// A guide cluster at the boundary of a complete docking root.
+    Outer { surface: SurfaceId, root: RootId },
 }
 
 impl DropGuideClusterId {
+    /// Creates a center-cluster identity for an empty logical surface.
+    #[must_use]
+    pub const fn surface(surface: SurfaceId) -> Self {
+        Self::Surface { surface }
+    }
+
     /// Creates an inner-cluster identity local to `node`.
     #[must_use]
     pub const fn inner(surface: SurfaceId, root: RootId, node: NodeId) -> Self {
-        Self {
+        Self::Inner {
             surface,
             root,
-            scope: DropGuideScope::Inner(node),
+            node,
         }
     }
 
     /// Creates an outer-cluster identity for a complete root.
     #[must_use]
     pub const fn outer(surface: SurfaceId, root: RootId) -> Self {
-        Self {
-            surface,
-            root,
-            scope: DropGuideScope::Outer,
+        Self::Outer { surface, root }
+    }
+
+    /// Returns the owning logical surface.
+    #[must_use]
+    pub const fn surface_id(self) -> SurfaceId {
+        match self {
+            Self::Surface { surface }
+            | Self::Inner { surface, .. }
+            | Self::Outer { surface, .. } => surface,
+        }
+    }
+
+    /// Returns the owning root, or `None` for an empty-surface guide.
+    #[must_use]
+    pub const fn root(self) -> Option<RootId> {
+        match self {
+            Self::Surface { .. } => None,
+            Self::Inner { root, .. } | Self::Outer { root, .. } => Some(root),
+        }
+    }
+
+    /// Returns the structural scope without duplicating ownership facts.
+    #[must_use]
+    pub const fn scope(self) -> DropGuideScope {
+        match self {
+            Self::Surface { .. } => DropGuideScope::Surface,
+            Self::Inner { node, .. } => DropGuideScope::Inner(node),
+            Self::Outer { .. } => DropGuideScope::Outer,
         }
     }
 }
@@ -198,9 +235,9 @@ impl DropGuideEdgeSet {
 /// Complete guide cluster with an exact activation region and paint layer.
 ///
 /// The enum shape makes ordinary inner clusters contain center plus four
-/// edges, root-central inner clusters contain only center, and outer clusters
-/// contain exactly four edges. Callers cannot construct a partially populated
-/// edge set.
+/// edges, root-central and empty-surface clusters contain only center, and outer
+/// clusters contain exactly four edges. Callers cannot construct a partially
+/// populated edge set.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DropGuideClusterRecord {
     id: DropGuideClusterId,
@@ -211,7 +248,7 @@ pub struct DropGuideClusterRecord {
 
 #[derive(Debug, Clone, PartialEq)]
 enum DropGuideClusterTargets {
-    Inner {
+    Centered {
         center: DropGuideTargetRecord,
         edges: Option<DropGuideEdgeSet>,
     },
@@ -221,6 +258,24 @@ enum DropGuideClusterTargets {
 }
 
 impl DropGuideClusterRecord {
+    /// Creates the single explicit docking destination on an empty surface.
+    #[must_use]
+    pub fn surface(
+        surface: SurfaceId,
+        activation: HitRegion,
+        center: DropGuideTargetRecord,
+    ) -> Self {
+        Self {
+            id: DropGuideClusterId::surface(surface),
+            activation,
+            layer: SceneLayerKey::surface_base(),
+            targets: DropGuideClusterTargets::Centered {
+                center,
+                edges: None,
+            },
+        }
+    }
+
     /// Creates a complete inner guide cluster local to `node`.
     #[must_use]
     pub fn inner(
@@ -236,7 +291,7 @@ impl DropGuideClusterRecord {
             id: DropGuideClusterId::inner(surface, root, node),
             activation,
             layer,
-            targets: DropGuideClusterTargets::Inner {
+            targets: DropGuideClusterTargets::Centered {
                 center,
                 edges: Some(edges),
             },
@@ -257,7 +312,7 @@ impl DropGuideClusterRecord {
             id: DropGuideClusterId::inner(surface, root, node),
             activation,
             layer,
-            targets: DropGuideClusterTargets::Inner {
+            targets: DropGuideClusterTargets::Centered {
                 center,
                 edges: None,
             },
@@ -303,7 +358,7 @@ impl DropGuideClusterRecord {
     #[must_use]
     pub const fn edges(&self) -> Option<&DropGuideEdgeSet> {
         match &self.targets {
-            DropGuideClusterTargets::Inner { edges, .. } => edges.as_ref(),
+            DropGuideClusterTargets::Centered { edges, .. } => edges.as_ref(),
             DropGuideClusterTargets::Outer { edges } => Some(edges),
         }
     }
@@ -313,9 +368,11 @@ impl DropGuideClusterRecord {
     #[cfg(test)]
     pub const fn target(&self, slot: DropGuideSlot) -> Option<&DropGuideTargetRecord> {
         match (&self.targets, slot) {
-            (DropGuideClusterTargets::Inner { center, .. }, DropGuideSlot::Center) => Some(center),
+            (DropGuideClusterTargets::Centered { center, .. }, DropGuideSlot::Center) => {
+                Some(center)
+            }
             (DropGuideClusterTargets::Outer { .. }, DropGuideSlot::Center) => None,
-            (DropGuideClusterTargets::Inner { edges, .. }, DropGuideSlot::Edge(edge)) => {
+            (DropGuideClusterTargets::Centered { edges, .. }, DropGuideSlot::Edge(edge)) => {
                 match edges {
                     Some(edges) => Some(edges.target(edge)),
                     None => None,
@@ -332,7 +389,7 @@ impl DropGuideClusterRecord {
         &self,
     ) -> impl DoubleEndedIterator<Item = (DropGuideSlot, &DropGuideTargetRecord)> {
         let center = match &self.targets {
-            DropGuideClusterTargets::Inner { center, .. } => Some(center),
+            DropGuideClusterTargets::Centered { center, .. } => Some(center),
             DropGuideClusterTargets::Outer { .. } => None,
         };
         let edges = self.edges().into_iter().flat_map(DropGuideEdgeSet::targets);
@@ -347,7 +404,7 @@ impl DropGuideClusterRecord {
         mut visit: impl FnMut(&mut DropGuideTargetRecord),
     ) {
         match &mut self.targets {
-            DropGuideClusterTargets::Inner { center, edges } => {
+            DropGuideClusterTargets::Centered { center, edges } => {
                 visit(center);
                 if let Some(edges) = edges {
                     edges.for_each_target_mut(visit);

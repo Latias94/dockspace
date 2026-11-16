@@ -468,12 +468,11 @@ impl DockEngine {
                         .ok_or(DockspaceActionRejection::PresentationUnavailable { surface })?;
                     let record = projection
                         .plan()
-                        .drop_targets()
-                        .iter()
-                        .find(|record| {
-                            record.id()
-                                == crate::interaction::targeting::targets::DropTargetId::SurfaceBackground { surface }
-                        })
+                        .drop_target(
+                            crate::interaction::targeting::targets::DropTargetId::SurfaceBackground {
+                                surface,
+                            },
+                        )
                         .ok_or(DockspaceActionRejection::PresentationUnavailable { surface })?;
                     Ok(Some((
                         source.clone(),

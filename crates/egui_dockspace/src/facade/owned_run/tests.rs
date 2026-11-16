@@ -29,6 +29,7 @@ use crate::pass_settlement::{ProductPassSettlement, ReadyProductPassSettlementBa
 use crate::{DockspaceActionOutcome, DockspaceActionStatus, DockspaceErrorKind};
 
 mod geometry_change;
+mod modal_docking;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const FIRST: ItemId = ItemId::new(1);
@@ -1312,7 +1313,7 @@ fn escaping_a_presentation_menu_returns_focus_to_its_button_for_keyboard_reopeni
             menu_button = nodes
                 .iter()
                 .find(|(_, node)| {
-                    node.role() == Role::Button && node.label() == Some("Presentation commands")
+                    node.role() == Role::Button && node.label() == Some("Layout actions")
                 })
                 .map(|(id, _)| *id);
         }
@@ -1323,9 +1324,9 @@ fn escaping_a_presentation_menu_returns_focus_to_its_button_for_keyboard_reopeni
                 "the presentation button must own focus before keyboard opening, pass {pass}"
             );
         }
-        let menu_visible = nodes.iter().any(|(_, node)| {
-            node.role() == Role::Menu && node.label() == Some("Presentation commands")
-        });
+        let menu_visible = nodes
+            .iter()
+            .any(|(_, node)| node.role() == Role::Menu && node.label() == Some("Layout actions"));
         if phase == 7 {
             assert!(
                 menu_visible,
@@ -1417,9 +1418,7 @@ fn presentation_menu_count(output: &FullOutput) -> usize {
         .unwrap()
         .nodes
         .iter()
-        .filter(|(_, node)| {
-            node.role() == Role::Menu && node.label() == Some("Presentation commands")
-        })
+        .filter(|(_, node)| node.role() == Role::Menu && node.label() == Some("Layout actions"))
         .count()
 }
 

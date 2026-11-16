@@ -600,15 +600,16 @@ fn select_guide_clusters(
         .drop_guide_clusters()
         .iter()
         .filter(visible)
-        .filter(|cluster| matches!(cluster.id().scope, DropGuideScope::Inner(_)))
+        .filter(|cluster| matches!(cluster.id().scope(), DropGuideScope::Inner(_)))
         .min_by(frontmost);
     if let Some(inner) = inner {
-        let inner_id = inner.id();
-        let outer = ready.drop_guide_clusters().iter().find(|cluster| {
-            cluster.id() == DropGuideClusterId::outer(inner_id.surface, inner_id.root)
-                && cluster.layer() == inner.layer()
-                && cluster.activation().contains(point)
-                && occluding_layer.is_none_or(|layer| cluster.layer() >= layer)
+        let outer = inner.id().root().and_then(|root| {
+            ready.drop_guide_clusters().iter().find(|cluster| {
+                cluster.id() == DropGuideClusterId::outer(inner.id().surface_id(), root)
+                    && cluster.layer() == inner.layer()
+                    && cluster.activation().contains(point)
+                    && occluding_layer.is_none_or(|layer| cluster.layer() >= layer)
+            })
         });
         return [outer, Some(inner)].into_iter().flatten().collect();
     }
@@ -617,7 +618,12 @@ fn select_guide_clusters(
         .drop_guide_clusters()
         .iter()
         .filter(visible)
-        .filter(|cluster| cluster.id().scope == DropGuideScope::Outer)
+        .filter(|cluster| {
+            matches!(
+                cluster.id().scope(),
+                DropGuideScope::Outer | DropGuideScope::Surface
+            )
+        })
         .min_by(frontmost)
         .into_iter()
         .collect()

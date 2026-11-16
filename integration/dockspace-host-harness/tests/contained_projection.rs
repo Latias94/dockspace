@@ -66,7 +66,7 @@ fn settle(session: &mut DockspaceSession) -> HostFrameReport {
 }
 
 struct RecordedGuide {
-    root: RootId,
+    root: Option<RootId>,
     scope: GuideScope,
     direction: DropDirection,
     visual: DockspaceVisualId,
@@ -1240,7 +1240,7 @@ fn frozen_clear_hover_batch_docks_behind_complete_source_at_release_commit() {
             let mut target = None;
             plan.visit_surface_program(|step| {
                 if let Step::DropGuide { structural, .. } = step
-                    && structural.root() == MAIN_ROOT
+                    && structural.root() == Some(MAIN_ROOT)
                     && structural.scope() == GuideScope::Inner
                 {
                     for button in structural.targets() {
@@ -1519,7 +1519,7 @@ fn rejected_non_source_contained_target_blocks_a_legal_background_target_and_fal
         .guides
         .iter()
         .filter(|guide| {
-            guide.root == ROOT
+            guide.root == Some(ROOT)
                 && guide.scope == GuideScope::Inner
                 && guide.direction == DropDirection::Center
         })
@@ -1577,7 +1577,7 @@ fn rejected_non_source_contained_target_blocks_a_legal_background_target_and_fal
                 && before
                     .guides
                     .iter()
-                    .filter(|guide| guide.root == ROOT)
+                    .filter(|guide| guide.root == Some(ROOT))
                     .all(|guide| !guide.hit.contains(*point))
         })
         .expect(
@@ -1607,7 +1607,7 @@ fn rejected_non_source_contained_target_blocks_a_legal_background_target_and_fal
         .guides
         .iter()
         .find(|guide| {
-            guide.root == MAIN_ROOT
+            guide.root == Some(MAIN_ROOT)
                 && guide.scope == GuideScope::Inner
                 && guide.direction == DropDirection::Center
                 && guide.preview.contains(clear_point)
@@ -1655,7 +1655,7 @@ fn rejected_non_source_contained_target_blocks_a_legal_background_target_and_fal
                 } = step
                 {
                     for target in cluster.targets().filter(|target| target.is_active()) {
-                        assert_eq!(cluster.root(), ROOT);
+                        assert_eq!(cluster.root(), Some(ROOT));
                         assert_eq!(target.visual_id(), front.visual);
                         assert_eq!(target.eligibility(), Eligibility::Rejected);
                         rejected = true;
@@ -1892,7 +1892,9 @@ fn complete_contained_group_magnetic_hysteresis_survives_presented_source_only_p
                 .guides
                 .iter()
                 .find(|guide| {
-                    guide.root == MAIN_ROOT && guide.scope == scope && guide.direction == direction
+                    guide.root == Some(MAIN_ROOT)
+                        && guide.scope == scope
+                        && guide.direction == direction
                 })
                 .unwrap();
             assert_eq!(

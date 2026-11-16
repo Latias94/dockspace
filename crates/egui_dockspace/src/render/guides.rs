@@ -35,7 +35,7 @@ pub(crate) fn paint_cluster(
 
 fn paint_target(
     context: &mut RenderContext<'_, '_, '_>,
-    root: RootId,
+    root: Option<RootId>,
     scope: DockspaceGuideScope,
     target: DropAffordanceTargetPaintRecord<'_>,
 ) {

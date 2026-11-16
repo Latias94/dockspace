@@ -1,6 +1,133 @@
 use super::*;
 
 #[test]
+fn menu_floated_root_stays_floating_when_released_away_from_docking_guides() {
+    for layout in [layout(), split_layout()] {
+        let context = Context::default();
+        context.enable_accesskit();
+        let mut dockspace = Dockspace::builder("menu-float-empty-floor-drag", layout)
+            .build()
+            .unwrap();
+        let original = (root_tabs(&dockspace), root_split(&dockspace));
+        let mut panes = Panes;
+        let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
+        let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
+        let (menu, menu_node) = accesskit_node(&stable.output, Role::Button, "Layout actions");
+        assert_eq!(
+            menu_node.description(),
+            Some("Applies to the entire layout, including all split groups")
+        );
+        let _ = run_frame(
+            &context,
+            &mut dockspace,
+            &mut panes,
+            vec![accesskit_action(menu, Action::Click)],
+        );
+        let opened = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
+        let (float, _) = accesskit_node(&opened.output, Role::MenuItem, "Float Layout");
+        let _ = run_frame(
+            &context,
+            &mut dockspace,
+            &mut panes,
+            vec![accesskit_action(float, Action::Click)],
+        );
+        let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
+        let floating = dockspace.view().item(FIRST).unwrap().contained().unwrap();
+        let source = node_center(&stable.output, Role::TitleBar, "First");
+        let blank = Pos2::new(80.0, 450.0);
+        for events in [
+            vec![Event::PointerMoved(source)],
+            vec![pointer_button(source, true)],
+            vec![Event::PointerMoved(source + vec2(12.0, 8.0))],
+        ] {
+            let _ = run_frame(&context, &mut dockspace, &mut panes, events);
+        }
+        let preview = run_frame(
+            &context,
+            &mut dockspace,
+            &mut panes,
+            vec![Event::PointerMoved(blank)],
+        );
+        let guide = node_rect(&preview.output, Role::Label, "Dockspace center drop guide");
+        assert!(!guide.contains(blank));
+        let _ = run_frame(
+            &context,
+            &mut dockspace,
+            &mut panes,
+            vec![pointer_button(blank, false)],
+        );
+        let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
+        assert!(!dockspace.has_active_gesture());
+        assert!(
+            dockspace.view().contained(floating).is_some(),
+            "releasing a floating root over blank canvas must keep it floating"
+        );
+        assert!(
+            dockspace
+                .view()
+                .surface(SURFACE)
+                .unwrap()
+                .main_root()
+                .is_none()
+        );
+        for item in [FIRST, SECOND] {
+            let item = dockspace.view().item(item).unwrap();
+            assert_eq!(item.root(), ROOT);
+            assert_eq!(item.contained(), Some(floating));
+        }
+
+        for modifiers in [Modifiers::SHIFT, Modifiers::NONE] {
+            let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
+            let source = node_center(&stable.output, Role::TitleBar, "First");
+            let button = |pressed| Event::PointerButton {
+                pos: if pressed { source } else { guide.center() },
+                button: PointerButton::Primary,
+                pressed,
+                modifiers,
+            };
+            for events in [
+                vec![
+                    Event::ModifiersChanged(modifiers),
+                    Event::PointerMoved(source),
+                ],
+                vec![button(true)],
+                vec![Event::PointerMoved(source + vec2(12.0, 8.0))],
+                vec![Event::PointerMoved(guide.center())],
+            ] {
+                let _ = run_frame(&context, &mut dockspace, &mut panes, events);
+            }
+            assert!(dockspace.has_active_gesture());
+            let _ = run_frame(&context, &mut dockspace, &mut panes, vec![button(false)]);
+            let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
+            assert!(!dockspace.has_active_gesture());
+            if modifiers.shift {
+                assert!(
+                    dockspace.view().contained(floating).is_some(),
+                    "Shift must suppress docking even over the empty-surface guide"
+                );
+            } else {
+                assert!(dockspace.view().contained(floating).is_none());
+                assert_eq!(
+                    dockspace
+                        .view()
+                        .surface(SURFACE)
+                        .unwrap()
+                        .main_root()
+                        .unwrap()
+                        .id(),
+                    ROOT
+                );
+                assert_eq!(
+                    (root_tabs(&dockspace), root_split(&dockspace)),
+                    original,
+                    "the explicit center drop restores the complete layout and stable identities"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn presentation_menu_floats_and_docks_back_with_truthful_native_availability() {
     let context = Context::default();
     context.enable_accesskit();
@@ -11,7 +138,7 @@ fn presentation_menu_floats_and_docks_back_with_truthful_native_availability() {
 
     let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    let (menu, menu_node) = accesskit_node(&stable.output, Role::Button, "Presentation commands");
+    let (menu, menu_node) = accesskit_node(&stable.output, Role::Button, "Layout actions");
     assert!(!menu_node.is_disabled());
 
     let sizing = run_frame(
@@ -23,7 +150,7 @@ fn presentation_menu_floats_and_docks_back_with_truthful_native_availability() {
     assert!(sizing.close_requests.is_empty());
     let opened = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert!(opened.close_requests.is_empty());
-    let (float, float_node) = accesskit_node(&opened.output, Role::MenuItem, "Float");
+    let (float, float_node) = accesskit_node(&opened.output, Role::MenuItem, "Float Layout");
     let (_, native_node) = accesskit_node(&opened.output, Role::MenuItem, "Move to New Window");
     let (_, dock_back_node) = accesskit_node(&opened.output, Role::MenuItem, "Dock Back");
     assert!(
@@ -71,7 +198,7 @@ fn presentation_menu_floats_and_docks_back_with_truthful_native_availability() {
 
     let floating = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert!(floating.close_requests.is_empty());
-    let (menu, _) = accesskit_node(&floating.output, Role::Button, "Presentation commands");
+    let (menu, _) = accesskit_node(&floating.output, Role::Button, "Layout actions");
     let sizing = run_frame(
         &context,
         &mut dockspace,
@@ -81,7 +208,7 @@ fn presentation_menu_floats_and_docks_back_with_truthful_native_availability() {
     assert!(sizing.close_requests.is_empty());
     let opened = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert!(opened.close_requests.is_empty());
-    let (_, float_node) = accesskit_node(&opened.output, Role::MenuItem, "Float");
+    let (_, float_node) = accesskit_node(&opened.output, Role::MenuItem, "Float Layout");
     let (_, native_node) = accesskit_node(&opened.output, Role::MenuItem, "Move to New Window");
     let (dock_back, dock_back_node) = accesskit_node(&opened.output, Role::MenuItem, "Dock Back");
     assert!(float_node.is_disabled());
@@ -191,7 +318,7 @@ fn contained_presentation_menu_exposes_and_executes_directional_commands() {
                 let center_x = (bounds.x0 + bounds.x1) * 0.5;
                 let center_y = (bounds.y0 + bounds.y1) * 0.5;
                 (node.role() == Role::Button
-                    && node.label() == Some("Presentation commands")
+                    && node.label() == Some("Layout actions")
                     && center_x >= contained_rect.min().x()
                     && center_x <= contained_rect.max().x()
                     && center_y >= contained_rect.min().y()
@@ -260,7 +387,7 @@ fn open_presentation_menu_closes_immediately_when_ui_becomes_disabled() {
 
     let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    let (menu, _) = accesskit_node(&stable.output, Role::Button, "Presentation commands");
+    let (menu, _) = accesskit_node(&stable.output, Role::Button, "Layout actions");
     let _ = run_frame(
         &context,
         &mut dockspace,
@@ -268,13 +395,12 @@ fn open_presentation_menu_closes_immediately_when_ui_becomes_disabled() {
         vec![accesskit_action(menu, Action::Click)],
     );
     let opened = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    let (_, opened_anchor) = accesskit_node(&opened.output, Role::Button, "Presentation commands");
+    let (_, opened_anchor) = accesskit_node(&opened.output, Role::Button, "Layout actions");
     assert_eq!(opened_anchor.is_expanded(), Some(true));
-    let _ = accesskit_node(&opened.output, Role::MenuItem, "Float");
+    let _ = accesskit_node(&opened.output, Role::MenuItem, "Float Layout");
 
     let disabled = run_disabled_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    let (_, disabled_anchor) =
-        accesskit_node(&disabled.output, Role::Button, "Presentation commands");
+    let (_, disabled_anchor) = accesskit_node(&disabled.output, Role::Button, "Layout actions");
     assert!(disabled_anchor.is_disabled());
     assert_eq!(
         disabled_anchor.is_expanded(),
@@ -322,7 +448,7 @@ fn open_main_presentation_menu_closes_immediately_when_anchor_becomes_occluded()
         .iter()
         .find_map(|(id, node)| {
             let is_main_anchor = node.role() == Role::Button
-                && node.label() == Some("Presentation commands")
+                && node.label() == Some("Layout actions")
                 && node.bounds().is_some_and(|bounds| bounds.x0 > 600.0);
             is_main_anchor.then_some((*id, node))
         })
@@ -350,7 +476,7 @@ fn open_main_presentation_menu_closes_immediately_when_anchor_becomes_occluded()
         .find_map(|(id, node)| (*id == main_menu).then_some(node))
         .expect("the opened main presentation anchor remains stable");
     assert_eq!(opened_anchor.is_expanded(), Some(true));
-    let _ = accesskit_node(&opened.output, Role::MenuItem, "Float");
+    let _ = accesskit_node(&opened.output, Role::MenuItem, "Float Layout");
 
     let mut occluded = None;
     for _ in 0..64 {
@@ -405,7 +531,7 @@ fn open_main_presentation_menu_closes_immediately_when_anchor_becomes_occluded()
         occluded_tree.nodes.iter().any(|(id, node)| {
             *id != main_menu
                 && node.role() == Role::Button
-                && node.label() == Some("Presentation commands")
+                && node.label() == Some("Layout actions")
                 && !node.is_disabled()
         }),
         "the front contained window keeps its own presentation anchor operable",
@@ -426,7 +552,7 @@ fn discarded_presentation_menu_activation_commits_exactly_once() {
 
     let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    let (menu, _) = accesskit_node(&stable.output, Role::Button, "Presentation commands");
+    let (menu, _) = accesskit_node(&stable.output, Role::Button, "Layout actions");
     let _ = run_frame(
         &context,
         &mut dockspace,
@@ -434,7 +560,7 @@ fn discarded_presentation_menu_activation_commits_exactly_once() {
         vec![accesskit_action(menu, Action::Click)],
     );
     let opened = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    let (float, float_node) = accesskit_node(&opened.output, Role::MenuItem, "Float");
+    let (float, float_node) = accesskit_node(&opened.output, Role::MenuItem, "Float Layout");
     assert!(!float_node.is_disabled());
 
     context
@@ -496,14 +622,14 @@ fn disabled_ui_does_not_open_or_activate_presentation_commands() {
 
     let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
-    let (menu, _) = accesskit_node(&stable.output, Role::Button, "Presentation commands");
+    let (menu, _) = accesskit_node(&stable.output, Role::Button, "Layout actions");
     let disabled = run_disabled_frame(
         &context,
         &mut dockspace,
         &mut panes,
         vec![accesskit_action(menu, Action::Click)],
     );
-    let (_, node) = accesskit_node(&disabled.output, Role::Button, "Presentation commands");
+    let (_, node) = accesskit_node(&disabled.output, Role::Button, "Layout actions");
     assert!(node.is_disabled());
     assert!(!node.supports_action(Action::Click));
     assert!(
@@ -561,9 +687,7 @@ fn fully_occluded_main_presentation_menu_is_accessibility_disabled() {
     let anchors = tree
         .nodes
         .iter()
-        .filter(|(_, node)| {
-            node.role() == Role::Button && node.label() == Some("Presentation commands")
-        })
+        .filter(|(_, node)| node.role() == Role::Button && node.label() == Some("Layout actions"))
         .collect::<Vec<_>>();
     assert_eq!(anchors.len(), 2);
     let (occluded_id, occluded) = anchors

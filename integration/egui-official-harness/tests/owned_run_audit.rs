@@ -275,14 +275,14 @@ fn shared_run_with_a_popup_keeps_both_dockspace_proofs_valid() {
         let mut menu_visible = false;
         if let Some(update) = &output.platform_output.accesskit_update {
             for (id, node) in &update.nodes {
-                if node.label() == Some("Presentation commands")
+                if node.label() == Some("Layout actions")
                     && node.bounds().is_some_and(|bounds| bounds.x0 < 400.0)
                     && node.role() == Role::Button
                 {
                     left_anchor = Some(*id);
                 }
                 menu_visible |= node.role() == Role::Menu
-                    || (node.role() == Role::MenuItem && node.label() == Some("Float"));
+                    || (node.role() == Role::MenuItem && node.label() == Some("Float Layout"));
             }
         }
         output.drop_without_applying_deltas();

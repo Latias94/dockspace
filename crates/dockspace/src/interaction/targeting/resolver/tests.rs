@@ -1207,7 +1207,8 @@ fn cross_surface_contained_background_rejection_never_falls_through() {
         .drop_guide_clusters()
         .iter()
         .find(|cluster| {
-            cluster.id().root == CROSS_CONTAINED_ROOT && cluster.id().scope == DropGuideScope::Outer
+            cluster.id().root() == Some(CROSS_CONTAINED_ROOT)
+                && cluster.id().scope() == DropGuideScope::Outer
         })
         .and_then(|cluster| cluster.target(DropGuideSlot::Edge(Edge::Bottom)))
         .expect("production compilation must publish the visible contained outer guide");

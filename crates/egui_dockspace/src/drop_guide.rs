@@ -29,9 +29,9 @@ const DISABLED_CUE_OPACITY: f32 = 0.5;
 pub struct DropGuide {
     /// Stable adapter identity for this exact guide, including its docking instance.
     pub id: Id,
-    /// Root containing this guide cluster.
-    pub root: RootId,
-    /// Whether the guide belongs to a pane's inner cluster or a root's outer edges.
+    /// Owning root, or `None` for an empty-surface docking destination.
+    pub root: Option<RootId>,
+    /// Whether the guide targets an empty surface, a pane, or a root's edges.
     pub scope: DockspaceGuideScope,
     /// Merge or split direction represented by this button.
     pub direction: DockspaceDropDirection,
@@ -88,7 +88,7 @@ impl DropGuide {
 
 pub(crate) fn describe_guide_button(
     id: Id,
-    root: RootId,
+    root: Option<RootId>,
     scope: DockspaceGuideScope,
     target: DropAffordanceTargetPaintRecord<'_>,
     rect: Rect,

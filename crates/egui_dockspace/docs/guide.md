@@ -439,7 +439,14 @@ settles that request as unavailable rather than guessing from the root viewport.
 
 ## Closing Content And Dock Back
 
-The contained-window close button and `Close Group` menu item request approval
+The three-dot **Layout actions** menu belongs to one complete root layout,
+including its split groups. The main layout exposes it on one tab bar; contained
+floating layouts expose it in their title bar. **Float Layout** detaches that
+whole layout. To float just one tab or tab group, use its drag gesture instead.
+After floating the main layout, dragging over blank canvas keeps it floating;
+the visible center docking guide returns it to the empty main area.
+
+The contained-window close button and `Close Layout` menu item request approval
 to close the whole root. `DockspaceResponse::close_request_events()` returns the
 plan; the application decides each pending item through `resolve_close` and, for
 deferred decisions, `resolve_deferred_close`. Until all required decisions allow

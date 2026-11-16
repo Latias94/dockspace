@@ -602,14 +602,14 @@ fn presentation_menu_uses_local_theme_and_docking_visual_overrides() {
         theme.visuals.menu_corner_radius = egui::CornerRadius::same(12);
         theme.visuals.window_stroke = egui::Stroke::new(3.0, theme_border);
         harness.local_style = Some(theme);
-        harness.focus(640.0, Role::Button, "Presentation commands");
+        harness.focus(640.0, Role::Button, "Layout actions");
         harness.run(640.0, vec![key(Key::Enter)]);
         let mut output = harness.run(640.0, Vec::new());
         for _ in 0..3 {
             output = harness.run(640.0, Vec::new());
         }
         assert!(nodes(&output).iter().any(|(_, node)| {
-            node.role() == Role::Menu && node.label() == Some("Presentation commands")
+            node.role() == Role::Menu && node.label() == Some("Layout actions")
         }));
         let (fill, border) = if customize {
             (override_fill, override_border)
