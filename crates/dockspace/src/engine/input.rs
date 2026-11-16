@@ -371,13 +371,13 @@ pub(crate) enum LocalSurfaceAction {
     AdjustSplitter {
         scene: SurfaceSceneStamp,
         splitter: SplitterSceneId,
-        delta: f64,
+        adjustment: ResizeAdjustment,
     },
     AdjustSplitterJunction {
         scene: SurfaceSceneStamp,
         junction: SplitterJunctionId,
         axis: crate::model::DockspaceAxis,
-        delta: f64,
+        adjustment: ResizeAdjustment,
     },
     AdjustContainedResize {
         scene: SurfaceSceneStamp,
@@ -407,12 +407,12 @@ impl LocalSurfaceAction {
             (
                 Self::AdjustSplitter {
                     splitter: a,
-                    delta: ad,
+                    adjustment: ad,
                     ..
                 },
                 Self::AdjustSplitter {
                     splitter: b,
-                    delta: bd,
+                    adjustment: bd,
                     ..
                 },
             ) => a == b && ad == bd,
@@ -420,13 +420,13 @@ impl LocalSurfaceAction {
                 Self::AdjustSplitterJunction {
                     junction: a,
                     axis: aa,
-                    delta: ad,
+                    adjustment: ad,
                     ..
                 },
                 Self::AdjustSplitterJunction {
                     junction: b,
                     axis: ba,
-                    delta: bd,
+                    adjustment: bd,
                     ..
                 },
             ) => a == b && aa == ba && ad == bd,
@@ -936,8 +936,8 @@ pub enum EngineInput {
         scene: SurfaceSceneStamp,
         /// Stable structural splitter identity exposed by that candidate.
         splitter: SplitterSceneId,
-        /// Signed displacement along the split axis in logical surface units.
-        delta: f64,
+        /// Final displacement and effective travel of the ordered adjustments.
+        adjustment: ResizeAdjustment,
     },
     /// Apply one axis of a splitter junction captured from an exact current-frame response.
     AdjustLocalSplitterJunctionResize {
@@ -949,8 +949,8 @@ pub enum EngineInput {
         junction: crate::presentation::scene::SplitterJunctionId,
         /// Logical split axis adjusted by the semantic control.
         axis: crate::model::DockspaceAxis,
-        /// Signed displacement shared by every incident splitter on `axis`.
-        delta: f64,
+        /// Ordered adjustment shared by every incident splitter on `axis`.
+        adjustment: ResizeAdjustment,
     },
     /// Apply one cardinal contained resize captured from an exact current-frame response.
     AdjustLocalContainedResize {

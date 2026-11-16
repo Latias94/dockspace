@@ -7,7 +7,7 @@ use crate::graph::command::{NodeSource, SplitResize};
 use crate::graph::{Axis, Node, SplitWeight, Workspace};
 use crate::ids::{NodeId, RootId};
 use crate::interaction::{
-    ActiveResize, FrozenResizeAxisGroup, FrozenResizeSplit, ResizeDeltaInterval,
+    ActiveResize, FrozenResizeAxisGroup, FrozenResizeSplit, ResizeAdjustment, ResizeDeltaInterval,
 };
 use crate::presentation::layout::{LayoutProjection, SplitProjection};
 use crate::presentation::scene::{PresentationPlan, SplitterRecord};
@@ -293,7 +293,34 @@ pub(super) fn resize_axis_group_updates(
     groups: &[FrozenResizeAxisGroup],
     delta: [f64; 2],
 ) -> Option<Vec<SplitResize>> {
-    if groups.is_empty() || delta.iter().any(|value| !value.is_finite()) {
+    resize_axis_group_updates_with_history(groups, delta, None)
+}
+
+/// Discrete adjustments commit proportions for each split that actually moved,
+/// even when their final displacement returns to the original boundary.
+pub(super) fn resize_axis_group_adjustment_updates(
+    groups: &[FrozenResizeAxisGroup],
+    axis: Axis,
+    adjustment: ResizeAdjustment,
+) -> Option<Vec<SplitResize>> {
+    let delta = match axis {
+        Axis::Horizontal => [adjustment.delta(), 0.0],
+        Axis::Vertical => [0.0, adjustment.delta()],
+    };
+    resize_axis_group_updates_with_history(groups, delta, Some((axis, adjustment.visited())))
+}
+
+fn resize_axis_group_updates_with_history(
+    groups: &[FrozenResizeAxisGroup],
+    delta: [f64; 2],
+    history: Option<(Axis, ResizeDeltaInterval)>,
+) -> Option<Vec<SplitResize>> {
+    if groups.is_empty()
+        || delta.iter().any(|value| !value.is_finite())
+        || history.is_some_and(|(_, visited)| {
+            !visited.minimum.is_finite() || !visited.maximum.is_finite()
+        })
+    {
         return None;
     }
     let mut axes = BTreeSet::new();
@@ -307,8 +334,18 @@ pub(super) fn resize_axis_group_updates(
             Axis::Vertical => delta[1],
         };
         let shared = requested.clamp(group.common_delta.minimum, group.common_delta.maximum);
+        let visited = history
+            .filter(|(axis, _)| *axis == group.axis)
+            .map(|(_, visited)| ResizeDeltaInterval {
+                minimum: visited
+                    .minimum
+                    .clamp(group.common_delta.minimum, group.common_delta.maximum),
+                maximum: visited
+                    .maximum
+                    .clamp(group.common_delta.minimum, group.common_delta.maximum),
+            });
         for split in group.splits.iter().filter(|split| split.axis == group.axis) {
-            let update = split_update(split, shared)?;
+            let update = split_update(split, shared, visited)?;
             if updates
                 .insert((split.source.root(), split.source.node()), update)
                 .is_some()
@@ -531,14 +568,30 @@ fn intersect_split_intervals(
     (interval.minimum <= interval.maximum).then_some(())
 }
 
-fn split_update(split: &FrozenResizeSplit, delta: f64) -> Option<SplitResize> {
+fn split_update(
+    split: &FrozenResizeSplit,
+    delta: f64,
+    visited: Option<ResizeDeltaInterval>,
+) -> Option<SplitResize> {
     let extents = split
         .child_extents
         .iter()
         .zip(&split.child_coefficients)
         .map(|(&extent, &coefficient)| extent + coefficient * delta)
         .collect::<Vec<_>>();
-    if extents == split.child_extents {
+    let moved_before = visited.is_some_and(|visited| {
+        split
+            .child_extents
+            .iter()
+            .zip(&split.child_coefficients)
+            .any(|(&extent, &coefficient)| {
+                extent + coefficient * visited.minimum != extent
+                    || extent + coefficient * visited.maximum != extent
+            })
+    });
+    // Pointer motion retains its frozen intent on return to the press boundary.
+    // Discrete inputs retain intermediate commits only where extents changed.
+    if extents == split.child_extents && !moved_before {
         return Some(SplitResize::new(
             split.source.clone(),
             split.weights.clone(),

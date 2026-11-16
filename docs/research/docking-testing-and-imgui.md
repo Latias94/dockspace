@@ -1,15 +1,25 @@
 # Docking reliability and ImGui design references
 
-Research checkpoint: 2026-11-16. The user requested preservation of the supplied
-testing and architecture investigation before further refactoring. The
-[two original messages](docking-testing-and-imgui-source.md) are archived verbatim;
-their claims are research input, not an adopted specification.
+Research checkpoint: 2026-11-16. The initial architecture/test review used
+Dockspace `c9dd58a84bf7ba8b4d78e16e7ca9ab33ba08f218`. Its findings and mutation
+measurements are historical baseline evidence. The subsequent implementation
+adopted the independent short semantic oracle, mandatory workbench outcomes,
+explicit central allocation and the small egui focus-handoff cleanup. Source
+coverage below describes those changes; recorded baseline test counts do not
+qualify the new implementation.
+
+The user requested preservation of the supplied investigation before further
+refactoring. The [two original messages](docking-testing-and-imgui-source.md) are
+archived verbatim; their claims are research input, not an adopted specification.
 
 The follow-up [architecture review](docking-architecture-review.md) compares
-these concerns with the current implementation. The [test design
-proposal](docking-testing-design-options.md) records a measured short-property
-oracle gap and a bounded implementation sequence. Both remain recommendations;
-they do not change the public contracts.
+these concerns with the current implementation, separates adopted contracts from
+remaining capabilities, and maps them to ImGui's proposed rewrite concerns. The
+[test design record](docking-testing-design-options.md) preserves the original
+oracle gap and proposal alongside the implementation and follow-up mutation.
+Its [restored implementation gates](docking-testing-design-options.md#restored-implementation-validation)
+record the final verification separately from the baseline experiments.
+ImGui's candidate directions remain research input, not a finalized v3 contract.
 
 ## Testing decisions
 
@@ -23,9 +33,9 @@ The existing test layers already cover different seams:
 
 | Layer | Existing basis | Bounded improvement |
 | --- | --- | --- |
-| Core commands | `command_model.rs`: 5,000 operations, semantic postconditions, strict topology and membership checks, rejected-transaction atomicity | Short proptest sequences with logical item selectors and standard shrinking |
+| Core commands | `command_model.rs`: 5,000 operations, semantic postconditions, strict topology and membership checks, rejected-transaction atomicity | Adopted: short proptest sequences with independent ordered groups, selection, full local MRU, hidden state, expected rejection and `changed`; logical selectors and standard shrinking |
 | Geometry and input properties | `model_properties.rs` and `pointer_journal_properties.rs` | Preserve independent invariants and existing regression persistence |
-| Real egui widgets | Workbench journeys, product harness and adapter regressions | Keep the full ordered trace, including failing and idle packets; manually reduce failures to real-widget regressions |
+| Real egui widgets | Workbench journeys, product harness and adapter regressions | Adopted: required docking/divider/junction/floating-edge outcomes and mixed keyboard/AccessKit geometry checks; preserve the complete diagnostic trace |
 | Native protocols | Coordinator journeys and bounded producer interleavings | Preserve producer order and original affine owners; inject real late results at explicit checkpoints |
 | Physical backends | Existing X11/macOS qualification drivers | Verify actual focus, hit testing, placement, capture and presentation in the owning backend |
 
@@ -34,6 +44,39 @@ from stable logical items. If shrinking removes a prerequisite, skip that exact
 action; do not retarget it or replace it with a selection. The short sequences
 do not replace long-run operation coverage. A core shrinker cannot reduce an egui
 hit-test failure or qualify native OS callbacks.
+
+### Adopted tests and their limits
+
+The short [semantic model](../../crates/dockspace/src/behavior_tests/command_model/shrinkable/semantics.rs)
+predicts each action before production authority is resolved. The
+[executor/properties](../../crates/dockspace/src/behavior_tests/command_model/shrinkable.rs)
+compare every ordered group, logical and visible selection, full local MRU and
+hidden membership, then require the predicted result class and `changed` value.
+Missing model prerequisites may be skipped after shrinking; missing SUT authority
+for a modeled prerequisite is a failure. Rejections are independently predicted,
+not accepted merely because state stayed unchanged. A constructive property
+always exercises a valid distinct-group center move. The follow-up mutation
+record in the [test design note](docking-testing-design-options.md#follow-up-mutation-evidence)
+shows both short properties now catch the previously accepted blanket rejection.
+
+Workbench [move expectations](../../crates/egui_dockspace/examples/workbench/tests/randomized/semantics.rs)
+check exact payload order, destination selection, source remainder, hidden state
+and unrelated groups. The
+[fixed docking journey](../../crates/egui_dockspace/examples/workbench/tests/randomized/docking.rs)
+requires exposed center/edge drops, actual floating and redocking. Dedicated
+[resize fixtures](../../crates/egui_dockspace/examples/workbench/tests/randomized/resize.rs)
+require divider movement, both axes of a junction, and all four cardinal floating
+edges. They check direct-manipulation geometry and keyboard/AccessKit progress,
+including exact combined steps where the fixed roomy fixture determines them.
+[Mixed semantic input](../../crates/egui_dockspace/examples/workbench/tests/randomized/semantic_input.rs)
+compares batched versus separate ordered events and requires actual progress when
+a numeric control has room.
+
+Adaptive exploration distinguishes `NotApplicable`, `Blocked` and `Performed`.
+`Blocked` is a diagnostic result, not proof that the operation was validly denied
+or that its interaction entry works. Required fixed fixtures must return
+`Performed`; prior random successes cannot excuse a missing mandatory control.
+Source coverage is not final gate evidence or physical backend qualification.
 
 Classify stalled cases against the owning contract:
 
@@ -74,9 +117,9 @@ and candidate directions; they do not establish a finalized Docking v3 design.
   explains central-node remaining-space allocation and why split direction
   changes which window inherits it. Disabling central nodes and splitting their
   properties are proposed; window-driven behavior is a candidate direction.
-- [Docking tests](https://github.com/ocornut/imgui_test_engine/blob/main/imgui_test_suite/imgui_tests_docking.cpp),
-  [viewport tests](https://github.com/ocornut/imgui_test_engine/blob/main/imgui_test_suite/imgui_tests_viewports.cpp)
-  and the [mock backend](https://github.com/ocornut/imgui_test_engine/blob/main/shared/imgui_app.cpp)
+- [Docking tests](https://github.com/ocornut/imgui_test_engine/blob/16b6efbb393fdef0dcac9b0794a8ee476606a152/imgui_test_suite/imgui_tests_docking.cpp),
+  [viewport tests](https://github.com/ocornut/imgui_test_engine/blob/16b6efbb393fdef0dcac9b0794a8ee476606a152/imgui_test_suite/imgui_tests_viewports.cpp)
+  and the [mock backend](https://github.com/ocornut/imgui_test_engine/blob/16b6efbb393fdef0dcac9b0794a8ee476606a152/shared/imgui_app.cpp)
   provide named semantic checks and mock platform operation. The local reference
   backend still lists resistance to move/resize as a testing gap; it is not a
   complete window-manager oracle.
@@ -100,19 +143,40 @@ investigation or the pinned local references.
 | --- | --- | --- |
 | Long-term docking intent | `DockAnchor::Item` and `DockAnchor::Central`; current-candidate resolution, no public persistent NodeId target | Add directional/largest/recent-region queries only for a concrete application need |
 | Group capability | Captured group scope is checked; moving its former item anchor must not silently redirect it | Preserve these semantics through future conveniences |
-| Central behavior | Ordinary tab roots are supported; `CentralNodePolicy` separates merge/split permissions | `central_tabs` still combines retaining an empty leaf with remaining-space allocation |
+| Declarative builder and persistence | Complete declarations compile fresh runtime structure; snapshots use local node numbers | Reopening a removed item still needs explicit placement; stable content identity is not an automatic historical-slot lookup |
+| Central behavior | Adopted: `central_tabs` retains the anchor; default `RootAllocation::Weighted` and explicit `PreferCentral` select allocation; `CentralNodePolicy` separately controls merge/split | PreferCentral requires an anchor. It redistributes constraint deltas, not fixed-width sidebars. Snapshots require the field, with no legacy fallback |
 | Pane sizing | Public host measurement supplies `PaneMinimum` | A general pane maximum/fixed-size policy and tab-constraint conflicts are not yet an adopted contract |
-| Visibility | Logical item visibility is distinct from item removal; shared visibility scenarios check preserved layout and restored controls | Verify single-visible-pane chrome against explicit product expectations before changing it |
+| Visibility | Hide retains logical placement; close removes it. `AutoHideSingle` uses visible membership | This is not universal ordinary-window title chrome; reusing an item ID does not recreate its removed slot |
 | Native resources | Typed effects and observed bindings are distinct from semantic publication and first-live presentation | Continue testing denied/adjusted placement and late platform callbacks in each real backend |
 | Motion | Logical targets and immutable animated output geometry are distinct | Overlap input must choose executable semantics consistently with the exact presented stack |
 
+The [current central tests](../../crates/dockspace/src/behavior_tests/central_allocation.rs)
+measure both allocation choices on both axes, with empty/occupied and nested
+anchors, minimum constraints, lifecycle and persistence. The
+[future-layout test](../../crates/dockspace/src/presentation/compiler/future_layout/tests/allocation.rs)
+compares preview content bounds with committed geometry. Hidden-anchor tests
+cover both strategies and restoration. The frozen solver/traversal is retained
+unchanged as an optimization comparison, with explicit fixtures for the prior
+central preference.
+
 There is no evidence here that a second layout tree, universal host trait or new
-mock-window-manager layer is required. A concrete need for an empty central
-anchor with proportional growth, or a fixed-width Inspector across moves, would
-justify separating empty-anchor retention from space-allocation policy. Define
-constraint aggregation, conflict behavior and split/merge inheritance before
-adding such a contract. The project is unreleased, so a necessary breaking change
-can replace the existing semantics rather than adding compatibility layers.
+mock-window-manager layer is required. The adopted central split removes a
+concrete overloaded contract. Fixed/max/preferred sizes remain a separate
+capability: constraint aggregation, conflict behavior, infeasible bounds and
+split/merge ownership must be defined before exposing it.
+
+### Multi-viewport boundaries
+
+The current native contracts distinguish requests from observations, semantic
+placement from physical lifetime, and Created/Prepared from exact first-live
+admission. Focus dispatch alone does not establish observed focus. The
+[native platform boundary](../../crates/egui_dockspace_native/README.md#run-the-editor)
+still excludes managed Wayland lifecycle/cross-window docking. Windows physical
+cross-window input, physical drag-out creation and arbitrary mixed-monitor DPI
+need further validation; macOS stationary cross-window dwell/autoscroll lack
+capture/delivery authority. Finite X11/macOS qualification does not establish
+all-platform support. Logical rootless surfaces are distinct from an egui native
+application with no root OS viewport; that adapter still requires its root.
 
 ## Related regression coverage
 

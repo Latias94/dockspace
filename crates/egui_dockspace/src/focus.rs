@@ -120,20 +120,30 @@ pub(crate) fn input_may_surrender_focus(context: &Context) -> bool {
     })
 }
 
-/// Preserves input order when a tab press publishes a new pane-focus intent.
-/// Content can take focus only while the original tab still owns framework focus.
-/// This records no renderer presentation or focus-observation acknowledgement.
-pub(crate) fn retain_tab_focus_order(
-    context: &Context,
-    instance: Id,
-    viewport: egui::ViewportId,
-    request: DockspacePaneFocusRequest,
-    tab_target: Option<Id>,
-) {
-    with_framework_focus(context, instance, viewport, request, |state| {
-        state.applied = tab_target.is_none();
-        state.tab_target = tab_target;
-    });
+impl DeferredTabFocus {
+    /// Hands a newly committed pane intent off from this run's ordered tab input.
+    ///
+    /// Content may take focus only while the original tab still owns framework
+    /// focus. This neither applies focus nor acknowledges renderer presentation.
+    pub(crate) fn handoff_after_commit(
+        &self,
+        context: &Context,
+        instance: Id,
+        viewport: egui::ViewportId,
+        previous: Option<DockspacePaneFocusRequest>,
+        committed: Option<DockspacePaneFocusRequest>,
+    ) {
+        let Some(request) = committed.filter(|request| Some(*request) != previous) else {
+            return;
+        };
+        if !self.handled() {
+            return;
+        }
+        with_framework_focus(context, instance, viewport, request, |state| {
+            state.applied = self.target().is_none();
+            state.tab_target = self.target();
+        });
+    }
 }
 
 /// Repeated observations remain true facts without creating an idle repaint loop.

@@ -221,6 +221,12 @@ pub enum WorkspaceValidationError {
         /// Invalid central runtime node.
         central: NodeId,
     },
+    /// Central-first allocation requires an independently declared anchor.
+    #[error("root {root} prefers central allocation but has no central anchor")]
+    CentralAllocationWithoutAnchor {
+        /// Root with an invalid redistribution policy.
+        root: RootId,
+    },
     /// A surface's main-root identity is absent from the root map.
     #[error("surface {surface} references missing main root {root}")]
     MissingSurfaceMainRoot {
@@ -750,6 +756,12 @@ impl<'workspace> Validator<'workspace> {
     fn validate_central_regions(&mut self) {
         for (&root_id, record) in self.workspace.roots.iter() {
             let Some(central) = record.central else {
+                if record.allocation == crate::model::RootAllocation::PreferCentral {
+                    self.errors
+                        .push(WorkspaceValidationError::CentralAllocationWithoutAnchor {
+                            root: root_id,
+                        });
+                }
                 continue;
             };
             let Some(node) = self.workspace.nodes.get(central) else {

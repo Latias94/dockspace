@@ -10,7 +10,7 @@ use crate::engine::{
 };
 use crate::ids::{EngineAuthorityDomainId, FloatingPresentationId, ItemId, SurfaceId};
 use crate::input::intent::CloseSceneTarget;
-use crate::interaction::GestureCancelDelivery;
+use crate::interaction::{GestureCancelDelivery, ResizeAdjustment};
 use crate::model::WorkspaceVersion;
 use crate::presentation::scene::{
     ContainedResizeDirection, SplitterJunctionId, SplitterSceneId, SurfaceSceneStamp,
@@ -188,7 +188,7 @@ impl PreparedSurfaceAction {
         scene: SurfaceSceneStamp,
         witness: Arc<crate::presentation::scene::SurfacePlanScene>,
         splitter: SplitterSceneId,
-        delta: f64,
+        adjustment: ResizeAdjustment,
     ) -> Self {
         Self {
             authority_domain,
@@ -198,7 +198,7 @@ impl PreparedSurfaceAction {
             action: SurfaceAction::AdjustSplitter {
                 scene,
                 splitter,
-                delta,
+                adjustment,
             },
         }
     }
@@ -210,7 +210,7 @@ impl PreparedSurfaceAction {
         witness: Arc<crate::presentation::scene::SurfacePlanScene>,
         junction: SplitterJunctionId,
         axis: crate::model::DockspaceAxis,
-        delta: f64,
+        adjustment: ResizeAdjustment,
     ) -> Self {
         Self {
             authority_domain,
@@ -221,7 +221,7 @@ impl PreparedSurfaceAction {
                 scene,
                 junction,
                 axis,
-                delta,
+                adjustment,
             },
         }
     }
@@ -380,24 +380,24 @@ impl PreparedSurfaceAction {
             SurfaceAction::AdjustSplitter {
                 scene,
                 splitter,
-                delta,
+                adjustment,
             } => EngineInput::AdjustLocalSplitterResize {
                 expected: self.expected,
                 scene,
                 splitter,
-                delta,
+                adjustment,
             },
             SurfaceAction::AdjustSplitterJunction {
                 scene,
                 junction,
                 axis,
-                delta,
+                adjustment,
             } => EngineInput::AdjustLocalSplitterJunctionResize {
                 expected: self.expected,
                 scene,
                 junction,
                 axis,
-                delta,
+                adjustment,
             },
             SurfaceAction::AdjustContainedResize {
                 scene,

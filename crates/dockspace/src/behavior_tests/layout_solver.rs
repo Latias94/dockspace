@@ -286,7 +286,12 @@ fn three_leaf_workspace() -> (Workspace, RootId, [NodeId; 3], NodeId) {
             .expect("valid split"),
     );
     let root = RootId::new(1);
-    builder.set_root(root, RootRecord::new(split).with_central(central));
+    builder.set_root(
+        root,
+        RootRecord::new(split)
+            .with_central(central)
+            .with_allocation(crate::model::RootAllocation::PreferCentral),
+    );
     builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(root));
     (
         builder.build().expect("valid workspace"),
@@ -751,7 +756,12 @@ fn central_leaf_semantics_propagate_through_ancestor_splits() {
         Node::split(Axis::Horizontal, [left, vertical], [0.25, 0.75]).expect("valid split"),
     );
     let root = RootId::new(2);
-    builder.set_root(root, RootRecord::new(horizontal).with_central(central));
+    builder.set_root(
+        root,
+        RootRecord::new(horizontal)
+            .with_central(central)
+            .with_allocation(crate::model::RootAllocation::PreferCentral),
+    );
     builder.set_surface(SurfaceId::new(2), SurfacePresentation::with_main(root));
     let workspace = builder.build().expect("valid workspace");
     let leaf_constraints = [left, central, bottom]
@@ -867,7 +877,12 @@ fn projects_ten_thousand_nested_splits_without_call_stack_growth() {
     }
 
     let root = RootId::new(4);
-    builder.set_root(root, RootRecord::new(subtree).with_central(central));
+    builder.set_root(
+        root,
+        RootRecord::new(subtree)
+            .with_central(central)
+            .with_allocation(crate::model::RootAllocation::PreferCentral),
+    );
     builder.set_surface(SurfaceId::new(4), SurfacePresentation::with_main(root));
     let workspace = builder.build().expect("valid deep workspace");
 

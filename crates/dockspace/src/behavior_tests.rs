@@ -3,6 +3,7 @@
 pub(crate) mod support;
 
 mod canonical_graph;
+mod central_allocation;
 mod command_model;
 mod command_sequences;
 mod contained_placement;

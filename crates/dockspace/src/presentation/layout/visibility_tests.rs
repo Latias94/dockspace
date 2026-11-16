@@ -1,6 +1,7 @@
 use super::*;
 use crate::graph::{RootRecord, SurfacePresentation};
 use crate::ids::{ItemId, SurfaceId};
+use crate::model::RootAllocation;
 
 const ROOT: RootId = RootId::new(1);
 
@@ -112,23 +113,39 @@ fn fully_hidden_subtrees_do_not_compose_constraints_or_nested_gaps() {
 
 #[test]
 fn hidden_central_ownership_does_not_participate_in_visible_allocation() {
-    let mut builder = Workspace::builder();
-    let central = builder.insert_node(Node::tabs([ItemId::new(1)]));
-    let a = builder.insert_node(Node::tabs([ItemId::new(2)]));
-    let b = builder.insert_node(Node::tabs([ItemId::new(3)]));
-    let split = builder
-        .insert_node(Node::split(Axis::Horizontal, [central, a, b], [0.2, 0.3, 0.5]).unwrap());
-    builder.set_root(ROOT, RootRecord::new(split).with_central(central));
-    builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(ROOT));
-    builder.set_hidden_items([ItemId::new(1)].into());
-    let workspace = builder.build().unwrap();
-    let projected = project(&workspace);
-    let split_projection = projected.splits.get(&split).unwrap();
-    assert_eq!(split_projection.central_index, None);
-    assert_eq!(split_projection.following_child_index(1), Some(2));
-    close(projected.nodes[&a].rect.width(), 375.0);
-    close(projected.nodes[&b].rect.width(), 625.0);
-    assert_eq!(workspace.root(ROOT).unwrap().central, Some(central));
+    for allocation in [RootAllocation::Weighted, RootAllocation::PreferCentral] {
+        let mut builder = Workspace::builder();
+        let central = builder.insert_node(Node::tabs([ItemId::new(1)]));
+        let a = builder.insert_node(Node::tabs([ItemId::new(2)]));
+        let b = builder.insert_node(Node::tabs([ItemId::new(3)]));
+        let split = builder
+            .insert_node(Node::split(Axis::Horizontal, [central, a, b], [0.2, 0.3, 0.5]).unwrap());
+        builder.set_root(
+            ROOT,
+            RootRecord::new(split)
+                .with_central(central)
+                .with_allocation(allocation),
+        );
+        builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(ROOT));
+        builder.set_hidden_items([ItemId::new(1)].into());
+        let mut workspace = builder.build().unwrap();
+        let projected = project(&workspace);
+        let split_projection = projected.splits.get(&split).unwrap();
+        assert_eq!(split_projection.central_index, None);
+        assert_eq!(split_projection.following_child_index(1), Some(2));
+        close(projected.nodes[&a].rect.width(), 375.0);
+        close(projected.nodes[&b].rect.width(), 625.0);
+        assert_eq!(workspace.root(ROOT).unwrap().central, Some(central));
+        workspace.replace_hidden_items(Default::default()).unwrap();
+        let restored = project(&workspace);
+        assert_eq!(
+            restored.splits.get(&split).unwrap().central_index,
+            (allocation == RootAllocation::PreferCentral).then_some(0)
+        );
+        close(restored.nodes[&central].rect.width(), 999.0 * 0.2);
+        close(restored.nodes[&a].rect.width(), 999.0 * 0.3);
+        close(restored.nodes[&b].rect.width(), 999.0 * 0.5);
+    }
 }
 
 #[test]

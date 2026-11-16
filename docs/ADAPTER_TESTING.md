@@ -45,6 +45,15 @@ includes future members even when they are clipped out of the current strip.
 These records grant no input authority; the currently presented layout remains
 the target-selection basis. Split targets do not add future tab shapes.
 
+UI journeys must associate a guide with the intended destination before sending
+release. Observe its root, scope and direction in the current completed pass,
+then match the active preview's destination and action. Identical accessibility
+labels do not identify the same pane: a foreground floating root can expose its
+own center guide over the requested main pane. A covered-target regression must
+first acquire the source drag, prove that overlap, cancel, and verify that no
+payload was released into the covering root. These observations guide the test's
+input; the core still validates the exact presented receiver authority.
+
 ## Retained UI publication
 
 Keep candidate node changes and hit records separate from the currently installed
@@ -127,6 +136,15 @@ clamp independently and return to the press geometry without accumulating drift.
 Cancellation after chrome or viewport changes must restore current committed
 geometry even when the preview was not presented or the recovery output is
 dropped. Later structural changes must retain their normal motion policy.
+
+Compare ordered keyboard/AccessKit resize batches with the same steps in
+separate frames, including persistent split weights as well as final geometry.
+Start from a constrained projection whose visible sizes differ from its stored
+weights. An effective discrete round trip must preserve the same committed size
+intent across packet boundaries; a wholly blocked sequence must leave latent
+weights unchanged. Keep the separate pointer-gesture regression: returning to
+the press position restores that gesture's original weights. Comparing only the
+current pixels misses differences exposed by later host resizing or persistence.
 
 Vary native DPI, presentation scale, client physical size and desktop origin
 independently. Test a change followed by a return to the original numeric
@@ -305,15 +323,21 @@ machine to reuse these tests.
 Use different tools for different failure seams:
 
 - The core command model retains its 5,000-step journey and operation-coverage
-  checks. Its short proptest sequences use logical item selectors and recreate
-  current sources and targets at each step. Proptest can shrink the sequence and
-  its parameters without preserving stale node IDs or authority. An action whose
-  precondition no longer holds is skipped explicitly; it never changes its target
-  or becomes another action to make a reduced sequence executable.
+  checks. Its short proptest sequences independently predict ordered groups,
+  selection, local MRU, hidden members, success/rejection and state changes.
+  Current executable sources and targets are resolved afterwards. A missing SUT
+  object expected by the model fails; only a prerequisite absent from the model
+  permits a skip. Proptest shrinks stable logical item selectors without
+  retargeting them. Constructive cases require legal center moves to succeed,
+  even when the remaining sequence would be entirely inapplicable.
 - The workbench drives real widgets and reports its full input trace. This is a
   diagnostic trace, not a version-independent recording format or an automatic
   UI shrinker. Reduce a discovered failure to a named regression at the narrowest
-  seam that still reproduces it, then retain the exploratory journey.
+  seam that still reproduces it, then retain the exploratory journey. Distinguish
+  inapplicable, blocked and performed attempts. An acquired real control must
+  produce its intended payload/selection or constrained geometry; consuming an
+  event alone is insufficient. Keep deterministic required-entry fixtures
+  alongside adaptive exploration, including move and release checkpoints.
 - Native schedules preserve each producer's order and the original affine
   owners. Keep their bounded interleavings rather than deleting raw callbacks
   with a generic sequence shrinker. Such deletion can violate ingress contracts

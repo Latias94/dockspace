@@ -339,11 +339,13 @@ pub enum NodeBuildError {
 pub struct RootRecord {
     /// Topology root node.
     pub node: NodeId,
-    /// Reachable tabs leaf that receives remaining central space.
+    /// Reachable tabs leaf retained as the central docking anchor.
     ///
     /// A main dockspace retains this leaf when its last content leaves. A
     /// contained floating root retires when all of its content leaves.
     pub central: Option<NodeId>,
+    /// Constraint redistribution, independently of empty-anchor retention.
+    pub allocation: crate::model::RootAllocation,
 }
 
 impl RootRecord {
@@ -352,6 +354,7 @@ impl RootRecord {
         Self {
             node,
             central: None,
+            allocation: crate::model::RootAllocation::Weighted,
         }
     }
 
@@ -359,6 +362,13 @@ impl RootRecord {
     #[must_use]
     pub fn with_central(mut self, central: NodeId) -> Self {
         self.central = Some(central);
+        self
+    }
+
+    /// Selects redistribution without changing the declared anchor.
+    #[must_use]
+    pub fn with_allocation(mut self, allocation: crate::model::RootAllocation) -> Self {
+        self.allocation = allocation;
         self
     }
 }

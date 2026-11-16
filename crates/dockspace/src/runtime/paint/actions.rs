@@ -460,7 +460,9 @@ impl SurfacePaintPlan<'_> {
     ///
     /// Each step clamps to the same touching-layout solver limits as a direct
     /// resize. An endpoint followed by an outward and inward step therefore
-    /// finishes one step inside that endpoint. Empty sequences return `None`.
+    /// finishes one step inside that endpoint. Effective intermediate movement
+    /// commits visible proportions even when the final displacement is zero.
+    /// Empty sequences return `None`.
     #[must_use]
     pub fn prepare_splitter_adjustment_sequence(
         self,
@@ -474,7 +476,7 @@ impl SurfacePaintPlan<'_> {
             .plan
             .splitter_record(id)
             .filter(|record| record.operable() && self.plan.partition_available(id.root))?;
-        let delta = self.splitter_adjustment_sequence_delta(
+        let adjustment = self.splitter_adjustment_sequence(
             crate::presentation::scene::SplitterResizeTarget::Handle(id),
             record.axis(),
             adjustments,
@@ -485,7 +487,7 @@ impl SurfacePaintPlan<'_> {
             self.scene,
             self.frozen_action_witness()?,
             id,
-            delta,
+            adjustment,
         ))
     }
 
@@ -508,7 +510,8 @@ impl SurfacePaintPlan<'_> {
     ///
     /// Every step uses the common reachable displacement of all incident pairs
     /// on this axis. The other axis remains unchanged. Equalizing still requires
-    /// a common constrained destination; empty sequences return `None`.
+    /// a common constrained destination. Effective intermediate movement commits
+    /// visible proportions; empty sequences return `None`.
     #[must_use]
     pub fn prepare_splitter_junction_adjustment_sequence(
         self,
@@ -524,7 +527,7 @@ impl SurfacePaintPlan<'_> {
             .find(|record| record.visual_id() == junction)?;
         self.splitter_junction_axis_operable(record, axis)
             .then_some(())?;
-        let delta = self.splitter_adjustment_sequence_delta(
+        let adjustment = self.splitter_adjustment_sequence(
             crate::presentation::scene::SplitterResizeTarget::Junction(id),
             axis.into(),
             adjustments,
@@ -536,7 +539,7 @@ impl SurfacePaintPlan<'_> {
             self.frozen_action_witness()?,
             id,
             axis,
-            delta,
+            adjustment,
         ))
     }
 

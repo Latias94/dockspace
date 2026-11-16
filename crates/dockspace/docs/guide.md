@@ -6,6 +6,7 @@
 - [Host integration](#engine-host-integration)
 - [Logical surfaces](#incremental-logical-surfaces) and [nested splits](#nested-split-resizing)
 - [Pane visibility](#pane-visibility)
+- [Central anchors and allocation](#central-anchors-and-allocation)
 - [Pointer input](#pointer-device-and-event-time), [stationary interaction](#stationary-interaction) and [touch](#local-touch)
 - [Native input budgets](#budgeted-native-input) and [window recovery](#native-creation-failure-and-recovery)
 - [Close decisions](#application-close-decisions) and [arrangement locking](#arrangement-locking)
@@ -219,6 +220,27 @@ cannot confirm the replacement pass. `DeferredSurfaceAction` retains the
 original semantic witness for actions produced during encoding and validates
 its relevant scope in a subsequent update.
 
+## Central anchors and allocation
+
+`DockspaceNode::central_tabs` declares an anchor that can remain empty. Moving
+the last item out of a main central area preserves that docking destination.
+Moving or approving the close of the last item in a contained root retires that
+source root. Explicitly declaring an empty contained central root remains valid.
+
+Space redistribution is a separate root choice. `DockspaceRootLayout::new`
+defaults to `RootAllocation::Weighted`: eligible children share constraint-induced
+growth or shrinkage by their weights. Use
+`.allocation(RootAllocation::PreferCentral)` when the central branch should
+absorb or yield that delta first. This requires a declared central anchor.
+It does not make side panes fixed-width; pane minimums still apply and host
+resizing uses the stored split weights.
+
+The option lives in `dockspace::model` and is re-exported by `egui_dockspace`.
+`DockspaceRootView::allocation()` reports the current choice. Complete-root
+float, dock-back and other rehoming preserve it; newly created roots default to
+Weighted. Logical layout copies and persistence preserve both the anchor and
+allocation. Pane-specific maximum/fixed sizes are not part of this option.
+
 ## Pane visibility
 
 Use `session.prepare_set_item_visibility(item, visible)` and submit the prepared
@@ -293,8 +315,19 @@ The exact presented layout supplies the complete geometry and constraints.
 All affected minima and maxima limit one shared displacement per axis before
 weights are reconstructed. Pointer gestures, splitter adjustments and junction
 adjustments use the same solver and publish their split updates in one atomic
-workspace mutation. Zero effective movement preserves the original persistent
-weights, including a gesture which moves away and returns to its starting point.
+workspace mutation. A pointer gesture with zero final displacement preserves
+its original persistent weights, including when it moves away and returns to
+its starting point.
+
+For representable movements, discrete keyboard/accessibility steps preserve
+their ordered resize intent across input packet boundaries. If a sequence
+actually moves and then returns to its initial visible size, it commits the achieved size
+proportions, just as separately submitted steps would. A sequence whose every
+step is blocked by the same size limit preserves the original weights. This
+distinction matters when a pane's minimum has already displaced its stored
+weighted size: the next host resize or saved layout must not depend on how many
+input events happened to arrive in one frame.
+
 An overflowing, underallocated or compressed separator projection cannot begin
 a resize; clipped hit geometry is never substituted for complete layout facts.
 

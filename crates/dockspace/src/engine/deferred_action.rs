@@ -88,13 +88,15 @@ impl DockEngine {
                 events,
             ),
             LocalSurfaceAction::AdjustSplitter {
-                splitter, delta, ..
+                splitter,
+                adjustment,
+                ..
             } => {
                 let outcome = self.adjust_splitter_from_candidate(
                     input,
                     witness,
                     *splitter,
-                    *delta,
+                    *adjustment,
                     policy,
                     events,
                     interaction_events,
@@ -107,7 +109,7 @@ impl DockEngine {
             LocalSurfaceAction::AdjustSplitterJunction {
                 junction,
                 axis,
-                delta,
+                adjustment,
                 ..
             } => {
                 let outcome = self.adjust_splitter_junction_from_candidate(
@@ -115,7 +117,7 @@ impl DockEngine {
                     witness,
                     *junction,
                     *axis,
-                    *delta,
+                    *adjustment,
                     policy,
                     events,
                     interaction_events,

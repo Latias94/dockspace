@@ -596,7 +596,13 @@ fn create_surface_root(
     }
     validate_root_content(workspace, content)?;
     let (node, central, items, delta) = detach_root_content(workspace, content)?;
-    Arc::make_mut(&mut workspace.storage.roots).insert(root, RootRecord { node, central });
+    Arc::make_mut(&mut workspace.storage.roots).insert(
+        root,
+        RootRecord {
+            central,
+            ..RootRecord::new(node)
+        },
+    );
     workspace
         .storage
         .surfaces
@@ -640,7 +646,13 @@ fn create_contained_root(
         return Err(CommandError::MissingSurface { surface });
     }
     let insertion_index = contained_insertion_index(workspace, surface, floating, position)?;
-    Arc::make_mut(&mut workspace.storage.roots).insert(root, RootRecord { node, central });
+    Arc::make_mut(&mut workspace.storage.roots).insert(
+        root,
+        RootRecord {
+            central,
+            ..RootRecord::new(node)
+        },
+    );
     workspace
         .storage
         .contained_floatings
@@ -689,7 +701,13 @@ fn install_main_root(
             root: existing,
         });
     }
-    Arc::make_mut(&mut workspace.storage.roots).insert(root, RootRecord { node, central });
+    Arc::make_mut(&mut workspace.storage.roots).insert(
+        root,
+        RootRecord {
+            central,
+            ..RootRecord::new(node)
+        },
+    );
     presentation.main_root = Some(root);
     workspace.complete_root_birth(root, RootPresentationOwner::Main { surface })?;
     Ok(AppliedCommand {

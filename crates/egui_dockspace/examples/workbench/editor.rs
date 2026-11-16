@@ -247,6 +247,15 @@ pub(super) struct DemoPanes {
     pub(super) panes: BTreeMap<ItemId, DemoPane>,
     selection: usize,
     objects: [SceneObject; 3],
+    #[cfg(test)]
+    pub(super) drop_observations: Option<DemoDropObservations>,
+}
+
+#[cfg(test)]
+pub(super) struct DemoDropObservations {
+    pub(super) pass: u64,
+    pub(super) guides: Vec<DropGuide>,
+    pub(super) target: Option<egui_dockspace::DockspaceDropTargetFeedback>,
 }
 
 struct SceneObject {
@@ -289,7 +298,26 @@ impl DemoPanes {
                 position: [[-140.0, 60.0, 0.0], [140.0, 60.0, 0.0], [0.0, -60.0, 0.0]][index],
                 visible: true,
             }),
+            #[cfg(test)]
+            drop_observations: None,
         }
+    }
+
+    #[cfg(test)]
+    fn observe_drop_pass(&mut self, ui: &egui::Ui) -> &mut DemoDropObservations {
+        let pass = ui.ctx().cumulative_pass_nr();
+        if self
+            .drop_observations
+            .as_ref()
+            .is_none_or(|old| old.pass != pass)
+        {
+            self.drop_observations = Some(DemoDropObservations {
+                pass,
+                guides: Vec::new(),
+                target: None,
+            });
+        }
+        self.drop_observations.as_mut().unwrap()
     }
 }
 
@@ -315,7 +343,15 @@ impl PaneView for DemoPanes {
     }
 
     fn drop_guide_ui(&mut self, ui: &egui::Ui, guide: &DropGuide) {
+        #[cfg(test)]
+        self.observe_drop_pass(ui).guides.push(*guide);
         tabs::drop_guide_ui(self, ui, guide);
+    }
+
+    #[cfg(test)]
+    fn drop_preview_ui(&mut self, ui: &egui::Ui, preview: &egui_dockspace::DropPreview) {
+        self.observe_drop_pass(ui).target = Some(preview.target);
+        preview.paint(ui);
     }
 
     fn tab_bar_layout(&self, _bar: TabBarId, _ui: &egui::Ui) -> TabBarLayout {

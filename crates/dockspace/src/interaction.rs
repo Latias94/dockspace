@@ -2253,6 +2253,39 @@ pub(crate) struct ResizeDeltaInterval {
     pub(crate) maximum: f64,
 }
 
+/// A discrete resize sequence, retaining effective travel before its final displacement.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ResizeAdjustment {
+    delta: f64,
+    visited: ResizeDeltaInterval,
+}
+
+impl ResizeAdjustment {
+    pub(crate) fn new(delta: f64) -> Self {
+        Self {
+            delta,
+            visited: ResizeDeltaInterval {
+                minimum: delta.min(0.0),
+                maximum: delta.max(0.0),
+            },
+        }
+    }
+
+    pub(crate) fn record(&mut self, delta: f64) {
+        self.delta = delta;
+        self.visited.minimum = self.visited.minimum.min(delta);
+        self.visited.maximum = self.visited.maximum.max(delta);
+    }
+
+    pub(crate) const fn delta(self) -> f64 {
+        self.delta
+    }
+
+    pub(crate) const fn visited(self) -> ResizeDeltaInterval {
+        self.visited
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ResizeStart {
     pub(crate) owner: GestureOwner,

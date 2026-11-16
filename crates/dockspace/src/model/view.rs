@@ -4,7 +4,7 @@ use crate::geometry::LogicalRect;
 use crate::graph::{Node, SplitWeight, SurfacePresentation, Workspace};
 use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
 
-use super::{DockspaceAxis, DockspaceLayout};
+use super::{DockspaceAxis, DockspaceLayout, RootAllocation};
 use crate::model::PreparedTabsGroup;
 
 /// Read-only product view of a validated docking workspace.
@@ -93,6 +93,7 @@ impl<'a> DockspaceView<'a> {
             id,
             content: record.node,
             central: record.central,
+            allocation: record.allocation,
         })
     }
 
@@ -254,6 +255,7 @@ impl<'a> DockspaceSurfaceView<'a> {
                 id: root,
                 content: record.node,
                 central: record.central,
+                allocation: record.allocation,
             })
         })
     }
@@ -287,6 +289,7 @@ pub struct DockspaceRootView<'a> {
     id: RootId,
     content: NodeId,
     central: Option<NodeId>,
+    allocation: RootAllocation,
 }
 
 impl fmt::Debug for DockspaceRootView<'_> {
@@ -295,6 +298,7 @@ impl fmt::Debug for DockspaceRootView<'_> {
             .debug_struct("DockspaceRootView")
             .field("id", &self.id)
             .field("content", &self.content())
+            .field("allocation", &self.allocation)
             .finish()
     }
 }
@@ -318,7 +322,7 @@ impl<'a> DockspaceRootView<'a> {
             })
     }
 
-    /// Returns the tabs leaf that receives remaining central space, when configured.
+    /// Returns the declared central docking anchor, when configured.
     #[must_use]
     pub fn central(self) -> Option<DockspaceNodeView<'a>> {
         self.central.and_then(|node| {
@@ -330,12 +334,19 @@ impl<'a> DockspaceRootView<'a> {
         })
     }
 
+    /// Returns the root's constraint redistribution independently of its anchor.
+    #[must_use]
+    pub const fn allocation(self) -> RootAllocation {
+        self.allocation
+    }
+
     /// Returns whether an empty central leaf keeps this root alive.
     ///
-    /// Only the main root of a logical surface retains an empty central area;
-    /// contained roots are retired once their content is gone. This is the
-    /// renderer-neutral lifecycle rule used by native hosts before admitting a
-    /// move or close that would empty the root.
+    /// Only the main root of a logical surface retains an empty central area
+    /// when a move or approved close removes its last item. An emptied contained
+    /// source is retired. Explicitly declaring an empty contained anchor remains
+    /// valid. Native hosts use this lifecycle rule before admitting a move or
+    /// close that would empty the root.
     #[must_use]
     pub fn retains_empty_central_root(self) -> bool {
         self.central.is_some()
@@ -454,6 +465,7 @@ impl<'a> DockspaceContainedView<'a> {
                 id: self.root,
                 content: record.node,
                 central: record.central,
+                allocation: record.allocation,
             })
     }
 }
@@ -573,7 +585,7 @@ impl<'a> DockspaceTabsView<'a> {
             .filter(|item| !self.hidden_items.contains(item))
     }
 
-    /// Returns whether this leaf receives the root's remaining central space.
+    /// Returns whether this leaf is the root's central docking anchor.
     #[must_use]
     pub const fn is_central(self) -> bool {
         self.central

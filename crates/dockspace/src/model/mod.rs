@@ -20,7 +20,7 @@ pub use action::{
 pub(crate) use action::{PreparedDockActionAuthorityMismatch, ProductAction};
 pub use layout::{
     DockspaceAxis, DockspaceContainedLayout, DockspaceLayout, DockspaceLayoutError, DockspaceNode,
-    DockspaceRootLayout, DockspaceSurfaceLayout,
+    DockspaceRootLayout, DockspaceSurfaceLayout, RootAllocation,
 };
 pub use revision::WorkspaceVersion;
 pub use view::{

@@ -280,18 +280,13 @@ impl Dockspace {
         self.pointer = pointer;
         self.pending_focus.settle(&accepted_focus, &report);
         deferred_focus.apply(ui.ctx());
-        if deferred_focus.handled()
-            && let Some(request) = self.session.pane_focus_request(surface)
-            && Some(request) != focus_before_pointer
-        {
-            crate::focus::retain_tab_focus_order(
-                ui.ctx(),
-                self.id,
-                ui.ctx().viewport_id(),
-                request,
-                deferred_focus.target(),
-            );
-        }
+        deferred_focus.handoff_after_commit(
+            ui.ctx(),
+            self.id,
+            ui.ctx().viewport_id(),
+            focus_before_pointer,
+            self.session.pane_focus_request(surface),
+        );
         crate::pointer::schedule_pointer_continuation(
             &self.session,
             ui.ctx(),

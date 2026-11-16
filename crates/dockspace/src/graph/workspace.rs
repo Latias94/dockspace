@@ -903,6 +903,7 @@ impl Workspace {
             root,
             root_node: record.node,
             central: record.central,
+            allocation: record.allocation,
             nodes,
             presentation,
         }));

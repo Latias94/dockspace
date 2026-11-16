@@ -1,28 +1,34 @@
 # Docking architecture review against Dear ImGui
 
-Reviewed on 2026-11-16 against Dockspace
+Baseline reviewed on 2026-11-16 against Dockspace
 `c9dd58a84bf7ba8b4d78e16e7ca9ab33ba08f218`, local Dear ImGui
 `d88f238d1d363ef387382b2e29ad12cf96f826ac`, and ImGui Test Engine
 `16b6efbb393fdef0dcac9b0794a8ee476606a152`.
-This is a research recommendation, not an adopted change to public contracts.
+The original review and measurements below describe that baseline. The subsequent
+2026-11-16 implementation has adopted the independent short semantic model,
+mandatory workbench outcome checks, separate central allocation and the small
+egui focus-handoff cleanup. Current contracts and remaining proposals are
+identified separately; final verification evidence belongs to the implementation
+checkpoint, not the historical baseline results.
 The [source archive and verified references][research] distinguish user-supplied
-investigation from primary evidence. The [test design proposal][testing] follows
-from the architectural findings below.
+investigation from primary evidence. The [test design record][testing] preserves
+the original proposal, its measurements and the adopted changes.
 
 ## Judgment
 
 Keep the current layout tree, content identities, atomic publication and exact
 native lifetime protocols. The inspected code does not establish a need to
 replace them. One production design change has a concrete independent use case:
-separate an empty central anchor from its constraint-allocation preference.
+separating an empty central anchor from its constraint-allocation preference.
+That separation is now implemented as the explicit `RootAllocation` contract.
 Maximum/fixed pane sizing is a capability decision that requires a complete
 public contract. It is not already supported by the internal solver's types.
 
-The more urgent reliability improvement is in the tests' expected behavior.
-A controlled mutation confirmed that the short command property can accept the
-blanket rejection of legal center docking. The long command journey detects
-that mutation. Both facts matter: keep the long exploration while making the
-short property's semantic expectations independent.
+The baseline's more urgent reliability gap was in the tests' expected behavior:
+a controlled mutation let the short property accept blanket rejection of legal
+center docking, while the long journey detected it. The new short model predicts
+results independently and rejects that mutation too. Both test layers remain;
+this closes a measured oracle gap without proving all command sequences correct.
 
 ## What ImGui's rewrite discussion actually identifies
 
@@ -62,55 +68,54 @@ runtime nodes on restore [D7]. The declarative builder allocates structure only
 when the complete declaration is compiled [D8]. These choices avoid requiring
 applications to manage mutable NodeIds or Builder call order.
 
-## Recommended production change: separate central responsibilities
+## Adopted contract: separate central responsibilities
 
-`central_tabs` currently declares both a retainable empty docking leaf and a
-remaining-space region [D8]. `RootRecord.central` drives canonical retention
-and the solver's preference for absorbing or yielding constraint deltas [D9].
-Merge/split permission is already separately configured by `CentralNodePolicy`.
+At the baseline, `central_tabs` combined a retainable empty docking leaf with
+preferential constraint redistribution. The implemented declaration now separates
+three responsibilities [D8], [D23]:
 
-The missing combination is concrete: keep a document landing area after its
-last tab leaves, while all panes share a constraint-induced adjustment by
-weight. Ordinary tabs cannot remain empty; the central declaration implicitly
-selects the allocation preference.
+- `DockspaceNode::central_tabs` declares the semantic docking anchor and permits
+  an empty leaf. It does not select an allocation preference.
+- `DockspaceRootLayout::allocation(RootAllocation::Weighted)` is the default.
+  Eligible children share constraint-induced redistribution by weight.
+- `RootAllocation::PreferCentral` explicitly lets the declared central branch
+  absorb or yield constraint deltas first. The declaration rejects this option
+  when no central leaf exists.
+- `CentralNodePolicy` independently controls merge/split permission. Allocation
+  does not grant permission or change root lifetime.
 
 Our solver differs from ImGui's `SizeRef` allocation. With normalized weights
-and unconstrained panes, central and ordinary allocation can produce the same
-result. A temporary solver probe confirmed this discriminating fixture:
+and unconstrained panes, both allocation choices can produce the same result.
+The original temporary solver probe established this discriminating fixture;
+the same numbers now have public measured-pane coverage [D24]:
 
-| Available extent: 800; weights: `[0.25, 0.5, 0.25]` | Ordinary weighted allocation | Middle child is central |
+| Available extent: 800; weights: `[0.25, 0.5, 0.25]` | `Weighted` | Explicit `PreferCentral` on the middle branch |
 | --- | --- | --- |
 | No constraining minimum | `[200, 400, 200]` | `[200, 400, 200]` |
 | Left child's minimum is 300 | `[300, 333.333…, 166.666…]` | `[300, 300, 200]` |
 
 This is constraint redistribution, not a promise of fixed-width side panels.
-The temporary probe exercised `solve_axis`; public measured-pane coverage is
-still needed for a future policy change.
+Both choices use the shared current/future geometry solver. Projection still
+validates the declared anchor under `Weighted`; only explicit `PreferCentral`
+supplies its visible branch as the preferred solver route. Hidden central
+ownership supplies no preferred visible row. Hiding and showing content must
+preserve that distinction [D25], [D26].
 
-The recommended shape is an independently declared root allocation choice:
-weighted redistribution, or preferential redistribution through the central
-anchor. Keep the anchor as a semantic destination. Retention, allocation and
-merge/split permissions must have separate documented meanings; the final type
-names are not decided here. Recommend weighted redistribution as the default,
-with central preference selected explicitly. Selecting central preference
-without a declared central anchor should be a declaration error, not create an
-implicit anchor.
-
-Acceptance must cover both axes, nested anchors, all edge directions, hiding,
-moving the last item and persistence. Moving or closing the last content item
-preserves a retained main anchor, but retires an emptied contained source root.
+Measured tests cover both axes, nested anchors, empty/occupied anchors and
+constrained/unconstrained space. Additional tests cover hiding/restoring the
+central branch, allocation-only fingerprint invalidation, persistence and the
+last-content lifecycle [D24]–[D26]. Moving the last content item preserves a
+retained main anchor but retires an emptied contained source root.
 Explicitly declared empty contained anchors remain valid layouts [D20]; changing
-that rule is outside this refactor. Allocation choice must not change either
-rule. Preserve the anchor across a split instead of inheriting it from the
-direction of a Builder operation. The existing four-direction tests already
-protect that identity [D10].
+that rule is outside this refactor. Existing four-direction tests protect anchor
+identity across splits [D10]. A complete root rehome/promotion carries its root
+allocation; a newly created root starts with `Weighted`.
 
-If implemented before first release, replace the overloaded public explanation
-and update declaration, metadata, snapshot and documentation together. Keep
-the unreleased format at version 1 as requested; do not add a legacy reader or
-parallel interpretation for the old combined meaning. Select and document the
-default explicitly, and persist the allocation choice without silently
-reinterpreting the old payload.
+`DockspaceRootView::allocation()` exposes the choice. Snapshots require and preserve the
+explicit allocation field; they do not silently default an old payload. The
+unreleased format remains version 1, with no compatibility reader. Structure
+fingerprints include allocation, so old presented authority cannot survive a
+change in allocation merely because membership stayed the same [D7], [D24], [D27].
 
 ## Capability decision: maximum and fixed pane sizes
 
@@ -162,10 +167,11 @@ presentation feature, not a reason to create a second topology [D14].
 Similarly, several focus records do not imply competing truth. Selected tab,
 pane focus request, actual framework focus and native activation are different
 facts. `DeferredTabFocus` belongs to the current input run; the framework request
-cache survives across runs. Keep their different lifetimes. The useful deletion
-is the repeated postcommit handoff predicate in callback and owned integration;
-move that rule into the existing focus module without changing when focus is
-applied [D15]. This is a small cleanup, not a new state machine.
+cache survives across runs. Keep their different lifetimes. The implemented
+`DeferredTabFocus::handoff_after_commit` removes the repeated postcommit predicate
+from callback and owned integration. It still requires handled tab input and a
+new committed request; neither integration's focus application phase changes
+[D15], [D28]. This is a small cleanup, not a new state machine.
 
 Do not combine normal and fatal native settlement into a mode-driven facade.
 They already share close/admission rules [D16]. Fatal postcommit settlement
@@ -187,19 +193,49 @@ and N-ary layouts against it [D19]. Keep that optimization regression oracle;
 new behavior needs explicit expectations and cannot be established merely by
 updating the old and new implementations to agree.
 
-## Implementation order and completion
+## Delivery against ImGui's proposed rewrite concerns
 
-1. Strengthen the independent semantic test model and required UI outcomes as
-   described in [the test proposal][testing]. Check success/rejection as well as
-   atomicity, all ordered groups and unaffected state. Keep the existing long
-   journey and bounded native schedules.
-2. Separate central retention and allocation, with the production measurement
-   fixture above, lifecycle/anchor preservation and snapshot tests. Remove the
-   overloaded semantics in the same change.
-3. Make the small egui focus-handoff cleanup behind the existing focus
-   regressions. Preserve each integration's application phase.
-4. Add maximum/fixed constraints only as a complete capability with the rules
-   above. Extend public host and egui cases before claiming support.
+These classifications compare observable contracts with the problems in
+[#7892][upstream-rewrite], not with a finalized upstream v3 specification.
+
+| ImGui concern and primary evidence | Dockspace status | Implemented behavior and remaining limit |
+| --- | --- | --- |
+| Mutable node identity versus long-term location, [#5161][upstream-identity] | Already avoided at the public seam | `ItemId` and current item/central anchors express content intent; internal `NodeId` is not a persistent public docking target. Captured group authority freezes its scope [D1], [D2]. A stable item does not promise a permanent screen location; directional/largest/recent-region lookup remains absent. |
+| DockBuilder exposes mutable structure/call order, [#7892][upstream-rewrite] | Main coupling already avoided | Complete declarative layouts compile once; snapshots use local node numbers and restore fresh runtime nodes [D7], [D8]. Applications still choose explicit placement for programmatic open and cannot infer historic placement from an item ID. |
+| Central node combines retention, allocation and special behavior, [#5209][upstream-central] | Completed in this batch | Empty anchor retention, `Weighted`/explicit `PreferCentral` allocation and `CentralNodePolicy` permissions have independent meanings, with measured current/future and lifecycle checks [D23]–[D27]. Central preference does not promise fixed sidebars. |
+| Windows dictate node behavior, [#7892][upstream-rewrite] and [#5209][upstream-central] | Partial, with explicit ownership | Item operation/close policy and measured minima follow content; root allocation belongs to the root. The selected visible tab supplies the leaf minimum; inactive metadata supports future layouts [D11], [D12]. A general conflict policy for maximum/fixed/preferred sizes is not implemented. |
+| Docked size constraints, [#2849][upstream-size] | Missing capability, not an adopted contract | Public measurement remains minimum-only. Internal solver maxima are not public pane maxima. Selection-dependent minima are supported; fixed/max/preferred sizing and conflicting-tab aggregation require the complete contract described above. |
+| One visible docked window resembles an ordinary window, [#9123][upstream-single] | Partial presentation support | `AutoHideSingle` uses visible membership, while logical hidden membership remains intact [D3], [D14]. It is not a universal conversion to ordinary native title chrome. |
+| Hidden/closed content and remembered docking | Product boundary | Hide preserves a slot; approved close removes the item [D3], [D13]. Reusing the same `ItemId` does not automatically restore a deleted historical slot; reopening needs explicit placement. |
+| Automated tests support structural change, pinned Test Engine [I3] | Strengthened in this batch | The short oracle now predicts ordered groups, selection, full local MRU, hidden state, rejection and `changed`; mandatory workbench docking/resize cases require actual outcomes [D29]–[D32]. Long exploration, frozen geometry comparisons and bounded native schedules remain. This is not a proof over all sequences. |
+
+### Multi-viewport remains a separate comparison
+
+Upstream's multi-viewport v2 discussion in [#7892][upstream-rewrite] concerns
+platform authority as well as docking. Dockspace already separates requested
+effects from observed placement/focus, logical surface placement from physical
+window lifetime, and Created/Prepared from exact first-live admission [D4]–[D6].
+Successful focus dispatch is not observed focus. These contracts address a class
+of assumptions; they do not make every backend physically qualified.
+
+The [native adapter's platform boundary][native-boundary] still applies:
+Wayland permits configured client-local/contained docking but not managed native
+lifecycle or physical cross-window docking. Windows physical cross-window input,
+physical drag-out creation and arbitrary mixed-monitor DPI need further
+validation. On macOS, stationary cross-window dwell/autoscroll lack the required
+capture/delivery authority. Existing X11/macOS qualification covers finite
+scenarios and configurations only. Logical rootless surfaces also do not imply
+that the egui native adapter supports running without its root OS viewport.
+
+## Adopted batch and remaining scope
+
+The short semantic oracle, mandatory UI outcomes, central split and focus-handoff
+deduplication are implemented. The [test design record][testing] distinguishes
+their source coverage from historical measurements and records the
+[restored implementation gates](docking-testing-design-options.md#restored-implementation-validation).
+Maximum/fixed constraints remain a separate capability decision. Optional trace
+replay and further composed platform observations remain bounded follow-up work,
+not prerequisites silently added to this batch.
 
 A batch completes when the changed observable contract has a discriminating
 test, relevant mutation is caught, fixed regressions and applicable existing
@@ -207,7 +243,7 @@ adapter gates pass, and the removed responsibility no longer lives in callers.
 State counters should distinguish skipped, expected rejection, applied and
 changed actions. No additional number of random seeds proves universal safety.
 
-## Validation from this review
+## Historical baseline validation
 
 The temporary central probe passed with both the unconstrained and constrained
 numbers above. Temporarily rejecting every `DockTarget::Center` in the production
@@ -223,6 +259,19 @@ layout-solver and frozen-traversal selection passed 50 tests with
 experiments, not newly reproduced product defects or physical-platform
 qualification.
 
+## Follow-up mutation evidence
+
+The coordinating agent repeated the blanket center-rejection mutation after the
+independent oracle was implemented. Both short properties now failed with a
+`model-valid CenterMove ... was rejected` diagnostic at seed `1340171702`
+(nextest run `2f75e4ef-e19d-47ac-82a5-3c3892700ee8`). The constructive property
+reduced to `prefix = []` and retains its fixed, distinct-group move
+`item 3 -> item 1`. The ordinary property reduced to a single legal no-op,
+`CenterMove item 1 -> item 1`; its minimized example must not be described as a
+cross-group move. Production bytes were restored exactly, and no new persisted
+failure-seed file was created. These measurements establish that this mutation
+is caught; they do not replace the final restored implementation gates.
+
 ## References
 
 [research]: docking-testing-and-imgui.md
@@ -231,6 +280,10 @@ qualification.
 [motion]: ../adr/0005-motion-and-presentation-geometry.md
 [upstream-rewrite]: https://github.com/ocornut/imgui/issues/7892
 [upstream-size]: https://github.com/ocornut/imgui/issues/2849
+[upstream-identity]: https://github.com/ocornut/imgui/issues/5161#issuecomment-1087337677
+[upstream-central]: https://github.com/ocornut/imgui/issues/5209#issuecomment-1102272275
+[upstream-single]: https://github.com/ocornut/imgui/issues/9123
+[native-boundary]: ../../crates/egui_dockspace_native/README.md#run-the-editor
 [I1]: https://github.com/ocornut/imgui/blob/d88f238d1d363ef387382b2e29ad12cf96f826ac/imgui_internal.h#L2127
 [I2]: https://github.com/ocornut/imgui/blob/d88f238d1d363ef387382b2e29ad12cf96f826ac/imgui.cpp#L19454
 [I3]: https://github.com/ocornut/imgui_test_engine/blob/16b6efbb393fdef0dcac9b0794a8ee476606a152/shared/imgui_app.cpp#L1478
@@ -256,3 +309,13 @@ qualification.
 [D20]: ../../crates/dockspace/src/behavior_tests/product_model.rs#L71
 [D21]: ../../crates/egui_dockspace_native/src/coordinator/shutdown.rs#L266
 [D22]: ../../crates/egui_dockspace_native/src/surface_driver/tests/shutdown_service.rs#L6
+[D23]: ../../crates/dockspace/src/model/layout.rs#L41
+[D24]: ../../crates/dockspace/src/behavior_tests/central_allocation.rs
+[D25]: ../../crates/dockspace/src/presentation/layout/visibility_tests.rs#L115
+[D26]: ../../crates/dockspace/src/presentation/compiler/future_layout/tests/allocation.rs
+[D27]: ../../crates/dockspace/src/model/view.rs#L339
+[D28]: ../../crates/egui_dockspace/src/focus.rs#L123
+[D29]: ../../crates/dockspace/src/behavior_tests/command_model/shrinkable/semantics.rs
+[D30]: ../../crates/dockspace/src/behavior_tests/command_model/shrinkable.rs
+[D31]: ../../crates/egui_dockspace/examples/workbench/tests/randomized/semantics.rs
+[D32]: ../../crates/egui_dockspace/examples/workbench/tests/randomized/resize.rs

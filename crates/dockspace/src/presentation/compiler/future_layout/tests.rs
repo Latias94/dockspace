@@ -36,6 +36,7 @@ const SURFACE: SurfaceId = SurfaceId::new(1);
 const ROOT: RootId = RootId::new(1);
 const MOVED: ItemId = ItemId::new(1);
 
+mod allocation;
 mod visibility;
 
 fn compile(

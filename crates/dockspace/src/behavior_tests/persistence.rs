@@ -969,6 +969,7 @@ fn deep_chain_restore_is_iterative() {
             id: 1,
             node: subtree,
             central: Some(0),
+            allocation: crate::model::RootAllocation::Weighted,
         }],
         surfaces: vec![SnapshotSurfaceRecord {
             id: 1,

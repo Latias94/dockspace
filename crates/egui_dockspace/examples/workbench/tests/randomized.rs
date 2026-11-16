@@ -8,10 +8,39 @@ use egui_dockspace::PaneView;
 
 use super::*;
 
+#[path = "randomized/docking.rs"]
+mod docking;
+#[path = "randomized/resize.rs"]
+mod resize;
 #[path = "randomized/semantic_input.rs"]
 mod semantic_input;
+#[path = "randomized/semantics.rs"]
+mod semantics;
+
+use semantics::LayoutState;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Attempt {
+    NotApplicable,
+    Blocked,
+    Performed,
+}
+
+impl Attempt {
+    const fn performed(self) -> bool {
+        matches!(self, Self::Performed)
+    }
+}
+
+#[derive(Debug, Default)]
+struct AttemptCounts {
+    not_applicable: usize,
+    blocked: usize,
+    performed: usize,
+}
 
 struct Replay {
+    seed: u64,
     context: egui::Context,
     dock: Dockspace,
     panes: DemoPanes,
@@ -24,13 +53,18 @@ struct Replay {
     merges: usize,
     floats: usize,
     adjustment_batches: usize,
+    attempts: AttemptCounts,
 }
 
 impl Replay {
     fn new(seed: u64) -> Self {
+        Self::from_layout(seed, demo_layout())
+    }
+
+    fn from_layout(seed: u64, layout: egui_dockspace::DockspaceLayout) -> Self {
         let context = editor::new_context();
         context.enable_accesskit();
-        let mut dock = Dockspace::builder(("workbench-pointer-replay", seed), demo_layout())
+        let mut dock = Dockspace::builder(("workbench-pointer-replay", seed), layout)
             .style(editor::dock_style())
             .build()
             .unwrap();
@@ -38,6 +72,7 @@ impl Replay {
         let _ = workbench_frame(&context, &mut dock, &mut panes, Vec::new());
         let output = workbench_frame(&context, &mut dock, &mut panes, Vec::new());
         Self {
+            seed,
             context,
             dock,
             panes,
@@ -50,6 +85,46 @@ impl Replay {
             merges: 0,
             floats: 0,
             adjustment_batches: 0,
+            attempts: AttemptCounts::default(),
+        }
+    }
+
+    fn at_current_layout(&self) -> Self {
+        let mut mirror = Self::from_layout(self.seed, self.dock.view().to_layout());
+        mirror.settle();
+        mirror
+    }
+
+    fn numeric_range(&self, widget: egui::Id) -> Option<(f64, f64, f64)> {
+        self.output
+            .platform_output
+            .accesskit_update
+            .as_ref()?
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == widget.accesskit_id())
+            .and_then(|(_, node)| {
+                Some((
+                    node.numeric_value()?,
+                    node.min_numeric_value()?,
+                    node.max_numeric_value()?,
+                ))
+            })
+    }
+
+    fn record(&mut self, operation: &str, result: Attempt) -> Attempt {
+        match result {
+            Attempt::NotApplicable => self.attempts.not_applicable += 1,
+            Attempt::Blocked => self.attempts.blocked += 1,
+            Attempt::Performed => self.attempts.performed += 1,
+        }
+        self.note(format!("{operation}: {result:?}"));
+        result
+    }
+
+    fn settle(&mut self) {
+        for _ in 0..20 {
+            self.frame(Vec::new());
         }
     }
 
@@ -215,11 +290,11 @@ impl Replay {
             self.dock.view().item(item).unwrap().is_selected(),
             self.dock.view().item(item).unwrap().tabs().items(),
         ));
-        let active = self.dock.has_active_gesture();
-        if !active {
-            self.frame(vec![button(source, false)]);
-        }
-        active
+        assert!(
+            self.dock.has_active_gesture(),
+            "a freshly exposed source must acquire the requested drag"
+        );
+        true
     }
 
     fn escape(&mut self) {
@@ -246,158 +321,6 @@ impl Replay {
         );
     }
 
-    fn dock_at(
-        &mut self,
-        item: egui_dockspace::ItemId,
-        target: egui_dockspace::ItemId,
-        label: &str,
-    ) -> bool {
-        if !self.begin_drag(item, Modifiers::NONE) {
-            return false;
-        }
-        let selected = self
-            .dock
-            .view()
-            .item(target)
-            .unwrap()
-            .tabs()
-            .selected()
-            .unwrap();
-        let mut destination = self.panes.panes[&selected].content.unwrap().center();
-        let mut guide = None;
-        for _ in 0..16 {
-            destination = self.panes.panes[&selected].content.unwrap().center();
-            self.frame(vec![Event::PointerMoved(destination)]);
-            guide = self
-                .semantic_rects(Role::Label, label)
-                .into_iter()
-                .min_by(|a, b| {
-                    a.center()
-                        .distance_sq(destination)
-                        .total_cmp(&b.center().distance_sq(destination))
-                });
-            if guide.is_some() {
-                break;
-            }
-        }
-        let Some(guide) = guide else {
-            self.note(format!(
-                "no {label} for {item}->{target} at {destination:?}: active={}, selected target={selected}",
-                self.dock.has_active_gesture(),
-            ));
-            self.escape();
-            return false;
-        };
-        let point = guide.center();
-        self.frame(vec![Event::PointerMoved(point), button(point, false)]);
-        true
-    }
-
-    fn split(&mut self) -> bool {
-        let items = self.main_items();
-        let mut choices = Vec::new();
-        for &item in &items {
-            let source = self.dock.view().item(item).unwrap();
-            for &target in &items {
-                let destination = self.dock.view().item(target).unwrap();
-                if source.tabs().items().len() > 1
-                    && destination.is_selected()
-                    && !source.tabs().items().contains(&target)
-                {
-                    choices.push((item, target));
-                }
-            }
-        }
-        let Some((item, target)) = self.pick(&choices) else {
-            return false;
-        };
-        let direction = self.pick(&["left", "right", "top", "bottom"]).unwrap();
-        self.note(format!("split {item} from {target} at {direction}"));
-        let label = format!("Dockspace {direction} drop guide");
-        let groups = self.group_count();
-        let operated = self.dock_at(item, target, &label);
-        let separated = self.group_count() > groups;
-        self.splits += usize::from(operated && separated);
-        operated && separated
-    }
-
-    fn merge(&mut self) -> bool {
-        let items = self.main_items();
-        let mut choices = Vec::new();
-        for &item in &items {
-            for &target in &items {
-                let source = self.dock.view().item(item).unwrap();
-                let destination = self.dock.view().item(target).unwrap();
-                if destination.is_selected() && !source.tabs().items().contains(&target) {
-                    choices.push((item, target));
-                }
-            }
-        }
-        let Some((item, target)) = self.pick(&choices) else {
-            return false;
-        };
-        self.note(format!("merge {item} into {target}"));
-        let operated = self.dock_at(item, target, "Dockspace center drop guide");
-        let merged = self
-            .dock
-            .view()
-            .item(item)
-            .unwrap()
-            .tabs()
-            .items()
-            .contains(&target);
-        self.merges += usize::from(operated && merged);
-        operated && merged
-    }
-
-    fn float(&mut self) -> bool {
-        let items = self.main_items();
-        let Some(item) = self.pick(&items) else {
-            return false;
-        };
-        self.note(format!("Shift-drag {item} to float"));
-        if !self.begin_drag(item, Modifiers::SHIFT) {
-            return false;
-        }
-        let body = self.panes.panes[&item].content.unwrap();
-        let point = body.min + body.size() * 0.65;
-        self.frame(vec![Event::PointerMoved(point)]);
-        self.frame(vec![Event::PointerButton {
-            pos: point,
-            button: PointerButton::Primary,
-            pressed: false,
-            modifiers: Modifiers::SHIFT,
-        }]);
-        self.frame(vec![Event::ModifiersChanged(Modifiers::NONE)]);
-        let floated = self.dock.view().item(item).unwrap().contained().is_some();
-        self.floats += usize::from(floated);
-        floated
-    }
-
-    fn redock(&mut self) -> bool {
-        let floating: Vec<_> = self
-            .panes
-            .panes
-            .keys()
-            .copied()
-            .filter(|item| self.dock.view().item(*item).unwrap().contained().is_some())
-            .collect();
-        let Some(item) = self.pick(&floating) else {
-            return false;
-        };
-        let destinations: Vec<_> = self
-            .main_items()
-            .into_iter()
-            .filter(|target| self.dock.view().item(*target).unwrap().is_selected())
-            .collect();
-        let Some(target) = self.pick(&destinations) else {
-            return false;
-        };
-        self.note(format!("redock floating {item} into {target}"));
-        self.dock_at(item, target, "Dockspace center drop guide")
-            && self.dock.view().item(item).unwrap().contained().is_none()
-    }
-
     fn cancel_and_recover(&mut self, outside: bool) {
         let items = self.main_items();
         let item = self.pick(&items).expect("there is an available main tab");
@@ -416,58 +339,8 @@ impl Replay {
         }
         self.assert_items();
         assert!(
-            self.redock() || self.merge() || self.split(),
+            self.redock().performed() || self.merge().performed() || self.split().performed(),
             "a completed/cancelled outside gesture must allow another actual docking operation",
-        );
-    }
-
-    fn resize(&mut self, junction: bool) {
-        let (role, label) = if junction {
-            (Role::Group, "Resize pane grid")
-        } else {
-            (Role::Splitter, "Resize panes")
-        };
-        let mut control = None;
-        for _ in 0..16 {
-            let choices = self.controls(role, label);
-            if let Some((widget, bounds)) = self.pick(&choices) {
-                let point = bounds.center();
-                self.frame(vec![Event::PointerMoved(point)]);
-                if self
-                    .context
-                    .viewport(|viewport| viewport.hits.drag.is_some_and(|hit| hit.id == widget))
-                {
-                    control = Some(bounds);
-                    break;
-                }
-            } else {
-                self.frame(Vec::new());
-            }
-        }
-        let Some(bounds) = control else {
-            self.note(format!("no exposed {label}"));
-            return;
-        };
-        let point = bounds.center();
-        let distance = self.pick(&[-36.0, -20.0, 20.0, 36.0]).unwrap();
-        let delta = if junction {
-            egui::vec2(distance, -distance * 0.75)
-        } else if bounds.width() < bounds.height() {
-            egui::vec2(distance, 0.0)
-        } else {
-            egui::vec2(0.0, distance)
-        };
-        self.note(format!("drag {label} at {point:?} by {delta:?}"));
-        self.frame(vec![Event::PointerMoved(point), button(point, true)]);
-        assert!(
-            self.dock.has_active_gesture(),
-            "the exposed resize control must acquire its gesture"
-        );
-        self.frame(vec![Event::PointerMoved(point + delta)]);
-        self.frame(vec![button(point + delta, false)]);
-        assert!(
-            !self.dock.has_active_gesture(),
-            "releasing a divider must finish direct manipulation"
         );
     }
 
@@ -479,7 +352,7 @@ impl Replay {
             .any(|item| self.dock.view().item(*item).unwrap().contained().is_some())
         {
             assert!(
-                self.float(),
+                self.float().performed(),
                 "create a floating group before its direct move"
             );
         }
@@ -574,7 +447,7 @@ impl Replay {
         assert!(self.dock.has_active_gesture());
         self.escape();
         assert!(
-            self.merge() || self.redock() || self.split(),
+            self.merge().performed() || self.redock().performed() || self.split().performed(),
             "restoring docking intent must leave the next docking gesture usable"
         );
     }
@@ -595,7 +468,7 @@ impl Replay {
         ]);
         assert_eq!(self.dock.version(), version);
         assert!(
-            self.merge() || self.redock() || self.split(),
+            self.merge().performed() || self.redock().performed() || self.split().performed(),
             "focus recovery must permit another actual docking operation"
         );
     }
@@ -643,7 +516,7 @@ impl Replay {
         self.frame(Vec::new());
         self.frame(Vec::new());
         assert!(
-            self.redock(),
+            self.redock().performed(),
             "the restored floating Inspector must dock normally"
         );
     }
@@ -671,25 +544,6 @@ impl Replay {
             }
         }
         assert_eq!(actual, self.panes.panes.keys().copied().collect());
-    }
-
-    fn group_count(&self) -> usize {
-        let mut count = 0;
-        for surface in self.dock.view().surfaces() {
-            let mut roots = surface.main_root().into_iter().collect::<Vec<_>>();
-            roots.extend(surface.contained().filter_map(|contained| contained.root()));
-            for root in roots {
-                let mut pending = vec![root.content().unwrap()];
-                while let Some(node) = pending.pop() {
-                    if node.tabs().is_some() {
-                        count += 1;
-                    } else if let Some(split) = node.split() {
-                        pending.extend(split.children());
-                    }
-                }
-            }
-        }
-        count
     }
 
     fn run(&mut self) {
@@ -727,8 +581,12 @@ impl Replay {
         for action in [0, 1, 2, 3, 4, 5] {
             self.step = 30 + action;
             match action {
-                0 => self.resize(false),
-                1 => self.resize(true),
+                0 => {
+                    self.resize(false);
+                }
+                1 => {
+                    self.resize(true);
+                }
                 2 => self.move_floating(),
                 3 => self.toggle_docking_and_cancel(),
                 4 => self.focus_loss_and_late_release(),
@@ -736,6 +594,7 @@ impl Replay {
             }
             self.assert_items();
         }
+        self.note(format!("attempt totals: {:?}", self.attempts));
         assert!(self.splits > 0, "the replay must commit an actual split");
         assert!(self.merges > 0, "the replay must commit an actual merge");
         assert!(self.floats > 0, "the replay must commit an actual float");

@@ -185,7 +185,9 @@ fn tabs(builder: &mut WorkspaceBuilder, item: u64) -> NodeId {
 
 fn finish(mut builder: WorkspaceBuilder, node: NodeId, central: Option<NodeId>) -> Workspace {
     let record = match central {
-        Some(central) => RootRecord::new(node).with_central(central),
+        Some(central) => RootRecord::new(node)
+            .with_central(central)
+            .with_allocation(crate::model::RootAllocation::PreferCentral),
         None => RootRecord::new(node),
     };
     builder.set_root(ROOT, record);
@@ -707,6 +709,115 @@ fn returning_to_the_press_boundary_restores_the_original_intent() {
         returned[0].weights(),
         groups[0].splits[0].weights.as_slice()
     );
+}
+
+#[test]
+fn discrete_round_trip_commits_visible_proportions() {
+    let (fixture, split) = constrained();
+    let groups = fixture.groups(&[(split, 0)]);
+    let mut adjustment = ResizeAdjustment::new(50.0);
+    adjustment.record(0.0);
+    let updates =
+        resize_axis_group_adjustment_updates(&groups, Axis::Horizontal, adjustment).unwrap();
+    assert_eq!(
+        updates[0]
+            .weights()
+            .iter()
+            .map(|weight| weight.get())
+            .collect::<Vec<_>>(),
+        [0.5, 0.5]
+    );
+    let projected = fixture.project_updates(&updates);
+    for (&node, before) in fixture.projection.nodes.iter_preorder() {
+        assert_eq!(projected.nodes[&node].rect, before.rect);
+    }
+}
+
+#[test]
+fn discrete_clamped_adjustments_preserve_latent_shares() {
+    let (fixture, split) = constrained();
+    let groups = fixture.groups(&[(split, 0)]);
+    for delta in [0.0, -48.0] {
+        let mut adjustment = ResizeAdjustment::new(delta);
+        adjustment.record(0.0);
+        let updates =
+            resize_axis_group_adjustment_updates(&groups, Axis::Horizontal, adjustment).unwrap();
+        assert_eq!(
+            updates[0]
+                .weights()
+                .iter()
+                .map(|weight| weight.get().to_bits())
+                .collect::<Vec<_>>(),
+            [0.25_f64.to_bits(), 0.75_f64.to_bits()]
+        );
+    }
+}
+
+#[test]
+fn discrete_round_trip_preserves_unmoved_and_sub_ulp_splits() {
+    let mut builder = Workspace::builder();
+    let a = tabs(&mut builder, 1);
+    let b = tabs(&mut builder, 2);
+    let c = tabs(&mut builder, 3);
+    let d = tabs(&mut builder, 4);
+    let moving = builder.insert_node(Node::split(Axis::Horizontal, [a, b], [0.25, 0.75]).unwrap());
+    let stationary =
+        builder.insert_node(Node::split(Axis::Horizontal, [c, d], [0.25, 0.75]).unwrap());
+    let outer =
+        builder.insert_node(Node::split(Axis::Vertical, [moving, stationary], [0.5, 0.5]).unwrap());
+    let fixture = Fixture::new(
+        finish(builder, outer, None),
+        rect(401.0, 601.0),
+        BTreeMap::from([
+            (a, constraints(200.0, 400.0)),
+            (b, constraints(100.0, 400.0)),
+            (c, constraints(200.0, 400.0)),
+            (d, constraints(100.0, 400.0)),
+        ]),
+        1.0,
+    );
+    let frozen = fixture.groups(&[(moving, 0), (stationary, 0)]);
+    let mut adjustment = ResizeAdjustment::new(50.0);
+    adjustment.record(0.0);
+    for coefficient in [0.0, f64::EPSILON * 0.01] {
+        let mut groups = frozen.clone();
+        let stationary_split = groups[0]
+            .splits
+            .iter_mut()
+            .find(|split| split.source.node() == stationary)
+            .unwrap();
+        // Isolate the solver's effective-motion boundary, including nonzero
+        // coefficients whose changes cannot be represented at this extent.
+        stationary_split.child_coefficients = vec![coefficient, -coefficient];
+        let updates =
+            resize_axis_group_adjustment_updates(&groups, Axis::Horizontal, adjustment).unwrap();
+        assert_eq!(updates.len(), 2);
+        let moved = updates
+            .iter()
+            .find(|update| update.split().node() == moving)
+            .unwrap();
+        assert_eq!(
+            moved
+                .weights()
+                .iter()
+                .map(|weight| weight.get())
+                .collect::<Vec<_>>(),
+            [0.5, 0.5]
+        );
+        let untouched = updates
+            .iter()
+            .find(|update| update.split().node() == stationary)
+            .unwrap();
+        assert_eq!(
+            untouched
+                .weights()
+                .iter()
+                .map(|weight| weight.get().to_bits())
+                .collect::<Vec<_>>(),
+            [0.25_f64.to_bits(), 0.75_f64.to_bits()],
+            "unmoved split normalized for coefficient {coefficient}"
+        );
+    }
 }
 
 #[test]

@@ -115,7 +115,7 @@ use self::reducer::{
     SequencedInput,
 };
 use self::splitter_geometry::{
-    prepare_resize_axis_groups, resize_axis_group_updates, split_resize_updates,
+    prepare_resize_axis_groups, resize_axis_group_adjustment_updates, split_resize_updates,
 };
 use self::surface_contribution::PreparedSurfaceContributionState;
 pub use self::surface_contribution::{
@@ -210,10 +210,10 @@ use crate::interaction::{
     InteractionEvent, InteractionEventKind, InteractionOutcome, InteractionRejection,
     InteractionState, InteractionStatus, JournalDragSourceGeometry, JournalDragThresholdOrigin,
     ManipulationPositionKey, PointerContinuationRequest, PointerContinuationSession,
-    PointerContinuationToken, PreviewProof, PreviewResolutionStatus, PreviewVisual, ResizeStart,
-    SceneGestureContinuation, SceneGestureContinuationDraft, SceneGestureContinuationSource,
-    SceneGestureSession, ScrollApplication, ScrollReductionOutcome, ScrollSessionId,
-    ScrollSuppressionReason, ScrollTerminationReason, TabStripEdgeDirection,
+    PointerContinuationToken, PreviewProof, PreviewResolutionStatus, PreviewVisual,
+    ResizeAdjustment, ResizeStart, SceneGestureContinuation, SceneGestureContinuationDraft,
+    SceneGestureContinuationSource, SceneGestureSession, ScrollApplication, ScrollReductionOutcome,
+    ScrollSessionId, ScrollSuppressionReason, ScrollTerminationReason, TabStripEdgeDirection,
     TabStripEdgeScrollState, TouchPressState, WorkspaceDeliveryKind,
 };
 #[cfg(test)]
@@ -1903,7 +1903,7 @@ impl DockEngine {
                 input,
                 scene,
                 splitter,
-                delta,
+                ResizeAdjustment::new(delta),
                 SplitterAdjustmentAuthority::PresentedCoordinates,
                 policy,
                 events,

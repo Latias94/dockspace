@@ -38,6 +38,26 @@ impl From<Axis> for DockspaceAxis {
     }
 }
 
+/// How a root redistributes space when pane constraints change weighted sizes.
+///
+/// This choice does not declare an empty docking anchor or change its lifetime.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    any(feature = "serde", test),
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[cfg_attr(any(feature = "serde", test), serde(rename_all = "snake_case"))]
+pub enum RootAllocation {
+    /// Redistribute available space among eligible children by their weights.
+    #[default]
+    Weighted,
+    /// Let the declared central branch absorb or yield constraint deltas first.
+    ///
+    /// Requires a central tabs leaf. Other children share any remaining delta
+    /// after that branch reaches its size constraint.
+    PreferCentral,
+}
+
 /// Recursive product declaration of one tabs or split node.
 ///
 /// Runtime node identities are allocated only when the complete [`DockspaceLayout`] is built.
@@ -173,9 +193,11 @@ impl DockspaceNode {
         Self::tabs_inner(items, false)
     }
 
-    /// Creates the tabs leaf that receives the root's remaining central space.
+    /// Creates the root's central docking anchor.
     ///
-    /// Empty tabs are permitted only when marked as the central region.
+    /// This leaf may be empty and survives when the main root's last item leaves.
+    /// Space redistribution is configured independently by
+    /// [`DockspaceRootLayout::allocation`].
     #[must_use]
     pub fn central_tabs(items: impl IntoIterator<Item = ItemId>) -> Self {
         Self::tabs_inner(items, true)
@@ -286,13 +308,28 @@ impl DockspaceNode {
 pub struct DockspaceRootLayout {
     id: RootId,
     content: DockspaceNode,
+    allocation: RootAllocation,
 }
 
 impl DockspaceRootLayout {
     /// Creates a root declaration.
     #[must_use]
     pub const fn new(id: RootId, content: DockspaceNode) -> Self {
-        Self { id, content }
+        Self {
+            id,
+            content,
+            allocation: RootAllocation::Weighted,
+        }
+    }
+
+    /// Selects how pane constraints redistribute the root's weighted space.
+    ///
+    /// [`RootAllocation::PreferCentral`] requires a central tabs declaration;
+    /// [`DockspaceLayout::new`] rejects it when the anchor is absent.
+    #[must_use]
+    pub const fn allocation(mut self, allocation: RootAllocation) -> Self {
+        self.allocation = allocation;
+        self
     }
 }
 
@@ -513,6 +550,12 @@ pub enum DockspaceLayoutError {
         /// Root containing the conflicting declarations.
         root: RootId,
     },
+    /// Central-first redistribution was requested without a central tabs anchor.
+    #[error("root {root} prefers central allocation but has no central tabs leaf")]
+    CentralAllocationWithoutAnchor {
+        /// Root with an incomplete allocation declaration.
+        root: RootId,
+    },
     /// A rootless surface has no contained-floating content.
     #[error("rootless surface {surface} must contain at least one floating root")]
     EmptyRootlessSurface {
@@ -593,10 +636,14 @@ impl LayoutCompiler {
         }
         let mut central = None;
         let node = self.compile_node(root.content, root.id, &mut central)?;
+        if root.allocation == RootAllocation::PreferCentral && central.is_none() {
+            return Err(DockspaceLayoutError::CentralAllocationWithoutAnchor { root: root.id });
+        }
         let record = match central {
             Some(central) => RootRecord::new(node).with_central(central),
             None => RootRecord::new(node),
-        };
+        }
+        .with_allocation(root.allocation);
         self.builder.set_root(root.id, record);
         Ok(root.id)
     }

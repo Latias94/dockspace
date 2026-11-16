@@ -142,6 +142,12 @@ pub enum CanonicalizationError {
         /// Invalid central node identity.
         central: NodeId,
     },
+    /// Central-first allocation has no declared central anchor.
+    #[error("root {root} prefers central allocation but has no central anchor")]
+    CentralAllocationWithoutAnchor {
+        /// Root with an invalid allocation policy.
+        root: RootId,
+    },
     /// A central tabs leaf is not reachable from the root that declares it.
     #[error("root {root} central node {central:?} is outside its tree")]
     CentralOutsideRoot {
@@ -814,6 +820,11 @@ fn validate_roots(
             });
         }
 
+        if record.central.is_none()
+            && record.allocation == crate::model::RootAllocation::PreferCentral
+        {
+            return Err(CanonicalizationError::CentralAllocationWithoutAnchor { root: *root });
+        }
         if let Some(central) = record.central {
             let Some(node) = workspace.nodes.get(central) else {
                 return Err(CanonicalizationError::MissingChild {

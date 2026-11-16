@@ -581,20 +581,13 @@ impl Dockspace {
             .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
             .map_err(DockspaceError::from_detail)?;
         let mut report = frame.commit().map_err(DockspaceError::from_detail)?;
-        if deferred_focus.handled()
-            && let Some(request) = self.session.pane_focus_request(surface)
-            && Some(request) != focus_before_pointer
-        {
-            // Hand tab focus to content on the next run only if no later input
-            // or application callback has taken focus in the matching viewport.
-            crate::focus::retain_tab_focus_order(
-                context,
-                self.id,
-                viewport,
-                request,
-                deferred_focus.target(),
-            );
-        }
+        deferred_focus.handoff_after_commit(
+            context,
+            self.id,
+            viewport,
+            focus_before_pointer,
+            self.session.pane_focus_request(surface),
+        );
         self.ui_actions
             .publish(pending_actions, run_sequence.unwrap(), &report);
         let painted = pointer.settle_report(

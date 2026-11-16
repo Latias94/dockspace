@@ -559,7 +559,7 @@ pub fn project_root_with_overrides(
     project_measurements(
         topology,
         values,
-        CentralRoute::tree(central_leaf_row),
+        CentralRoute::tree(preferred_central_row(record.allocation, central_leaf_row)),
         bounds,
         metrics,
         false,
@@ -734,10 +734,14 @@ fn project_draft(
 ) -> Result<LayoutProjection, LayoutError> {
     let (topology, measurements) =
         RootStructure::compile_draft(draft.draft(), root, leaves, metrics)?;
+    let prefers_central = draft
+        .draft()
+        .root(root)
+        .is_some_and(|record| record.allocation == crate::model::RootAllocation::PreferCentral);
     let central_rows = measurements
         .iter()
         .enumerate()
-        .filter_map(|(row, value)| value.contains_central.then_some(row))
+        .filter_map(|(row, value)| (prefers_central && value.contains_central).then_some(row))
         .collect::<Vec<_>>();
     let empty_rect = LogicalRect::new(0.0, 0.0, 0.0, 0.0)?;
     let values = measurements
@@ -894,7 +898,7 @@ fn measure_root<'workspace>(
         minimum: values[0].constraints.min(),
         topology,
         values,
-        central_leaf_row,
+        central_leaf_row: preferred_central_row(record.allocation, central_leaf_row),
         minimums_only,
     })
 }
@@ -1007,6 +1011,16 @@ enum CentralRoute {
     },
     #[cfg(test)]
     Raw(Vec<usize>),
+}
+
+fn preferred_central_row(
+    allocation: crate::model::RootAllocation,
+    central: Option<usize>,
+) -> Option<usize> {
+    match allocation {
+        crate::model::RootAllocation::Weighted => None,
+        crate::model::RootAllocation::PreferCentral => central,
+    }
 }
 
 impl CentralRoute {

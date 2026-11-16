@@ -491,7 +491,7 @@ impl DockEngine {
         input: InputSequence,
         scene: SurfaceSceneStamp,
         splitter: SplitterSceneId,
-        delta: f64,
+        adjustment: ResizeAdjustment,
         authority: SplitterAdjustmentAuthority,
         policy: &DockPolicySnapshot,
         events: &mut Vec<WorkspaceEvent>,
@@ -530,7 +530,7 @@ impl DockEngine {
             input,
             &painted,
             splitter,
-            delta,
+            adjustment,
             policy,
             events,
             interaction_events,
@@ -543,7 +543,7 @@ impl DockEngine {
         input: InputSequence,
         painted: &crate::presentation::scene::SurfacePlanScene,
         splitter: SplitterSceneId,
-        delta: f64,
+        adjustment: ResizeAdjustment,
         policy: &DockPolicySnapshot,
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
@@ -582,11 +582,7 @@ impl DockEngine {
             Ok(groups) => groups,
             Err(rejection) => return Ok(InteractionOutcome::Rejected(rejection)),
         };
-        let delta = match axis {
-            Axis::Horizontal => [delta, 0.0],
-            Axis::Vertical => [0.0, delta],
-        };
-        let Some(updates) = resize_axis_group_updates(&groups, delta) else {
+        let Some(updates) = resize_axis_group_adjustment_updates(&groups, axis, adjustment) else {
             return Ok(InteractionOutcome::Rejected(
                 InteractionRejection::SplitterResizeGeometryUnavailable,
             ));
@@ -618,7 +614,7 @@ impl DockEngine {
         scene: SurfaceSceneStamp,
         junction: crate::presentation::scene::SplitterJunctionId,
         axis: crate::model::DockspaceAxis,
-        delta: f64,
+        adjustment: ResizeAdjustment,
         policy: &DockPolicySnapshot,
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
@@ -632,7 +628,7 @@ impl DockEngine {
             &painted,
             junction,
             axis,
-            delta,
+            adjustment,
             policy,
             events,
             interaction_events,
@@ -709,7 +705,7 @@ impl DockEngine {
         painted: &crate::presentation::scene::SurfacePlanScene,
         junction: crate::presentation::scene::SplitterJunctionId,
         axis: crate::model::DockspaceAxis,
-        delta: f64,
+        adjustment: ResizeAdjustment,
         policy: &DockPolicySnapshot,
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
@@ -726,11 +722,7 @@ impl DockEngine {
             Ok(groups) => groups,
             Err(rejection) => return Ok(InteractionOutcome::Rejected(rejection)),
         };
-        let delta = match axis {
-            Axis::Horizontal => [delta, 0.0],
-            Axis::Vertical => [0.0, delta],
-        };
-        let Some(updates) = resize_axis_group_updates(&groups, delta) else {
+        let Some(updates) = resize_axis_group_adjustment_updates(&groups, axis, adjustment) else {
             return Ok(InteractionOutcome::Rejected(
                 InteractionRejection::SplitterResizeGeometryUnavailable,
             ));

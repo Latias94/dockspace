@@ -44,7 +44,9 @@ fn fixture(seed: &mut u64, central: bool) -> (Workspace, Vec<NodeId>) {
     let mut record = RootRecord::new(node);
     if central {
         let row = usize::try_from(next(seed) % u64::try_from(leaves.len()).unwrap()).unwrap();
-        record = record.with_central(leaves[row]);
+        record = record
+            .with_central(leaves[row])
+            .with_allocation(crate::model::RootAllocation::PreferCentral);
     }
     builder.set_root(ROOT, record);
     builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(ROOT));
@@ -329,7 +331,12 @@ fn sparse_recycled_tree_keeps_ordered_identity_and_cold_warm_oracle_results() {
         )
         .unwrap(),
     );
-    builder.set_root(ROOT, RootRecord::new(root_node).with_central(kept[0]));
+    builder.set_root(
+        ROOT,
+        RootRecord::new(root_node)
+            .with_central(kept[0])
+            .with_allocation(crate::model::RootAllocation::PreferCentral),
+    );
     builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(ROOT));
     let other_root = RootId::new(2);
     builder.set_root(other_root, RootRecord::new(kept[2]));
@@ -611,7 +618,12 @@ fn projects_ten_thousand_nested_splits_without_call_stack_growth() {
         };
         subtree = builder.insert_node(Node::equal_split(axis, [subtree, side]).unwrap());
     }
-    builder.set_root(ROOT, RootRecord::new(subtree).with_central(central));
+    builder.set_root(
+        ROOT,
+        RootRecord::new(subtree)
+            .with_central(central)
+            .with_allocation(crate::model::RootAllocation::PreferCentral),
+    );
     builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(ROOT));
     let workspace = builder.build().unwrap();
     let bounds = LogicalRect::new(0.0, 0.0, 1_000.0, 1_000.0).unwrap();
@@ -804,10 +816,11 @@ fn same_version_edits_own_new_rows_and_keep_the_original_output_body() {
                 *weights = SplitWeight::normalize(std::iter::repeat_n(1.0, weights.len())).unwrap();
             }
             2 => {
-                Arc::make_mut(&mut changed.draft_mut().roots)
+                let record = Arc::make_mut(&mut changed.draft_mut().roots)
                     .get_mut(&ROOT)
-                    .unwrap()
-                    .central = Some(leaves[0]);
+                    .unwrap();
+                record.central = Some(leaves[0]);
+                record.allocation = crate::model::RootAllocation::PreferCentral;
             }
             _ => {
                 let Node::Split { children, .. } =
@@ -953,7 +966,12 @@ fn central_ancestor_depths_keep_fresh_reader_order_and_delayed_minimum_projectio
             node = builder.insert_node(Node::split(axis, children, [0.25, 0.75]).unwrap());
             ancestors.push((node, central_index));
         }
-        builder.set_root(ROOT, RootRecord::new(node).with_central(central));
+        builder.set_root(
+            ROOT,
+            RootRecord::new(node)
+                .with_central(central)
+                .with_allocation(crate::model::RootAllocation::PreferCentral),
+        );
         builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(ROOT));
         let workspace = builder.build().unwrap();
         let leaf = Constraints::new(
@@ -1026,7 +1044,12 @@ fn raw_shared_central_subtree_keeps_membership_in_both_parent_branches() {
     let second =
         builder.insert_node(Node::equal_split(Axis::Vertical, [leaves[2], leaves[3]]).unwrap());
     let root = builder.insert_node(Node::equal_split(Axis::Horizontal, [first, second]).unwrap());
-    builder.set_root(ROOT, RootRecord::new(root).with_central(leaves[0]));
+    builder.set_root(
+        ROOT,
+        RootRecord::new(root)
+            .with_central(leaves[0])
+            .with_allocation(crate::model::RootAllocation::PreferCentral),
+    );
     builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(ROOT));
     let mut draft = builder.build().unwrap().into_builder();
     let Node::Split { children, .. } = draft.draft_mut().nodes.get_mut(second).unwrap() else {

@@ -34,6 +34,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+`central_tabs` keeps an empty docking anchor when the main root's last tab
+leaves. Roots use `RootAllocation::Weighted` by default. Select
+`.allocation(RootAllocation::PreferCentral)` on `DockspaceRootLayout` to let
+that branch absorb or yield constraint deltas first. This choice does not make
+side panes fixed-width. See the core guide's
+[central anchors and allocation](../../dockspace/docs/guide.md#central-anchors-and-allocation)
+for declaration, persistence and root-movement rules.
+
 ## Pane rendering
 
 Provide a `PaneView` implementation to measure and paint application panes.

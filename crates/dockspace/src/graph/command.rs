@@ -70,6 +70,7 @@ impl NodeFingerprint {
         self.0.root == other.0.root
             && self.0.root_node == other.0.root_node
             && self.0.central == other.0.central
+            && self.0.allocation == other.0.allocation
             && self.0.presentation == other.0.presentation
             && self.0.nodes.len() == other.0.nodes.len()
             && self
@@ -133,6 +134,7 @@ pub(crate) struct RootFingerprintData {
     pub(crate) root: RootId,
     pub(crate) root_node: NodeId,
     pub(crate) central: Option<NodeId>,
+    pub(crate) allocation: crate::model::RootAllocation,
     pub(crate) nodes: Vec<NodeFingerprintRecord>,
     pub(crate) presentation: FingerprintPresentation,
 }

@@ -94,6 +94,8 @@ pub struct SnapshotRootRecord {
     /// Snapshot-local central tabs leaf.
     #[serde(deserialize_with = "deserialize_required_option")]
     pub central: Option<u64>,
+    /// Explicit redistribution policy; empty-anchor retention is independent.
+    pub allocation: crate::model::RootAllocation,
 }
 
 /// Persisted presentation surface.
@@ -284,6 +286,7 @@ impl WorkspaceSnapshot {
                         .central
                         .map(|central| captured_id(&node_ids, central))
                         .transpose()?,
+                    allocation: root.allocation,
                 })
             })
             .collect::<Result<Vec<_>, SnapshotCaptureError>>()?;
@@ -702,7 +705,14 @@ fn populate_roots(
             .central
             .map(|central| runtime_node(runtime_nodes, owner, central))
             .transpose()?;
-        builder.set_root(RootId::new(root.id), RootRecord { node, central });
+        builder.set_root(
+            RootId::new(root.id),
+            RootRecord {
+                node,
+                central,
+                allocation: root.allocation,
+            },
+        );
     }
     Ok(())
 }

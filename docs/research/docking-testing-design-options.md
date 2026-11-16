@@ -1,14 +1,156 @@
-# Docking test design options after the ImGui comparison
+# Docking test design record after the ImGui comparison
 
-Research checkpoint: 2026-11-16. **This is a proposal for review, not an adopted
-specification.** It builds on [the earlier investigation][R1] and
-[the adapter testing guide][R2]. Source inspection used Dockspace HEAD
+Research checkpoint: 2026-11-16. **The original proposal and measurements describe
+a historical baseline; the adopted implementation is recorded first below.**
+This note builds on [the earlier investigation][R1] and
+[the adapter testing guide][R2]. Baseline source inspection used Dockspace
 `c9dd58a84bf7ba8b4d78e16e7ca9ab33ba08f218` and local ImGui Test Engine reference
-`16b6efbb393fdef0dcac9b0794a8ee476606a152`. Dockspace citations describe the
-inspected working tree. The coordinating agent supplied the targeted mutation
-results below; no physical backend qualification was performed for this note.
+`16b6efbb393fdef0dcac9b0794a8ee476606a152`. The subsequent implementation adopted
+the independent short semantic oracle, mandatory workbench outcomes, explicit
+central allocation and the small egui focus-handoff cleanup. The coordinating
+agent supplied the targeted mutation results. Historical restored test counts
+remain unchanged and must not be read as verification of the new implementation.
+No physical backend qualification was performed for this note.
 
-## Recommended direction
+## Adopted implementation
+
+### Independent short-command expectations
+
+The new test-local [semantic model][C15] stores complete ordered groups, logical
+selection, full local MRU, a retained central-group marker and hidden membership.
+It does not reconstruct split topology or the constraint solver. It independently
+predicts valid success/no-op, expected rejection and `changed` before the
+[executor][C1] resolves fresh production authority for the same logical items.
+Every ordered group, selection/history and hidden set is compared after each
+step, including unaffected groups and visible-selection fallback.
+
+The action grammar now includes visibility alongside select, reorder, open,
+center/edge moves and resize. Rejections cover hidden selection, duplicate open
+and out-of-range insertion, with the predicted error class/parameters. Model
+prerequisites removed by shrinking may yield `Skipped`; a modeled item missing
+from the SUT cannot. Coverage distinguishes skipped, expected rejection, applied
+and changed actions. An all-skipped candidate is not fabricated success. A
+separate constructive property guarantees an initial legal distinct-group center
+move and checks that the always-owned source/target remain operable after a
+generated prefix.
+
+This closes the measured blanket-rejection gap below. It is still a deliberately
+small default-policy semantic model, not a second docking/native engine. The
+long command journey, explicit edge geometry checks, named MRU regressions,
+frozen traversal comparisons and ordered native schedules remain useful.
+
+### Required real-widget outcomes
+
+Workbench [semantic expectations][W4] compare exact moved payload/order,
+destination selection, source remainder, hidden members and unaffected groups,
+plus unrelated floating geometry. The fixed [docking test][W6] requires actual
+center/edge drops, floating and redocking in its unobscured fixture.
+
+The [resize tests][W5] require an exposed divider and junction, check move-frame
+versus release geometry, enforce clamps/perpendicular-axis preservation where
+applicable, and require both axes to change for a corner drag. Required fixtures
+exercise all four cardinal floating edges through pointer input and real egui
+keyboard/AccessKit events. They require the known combined step and preserve
+unrelated main content. Separate junction-axis fixtures require keyboard plus
+AccessKit to advance exactly the requested axis.
+
+[Mixed input batches][W2] compare the resulting layout with the same ordered
+events delivered separately, preserve content/selection and require actual
+progress for a numeric control with room. Consumption or equivalence alone can
+no longer satisfy that progress check.
+
+This stronger check found a production defect under minimum-size constraints:
+the final pane rectangles matched, but a batched discrete round trip retained
+latent weights while separately committed steps saved the achieved proportions.
+The two-pane named regression
+`clamped_mixed_resize_round_trip_preserves_frame_independent_durable_shares`
+reproduced the failure before the fix (nextest run
+`96f5a25f-5f06-4645-823d-39d0387b2e4e`); its wholly blocked counterpart passed.
+The required contract compares durable size intent too, since later window
+growth and persistence can expose this difference. A continuous pointer gesture
+returning to its press position still restores its original weights. Final
+verification of the production correction is recorded with the delivery gates.
+
+Adaptive random operations report `NotApplicable`, `Blocked` or `Performed`.
+`Blocked` remains diagnostic: it is not an independently justified rejection or
+proof of a usable entry path. Mandatory fixed scenarios must return `Performed`;
+a missing required guide/divider/edge cannot be excused by an earlier success.
+The timed string trace remains diagnostic, without a general packet replayer.
+
+Strengthening the outcome checks also exposed a driver error: a globally
+nearest guide with the requested label could belong to a foreground floating
+root. The test-only workbench hooks now observe public guide/preview data for
+the current completed pass. The driver checks destination root, pane, direction,
+action and active eligibility before release. A named overlapping-root fixture
+first requires source acquisition, then verifies that targeting the covered main
+pane cancels without releasing into the floating guide. This corrects the
+driver's precondition; it does not establish a production wrong-target defect.
+
+### Explicit central allocation
+
+The [architecture review][R3] records the adopted production contract:
+`central_tabs` retains an empty semantic anchor; default `RootAllocation::Weighted`
+and explicit `PreferCentral` independently select constraint redistribution;
+`CentralNodePolicy` separately controls merge/split. PreferCentral requires an
+anchor. Required snapshot allocation, fingerprints, root movement and lifecycle
+preserve the choice without a legacy default.
+
+[Measured-pane tests][C16] use the discriminating weighted/central fixture on
+both axes, including nested and empty/occupied anchors. [Preview tests][C17]
+compare future content bounds with committed content bounds. Hidden/restored
+central allocation is exercised under both choices [C18]. The frozen reference
+implementation was left unchanged; prior central fixtures select PreferCentral
+explicitly. This does not expose maximum/fixed/preferred pane sizes.
+
+## Follow-up mutation evidence
+
+The coordinating agent repeated the temporary blanket rejection of every
+`DockTarget::Center` with seed `1340171702` (nextest run
+`2f75e4ef-e19d-47ac-82a5-3c3892700ee8`). Both short properties **failed** with
+`model-valid CenterMove ... was rejected`. The constructive property reduced to
+`prefix = []`; its fixed first operation is the legal cross-group move
+`item 3 -> item 1`. The ordinary property reduced to one legal no-op,
+`CenterMove item 1 -> item 1`. That ordinary minimal counterexample does not
+establish a cross-group move, but correctly rejects blanket denial of a valid
+no-op too.
+
+Production bytes were restored exactly in cleanup, and no new persisted
+failure-seed file was created. This is evidence that the new oracle catches this
+specific mutation. The restored implementation gates below are separate evidence.
+
+## Restored implementation validation
+
+The final implementation was checked on 2026-11-16, after the production resize
+correction and the workbench target-admission/module extraction changes. Cargo
+builds ran serially with two build jobs; nextest used two test threads. The
+workspace toolchain is Rust 1.100.0. Consumer harness rows explicitly identify
+their Rust 1.95.0 compatibility runs. Counts overlap across configurations and
+must not be added as distinct scenarios.
+
+| Configuration | Result | Nextest run ID |
+| --- | --- | --- |
+| Workspace, all features and all targets | 2,898 passed, 3 skipped | `ec2950a7-dffa-4588-8b60-d043203b1d84` |
+| Core library, no default features | 2,270 passed, 3 skipped | `6f0d5e29-c7ad-46cf-b15b-7a1129f6793c` |
+| egui library, no default features | 331 passed | `2971b2e4-f125-44df-a57f-ec052f5dfd14` |
+| Native workspace, all features and all targets | 824 passed, 2 skipped | `089cfd98-d762-4b37-a24c-2764a5bd4ef2` |
+| Public host harness, default features, Rust 1.95.0 | 411 passed | `eb2bd635-87fd-4d5b-a512-6d706e6fffb8` |
+| Public host harness, serde and motion, Rust 1.95.0 | 471 passed | `6bd00d48-56fe-447a-b0b3-285d498bcbc1` |
+| Official egui harness, all features and all targets, Rust 1.95.0 | 41 passed | `313e8bb3-0134-4083-b001-9b3e4b48c38c` |
+| Product harness, default features and all targets, Rust 1.95.0 | 142 passed | `778a69f1-65de-4066-8e5a-8a14b8ba1f67` |
+| Product harness, serde and all targets, Rust 1.95.0 | 147 passed | `9c8efe7e-0dc9-40f0-802d-637e4c113eb3` |
+
+These restored gates pass both the clamped mixed-input regression that failed
+before the production fix and the two short properties that failed under the
+temporary center-rejection mutation. The mutation is absent from the final code.
+
+Additional passing checks: workspace correctness/suspicious Clippy gates;
+warnings-as-errors rustdoc for the three public crates; 17 workspace doctests;
+the core/egui wasm32 library build with egui serde; native library compilation
+without default features; root/native formatting; core dependency boundaries;
+and local file targets in the changed Markdown. Clippy's selected-category gate
+is not a claim of zero warnings. No new physical OS qualification was performed.
+
+## Original recommended direction (historical)
 
 First, give short command properties an independent semantic oracle: ordered
 tab groups, selection, visibility and unaffected groups, with success/rejection
@@ -38,7 +180,7 @@ v3 design or a requirement for Dockspace to adopt those policies [R1].
 | Selection versus usable focus | Send keyboard input to a concrete pane widget after each entry; distinguish header focus, activation and native observed focus. | ImGui compares content/tab/title/menu entries but also disables focus expectations [U4]. Dockspace has pane-focus regressions [C10] and dispatch-versus-focus tests [N4]. |
 | Requested versus observed platform behavior | Independently vary requested/actual placement and focus; delay/drop exact outputs before admitting a child. | ImGui's mock stores requested position/size/focus directly and leaves resistance as TODOs [U6]. Dockspace already distinguishes placement, Created/prepared/first-live and focus dispatch [N3], [N4], [C7]. |
 
-## Current evidence and concrete oracle gaps
+## Baseline evidence and oracle gaps (historical)
 
 ### Commands: independent membership is not complete semantic expectation
 
@@ -75,12 +217,13 @@ All temporary mutation/probe/witness source was removed. The final restored
 command-model, layout-solver and frozen-traversal selection passed **50 tests**
 with all features and the same seed (nextest run
 `6c8ee9f0-fb61-42d4-af66-ad3fa25dcba0`). These are test-oracle measurements, not a
-discovered production bug or a reliability percentage. The independent oracle
-proposed below has not been implemented.
+discovered production bug or a reliability percentage. At that historical
+checkpoint the independent oracle proposed below had not been implemented; its
+adopted implementation and new mutation evidence are recorded above.
 
 Other mutation thought experiments remain **hypothetical**:
 
-| Fault | Why the current short property could pass | Required check |
+| Fault | Why the baseline short property could pass | Required check |
 | --- | --- | --- |
 | Move an unrelated unselected tab as well | Requested item still reaches the target; topology and global membership can remain valid. | Compare every ordered group, including outside the action's write set. |
 | Corrupt destination selection or source order/MRU | Target containment and recapturability do not establish those semantics. | Independently predict activation and successor/history; existing MRU regressions specify the distinction [C6]. |
@@ -193,7 +336,12 @@ and DPI 1, and provides no physical-presentation evidence; moving/resizing
 resistance remains TODO [U6]. Viewport tests are not registered without enabled
 viewports and both backend flags [U5]. Green counts need configuration context.
 
-## Independent expected model: deliberately smaller than the engine
+## Original model design: deliberately smaller than the engine
+
+This section preserves the design that motivated the implementation above.
+The delivered model compares full local MRU rather than only selected-item
+membership. Broader public-session scope/policy combinations remain follow-up
+work; this section does not imply they are already generated.
 
 Use test-local ordered groups, logical selection, visibility and presentation
 aliases; represent a retained empty central slot by a fixture alias. Add a small
@@ -220,7 +368,7 @@ For each requested action:
    on success, and unchanged semantics on rejection. Then check graph validity
    and report/state consistency independently.
 4. Count requested, skipped, expected-rejected, applied and changed separately.
-   Current `apply_action == true` includes rejected transactions [C1].
+   At the baseline, `apply_action == true` included rejected transactions [C1].
 
 Keep all-skipped shrink candidates valid and visibly accounted; do not retarget
 `Select(9)` or fail merely because a prerequisite was removed. Add separate
@@ -232,21 +380,21 @@ The oracle does not construct split trees, solve constraints or model receivers,
 native identities or affine tokens. Normalizing actual SUT state is necessary;
 deriving expected preconditions or results from it defeats independence.
 
-## Implementation stages and passing evidence
+## Implementation stages and current status
 
-| Order | Bounded change | Acceptance |
+| Stage | Delivery status | Acceptance or remaining boundary |
 | --- | --- | --- |
-| **First — independent expectations** | Refactor command expectation/resolution with existing proptest; flat select/reorder/open/center model, then visibility through public session. Keep the long journey. | Guaranteed-valid center actions succeed; result classes and full ordered groups/selection/visibility match. Model/SUT resolution divergence fails. Skips cannot masquerade as successful coverage. The measured blanket-rejection mutation must fail the new short property. |
-| **First — mandatory admitted UI semantics** | Small local operation result: inapplicable, expected blockage, or performed. Preserve completed-hit sampling. | A required source/guide/splitter disappearing fails despite earlier successes. Admitted operations check exact payload/selection and move-frame/terminal geometry, known clamps and unaffected regions. |
-| **Next — scope/visibility combinations** | Extend existing scenario fixtures and recording/egui executors: item/group/title, hidden siblings, empty/occupied central. | Exact ownership/order/selection and retained hidden members; actual UI input in egui; labels follow independent checks. Unsupported capabilities reject before input. |
-| **Next — bounded numeric properties** | Elementary proportions/clamp/remainder formulas and measured-pane checks; reuse batch-equivalence helpers with changed layouts. | Wrong allocation fails despite valid conservation. Two/three-child answers are independently calculable; preview/cancel/drop does not add a durable mutation. Do not require animated rectangles to partition. |
-| **Next, if useful — packet replay** | Test-local `(time, Vec<Event>)`, fixed initialization and warm-up/idle packets; executor performs no new semantic picks. | Repeat at the same revision with identical ordered packets and first divergence; retain necessary settlement steps during reduction. No cross-version protocol or serialized authority. |
-| **Later — composed platform results** | Parameterize existing fixtures with actual bounds/readiness/focus independent of requests; adjusted size/origin/DPI, unfocused dispatch and delayed/late results. Retain ordered schedules. | No fabricated focus/geometry/first-live. Source remains until exact admission; denied/cancelled cases follow their contract and admit fresh input where recovery is promised. |
-| **When the backend seam changes** | Existing targeted physical X11/macOS journeys. | Actual placement, focus, input and presentation evidence qualifies only the exercised backend/configuration. |
+| Independent expectations | Adopted: flat ordered groups/selection/full MRU/hidden state, expected rejection and `changed`; existing proptest shrinking and long journey retained | Both short properties catch blanket center rejection. Generated visibility uses the command seam; this does not claim every public-session policy/scope combination is generated. |
+| Mandatory admitted UI semantics | Adopted: explicit attempt results, independent move expectations and required docking/divider/junction/four-edge fixtures | Fixed scenarios require success. Random `Blocked` counts are diagnostics. Move/release geometry and keyboard/AccessKit progress have explicit checks. Final restored gates are separate evidence. |
+| Scope/visibility combinations | Partly covered by the model and existing named/scenario tests; broader combined generation remains optional | Preserve exact ownership/order/selection and hidden members. Actual UI input and capability admission need their own assertions; labels alone are insufficient. |
+| Numeric allocation | Adopted: measured central weighted/preferred fixtures, lifecycle/persistence/fingerprint tests and future-preview comparison; shared solver retained | The elementary discriminating fixture establishes this contract. It does not establish a new fixed/max-size capability or a general independent constraint solver. |
+| Packet replay | Not implemented; diagnostic timed trace retained | Add a test-local exact packet executor only if reduction needs it. No cross-version protocol or serialized authority. |
+| Composed platform results | Existing named noncompliant-result tests and ordered schedules retained; further composition remains follow-up | Do not fabricate focus, geometry or first-live. Preserve source ownership until exact admission and respect each cancellation/failure contract. |
+| Physical backend qualification | No new physical qualification claimed by this note | Actual placement/focus/input/presentation qualifies only the exercised backend/configuration. |
 
-Keep the First stage reviewable; semantic assertions precede replay investment.
-The production mutation and restored baseline are recorded above. Later optional
-oracle checks may corrupt unrelated membership/selection or consume resize
+Semantic assertions precede replay investment. The historical production
+mutation/restored baseline and follow-up mutation are recorded separately above.
+Further optional oracle checks may corrupt unrelated membership/selection or consume resize
 without its semantic change. Each must fail its owning test; no mutation
 framework is needed.
 
@@ -258,19 +406,23 @@ Cargo work. Record backend/configuration; more seeds alone are not completion.
 Recoverable cancellation, legitimate pending external results and permanently
 rejected FIFO ingress have different terminal contracts; retain those distinctions.
 
-Fixed/max pane sizing, conflicting tab constraints, and separate empty-central
-retention/allocation still require explicit product decisions [R1]. Define each
-observable result before adding its discriminating fixture. These stages improve
-the current contract's oracle without committing to a production architecture.
+Fixed/max/preferred pane sizing and conflicting tab constraints still require
+explicit product decisions [R1]. Empty-central retention/allocation is now
+separate, with the adopted contract and tests above. Define each new observable
+result before adding its discriminating fixture. Stronger test oracles do not
+make an unimplemented product capability part of the public contract.
 
 ## Source references
 
-Local links identify the inspected implementation or contract. ImGui links are
-pinned to the inspected reference revision so a later upstream edit does not
-silently change the cited evidence.
+Local links identify the relevant source file or contract in the working tree.
+Historical sections describe those files at the baseline revision recorded at
+the top; the adopted sections refer to the subsequent implementation. ImGui
+links are pinned to the inspected reference revision so a later upstream edit
+does not silently change the cited evidence.
 
 [R1]: docking-testing-and-imgui.md
 [R2]: ../ADAPTER_TESTING.md
+[R3]: docking-architecture-review.md
 [C1]: ../../crates/dockspace/src/behavior_tests/command_model/shrinkable.rs#L62
 [C2]: ../../crates/dockspace/src/behavior_tests/command_model.rs#L506
 [C3]: ../../crates/dockspace/src/behavior_tests/model_properties.rs#L8
@@ -285,6 +437,10 @@ silently change the cited evidence.
 [C12]: ../../crates/dockspace/src/graph/operation/topology.rs#L236
 [C13]: ../../crates/dockspace/src/presentation/layout/reference.rs#L1
 [C14]: ../../crates/dockspace/src/presentation/layout/topology_tests.rs#L55
+[C15]: ../../crates/dockspace/src/behavior_tests/command_model/shrinkable/semantics.rs
+[C16]: ../../crates/dockspace/src/behavior_tests/central_allocation.rs
+[C17]: ../../crates/dockspace/src/presentation/compiler/future_layout/tests/allocation.rs
+[C18]: ../../crates/dockspace/src/presentation/layout/visibility_tests.rs#L115
 [S1]: ../../crates/dockspace_host_conformance/src/scenario.rs#L1
 [S2]: ../../integration/dockspace-host-harness/tests/shared_local_scenario/main.rs#L180
 [S3]: ../../integration/egui-product-harness/tests/product.rs#L4726
@@ -294,6 +450,9 @@ silently change the cited evidence.
 [W1]: ../../crates/egui_dockspace/examples/workbench/tests/randomized.rs#L17
 [W2]: ../../crates/egui_dockspace/examples/workbench/tests/randomized/semantic_input.rs#L9
 [W3]: ../../crates/egui_dockspace/src/facade/chrome_tests/splitters.rs#L165
+[W4]: ../../crates/egui_dockspace/examples/workbench/tests/randomized/semantics.rs
+[W5]: ../../crates/egui_dockspace/examples/workbench/tests/randomized/resize.rs
+[W6]: ../../crates/egui_dockspace/examples/workbench/tests/randomized/docking.rs
 [N1]: ../../crates/egui_dockspace_native/src/coordinator/tests/docking_enabled/randomized.rs#L17
 [N2]: ../../crates/egui_dockspace_native/src/coordinator/tests/docking_enabled/randomized/last_pane/presentation_order/endpoint_revocation/schedules.rs#L1
 [N3]: ../../crates/egui_dockspace_native/src/coordinator/tests/ingress_create.rs#L730
