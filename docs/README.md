@@ -26,6 +26,8 @@
 
 - [Contributing](../CONTRIBUTING.md): repository layout and local checks.
 - [Maintaining](MAINTAINING.md): repository structure and package/release order.
+- [egui chrome design](../crates/egui_dockspace/docs/chrome-design.md): target
+  component scopes, density, visual states and implementation acceptance.
 - [Native qualification](../integration/egui-native-smoke/README.md): real-window
   and physical-input checks.
 - [Host-update sampling](../integration/dockspace-host-harness/BENCHMARKING.md)

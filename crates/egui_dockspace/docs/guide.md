@@ -710,6 +710,9 @@ still require application-owned state transfer.
 
 ## Styling
 
+The [chrome design](chrome-design.md) defines the target component and interaction
+rules, including work still to implement. This section documents current APIs.
+
 The application owns the surrounding egui `Panel`, `Frame`, and margins.
 Dockspace consumes the available rectangle of the `Ui` it is given and does not
 insert another panel around the docking surface.
