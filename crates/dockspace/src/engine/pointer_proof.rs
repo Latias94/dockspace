@@ -1675,10 +1675,16 @@ impl DockEngine {
                 }
                 let manifest = click.1.hit_manifest();
                 let click_region = manifest.region(click.0).ok_or_else(|| {
-                    invariant(format!("click receiver {:?} is absent from its manifest", click.0))
+                    invariant(format!(
+                        "click receiver {:?} is absent from its manifest",
+                        click.0
+                    ))
                 })?;
                 let drag_region = manifest.region(drag.0).ok_or_else(|| {
-                    invariant(format!("drag receiver {:?} is absent from its manifest", drag.0))
+                    invariant(format!(
+                        "drag receiver {:?} is absent from its manifest",
+                        drag.0
+                    ))
                 })?;
                 // Independent lanes can name overlapping travelling panes.
                 // Their shared presentation stack decides which control acts.

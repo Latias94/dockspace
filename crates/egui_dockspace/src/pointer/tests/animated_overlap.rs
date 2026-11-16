@@ -67,10 +67,7 @@ fn an_animated_close_over_another_tab_body_does_not_fail_the_pointer_protocol() 
             RootId::new(1),
             DockspaceNode::equal_split(
                 crate::DockspaceAxis::Horizontal,
-                [
-                    DockspaceNode::tabs([FIRST]),
-                    DockspaceNode::tabs([SECOND]),
-                ],
+                [DockspaceNode::tabs([FIRST]), DockspaceNode::tabs([SECOND])],
             )
             .unwrap(),
         ),
@@ -225,10 +222,7 @@ fn a_foreground_drag_lane_over_a_background_close_resizes_without_closing() {
             RootId::new(1),
             DockspaceNode::equal_split(
                 crate::DockspaceAxis::Horizontal,
-                [
-                    DockspaceNode::tabs([FIRST]),
-                    DockspaceNode::tabs([SECOND]),
-                ],
+                [DockspaceNode::tabs([FIRST]), DockspaceNode::tabs([SECOND])],
             )
             .unwrap(),
         ),
@@ -294,7 +288,10 @@ fn a_foreground_drag_lane_over_a_background_close_resizes_without_closing() {
             button(target, false),
         ],
     );
-    assert!(closed.is_empty(), "the lower close button must not activate");
+    assert!(
+        closed.is_empty(),
+        "the lower close button must not activate"
+    );
     assert!(!dockspace.has_active_gesture());
     let (output, closed) = frame(&context, &mut dockspace, 0.6, Vec::new());
     assert!(closed.is_empty());
