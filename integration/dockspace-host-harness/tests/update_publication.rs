@@ -11,14 +11,15 @@ use dockspace::model::{
 };
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
-    DockspaceHostFrame, DockspaceManipulationDelivery, DockspaceManipulationStatus,
-    DockspaceReceiverDescriptor, DockspaceRuntimeError, DockspaceRuntimeErrorKind,
-    DockspaceSemanticOutput, DockspaceSession, DockspaceUpdate, HostFrameReport, HostInputOutcome,
-    HostPointerInput, HostPointerRoute, PaintedSurfaceOutput, PointerDeviceKind,
-    PointerEventMetadata, SurfacePaintPlan, SurfacePaintProgramOperation as Operation,
-    SurfacePaintProgramStep as Step, SurfacePointerButton, SurfacePointerCapture,
-    SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts, SurfacePresentationResult,
-    SurfaceUnavailableReason, SurfaceWork, SurfaceWorkDeferred, UniformSurfaceMetrics,
+    DockspaceEventKind, DockspaceHostFrame, DockspaceManipulationDelivery,
+    DockspaceManipulationStatus, DockspaceReceiverDescriptor, DockspaceRuntimeError,
+    DockspaceRuntimeErrorKind, DockspaceSemanticOutput, DockspaceSession, DockspaceUpdate,
+    HostFrameReport, HostInputOutcome, HostPointerInput, HostPointerRoute, PaintedSurfaceOutput,
+    PointerDeviceKind, PointerEventMetadata, SurfacePaintPlan,
+    SurfacePaintProgramOperation as Operation, SurfacePaintProgramStep as Step,
+    SurfacePointerButton, SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId,
+    SurfacePointerReceiverFacts, SurfacePresentationResult, SurfaceUnavailableReason, SurfaceWork,
+    SurfaceWorkDeferred, UniformSurfaceMetrics,
 };
 use dockspace_host_harness::{OwnedRecord, RecordingRenderer};
 
@@ -192,6 +193,216 @@ fn owned_update_suspends_without_publication_and_resumes_the_same_candidate_once
     assert!(settled.inputs().is_empty());
     assert!(settled.take_painted_outputs().is_empty());
     assert!(settled.surface_presentation_commits().is_empty());
+}
+
+#[test]
+fn suspended_pointer_update_keeps_late_output_terminals_pending_until_its_successor() {
+    for result in [
+        SurfacePresentationResult::Presented,
+        SurfacePresentationResult::Dropped,
+    ] {
+        for commit_update in [false, true] {
+            let mut session = session();
+            session.enable_host_pointer().unwrap();
+            session
+                .configure_output_capacity(NonZeroUsize::MIN)
+                .unwrap();
+            let mut initial = session.begin_host_frame().unwrap();
+            initial.measure_surface(A, metrics(800.0, 96.0)).unwrap();
+            let descriptor = ready(&mut initial, A).tab_receiver(SECOND).unwrap();
+            encode(&mut initial, A);
+            let original = only_output(&mut initial.commit().unwrap());
+            session
+                .report_surface_presentation(original, SurfacePresentationResult::Presented)
+                .unwrap();
+            settle(&mut session);
+            let surface = session.presented_surface(A).unwrap();
+            let receiver = session.bind_presented_receiver(&descriptor).unwrap();
+            let route = HostPointerRoute::new(surface, receiver.center());
+            let click = || {
+                [
+                    SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary),
+                    SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary),
+                ]
+                .map(|event| {
+                    HostPointerInput::new(
+                        SurfacePointerId::new(1),
+                        event,
+                        route,
+                        route,
+                        SurfacePointerCapture::ProviderEndpoint,
+                        SurfacePointerReceiverFacts::delivery(&receiver),
+                    )
+                })
+            };
+            let (_, _, inflight) = measure_and_emit(&mut session, 800.0, 96.0);
+            let inflight_artifact = inflight.presentation_artifact();
+            let before = session.version();
+
+            let update = session.begin_update().unwrap();
+            let mut frame = session.resume_update(update).unwrap();
+            frame.submit_host_pointer_batch(click()).unwrap();
+            assert!(frame.view().item(SECOND).unwrap().is_selected());
+            frame.measure_surface(A, metrics(800.0, 96.0)).unwrap();
+            assert!(matches!(
+                frame
+                    .prepare_surface_with::<DockspaceRuntimeError>(A, |_| {
+                        panic!("the unresolved output occupies the only slot")
+                    })
+                    .unwrap(),
+                SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity)
+            ));
+            let update = frame.suspend();
+            assert_eq!(session.version(), before);
+            assert!(session.view().item(FIRST).unwrap().is_selected());
+
+            session
+                .report_surface_presentation(inflight, result)
+                .unwrap();
+            let mut frame = session.resume_update(update).unwrap();
+            assert!(frame.view().item(SECOND).unwrap().is_selected());
+            assert!(matches!(
+                frame
+                    .prepare_surface_with::<DockspaceRuntimeError>(A, |_| {
+                        panic!(
+                            "a terminal reported after suspension is outside this update's prelude"
+                        )
+                    })
+                    .unwrap(),
+                SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity)
+            ));
+            if commit_update {
+                let mut committed = frame.commit().unwrap();
+                assert!(committed.workspace_changed());
+                // A draggable tab press reports its durable selection as an event.
+                assert_eq!(
+                    committed
+                        .events()
+                        .iter()
+                        .filter(|event| matches!(
+                            event.kind(),
+                            DockspaceEventKind::SelectionCommitted { item: SECOND }
+                        ))
+                        .count(),
+                    1,
+                    "the resumed pointer prefix must select its original tab exactly once"
+                );
+                assert!(committed.surface_presentation_commits().is_empty());
+                assert!(committed.take_painted_outputs().is_empty());
+            } else {
+                drop(frame);
+                assert_eq!(session.version(), before);
+            }
+            assert_eq!(
+                session.view().item(SECOND).unwrap().is_selected(),
+                commit_update
+            );
+            assert!(!session.has_active_gesture());
+
+            // Only a new update can admit the late terminal and reuse its output slot.
+            let mut admission = session.begin_host_frame().unwrap();
+            assert!(admission.reserve_surface_output(A).unwrap());
+            let mut admitted = admission.commit().unwrap();
+            assert!(!admitted.workspace_changed());
+            assert!(admitted.inputs().is_empty());
+            assert!(admitted.events().is_empty());
+            assert!(admitted.take_painted_outputs().is_empty());
+            let [terminal] = admitted.surface_presentation_commits() else {
+                panic!("the late terminal must remain available after commit or rollback")
+            };
+            assert!(terminal.settles(inflight_artifact));
+            if result == SurfacePresentationResult::Dropped {
+                assert!(terminal.retires(inflight_artifact));
+            } else if !commit_update {
+                assert!(terminal.presents(inflight_artifact));
+            }
+
+            let mut successor = session.begin_host_frame().unwrap();
+            successor
+                .measure_surface(A, metrics(1000.0, 112.0))
+                .unwrap();
+            let successor_receiver = ready(&mut successor, A).tab_receiver(SECOND).unwrap();
+            let recording = encode(&mut successor, A);
+            let mut published = successor.commit().unwrap();
+            assert!(published.inputs().is_empty());
+            assert!(published.surface_presentation_commits().is_empty());
+            let output = only_output(&mut published);
+            assert!(output.matches_semantic_output(semantic(&recording)));
+            let successor_artifact = output.presentation_artifact();
+            session
+                .report_surface_presentation(output, SurfacePresentationResult::Presented)
+                .unwrap();
+            let settled = settle(&mut session);
+            assert!(settled.inputs().is_empty());
+            assert!(settled.events().is_empty());
+            assert!(settled.manipulation_feedback().is_empty());
+            let [terminal] = settled.surface_presentation_commits() else {
+                panic!("the successor must present once after the late terminal settles")
+            };
+            assert!(terminal.presents(successor_artifact));
+
+            // Dropping P1 leaves P0 valid; presenting P2 makes P0 stale in every branch.
+            assert!(session.bind_presented_receiver(&descriptor).is_none());
+            let mut stale = session.begin_host_frame().unwrap();
+            stale.submit_host_pointer_batch(click()).unwrap();
+            let rejected = stale.commit().unwrap();
+            assert!(!rejected.workspace_changed());
+            assert!(rejected.events().is_empty());
+            assert!(rejected.manipulation_feedback().is_empty());
+            assert_eq!(
+                session.view().item(SECOND).unwrap().is_selected(),
+                commit_update
+            );
+            assert!(!session.has_active_gesture());
+
+            let current = session.presented_surface(A).unwrap();
+            assert_ne!(current, surface);
+            let current_receiver = session
+                .bind_presented_receiver(&successor_receiver)
+                .unwrap();
+            let current_route = HostPointerRoute::new(current, current_receiver.center());
+            let mut fresh = session.begin_host_frame().unwrap();
+            fresh
+                .submit_host_pointer_batch(
+                    [
+                        SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary),
+                        SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary),
+                    ]
+                    .map(|event| {
+                        HostPointerInput::new(
+                            SurfacePointerId::new(1),
+                            event,
+                            current_route,
+                            current_route,
+                            SurfacePointerCapture::ProviderEndpoint,
+                            SurfacePointerReceiverFacts::delivery(&current_receiver),
+                        )
+                    }),
+                )
+                .unwrap();
+            let report = fresh.commit().unwrap();
+            assert_eq!(report.workspace_changed(), !commit_update);
+            assert_eq!(
+                report
+                    .events()
+                    .iter()
+                    .filter(|event| matches!(
+                        event.kind(),
+                        DockspaceEventKind::SelectionCommitted { item: SECOND }
+                    ))
+                    .count(),
+                usize::from(!commit_update),
+                "a fresh input selects once only when the suspended prefix was rolled back"
+            );
+            assert!(session.view().item(SECOND).unwrap().is_selected());
+            assert!(!session.has_active_gesture());
+            let quiet = settle(&mut session);
+            assert!(quiet.inputs().is_empty());
+            assert!(quiet.events().is_empty());
+            assert!(quiet.manipulation_feedback().is_empty());
+            assert!(quiet.surface_presentation_commits().is_empty());
+        }
+    }
 }
 
 #[test]
