@@ -69,6 +69,15 @@ impl GuideMetrics {
             outer_inset: config.guide_outer_inset() * scale,
         })
     }
+
+    fn scaled(self, scale: f64) -> Self {
+        Self {
+            half_extent: self.half_extent * scale,
+            hit_padding: self.hit_padding * scale,
+            inner_offset: self.inner_offset * scale,
+            outer_inset: self.outer_inset * scale,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -103,6 +112,23 @@ impl GuideEdgeGeometry {
     }
 }
 
+struct InnerGuideGeometry {
+    center: GuideButtonGeometry,
+    edges: Option<GuideEdgeGeometry>,
+}
+
+impl InnerGuideGeometry {
+    fn is_complete(&self, bounds: LogicalRect) -> bool {
+        match self.edges {
+            Some(edges) => {
+                let [left, right, top, bottom] = edges.buttons();
+                guide_geometry_is_complete(bounds, &[self.center, left, right, top, bottom])
+            }
+            None => guide_geometry_is_complete(bounds, &[self.center]),
+        }
+    }
+}
+
 pub(super) fn compile_surface_background(
     config: &DockPresentationConfig,
     surface: SurfaceId,
@@ -118,9 +144,17 @@ pub(super) fn compile_surface_background(
         midpoint(bounds.x(), bounds.max().x()),
         midpoint(bounds.y(), bounds.max().y()),
     )?;
+    let original = guide_button(
+        bounds,
+        center.x(),
+        center.y(),
+        metrics.half_extent,
+        metrics.half_extent,
+        metrics.hit_padding,
+    )?;
+    ensure_complete_guide_geometry(cluster, bounds, &[original])?;
     let half_span = metrics.half_extent + metrics.hit_padding;
     let placement = guide_placement(
-        cluster,
         bounds,
         half_span,
         half_span,
@@ -128,29 +162,22 @@ pub(super) fn compile_surface_background(
         guide_placement_occlusions(ready)
             .map(|occlusion| occlusion.region().rect())
             .filter(|occlusion| !rect_contains(*occlusion, bounds)),
+        |placement| {
+            let button = guide_button(
+                placement.cell,
+                placement.center_x,
+                placement.center_y,
+                metrics.half_extent * placement.scale,
+                metrics.half_extent * placement.scale,
+                metrics.hit_padding * placement.scale,
+            )?;
+            Ok(guide_geometry_is_complete(bounds, &[button]).then_some(button))
+        },
     )?;
     // A fully covered surface keeps latent geometry behind its occluders.
     // Whole-window drag sources are excluded before placement, so the button
     // does not follow the source window as it moves under the pointer.
-    let (cell, center_x, center_y, scale) = placement
-        .map(|placement| {
-            (
-                placement.cell,
-                placement.center_x,
-                placement.center_y,
-                placement.scale,
-            )
-        })
-        .unwrap_or((bounds, center.x(), center.y(), 1.0));
-    let button = guide_button(
-        cell,
-        center_x,
-        center_y,
-        metrics.half_extent * scale,
-        metrics.half_extent * scale,
-        metrics.hit_padding * scale,
-    )?;
-    ensure_complete_guide_geometry(cluster, bounds, &[button])?;
+    let button = placement.unwrap_or(original);
     let target = Arc::new(DropTargetRecord::surface_background(
         SurfaceBackground::new(surface),
         HitRegion::new(button.hit),
@@ -217,8 +244,7 @@ pub(super) fn outer_guide_geometry(
                 .filter(|other| *other != edge)
                 .map(|other| geometry.get(other).hit),
         );
-        let Some(placement) = guide_placement(
-            cluster,
+        let Some(moved) = guide_placement(
             bounds,
             button.hit.width() * 0.5,
             button.hit.height() * 0.5,
@@ -227,28 +253,33 @@ pub(super) fn outer_guide_geometry(
                 midpoint(button.hit.y(), button.hit.max().y()),
             )?,
             obstacles,
+            |placement| {
+                let move_rect = |rect: LogicalRect| {
+                    LogicalRect::new(
+                        placement.center_x
+                            + (rect.x() - midpoint(button.hit.x(), button.hit.max().x()))
+                                * placement.scale,
+                        placement.center_y
+                            + (rect.y() - midpoint(button.hit.y(), button.hit.max().y()))
+                                * placement.scale,
+                        rect.width() * placement.scale,
+                        rect.height() * placement.scale,
+                    )
+                };
+                let hit = clip_rect(move_rect(button.hit)?, placement.cell)?;
+                let moved = GuideButtonGeometry {
+                    draw: clip_rect(move_rect(button.draw)?, hit)?,
+                    hit,
+                };
+                let mut candidate = geometry;
+                candidate.set(edge, moved);
+                Ok(guide_geometry_is_complete(bounds, &candidate.buttons()).then_some(moved))
+            },
         )?
         else {
             return Ok(None);
         };
-        let move_rect = |rect: LogicalRect| {
-            LogicalRect::new(
-                placement.center_x
-                    + (rect.x() - midpoint(button.hit.x(), button.hit.max().x())) * placement.scale,
-                placement.center_y
-                    + (rect.y() - midpoint(button.hit.y(), button.hit.max().y())) * placement.scale,
-                rect.width() * placement.scale,
-                rect.height() * placement.scale,
-            )
-        };
-        let hit = clip_rect(move_rect(button.hit)?, placement.cell)?;
-        geometry.set(
-            edge,
-            GuideButtonGeometry {
-                draw: clip_rect(move_rect(button.draw)?, hit)?,
-                hit,
-            },
-        );
+        geometry.set(edge, moved);
     }
     ensure_complete_guide_geometry(cluster, bounds, &geometry.buttons())?;
     Ok(Some(geometry))
@@ -277,14 +308,14 @@ struct GuidePlacement {
     displacement: f64,
 }
 
-fn guide_placement(
-    cluster: DropGuideClusterId,
+fn guide_placement<T>(
     bounds: LogicalRect,
     half_width: f64,
     half_height: f64,
     preferred: LogicalPoint,
     obstacles: impl IntoIterator<Item = LogicalRect>,
-) -> Result<Option<GuidePlacement>, SceneCompilationError> {
+    mut prepare: impl FnMut(&GuidePlacement) -> Result<Option<T>, GeometryError>,
+) -> Result<Option<T>, SceneCompilationError> {
     let preferred_x = preferred.x();
     let preferred_y = preferred.y();
     let mut cells = vec![bounds];
@@ -316,7 +347,7 @@ fn guide_placement(
     if cells.is_empty() {
         return Ok(None);
     }
-    let mut best: Option<GuidePlacement> = None;
+    let mut best: Option<(GuidePlacement, T)> = None;
     for cell in cells {
         let scale = (cell.width() / (2.0 * half_width))
             .min(cell.height() / (2.0 * half_height))
@@ -331,23 +362,27 @@ fn guide_placement(
             .max(cell.y() + half_height * scale)
             .min(cell.max().y() - half_height * scale);
         let displacement = (center_x - preferred_x).hypot(center_y - preferred_y);
-        if best.as_ref().is_some_and(|best| {
+        if best.as_ref().is_some_and(|(best, _)| {
             best.scale > scale || (best.scale == scale && best.displacement <= displacement)
         }) {
             continue;
         }
-        best = Some(GuidePlacement {
+        let placement = GuidePlacement {
             cell,
             center_x,
             center_y,
             scale,
             displacement,
-        });
+        };
+        // A positive free rectangle can be too thin to represent every button
+        // at this origin. Only rank candidates whose complete geometry survives.
+        if let Some(geometry) = prepare(&placement)? {
+            best = Some((placement, geometry));
+        }
     }
     // Placement depends only on immutable layout geometry, never the pointer
     // or active slot. Crossing guide boundaries therefore cannot move buttons.
-    best.map(Some)
-        .ok_or(SceneCompilationError::UnrepresentableGuideGeometry { cluster, bounds })
+    Ok(best.map(|(_, geometry)| geometry))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -380,6 +415,25 @@ pub(super) fn compile_inner_targets_and_guide(
         cluster,
         bounds: placement_bounds,
     })?;
+    let preferred = LogicalPoint::new(
+        midpoint(placement_bounds.x(), placement_bounds.max().x()),
+        midpoint(placement_bounds.y(), placement_bounds.max().y()),
+    )?;
+    // Invalid configured geometry remains an error even when a foreground
+    // window happens to cover this pane. Occlusion can only reduce placement.
+    let intrinsic = inner_guide_geometry(
+        placement_bounds,
+        preferred.x(),
+        preferred.y(),
+        nominal,
+        root_central,
+    )?;
+    if !intrinsic.is_complete(placement_bounds) {
+        return Err(SceneCompilationError::UnrepresentableGuideGeometry {
+            cluster,
+            bounds: placement_bounds,
+        });
+    }
     let half_span = nominal.half_extent
         + nominal.hit_padding
         + if root_central {
@@ -397,42 +451,39 @@ pub(super) fn compile_inner_targets_and_guide(
                 .map(|occlusion| occlusion.region().rect())
                 .filter(|occlusion| !rect_contains(*occlusion, placement_bounds)),
         );
-    let Some(placement) = guide_placement(
-        cluster,
+    let Some(geometry) = guide_placement(
         placement_bounds,
         half_span,
         half_span,
-        LogicalPoint::new(
-            midpoint(placement_bounds.x(), placement_bounds.max().x()),
-            midpoint(placement_bounds.y(), placement_bounds.max().y()),
-        )?,
+        preferred,
         obstacles,
+        |placement| {
+            let geometry = inner_guide_geometry(
+                placement.cell,
+                placement.center_x,
+                placement.center_y,
+                nominal.scaled(placement.scale),
+                root_central,
+            )?;
+            Ok(geometry.is_complete(placement_bounds).then_some(geometry))
+        },
     )?
     else {
         return Ok(None);
     };
-    let GuidePlacement {
-        cell,
-        center_x,
-        center_y,
-        scale,
-        ..
-    } = placement;
-    let metrics = GuideMetrics {
-        half_extent: nominal.half_extent * scale,
-        hit_padding: nominal.hit_padding * scale,
-        inner_offset: nominal.inner_offset * scale,
-        outer_inset: nominal.outer_inset * scale,
-    };
-    let center_geometry = guide_button(
-        cell,
-        center_x,
-        center_y,
-        metrics.half_extent,
-        metrics.half_extent,
-        metrics.hit_padding,
-    )?;
-    ensure_complete_guide_geometry(cluster, placement_bounds, &[center_geometry])?;
+    let prepared_edges = geometry
+        .edges
+        .map(|edges| {
+            let [left, right, top, bottom] = [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom]
+                .map(|edge| edge_preview(node_bounds, edge, fraction));
+            Ok::<_, GeometryError>([
+                (Edge::Left, edges.left, left?),
+                (Edge::Right, edges.right, right?),
+                (Edge::Top, edges.top, top?),
+                (Edge::Bottom, edges.bottom, bottom?),
+            ])
+        })
+        .transpose()?;
     let center_location = DropTargetLocation::Center {
         surface,
         root,
@@ -441,13 +492,13 @@ pub(super) fn compile_inner_targets_and_guide(
     let center_target = install_canonical_drop_target(
         center_location,
         tab_availability(policy),
-        center_geometry,
+        geometry.center,
         placement_bounds,
         layer,
         ready,
     );
-    let center = guide_target_record(center_target, center_geometry);
-    if root_central {
+    let center = guide_target_record(center_target, geometry.center);
+    let Some(prepared_edges) = prepared_edges else {
         return Ok(Some(DropGuideClusterRecord::inner_center(
             surface,
             root,
@@ -456,47 +507,8 @@ pub(super) fn compile_inner_targets_and_guide(
             layer,
             center,
         )));
-    }
-
-    let mut geometry = GuideEdgeGeometry {
-        left: guide_button(
-            cell,
-            center_x - metrics.inner_offset,
-            center_y,
-            metrics.half_extent,
-            metrics.half_extent,
-            metrics.hit_padding,
-        )?,
-        right: guide_button(
-            cell,
-            center_x + metrics.inner_offset,
-            center_y,
-            metrics.half_extent,
-            metrics.half_extent,
-            metrics.hit_padding,
-        )?,
-        top: guide_button(
-            cell,
-            center_x,
-            center_y - metrics.inner_offset,
-            metrics.half_extent,
-            metrics.half_extent,
-            metrics.hit_padding,
-        )?,
-        bottom: guide_button(
-            cell,
-            center_x,
-            center_y + metrics.inner_offset,
-            metrics.half_extent,
-            metrics.half_extent,
-            metrics.hit_padding,
-        )?,
     };
-    separate_inner_cross_hits(cell, center_geometry, &mut geometry)?;
-    let mut all = Vec::from(geometry.buttons());
-    all.push(center_geometry);
-    ensure_complete_guide_geometry(cluster, placement_bounds, &all)?;
-    let mut edge_record = |edge| {
+    let [left, right, top, bottom] = prepared_edges.map(|(edge, geometry, preview)| {
         let location = DropTargetLocation::InnerEdge {
             surface,
             root,
@@ -504,23 +516,17 @@ pub(super) fn compile_inner_targets_and_guide(
             edge,
             fraction,
         };
-        let preview = edge_preview(node_bounds, edge, fraction)?;
         let target = install_canonical_drop_target(
             location,
             edge_availability(policy),
-            geometry.get(edge),
+            geometry,
             preview,
             layer,
             ready,
         );
-        Ok::<_, SceneCompilationError>(guide_target_record(target, geometry.get(edge)))
-    };
-    let edges = DropGuideEdgeSet::new(
-        edge_record(Edge::Left)?,
-        edge_record(Edge::Right)?,
-        edge_record(Edge::Top)?,
-        edge_record(Edge::Bottom)?,
-    );
+        guide_target_record(target, geometry)
+    });
+    let edges = DropGuideEdgeSet::new(left, right, top, bottom);
     Ok(Some(DropGuideClusterRecord::inner(
         surface,
         root,
@@ -530,6 +536,39 @@ pub(super) fn compile_inner_targets_and_guide(
         center,
         edges,
     )))
+}
+
+fn inner_guide_geometry(
+    bounds: LogicalRect,
+    center_x: f64,
+    center_y: f64,
+    metrics: GuideMetrics,
+    root_central: bool,
+) -> Result<InnerGuideGeometry, GeometryError> {
+    let button = |x, y| {
+        guide_button(
+            bounds,
+            x,
+            y,
+            metrics.half_extent,
+            metrics.half_extent,
+            metrics.hit_padding,
+        )
+    };
+    let center = button(center_x, center_y)?;
+    let edges = if root_central {
+        None
+    } else {
+        let mut edges = GuideEdgeGeometry {
+            left: button(center_x - metrics.inner_offset, center_y)?,
+            right: button(center_x + metrics.inner_offset, center_y)?,
+            top: button(center_x, center_y - metrics.inner_offset)?,
+            bottom: button(center_x, center_y + metrics.inner_offset)?,
+        };
+        separate_inner_cross_hits(bounds, center, &mut edges)?;
+        Some(edges)
+    };
+    Ok(InnerGuideGeometry { center, edges })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -865,17 +904,21 @@ fn ensure_complete_guide_geometry(
     bounds: LogicalRect,
     buttons: &[GuideButtonGeometry],
 ) -> Result<(), SceneCompilationError> {
+    if guide_geometry_is_complete(bounds, buttons) {
+        Ok(())
+    } else {
+        Err(SceneCompilationError::UnrepresentableGuideGeometry { cluster, bounds })
+    }
+}
+
+fn guide_geometry_is_complete(bounds: LogicalRect, buttons: &[GuideButtonGeometry]) -> bool {
     let complete = buttons.iter().all(|button| {
         rect_has_area(button.draw)
             && rect_has_area(button.hit)
             && rect_contains(bounds, button.hit)
             && rect_contains(button.hit, button.draw)
     });
-    if complete && !guide_hits_overlap(buttons) {
-        Ok(())
-    } else {
-        Err(SceneCompilationError::UnrepresentableGuideGeometry { cluster, bounds })
-    }
+    complete && !guide_hits_overlap(buttons)
 }
 
 fn guide_hits_overlap(buttons: &[GuideButtonGeometry]) -> bool {
