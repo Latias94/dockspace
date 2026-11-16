@@ -226,8 +226,30 @@ impl SurfacePaintPlan<'_> {
         menu: TabListMenuPaintRecord<'_>,
         delta: f64,
     ) -> Option<PreparedSurfaceAction> {
+        self.prepare_tab_list_menu_scroll_sequence(menu, [delta])
+    }
+
+    /// Folds ordered logical scroll deltas into one exact tab-list menu action.
+    ///
+    /// Every step clamps to this menu's current scroll range before the next
+    /// delta is applied. A round trip remains a handled action even when its
+    /// final offset is unchanged. Empty sequences and non-finite deltas return
+    /// `None` without preparing a partial action.
+    #[must_use]
+    pub fn prepare_tab_list_menu_scroll_sequence(
+        self,
+        menu: TabListMenuPaintRecord<'_>,
+        deltas: impl IntoIterator<Item = f64>,
+    ) -> Option<PreparedSurfaceAction> {
+        let mut deltas = deltas.into_iter().peekable();
+        deltas.peek()?;
+        let target = deltas.try_fold(menu.scroll_offset(), |offset, delta| {
+            delta
+                .is_finite()
+                .then(|| (offset + delta).clamp(0.0, menu.maximum_scroll_offset()))
+        })?;
         let adjustment =
-            crate::engine::TabScrollAdjustment::scroll_by_preserving(delta, []).ok()?;
+            crate::engine::TabScrollAdjustment::scroll_by(target - menu.scroll_offset()).ok()?;
         self.prepare_tab_list_menu_scroll(menu, adjustment)
     }
 
@@ -527,6 +549,21 @@ impl SurfacePaintPlan<'_> {
         direction: ContainedResizeDirection,
         adjustment: SurfaceContainedResizeAdjustment,
     ) -> Option<PreparedSurfaceAction> {
+        self.prepare_contained_resize_adjustment_sequence(floating, direction, [adjustment])
+    }
+
+    /// Folds ordered cardinal-edge adjustments into one scene-bound action.
+    ///
+    /// Every step uses the same surface bounds and minimum-size constraints as
+    /// direct resizing. An outward step at a limit followed by an inward step
+    /// therefore ends inside that limit. Empty sequences return `None`.
+    #[must_use]
+    pub fn prepare_contained_resize_adjustment_sequence(
+        self,
+        floating: FloatingPresentationId,
+        direction: ContainedResizeDirection,
+        adjustments: impl IntoIterator<Item = SurfaceContainedResizeAdjustment>,
+    ) -> Option<PreparedSurfaceAction> {
         let direction = direction.into_core();
         match direction {
             CoreContainedResizeDirection::North
@@ -538,7 +575,7 @@ impl SurfacePaintPlan<'_> {
             | CoreContainedResizeDirection::SouthWest
             | CoreContainedResizeDirection::NorthWest => return None,
         }
-        self.plan.contained_records().iter().find(|record| {
+        let contained = self.plan.contained_records().iter().find(|record| {
             record.floating() == floating
                 && record.transform_operable()
                 && record.resize().iter().any(|resize| {
@@ -548,6 +585,21 @@ impl SurfacePaintPlan<'_> {
                             .region_is_operable(resize.hit().rect(), record.layer())
                 })
         })?;
+        let source = self
+            .candidate
+            .workspace()
+            .contained_floating(floating)
+            .filter(|record| record.root == contained.root())?;
+        let delta = crate::engine::DockEngine::cardinal_contained_resize_sequence_delta(
+            self.surface,
+            source.rect,
+            self.plan.bounds(),
+            contained.minimum_size(),
+            direction,
+            adjustments
+                .into_iter()
+                .map(|adjustment| self.splitter_keyboard_step * adjustment.direction()),
+        )?;
         Some(PreparedSurfaceAction::adjust_contained_resize(
             self.authority_domain,
             self.version,
@@ -555,7 +607,7 @@ impl SurfacePaintPlan<'_> {
             self.frozen_action_witness()?,
             floating,
             direction,
-            self.splitter_keyboard_step * adjustment.direction(),
+            delta,
         ))
     }
 
@@ -607,3 +659,6 @@ impl SurfacePaintPlan<'_> {
             .cloned()
     }
 }
+
+#[cfg(test)]
+mod scroll_tests;

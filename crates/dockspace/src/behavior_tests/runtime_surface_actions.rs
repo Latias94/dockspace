@@ -26,6 +26,7 @@ use crate::runtime::{
     UniformSurfaceMetrics,
 };
 
+mod contained_resize_sequence;
 mod splitter_equalization;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);

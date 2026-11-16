@@ -3,6 +3,42 @@
 use super::*;
 
 impl DockEngine {
+    pub(crate) fn cardinal_contained_resize_sequence_delta(
+        surface: SurfaceId,
+        source: crate::geometry::LogicalRect,
+        bounds: crate::geometry::LogicalRect,
+        minimum: crate::geometry::LogicalSize,
+        direction: crate::presentation::scene::ContainedResizeDirection,
+        steps: impl IntoIterator<Item = f64>,
+    ) -> Option<f64> {
+        let mut steps = steps.into_iter();
+        let first = steps.next()?;
+        let Some(second) = steps.next() else {
+            return first.is_finite().then_some(first);
+        };
+        let mut rect = source;
+        for delta in [first, second].into_iter().chain(steps) {
+            let requested =
+                cardinal_contained_resize_requested_rect(rect, bounds, minimum, direction, delta)
+                    .ok()?;
+            rect = clamp_contained_rect(surface, bounds, requested, minimum).ok()?;
+        }
+        // Placement can translate an initially offscreen window. Retain the
+        // change in extent so one final resize reproduces that same placement.
+        use crate::presentation::scene::ContainedResizeDirection as Direction;
+        let delta = match direction {
+            Direction::North => source.height() - rect.height(),
+            Direction::East => rect.width() - source.width(),
+            Direction::South => rect.height() - source.height(),
+            Direction::West => source.width() - rect.width(),
+            Direction::NorthEast
+            | Direction::SouthEast
+            | Direction::SouthWest
+            | Direction::NorthWest => return None,
+        };
+        delta.is_finite().then_some(delta)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn resize_contained_from_candidate(
         &mut self,
