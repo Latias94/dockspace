@@ -280,7 +280,7 @@ fn configured_font_size_changes_the_measured_tab_geometry(cx: &mut TestAppContex
 }
 
 #[open_gpui::test]
-fn pane_minimum_size_limits_a_real_splitter_drag(cx: &mut TestAppContext) {
+fn pane_sizing_size_limits_a_real_splitter_drag(cx: &mut TestAppContext) {
     cx.defer_next_window_frame_requests();
     let dock = cx.update(|app| {
         let content = DockspaceNode::split(

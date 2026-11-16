@@ -2,10 +2,10 @@
 
 use dockspace::model::ItemId;
 use egui::scroll_area::ScrollAreaOutput;
-use egui::{Context, Id, Response, Ui, Vec2, WidgetText};
+use egui::{Context, Id, Response, Ui, WidgetText};
 
 use crate::tab::{Tab, TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose, TabVisuals};
-use crate::{DragPreview, DropGuide, DropPreview};
+use crate::{DragPreview, DropGuide, DropPreview, PaneSizing};
 
 /// Ordinary application-content registrations produced by one pane callback.
 ///
@@ -297,21 +297,27 @@ pub trait PaneView {
         }
     }
 
-    /// Returns the pane-specific minimum content size in egui points.
+    /// Returns application content sizing in egui points, before docking chrome.
     ///
-    /// This metadata is queried for every open tab, including inactive or
-    /// unloaded content, so it must not depend on creating the pane UI. Core
-    /// needs exact potential-layout minimums before a tab is dragged out.
+    /// This metadata is queried for every non-hidden tab, including inactive or
+    /// unloaded content, so it must not depend on creating the pane UI. Hidden
+    /// tabs are measured again when shown. Only the selected tab's sizing controls
+    /// its current pane frame; other tabs supply exact potential drag layouts.
     ///
-    /// Report the smallest useful content viewport, not the full document or
-    /// scrollable content extent. A host window can still become smaller than
-    /// the combined layout minimum, so content must respect its clip and remain
-    /// usable through scrolling, wrapping, or an application-specific fallback.
+    /// Declare a useful content viewport, not the full document or scrollable
+    /// content extent. Fixed sizes are equal minimum and maximum bounds. An
+    /// explicit maximum can lower the style's minimum floor, so a fixed pane may
+    /// be smaller than [`DockStyle::minimum_pane_size`](crate::style::DockStyle::minimum_pane_size).
+    /// Preferred extents apply only to explicit preferred-size reset actions;
+    /// they do not replace stored split weights during normal layout.
     ///
-    /// The default delegates the minimum floor entirely to
-    /// [`DockStyle`](crate::style::DockStyle).
-    fn minimum_size(&self, _item: ItemId) -> Vec2 {
-        Vec2::ZERO
+    /// Build and retain validated metadata with [`PaneSizing::builder`]. The
+    /// default delegates minimum floors entirely to [`DockStyle`](crate::style::DockStyle)
+    /// and imposes no maximum or preferred extent. Hosts still own available Ui
+    /// and native-window bounds; undersized hosts follow the configured overflow
+    /// policy, and content must respect its clip.
+    fn sizing(&self, _item: ItemId) -> PaneSizing {
+        PaneSizing::default()
     }
 }
 
@@ -364,8 +370,8 @@ impl<T: PaneView + ?Sized> PaneView for Box<T> {
         (**self).focus_state(item, context)
     }
 
-    fn minimum_size(&self, item: ItemId) -> Vec2 {
-        (**self).minimum_size(item)
+    fn sizing(&self, item: ItemId) -> PaneSizing {
+        (**self).sizing(item)
     }
 }
 
@@ -400,12 +406,12 @@ mod tests {
     }
 
     #[test]
-    fn default_minimum_size_defers_to_adapter_style() {
+    fn default_sizing_defers_to_adapter_style() {
         let panes = TestPanes {
             locked: ItemId::new(7),
         };
 
-        assert_eq!(panes.minimum_size(ItemId::new(8)), Vec2::ZERO);
+        assert_eq!(panes.sizing(ItemId::new(8)), PaneSizing::default());
     }
 
     #[test]
@@ -427,6 +433,7 @@ mod tests {
         struct BorrowedPanes<'a> {
             title: &'a str,
             paints: Rc<Cell<usize>>,
+            sizing: PaneSizing,
         }
 
         impl PaneView for BorrowedPanes<'_> {
@@ -447,23 +454,31 @@ mod tests {
                 Some(Id::unique(("boxed-provider", item)))
             }
 
-            fn minimum_size(&self, _item: ItemId) -> Vec2 {
-                Vec2::new(80.0, 40.0)
+            fn sizing(&self, _item: ItemId) -> PaneSizing {
+                self.sizing
             }
         }
 
         let title = String::from("Borrowed provider");
         let paints = Rc::new(Cell::new(0));
+        let sizing = PaneSizing::builder()
+            .min_width(80.0)
+            .max_width(320.0)
+            .preferred_width(160.0)
+            .fixed_height(40.0)
+            .build()
+            .unwrap();
         let mut boxed: Box<dyn PaneView + '_> = Box::new(BorrowedPanes {
             title: &title,
             paints: Rc::clone(&paints),
+            sizing,
         });
         // Coercing the box itself exercises its implementation, not deref lookup.
         let provider: &mut dyn PaneView = &mut boxed;
         let item = ItemId::new(8);
         let context = Context::default();
         assert_eq!(provider.title(item).unwrap().text(), title);
-        assert_eq!(provider.minimum_size(item), Vec2::new(80.0, 40.0));
+        assert_eq!(provider.sizing(item), sizing);
         assert_eq!(
             provider.focus_target(item),
             Some(Id::unique(("boxed-provider", item)))

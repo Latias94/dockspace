@@ -45,9 +45,10 @@ fn review_zero_displacement_splitter_click_preserves_durable_intent() {
                 Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
                     Answer::Bounds(LogicalRect::new(0.0, 0.0, 400.0 + gap, 600.0).unwrap())
                 }
-                Question::PaneMinimum { item, .. } => Answer::PaneMinimum(
-                    LogicalSize::new(if item == Some(FIRST) { 200.0 } else { 100.0 }, 48.0)
-                        .unwrap(),
+                Question::PaneSizing { item, .. } => Answer::PaneSizing(
+                    (LogicalSize::new(if item == Some(FIRST) { 200.0 } else { 100.0 }, 48.0)
+                        .unwrap())
+                    .into(),
                 ),
                 Question::TabIntrinsic { .. } => Answer::TabIntrinsic(56.0),
                 Question::TabStrip { .. } => {

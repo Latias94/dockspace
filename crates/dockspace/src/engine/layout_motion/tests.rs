@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use crate::geometry::{LogicalRect, LogicalSize};
+use crate::geometry::{LogicalRect, LogicalSize, PaneSizing};
 use crate::model::{
     DockPlacement, DockspaceAxis, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
     DockspaceSurfaceLayout, ItemId, RootId, SurfaceId,
@@ -91,7 +91,10 @@ fn paint_with_metrics(
                 operation: Operation::Splitter(splitter),
                 ..
             } => {
-                assert!(plan.receiver_for_splitter(splitter).is_some());
+                assert_eq!(
+                    plan.receiver_for_splitter(splitter).is_some(),
+                    splitter.operable()
+                );
                 sample.splitters += 1;
             }
             _ => {}
@@ -183,6 +186,39 @@ fn survivor_reflow_uses_confirmed_content_and_ticks_do_not_resolve_target_again(
 }
 
 #[test]
+fn a_new_content_cap_applies_to_every_frame_of_an_in_flight_reflow() {
+    let (mut session, before) = fixture();
+    assert!(before.panes[&B].width() > 180.0);
+    assert!(before.panes[&B].height() > 118.0);
+    dock(&mut session, C, A);
+    let (_, output) = paint(&mut session, motion(1000));
+    present(&mut session, output);
+    assert!(session.surface_motion_is_active(SURFACE));
+
+    let sizing = PaneSizing::builder()
+        .max_width(180.0)
+        .max_height(90.0)
+        .build()
+        .unwrap();
+    let capped_metrics = UniformSurfaceMetrics::new(
+        LogicalRect::new(0.0, 0.0, 960.0, 600.0).unwrap(),
+        sizing,
+        80.0,
+    )
+    .unwrap();
+    for now in [1025, 1050, 1100, 6000] {
+        let (sample, output) = paint_with_metrics(&mut session, motion(now), capped_metrics);
+        assert_eq!(sample.panes.len(), 2);
+        for bounds in sample.panes.values() {
+            assert!(bounds.width() <= 180.0, "t={now}: {bounds:?}");
+            assert!(bounds.height() <= 118.0, "t={now}: {bounds:?}");
+        }
+        present(&mut session, output);
+    }
+    assert!(!session.surface_motion_is_active(SURFACE));
+}
+
+#[test]
 fn popup_on_another_surface_preserves_the_running_layout_sample() {
     use crate::runtime::{
         DockspaceHostFrame, SurfaceMeasurementAnswer, SurfaceMeasurementRequest,
@@ -227,8 +263,10 @@ fn popup_on_another_surface_preserves_the_running_layout_sample() {
                             LogicalRect::new(0.0, 0.0, 260.0, 180.0).unwrap(),
                         )
                     }
-                    SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                        SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(40.0, 30.0).unwrap())
+                    SurfaceMeasurementRequest::PaneSizing { .. } => {
+                        SurfaceMeasurementAnswer::PaneSizing(
+                            (LogicalSize::new(40.0, 30.0).unwrap()).into(),
+                        )
                     }
                     SurfaceMeasurementRequest::TabIntrinsic { .. } => {
                         SurfaceMeasurementAnswer::TabIntrinsic(80.0)

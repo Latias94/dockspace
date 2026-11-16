@@ -271,6 +271,7 @@ const fn scene_compilation_error_kind(error: &SceneCompilationError) -> Dockspac
         | SceneCompilationError::NonFiniteAggregate { .. }
         | SceneCompilationError::InvalidTabWidthAllocation { .. }
         | SceneCompilationError::InvalidDockFraction
+        | SceneCompilationError::PaneSizingOverflow
         | SceneCompilationError::LayoutMetrics(_)
         | SceneCompilationError::Geometry(_) => DockspaceRuntimeErrorKind::InvalidConfiguration,
         SceneCompilationError::Layout(error) => layout_error_kind(error),
@@ -284,10 +285,10 @@ const fn scene_compilation_error_kind(error: &SceneCompilationError) -> Dockspac
         | SceneCompilationError::MissingRoot { .. }
         | SceneCompilationError::MissingNode { .. }
         | SceneCompilationError::RepeatedNode { .. }
-        | SceneCompilationError::MissingLeafMinimum { .. }
+        | SceneCompilationError::MissingLeafSizing { .. }
         | SceneCompilationError::MissingTabBarRequirement { .. }
         | SceneCompilationError::MissingTabCloseCapability { .. }
-        | SceneCompilationError::MissingPaneMinimumMeasurement { .. }
+        | SceneCompilationError::MissingPaneSizingMeasurement { .. }
         | SceneCompilationError::MissingTabIntrinsicMeasurement { .. }
         | SceneCompilationError::MissingTabStripMeasurement { .. }
         | SceneCompilationError::TabListMenuRosterMismatch { .. }

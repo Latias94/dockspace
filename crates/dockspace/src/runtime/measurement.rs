@@ -5,7 +5,7 @@ pub use crate::presentation::manifest::{
     TabStripControlPlacement, TabStripMetrics,
 };
 
-use crate::geometry::{LogicalRect, LogicalSize};
+use crate::geometry::{LogicalRect, PaneSizing};
 use crate::ids::{ItemId, SurfaceId};
 use crate::policy::TabBarVisibility;
 use crate::presentation::manifest::{Measurement, SurfaceMeasurements, TabIntrinsic};
@@ -23,7 +23,7 @@ use super::{
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UniformSurfaceMetrics {
     pub(super) bounds: LogicalRect,
-    pub(super) pane_minimum: LogicalSize,
+    pub(super) pane_sizing: PaneSizing,
     pub(super) tab_intrinsic: TabIntrinsic,
     pub(super) tab_strip: TabStripMetrics,
 }
@@ -36,7 +36,7 @@ impl UniformSurfaceMetrics {
     /// Returns an error when the tab content width is negative or non-finite.
     pub fn new(
         bounds: LogicalRect,
-        pane_minimum: LogicalSize,
+        pane_sizing: impl Into<PaneSizing>,
         tab_content_width: f64,
     ) -> Result<Self, DockspaceInteractionError> {
         let tab_intrinsic = TabIntrinsic::new(tab_content_width)
@@ -45,7 +45,7 @@ impl UniformSurfaceMetrics {
             .map_err(|_| DockspaceInteractionError::InvalidMeasurementProfile)?;
         Ok(Self {
             bounds,
-            pane_minimum,
+            pane_sizing: pane_sizing.into(),
             tab_intrinsic,
             tab_strip,
         })
@@ -69,20 +69,20 @@ pub enum SurfaceMeasurementRequest {
         /// Logical surface being measured.
         surface: SurfaceId,
     },
-    /// Measure one pane content minimum.
+    /// Measure one pane's complete content sizing declaration.
     ///
     /// Report the smallest useful viewport, not the full document extent.
     /// Hosts own content scrolling, wrapping and canvas navigation. A surface
     /// smaller than the combined minima can still clip panes out of view.
-    PaneMinimum {
+    PaneSizing {
         /// Stable renderer identity of the tabs leaf.
         visual: DockspaceVisualId,
         /// Visible pane item, including an inactive tab, or `None` for an empty leaf.
         ///
-        /// Every visible item needs minimum-size metadata independently of its
+        /// Every visible item needs sizing metadata independently of its
         /// content being loaded. Hidden items are omitted until shown again.
         /// Core uses these values for exact potential drag layouts; an unavailable
-        /// minimum defers the complete surface contribution.
+        /// declaration defers the complete surface contribution.
         item: Option<ItemId>,
     },
     /// Measure one tab's text-and-icon content width before core padding.
@@ -113,8 +113,8 @@ pub enum SurfaceMeasurementRequest {
 pub enum SurfaceMeasurementAnswer {
     /// Logical bounds for either a dock layout or popup plane request.
     Bounds(LogicalRect),
-    /// Minimum logical content size for one pane request.
-    PaneMinimum(LogicalSize),
+    /// Logical content bounds and optional reset preferences for one pane request.
+    PaneSizing(PaneSizing),
     /// Text-and-icon content width for one tab request.
     TabIntrinsic(f64),
     /// Renderer-owned tab-strip chrome measurements.
@@ -128,15 +128,15 @@ impl SurfaceMeasurementAnswer {
         match self {
             Self::Bounds(value) => Ok(Measurement::Measured(value)),
             Self::Unavailable(reason) => Ok(Measurement::Unavailable(reason.into())),
-            Self::PaneMinimum(_) | Self::TabIntrinsic(_) | Self::TabStrip(_) => {
+            Self::PaneSizing(_) | Self::TabIntrinsic(_) | Self::TabStrip(_) => {
                 Err(DockspaceInteractionError::MeasurementAnswerMismatch)
             }
         }
     }
 
-    fn into_pane_minimum(self) -> Result<Measurement<LogicalSize>, DockspaceInteractionError> {
+    fn into_pane_sizing(self) -> Result<Measurement<PaneSizing>, DockspaceInteractionError> {
         match self {
-            Self::PaneMinimum(value) => Ok(Measurement::Measured(value)),
+            Self::PaneSizing(value) => Ok(Measurement::Measured(value)),
             Self::Unavailable(reason) => Ok(Measurement::Unavailable(reason.into())),
             Self::Bounds(_) | Self::TabIntrinsic(_) | Self::TabStrip(_) => {
                 Err(DockspaceInteractionError::MeasurementAnswerMismatch)
@@ -150,7 +150,7 @@ impl SurfaceMeasurementAnswer {
                 .map(Measurement::Measured)
                 .map_err(|_| DockspaceInteractionError::InvalidMeasurementProfile),
             Self::Unavailable(reason) => Ok(Measurement::Unavailable(reason.into())),
-            Self::Bounds(_) | Self::PaneMinimum(_) | Self::TabStrip(_) => {
+            Self::Bounds(_) | Self::PaneSizing(_) | Self::TabStrip(_) => {
                 Err(DockspaceInteractionError::MeasurementAnswerMismatch)
             }
         }
@@ -160,7 +160,7 @@ impl SurfaceMeasurementAnswer {
         match self {
             Self::TabStrip(value) => Ok(Measurement::Measured(value)),
             Self::Unavailable(reason) => Ok(Measurement::Unavailable(reason.into())),
-            Self::Bounds(_) | Self::PaneMinimum(_) | Self::TabIntrinsic(_) => {
+            Self::Bounds(_) | Self::PaneSizing(_) | Self::TabIntrinsic(_) => {
                 Err(DockspaceInteractionError::MeasurementAnswerMismatch)
             }
         }
@@ -185,8 +185,8 @@ impl DockspaceHostFrame<'_> {
                 | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
                     SurfaceMeasurementAnswer::Bounds(metrics.bounds)
                 }
-                SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                    SurfaceMeasurementAnswer::PaneMinimum(metrics.pane_minimum)
+                SurfaceMeasurementRequest::PaneSizing { .. } => {
+                    SurfaceMeasurementAnswer::PaneSizing(metrics.pane_sizing)
                 }
                 SurfaceMeasurementRequest::TabIntrinsic { .. } => {
                     SurfaceMeasurementAnswer::TabIntrinsic(metrics.tab_intrinsic.content_width())
@@ -262,19 +262,19 @@ impl DockspaceHostFrame<'_> {
                     core_error(DockspaceInteractionError::MeasurementRosterInvariant.into())
                 })?;
         }
-        for key in requirements.pane_minimums() {
+        for key in requirements.pane_sizings() {
             let visual = DockspaceVisualId::from_pane_scene(PaneSceneId {
                 root: key.root(),
                 tabs: key.tabs(),
             });
             measurements
-                .insert_pane_minimum(
+                .insert_pane_sizing(
                     key,
-                    resolve(SurfaceMeasurementRequest::PaneMinimum {
+                    resolve(SurfaceMeasurementRequest::PaneSizing {
                         visual,
                         item: key.selected(),
                     })?
-                    .into_pane_minimum()
+                    .into_pane_sizing()
                     .map_err(|error| core_error(error.into()))?,
                 )
                 .map_err(|_| {

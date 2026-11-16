@@ -236,7 +236,7 @@ fn a_foreground_drag_lane_over_a_background_close_resizes_without_closing() {
         .build()
         .unwrap();
     dockspace.set_input(crate::DockInputConfig {
-        double_click_equalizes_splitter: false,
+        splitter_double_click: None,
         ..Default::default()
     });
     let mut output = frame(&context, &mut dockspace, 0.0, Vec::new()).0;

@@ -108,7 +108,9 @@ pub use dockspace::close::{
     ClosePlanTargetKind, CloseRequestId, DeferredCloseDecision, DeferredCloseToken,
     SurfaceCloseDisposition,
 };
-pub use dockspace::geometry::LogicalRect;
+pub use dockspace::geometry::{
+    AxisSizing, LogicalRect, PaneSizing, PaneSizingBuilder, PaneSizingError,
+};
 pub use dockspace::model::{
     DockAnchor, DockEdge, DockFraction, DockPlacement, DockspaceActionOutcome,
     DockspaceActionRejection, DockspaceAxis, DockspaceContainedLayout, DockspaceContainedView,
@@ -145,7 +147,7 @@ pub use drop_preview::{
 };
 pub use error::{DockspaceError, DockspaceErrorKind};
 pub use facade::Dockspace;
-pub use input::{DockInputConfig, DockingActivation};
+pub use input::{DockInputConfig, DockingActivation, SplitterDoubleClick};
 pub use pane::{PaneFocusState, PaneResponse, PaneView};
 pub use pass_settlement::{DockspaceOutput, DockspaceOutputReceipt, run_ui};
 pub use response::{

@@ -77,8 +77,8 @@ fn measure(frame: &mut DockspaceHostFrame<'_>, bounds: LogicalRect, controls: bo
                 Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
                     Answer::Bounds(bounds)
                 }
-                Question::PaneMinimum { .. } => {
-                    Answer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+                Question::PaneSizing { .. } => {
+                    Answer::PaneSizing((LogicalSize::new(64.0, 48.0).unwrap()).into())
                 }
                 Question::TabIntrinsic { .. } => Answer::TabIntrinsic(96.0),
                 Question::TabStrip { .. } => Answer::TabStrip(
@@ -454,7 +454,14 @@ fn review_expanded_touch_targets_preserve_each_visible_parallel_splitter_center(
                 DockspaceRootLayout::new(ROOT, node),
             )])
             .unwrap();
+            // This fixture scales the logical canvas, so scale its chrome and
+            // style floors too. Otherwise the small case overflows its minima
+            // and correctly has no resize authority, independent of hit expansion.
             let config = DockPresentationConfig::builder()
+                .minimum_pane_size(80.0 * scale, 48.0 * scale)
+                .tab_bar_height(28.0 * scale)
+                .tab_close_extent(16.0 * scale)
+                .tab_group_grip_extent(28.0 * scale)
                 .touch_resize_hit_extent(extent)
                 .build()
                 .unwrap();
@@ -480,6 +487,19 @@ fn review_expanded_touch_targets_preserve_each_visible_parallel_splitter_center(
                     .unwrap(),
                 )
                 .unwrap();
+            let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+            plan.visit_surface_program(|step| {
+                if let Step::Operation {
+                    operation: Operation::Splitter(splitter),
+                    ..
+                } = step
+                {
+                    assert!(splitter.operable(), "{axis:?}, scale={scale}");
+                    assert!(plan.splitter_resize_range(splitter.visual_id()).is_some());
+                }
+                Ok::<(), ()>(())
+            })
+            .unwrap();
             commit(frame);
             let (geometry, _, output) = paint(&mut session);
             assert_eq!(geometry.splitters.len(), 2);

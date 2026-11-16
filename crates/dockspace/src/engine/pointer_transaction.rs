@@ -3,8 +3,8 @@
 use super::contained_geometry::{contained_manipulation_point, contained_move_geometry};
 use super::*;
 use crate::input::intent::PointerId;
-use crate::presentation::compiler::{contained_minimum_size, pane_outer_minimum};
-use crate::presentation::manifest::PaneMinimumKey;
+use crate::presentation::compiler::{contained_minimum_size, pane_outer_sizing};
+use crate::presentation::manifest::PaneSizingKey;
 
 mod click;
 mod native;
@@ -2787,9 +2787,9 @@ impl DockEngine {
                     .ok_or_else(unavailable)?;
                 let facts = plan.layout_facts().ok_or_else(unavailable)?;
                 let root_facts = facts.root(root).ok_or_else(unavailable)?;
-                let pane_minimum = if let TabGestureSource::Item(item) = source {
+                let pane_sizing = if let TabGestureSource::Item(item) = source {
                     let measured = root_facts
-                        .pane_minimum(PaneMinimumKey::new(root, tabs, Some(item.item)))
+                        .pane_sizing(PaneSizingKey::new(root, tabs, Some(item.item)))
                         .ok_or_else(unavailable)?;
                     let visibility = self
                         .presentation_requirements()
@@ -2800,8 +2800,9 @@ impl DockEngine {
                         })
                         .map(|bar| bar.policy().resolved(1, false).visibility())
                         .ok_or_else(unavailable)?;
-                    pane_outer_minimum(measured, facts.config(), visibility)
+                    pane_outer_sizing(measured, facts.config(), visibility)
                         .map_err(|_| unavailable())?
+                        .minimum_size()
                 } else {
                     root_facts
                         .projection()
@@ -2812,7 +2813,7 @@ impl DockEngine {
                 };
                 JournalDragSourceGeometry {
                     source_rect: pane.bounds(),
-                    minimum_size: contained_minimum_size(facts.config(), pane_minimum)
+                    minimum_size: contained_minimum_size(facts.config(), pane_sizing)
                         .map_err(|_| unavailable())?,
                 }
             }

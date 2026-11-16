@@ -1,7 +1,7 @@
 use super::*;
 use crate::geometry::LogicalPoint;
 use crate::graph::SplitWeight;
-use crate::presentation::layout::ChildProjection;
+use crate::presentation::layout::{ChildProjection, measure_resize_contacts};
 
 mod contained;
 mod error;
@@ -21,7 +21,7 @@ use guides::{
 };
 use measurement::{RootLayoutMeasurement, measure_root_layout};
 pub(crate) use measurement::{
-    contained_minimum_size, pane_outer_minimum, selection_geometry_unchanged,
+    contained_minimum_size, pane_outer_sizing, selection_geometry_unchanged,
 };
 #[cfg(feature = "motion")]
 pub(crate) use motion::materialize_presentation_sample;
@@ -551,7 +551,7 @@ fn compile_root(
         .root(root)
         .ok_or(SceneCompilationError::MissingRoot { surface, root })?;
     let RootLayoutMeasurement {
-        pane_minimums,
+        pane_sizings,
         layout,
     } = root_measurement;
     let root_overrides = resize_overrides
@@ -565,10 +565,12 @@ fn compile_root(
         workspace_index,
         workspace_version,
     )?);
+    let resize_contacts =
+        measure_resize_contacts(workspace, &projection, config.splitter_thickness());
     ready.push_root_layout_facts(RootLayoutFacts::new(
         root,
         bounds,
-        pane_minimums,
+        pane_sizings,
         Arc::clone(&projection),
     ));
     let mut node_depths = BTreeMap::new();
@@ -689,7 +691,7 @@ fn compile_root(
                     bounds,
                 )?;
                 let mut resize_facts = None;
-                let operable = policy.splitter_resize_is_allowed(root, *axis, surface)
+                let split_operable = policy.splitter_resize_is_allowed(root, *axis, surface)
                     && !(config.pane_overflow_policy()
                         == crate::presentation::config::PaneOverflowPolicy::Compress
                         && split.overflow > 0.0);
@@ -697,6 +699,12 @@ fn compile_root(
                     let after_index = split.following_child_index(index).ok_or(
                         SceneCompilationError::MissingSplitProjection { root, split: *node },
                     )?;
+                    let operable = split_operable
+                        && resize_contacts.splitter_is_operable(
+                            *node,
+                            children[index],
+                            children[after_index],
+                        );
                     let id = SplitterSceneId {
                         root,
                         split: *node,

@@ -142,6 +142,7 @@ impl RootStructure {
         let zero = LogicalSize::new(0.0, 0.0)?;
         let empty = NodeResult {
             visible: false,
+            slot: LogicalRect::new(0.0, 0.0, 0.0, 0.0)?,
             rect: LogicalRect::new(0.0, 0.0, 0.0, 0.0)?,
             constraints: Constraints::new(zero, zero)?,
         };

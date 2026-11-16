@@ -7,7 +7,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::engine::transition::WorkspaceVersion;
-use crate::geometry::{LogicalRect, LogicalSize};
+use crate::geometry::{LogicalRect, PaneSizing};
 use crate::graph::error::CommandError;
 use crate::graph::workspace::{RootPresentationOwner, WorkspaceIndex};
 use crate::graph::{Node, Workspace};
@@ -184,21 +184,21 @@ impl PopupPlaneBoundsKey {
     }
 }
 
-/// Exact key for one pane item's intrinsic content minimum in a tabs leaf.
+/// Exact key for one pane item's complete content sizing in a tabs leaf.
 ///
 /// Every item is measured, not only the selected item. This lets core project
 /// a drag candidate in which any visible tab becomes the selected item of a
-/// newly created leaf without inventing a minimum-size heuristic. An empty leaf
+/// newly created leaf without inventing sizing metadata. An empty leaf
 /// is represented by `selected == None`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PaneMinimumKey {
+pub struct PaneSizingKey {
     root: RootId,
     tabs: NodeId,
     selected: Option<ItemId>,
 }
 
-impl PaneMinimumKey {
-    /// Creates a pane-minimum key from core-owned structural identity.
+impl PaneSizingKey {
+    /// Creates a pane-sizing key from core-owned structural identity.
     #[must_use]
     pub const fn new(root: RootId, tabs: NodeId, selected: Option<ItemId>) -> Self {
         Self {
@@ -674,7 +674,7 @@ pub struct SurfaceRequirements {
     ticket: SurfaceMeasurementTicket,
     bounds: SurfaceBoundsKey,
     popup_plane_bounds: Option<PopupPlaneBoundsKey>,
-    pane_minimums: Arc<BTreeSet<PaneMinimumKey>>,
+    pane_sizings: Arc<BTreeSet<PaneSizingKey>>,
     tab_intrinsics: Arc<BTreeSet<TabIntrinsicKey>>,
     tab_strips: Arc<BTreeSet<TabStripKey>>,
     tab_bars: Arc<BTreeMap<TabBarSceneId, TabBarRequirement>>,
@@ -1106,7 +1106,7 @@ impl SurfaceRequirements {
     /// Constructs a core-owned exact requirement set.
     pub(crate) fn new(
         ticket: SurfaceMeasurementTicket,
-        pane_minimums: BTreeSet<PaneMinimumKey>,
+        pane_sizings: BTreeSet<PaneSizingKey>,
         tab_intrinsics: BTreeSet<TabIntrinsicKey>,
         tab_strips: BTreeSet<TabStripKey>,
         tab_bars: BTreeMap<TabBarSceneId, TabBarRequirement>,
@@ -1137,7 +1137,7 @@ impl SurfaceRequirements {
             ticket,
             bounds: SurfaceBoundsKey::new(surface),
             popup_plane_bounds: None,
-            pane_minimums: Arc::new(pane_minimums),
+            pane_sizings: Arc::new(pane_sizings),
             tab_intrinsics: Arc::new(tab_intrinsics),
             tab_strips: Arc::new(tab_strips),
             tab_bars: Arc::new(tab_bars),
@@ -1162,10 +1162,10 @@ impl SurfaceRequirements {
         self.popup_plane_bounds
     }
 
-    /// Iterates required intrinsic pane minimums in deterministic identity order.
+    /// Iterates required pane sizing declarations in deterministic identity order.
     #[must_use]
-    pub fn pane_minimums(&self) -> impl ExactSizeIterator<Item = PaneMinimumKey> + '_ {
-        self.pane_minimums.iter().copied()
+    pub fn pane_sizings(&self) -> impl ExactSizeIterator<Item = PaneSizingKey> + '_ {
+        self.pane_sizings.iter().copied()
     }
 
     /// Iterates required tab intrinsics in deterministic identity order.
@@ -1235,7 +1235,7 @@ impl SurfaceRequirements {
             }
             (Some(_), Some(_)) | (None, None) => {}
         }
-        validate_pane_minimum_set(&self.pane_minimums, &measurements.pane_minimums)?;
+        validate_pane_sizing_set(&self.pane_sizings, &measurements.pane_sizings)?;
         validate_tab_intrinsic_set(&self.tab_intrinsics, &measurements.tab_intrinsics)?;
         validate_tab_strip_set(&self.tab_strips, &measurements.tab_strips)?;
         Ok(ValidatedSurfaceMeasurements { measurements })
@@ -1248,7 +1248,7 @@ pub struct SurfaceMeasurements {
     ticket: SurfaceMeasurementTicket,
     bounds: Option<(SurfaceBoundsKey, Measurement<LogicalRect>)>,
     popup_plane_bounds: Option<(PopupPlaneBoundsKey, Measurement<LogicalRect>)>,
-    pane_minimums: Arc<BTreeMap<PaneMinimumKey, Measurement<LogicalSize>>>,
+    pane_sizings: Arc<BTreeMap<PaneSizingKey, Measurement<PaneSizing>>>,
     tab_intrinsics: Arc<BTreeMap<TabIntrinsicKey, Measurement<TabIntrinsic>>>,
     tab_strips: Arc<BTreeMap<TabStripKey, Measurement<TabStripMetrics>>>,
 }
@@ -1261,7 +1261,7 @@ impl SurfaceMeasurements {
     pub(crate) fn same_values(&self, other: &Self) -> bool {
         self.bounds == other.bounds
             && self.popup_plane_bounds == other.popup_plane_bounds
-            && self.pane_minimums == other.pane_minimums
+            && self.pane_sizings == other.pane_sizings
             && self.tab_intrinsics == other.tab_intrinsics
             && self.tab_strips == other.tab_strips
     }
@@ -1287,7 +1287,7 @@ impl SurfaceMeasurements {
             ticket,
             bounds: None,
             popup_plane_bounds: None,
-            pane_minimums: Arc::default(),
+            pane_sizings: Arc::default(),
             tab_intrinsics: Arc::default(),
             tab_strips: Arc::default(),
         }
@@ -1310,9 +1310,9 @@ impl SurfaceMeasurements {
             popup_plane_bounds: requirements
                 .popup_plane_bounds()
                 .map(|key| (key, Measurement::Unavailable(reason))),
-            pane_minimums: Arc::new(
+            pane_sizings: Arc::new(
                 requirements
-                    .pane_minimums()
+                    .pane_sizings()
                     .map(|key| (key, Measurement::Unavailable(reason)))
                     .collect(),
             ),
@@ -1372,22 +1372,22 @@ impl SurfaceMeasurements {
         Ok(())
     }
 
-    /// Answers one intrinsic pane-minimum requirement.
+    /// Answers one complete pane-sizing requirement.
     ///
     /// # Errors
     ///
     /// Returns a typed duplicate error when this key was already answered.
-    pub fn insert_pane_minimum(
+    pub fn insert_pane_sizing(
         &mut self,
-        key: PaneMinimumKey,
-        value: Measurement<LogicalSize>,
+        key: PaneSizingKey,
+        value: Measurement<PaneSizing>,
     ) -> Result<(), MeasurementSubmissionError> {
-        match Arc::make_mut(&mut self.pane_minimums).entry(key) {
+        match Arc::make_mut(&mut self.pane_sizings).entry(key) {
             Entry::Vacant(entry) => {
                 entry.insert(value);
                 Ok(())
             }
-            Entry::Occupied(_) => Err(MeasurementSubmissionError::DuplicatePaneMinimum { key }),
+            Entry::Occupied(_) => Err(MeasurementSubmissionError::DuplicatePaneSizing { key }),
         }
     }
 
@@ -1459,9 +1459,9 @@ impl<'a> ValidatedSurfaceMeasurements<'a> {
             }
             None => None,
         };
-        for (key, value) in self.measurements.pane_minimums.iter() {
+        for (key, value) in self.measurements.pane_sizings.iter() {
             if let Measurement::Unavailable(reason) = value {
-                return Err(MeasurementAuthorityError::PaneMinimum {
+                return Err(MeasurementAuthorityError::PaneSizing {
                     key: *key,
                     reason: *reason,
                 });
@@ -1521,10 +1521,10 @@ impl AuthoritativeSurfaceMeasurements<'_> {
         self.popup_plane_bounds
     }
 
-    /// Returns one exact intrinsic pane minimum.
+    /// Returns one exact content-sizing declaration.
     #[must_use]
-    pub fn pane_minimum(self, key: PaneMinimumKey) -> Option<LogicalSize> {
-        match self.measurements.pane_minimums.get(&key) {
+    pub fn pane_sizing(self, key: PaneSizingKey) -> Option<PaneSizing> {
+        match self.measurements.pane_sizings.get(&key) {
             Some(Measurement::Measured(value)) => Some(*value),
             Some(Measurement::Unavailable(_)) | None => None,
         }
@@ -1601,10 +1601,10 @@ macro_rules! exact_set_validator {
 }
 
 exact_set_validator!(
-    validate_pane_minimum_set,
-    PaneMinimumKey,
-    MissingPaneMinimum,
-    UnexpectedPaneMinimum
+    validate_pane_sizing_set,
+    PaneSizingKey,
+    MissingPaneSizing,
+    UnexpectedPaneSizing
 );
 exact_set_validator!(
     validate_tab_intrinsic_set,
@@ -1841,11 +1841,11 @@ pub enum MeasurementSubmissionError {
     /// Popup-plane bounds were answered more than once.
     #[error("popup-plane bounds were submitted more than once")]
     DuplicatePopupPlaneBounds,
-    /// One pane minimum key was answered more than once.
-    #[error("pane minimum for {key:?} was submitted more than once")]
-    DuplicatePaneMinimum {
+    /// One pane sizing key was answered more than once.
+    #[error("pane sizing for {key:?} was submitted more than once")]
+    DuplicatePaneSizing {
         /// Repeated key.
-        key: PaneMinimumKey,
+        key: PaneSizingKey,
     },
     /// One tab intrinsic key was answered more than once.
     #[error("tab intrinsic for {key:?} was submitted more than once")]
@@ -1934,17 +1934,17 @@ pub enum MeasurementValidationError {
         /// Submitted key.
         actual: PopupPlaneBoundsKey,
     },
-    /// One required pane minimum was omitted.
-    #[error("pane minimum for {key:?} is missing")]
-    MissingPaneMinimum {
+    /// One required pane sizing declaration was omitted.
+    #[error("pane sizing for {key:?} is missing")]
+    MissingPaneSizing {
         /// First missing key.
-        key: PaneMinimumKey,
+        key: PaneSizingKey,
     },
-    /// One unrequested pane minimum was submitted.
-    #[error("pane minimum for {key:?} was not requested")]
-    UnexpectedPaneMinimum {
+    /// One unrequested pane sizing declaration was submitted.
+    #[error("pane sizing for {key:?} was not requested")]
+    UnexpectedPaneSizing {
         /// First unexpected key.
-        key: PaneMinimumKey,
+        key: PaneSizingKey,
     },
     /// One required tab intrinsic was omitted.
     #[error("tab intrinsic for {key:?} is missing")]
@@ -1990,11 +1990,11 @@ pub enum MeasurementAuthorityError {
         /// Adapter-provided reason.
         reason: MeasurementUnavailableReason,
     },
-    /// An intrinsic pane minimum was unavailable.
-    #[error("pane minimum for {key:?} is unavailable: {reason:?}")]
-    PaneMinimum {
+    /// A pane sizing declaration was unavailable.
+    #[error("pane sizing for {key:?} is unavailable: {reason:?}")]
+    PaneSizing {
         /// Requirement key.
-        key: PaneMinimumKey,
+        key: PaneSizingKey,
         /// Adapter-provided reason.
         reason: MeasurementUnavailableReason,
     },
@@ -2035,7 +2035,7 @@ mod tests {
 
     fn keys() -> (
         SurfaceMeasurementTicket,
-        PaneMinimumKey,
+        PaneSizingKey,
         TabIntrinsicKey,
         TabStripKey,
     ) {
@@ -2057,7 +2057,7 @@ mod tests {
                 SurfaceRequirementRevision::new(8),
                 surface,
             ),
-            PaneMinimumKey::new(root, tabs, Some(tab.item)),
+            PaneSizingKey::new(root, tabs, Some(tab.item)),
             TabIntrinsicKey::new(surface, tab),
             TabStripKey::new(surface, TabBarSceneId { root, tabs }),
         )
@@ -2240,8 +2240,8 @@ mod tests {
         );
         let old = original.surface(surface).unwrap();
         let new = rebound.surface(surface).unwrap();
-        assert_eq!(new.pane_minimums().count(), 2);
-        assert!(Arc::ptr_eq(&old.pane_minimums, &new.pane_minimums));
+        assert_eq!(new.pane_sizings().count(), 2);
+        assert!(Arc::ptr_eq(&old.pane_sizings, &new.pane_sizings));
         assert!(Arc::ptr_eq(&old.tab_intrinsics, &new.tab_intrinsics));
         assert!(Arc::ptr_eq(&old.tab_strips, &new.tab_strips));
         assert!(Arc::ptr_eq(&old.tab_bars, &new.tab_bars));
@@ -2292,8 +2292,8 @@ mod tests {
         ));
         assert!(!original.same_values(&changed));
         let mut changed = reticketed.clone();
-        Arc::make_mut(&mut changed.pane_minimums).insert(
-            requirements.pane_minimums().next().unwrap(),
+        Arc::make_mut(&mut changed.pane_sizings).insert(
+            requirements.pane_sizings().next().unwrap(),
             Measurement::Unavailable(MeasurementUnavailableReason::ContentUnavailable),
         );
         assert!(!original.same_values(&changed));
@@ -2439,9 +2439,11 @@ mod tests {
             )
             .expect("single bounds answer");
         contribution
-            .insert_pane_minimum(
+            .insert_pane_sizing(
                 pane,
-                Measurement::Measured(LogicalSize::new(80.0, 60.0).expect("valid minimum")),
+                Measurement::Measured(
+                    (LogicalSize::new(80.0, 60.0).expect("valid minimum")).into(),
+                ),
             )
             .expect("unique pane answer");
         contribution
@@ -2487,7 +2489,7 @@ mod tests {
             .expect("all values are measured");
 
         assert_eq!(accepted.bounds().width().to_bits(), 800.0_f64.to_bits());
-        assert!(accepted.pane_minimum(keys().1).is_some());
+        assert!(accepted.pane_sizing(keys().1).is_some());
         assert!(
             accepted
                 .measurements
@@ -2508,24 +2510,24 @@ mod tests {
             .unwrap()
             .snapshot();
         let (_, pane, _, _) = keys();
-        let unexpected = PaneMinimumKey::new(RootId::new(99), pane.tabs(), None);
+        let unexpected = PaneSizingKey::new(RootId::new(99), pane.tabs(), None);
         contribution
-            .insert_pane_minimum(
+            .insert_pane_sizing(
                 unexpected,
                 Measurement::Unavailable(MeasurementUnavailableReason::Deferred),
             )
             .unwrap();
         assert!(matches!(
             requirements.validate(&contribution),
-            Err(MeasurementValidationError::UnexpectedPaneMinimum { key }) if key == unexpected
+            Err(MeasurementValidationError::UnexpectedPaneSizing { key }) if key == unexpected
         ));
         let accepted = requirements
             .validate(&retained)
             .unwrap()
             .require_authoritative()
             .unwrap();
-        assert!(accepted.pane_minimum(pane).is_some());
-        assert!(accepted.pane_minimum(unexpected).is_none());
+        assert!(accepted.pane_sizing(pane).is_some());
+        assert!(accepted.pane_sizing(unexpected).is_none());
     }
 
     #[test]
@@ -2576,17 +2578,17 @@ mod tests {
     fn missing_precedes_unexpected_in_stable_exact_set_order() {
         let requirements = requirements();
         let mut contribution = measured_contribution(&requirements);
-        Arc::make_mut(&mut contribution.pane_minimums).clear();
+        Arc::make_mut(&mut contribution.pane_sizings).clear();
         let (_, pane, _, _) = keys();
-        let unexpected = PaneMinimumKey::new(RootId::new(99), pane.tabs(), None);
-        Arc::make_mut(&mut contribution.pane_minimums).insert(
+        let unexpected = PaneSizingKey::new(RootId::new(99), pane.tabs(), None);
+        Arc::make_mut(&mut contribution.pane_sizings).insert(
             unexpected,
             Measurement::Unavailable(MeasurementUnavailableReason::Deferred),
         );
 
         assert!(matches!(
             requirements.validate(&contribution),
-            Err(MeasurementValidationError::MissingPaneMinimum { key }) if key == pane
+            Err(MeasurementValidationError::MissingPaneSizing { key }) if key == pane
         ));
     }
 
@@ -2595,15 +2597,15 @@ mod tests {
         let requirements = requirements();
         let mut contribution = measured_contribution(&requirements);
         let (_, pane, _, _) = keys();
-        let unexpected = PaneMinimumKey::new(RootId::new(99), pane.tabs(), None);
-        Arc::make_mut(&mut contribution.pane_minimums).insert(
+        let unexpected = PaneSizingKey::new(RootId::new(99), pane.tabs(), None);
+        Arc::make_mut(&mut contribution.pane_sizings).insert(
             unexpected,
             Measurement::Unavailable(MeasurementUnavailableReason::Deferred),
         );
 
         assert!(matches!(
             requirements.validate(&contribution),
-            Err(MeasurementValidationError::UnexpectedPaneMinimum { key })
+            Err(MeasurementValidationError::UnexpectedPaneSizing { key })
                 if key == unexpected
         ));
     }

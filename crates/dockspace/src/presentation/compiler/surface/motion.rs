@@ -1,6 +1,7 @@
 //! Materialize sampled pane bounds from a sealed target without solving its layout again.
 
 use super::*;
+use crate::presentation::manifest::PaneSizingKey;
 use crate::presentation::scene::{
     PaneSceneId, PresentationMenuAnchorHost, ResolvedSurfaceProgramOperation,
     ResolvedSurfaceProgramStep, SurfaceProgramVisitError,
@@ -100,10 +101,39 @@ pub(crate) fn materialize_presentation_sample(
                                     surface,
                                     root: id.root,
                                 })?;
-                        let bounds = clip_rect(
-                            rects.get(&id).copied().unwrap_or_else(|| pane.bounds()),
-                            root_layout.bounds(),
+                        let sampled_bounds =
+                            rects.get(&id).copied().unwrap_or_else(|| pane.bounds());
+                        let key = PaneSizingKey::new(id.root, id.tabs, selected);
+                        let sizing = root_layout
+                            .pane_sizing(key)
+                            .ok_or(SceneCompilationError::MissingPaneSizingMeasurement { key })?;
+                        let maximum = root_layout
+                            .projection()
+                            .nodes
+                            .get(&id.tabs)
+                            .ok_or(SceneCompilationError::MissingNodeProjection {
+                                root: id.root,
+                                node: id.tabs,
+                            })?
+                            .constraints
+                            .max();
+                        let capped_bounds = LogicalRect::new(
+                            sampled_bounds.x(),
+                            sampled_bounds.y(),
+                            sizing
+                                .width()
+                                .maximum()
+                                .map_or(sampled_bounds.width(), |_| {
+                                    sampled_bounds.width().min(maximum.width())
+                                }),
+                            sizing
+                                .height()
+                                .maximum()
+                                .map_or(sampled_bounds.height(), |_| {
+                                    sampled_bounds.height().min(maximum.height())
+                                }),
                         )?;
+                        let bounds = clip_rect(capped_bounds, root_layout.bounds())?;
                         let presentation_menu_anchor = target
                             .presentation_menu_anchor_records()
                             .iter()

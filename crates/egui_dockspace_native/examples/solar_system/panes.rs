@@ -1,7 +1,7 @@
 //! Pane content and observations from the real viewport currently painting it.
 
 use eframe::egui;
-use egui_dockspace::{PaneResponse, PaneView};
+use egui_dockspace::{PaneResponse, PaneSizing, PaneView};
 
 use super::{ItemId, PLANETS, ROOT_SURFACE, SUN, SurfaceId, orbit::Orbit, orbit::WindowGeometry};
 
@@ -148,8 +148,12 @@ impl PaneView for Panes {
             .map(|planet| planet.name.into())
     }
 
-    fn minimum_size(&self, _item: ItemId) -> egui::Vec2 {
-        egui::vec2(160.0, 110.0)
+    fn sizing(&self, _item: ItemId) -> PaneSizing {
+        PaneSizing::builder()
+            .min_width(160.0)
+            .min_height(110.0)
+            .build()
+            .expect("the orbit pane content minimums are valid")
     }
 
     fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> PaneResponse {

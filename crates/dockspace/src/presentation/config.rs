@@ -1302,7 +1302,7 @@ mod tests {
     }
 
     #[test]
-    fn nominal_guide_size_may_exceed_the_pane_minimum_because_compilation_compacts_it() {
+    fn nominal_guide_size_may_exceed_the_pane_sizing_because_compilation_compacts_it() {
         let config = DockPresentationConfig::builder()
             .guide_extent(64.0)
             .guide_gap(8.0)

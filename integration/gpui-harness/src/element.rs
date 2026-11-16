@@ -710,12 +710,13 @@ fn build_candidate(
     let work = frame.prepare_surface_with(surface, |request| -> Result<Answer> {
         Ok(match request {
             Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => Answer::Bounds(bounds),
-            Request::PaneMinimum { item, .. } => {
-                Answer::PaneMinimum(item.and_then(|item| panels.get(&item)).map_or_else(
+            Request::PaneSizing { item, .. } => Answer::PaneSizing(
+                (item.and_then(|item| panels.get(&item)).map_or_else(
                     || LogicalSize::new(120.0, 90.0).expect("default minimum is valid"),
                     |pane| pane.minimum_size,
                 ))
-            }
+                .into(),
+            ),
             Request::TabIntrinsic { item, .. } => {
                 let width = panels.get(&item).map_or(120.0, |pane| {
                     let line = window.text_system().shape_line(

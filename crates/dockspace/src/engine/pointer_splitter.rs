@@ -1,6 +1,7 @@
 //! Splitter and junction pointer-resize transactions.
 
 use super::*;
+use crate::ids::NodeId;
 
 impl DockEngine {
     pub(super) fn splitter_resize_delta_interval(
@@ -9,6 +10,16 @@ impl DockEngine {
         target: SplitterResizeTarget,
         axis: Axis,
     ) -> Option<crate::interaction::ResizeDeltaInterval> {
+        self.prepare_splitter_resize_axis_group(plan, target, axis)
+            .map(|group| group.common_delta)
+    }
+
+    fn prepare_splitter_resize_axis_group(
+        &self,
+        plan: &PresentationPlan,
+        target: SplitterResizeTarget,
+        axis: Axis,
+    ) -> Option<crate::interaction::FrozenResizeAxisGroup> {
         let handles = match target {
             SplitterResizeTarget::Handle(_) => self.prepare_splitter_resize_handles(plan, target),
             SplitterResizeTarget::Junction(junction) => {
@@ -19,10 +30,69 @@ impl DockEngine {
         let groups = self
             .prepare_checked_resize_axis_groups(plan, handles, self.policy_snapshot())
             .ok()?;
-        groups
-            .into_iter()
-            .find(|group| group.axis == axis)
-            .map(|group| group.common_delta)
+        groups.into_iter().find(|group| group.axis == axis)
+    }
+
+    /// Samples the already-proved linear frontier without solving another layout.
+    pub(super) fn splitter_resize_axis_extents(
+        &self,
+        plan: &PresentationPlan,
+        target: SplitterResizeTarget,
+        axis: Axis,
+        delta: f64,
+    ) -> Option<BTreeMap<NodeId, f64>> {
+        let group = self.prepare_splitter_resize_axis_group(plan, target, axis)?;
+        if !delta.is_finite()
+            || delta < group.common_delta.minimum
+            || delta > group.common_delta.maximum
+        {
+            return None;
+        }
+        let root = match target {
+            SplitterResizeTarget::Handle(id) => id.root,
+            SplitterResizeTarget::Junction(id) => id.root(),
+        };
+        let projection = plan.layout_facts()?.root(root)?.projection();
+        let splits = group
+            .splits
+            .iter()
+            .filter(|split| split.axis == axis)
+            .map(|split| (split.source.node(), split))
+            .collect::<BTreeMap<_, _>>();
+        let mut pending = vec![(self.workspace.root(root)?.node, 0.0)];
+        let mut extents = BTreeMap::new();
+        while let Some((node, coefficient)) = pending.pop() {
+            let result = projection.nodes.get(&node)?;
+            let coefficient = if result.visible { coefficient } else { 0.0 };
+            let current = match axis {
+                Axis::Horizontal => result.rect.width(),
+                Axis::Vertical => result.rect.height(),
+            };
+            let extent = current + coefficient * delta;
+            if !extent.is_finite() || extent < 0.0 {
+                return None;
+            }
+            extents.insert(node, extent);
+            if let Node::Split {
+                axis: split_axis,
+                children,
+                ..
+            } = self.workspace.node(node)?
+            {
+                for (index, &child) in children.iter().enumerate().rev() {
+                    let child_coefficient = if *split_axis == axis {
+                        match splits.get(&node) {
+                            Some(split) => *split.child_coefficients.get(index)?,
+                            None => 0.0,
+                        }
+                    } else {
+                        coefficient
+                    };
+                    pending.push((child, child_coefficient));
+                }
+            }
+        }
+        Some(extents)
     }
 
     pub(super) fn prepare_journal_splitter_gesture(

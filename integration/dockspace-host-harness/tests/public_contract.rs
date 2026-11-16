@@ -76,8 +76,10 @@ fn measure_overflow_surface(frame: &mut DockspaceHostFrame<'_>, surface: Surface
                 | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
                     SurfaceMeasurementAnswer::Bounds(bounds(160.0))
                 }
-                SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+                SurfaceMeasurementRequest::PaneSizing { .. } => {
+                    SurfaceMeasurementAnswer::PaneSizing(
+                        (LogicalSize::new(64.0, 48.0).unwrap()).into(),
+                    )
                 }
                 SurfaceMeasurementRequest::TabIntrinsic { .. } => {
                     SurfaceMeasurementAnswer::TabIntrinsic(96.0)
@@ -1275,8 +1277,10 @@ fn prepare_surface_retains_active_source_geometry_while_an_unrelated_surface_ref
                 | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
                     SurfaceMeasurementAnswer::Bounds(bounds(900.0))
                 }
-                SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(80.0, 64.0).unwrap())
+                SurfaceMeasurementRequest::PaneSizing { .. } => {
+                    SurfaceMeasurementAnswer::PaneSizing(
+                        (LogicalSize::new(80.0, 64.0).unwrap()).into(),
+                    )
                 }
                 SurfaceMeasurementRequest::TabIntrinsic { .. } => {
                     SurfaceMeasurementAnswer::TabIntrinsic(144.0)
@@ -1531,8 +1535,10 @@ fn host_pointer_input_only_preview_cancel_and_repress_allow_independent_prepare_
                 | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
                     SurfaceMeasurementAnswer::Bounds(bounds(900.0))
                 }
-                SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(80.0, 64.0).unwrap())
+                SurfaceMeasurementRequest::PaneSizing { .. } => {
+                    SurfaceMeasurementAnswer::PaneSizing(
+                        (LogicalSize::new(80.0, 64.0).unwrap()).into(),
+                    )
                 }
                 SurfaceMeasurementRequest::TabIntrinsic { .. } => {
                     SurfaceMeasurementAnswer::TabIntrinsic(144.0)

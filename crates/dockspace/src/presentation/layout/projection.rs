@@ -13,7 +13,12 @@ use super::{Axis, Constraints, LogicalRect, NodeId, RootNodeKind, RootStructure}
 pub struct NodeResult {
     /// Whether this node contributes to the visible layout.
     pub visible: bool,
-    /// Logical rectangle assigned to this node.
+    /// Logical rectangle allocated by the parent or actual root host.
+    pub slot: LogicalRect,
+    /// Actual frame, anchored at the slot origin and limited by pane maxima.
+    ///
+    /// A frame can be smaller than its slot. Minima do not enlarge the frame;
+    /// overflow is handled by the split allocation policy and surface clipping.
     pub rect: LogicalRect,
     /// Composed minimum and maximum logical sizes for this node.
     pub constraints: Constraints,
@@ -96,7 +101,8 @@ impl<T> NodeMap<T> {
 }
 
 impl NodeMap<NodeResult> {
-    pub(super) fn record_rect(&mut self, row: usize, rect: LogicalRect) {
+    pub(super) fn record_rect(&mut self, row: usize, slot: LogicalRect, rect: LogicalRect) {
+        self.values[row].slot = slot;
         self.values[row].rect = rect;
     }
 }
@@ -190,7 +196,7 @@ pub struct SplitProjection<'a> {
     pub central_index: Option<usize>,
     /// Extent by which child minima exceed the split bounds.
     pub overflow: f64,
-    /// Extent left unused after every child reached its maximum.
+    /// Slot extent left unused after the split frame and children reached their maxima.
     pub unallocated: f64,
 }
 

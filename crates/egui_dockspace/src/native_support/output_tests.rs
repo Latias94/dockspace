@@ -197,14 +197,14 @@ fn native_measurement_error_stops_callbacks_and_preserves_ready_scene_for_retry(
     use egui::{RawInput, Rect, Ui};
 
     use crate::{
-        DockInputConfig, DockStyle, DockspaceErrorKind, PaneResponse, PaneView, TabBarId,
-        TabBarLayout,
+        DockInputConfig, DockStyle, DockspaceErrorKind, PaneResponse, PaneSizing, PaneView,
+        TabBarId, TabBarLayout,
     };
 
     #[derive(Default)]
     struct Panes {
-        invalid_minimum: bool,
-        minimum_calls: Cell<usize>,
+        invalid_tab_width: bool,
+        sizing_calls: Cell<usize>,
         title_calls: Cell<usize>,
         chrome_calls: Cell<usize>,
     }
@@ -219,12 +219,20 @@ fn native_measurement_error_stops_callbacks_and_preserves_ready_scene_for_retry(
             PaneResponse::from(&ui.label("Document content"))
         }
 
-        fn minimum_size(&self, _: ItemId) -> egui::Vec2 {
-            self.minimum_calls.set(self.minimum_calls.get() + 1);
-            if self.invalid_minimum {
-                egui::vec2(f32::NAN, 40.0)
+        fn sizing(&self, _: ItemId) -> PaneSizing {
+            self.sizing_calls.set(self.sizing_calls.get() + 1);
+            PaneSizing::builder()
+                .min_width(80.0)
+                .min_height(40.0)
+                .build()
+                .unwrap()
+        }
+
+        fn tab_content_width(&self, _: ItemId, _: &Ui, title: &egui::Galley) -> f32 {
+            if self.invalid_tab_width {
+                f32::NAN
             } else {
-                egui::vec2(80.0, 40.0)
+                title.size().x
             }
         }
 
@@ -251,8 +259,8 @@ fn native_measurement_error_stops_callbacks_and_preserves_ready_scene_for_retry(
     let mut ready_output = None;
 
     for pass in 0..3 {
-        panes.invalid_minimum = pass == 1;
-        panes.minimum_calls.set(0);
+        panes.invalid_tab_width = pass == 1;
+        panes.sizing_calls.set(0);
         panes.title_calls.set(0);
         panes.chrome_calls.set(0);
         let mut output = context.run_ui(
@@ -271,13 +279,14 @@ fn native_measurement_error_stops_callbacks_and_preserves_ready_scene_for_retry(
                     super::measure_surface(&mut frame, surface, ui, bounds, bounds, &panes, &style);
                 if pass == 1 {
                     let error = measured.unwrap_err();
-                    assert_eq!(error.kind(), DockspaceErrorKind::InvalidConfiguration);
-                    assert_eq!(
-                        error.to_string(),
-                        "egui measurement for pane minimum is invalid"
+                    assert_eq!(error.kind(), DockspaceErrorKind::HostProtocol);
+                    assert!(
+                        error
+                            .to_string()
+                            .contains("surface measurement profile contains an invalid scalar")
                     );
-                    assert_eq!(panes.minimum_calls.get(), 1);
-                    assert_eq!(panes.title_calls.get(), 0);
+                    assert_eq!(panes.sizing_calls.get(), 2);
+                    assert_eq!(panes.title_calls.get(), 1);
                     assert_eq!(panes.chrome_calls.get(), 0);
                     assert_eq!(
                         frame
@@ -292,7 +301,7 @@ fn native_measurement_error_stops_callbacks_and_preserves_ready_scene_for_retry(
                 }
 
                 assert!(measured.unwrap().is_empty());
-                assert!(panes.minimum_calls.get() > 0);
+                assert!(panes.sizing_calls.get() > 0);
                 assert!(panes.title_calls.get() > 0);
                 assert!(panes.chrome_calls.get() > 0);
                 if pass == 0 {

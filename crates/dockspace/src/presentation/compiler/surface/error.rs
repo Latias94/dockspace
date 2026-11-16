@@ -9,7 +9,7 @@ use crate::ids::{FloatingPresentationId, NodeId, RootId, SurfaceId};
 use crate::interaction::targeting::guide::DropGuideClusterId;
 use crate::presentation::layout::{LayoutError, LayoutMetricsError};
 use crate::presentation::manifest::{
-    ManifestMeasurementError, MeasurementAuthorityError, PaneMinimumKey, PolicyRevision,
+    ManifestMeasurementError, MeasurementAuthorityError, PaneSizingKey, PolicyRevision,
     SurfaceMeasurementTicket, TabIntrinsicKey, TabStripKey,
 };
 use crate::presentation::scene::{
@@ -20,6 +20,9 @@ use crate::presentation::tab_strip::TabStripStateKey;
 /// Failure to compile authoritative measurements into one semantic surface scene.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum SceneCompilationError {
+    /// Adding renderer chrome to otherwise valid pane sizing overflowed.
+    #[error("pane sizing with core chrome is not representable")]
+    PaneSizingOverflow,
     /// The validated contribution did not echo the exact requirement ticket.
     #[error("surface measurement ticket {actual:?} does not match requirement {expected:?}")]
     TicketMismatch {
@@ -108,9 +111,9 @@ pub enum SceneCompilationError {
         /// Repeated node.
         node: NodeId,
     },
-    /// A tabs leaf had no core-minted minimum answer.
-    #[error("root {root} tabs node {tabs:?} has no pane minimum")]
-    MissingLeafMinimum {
+    /// A tabs leaf had no core-minted sizing answer.
+    #[error("root {root} tabs node {tabs:?} has no pane sizing")]
+    MissingLeafSizing {
         /// Owning root.
         root: RootId,
         /// Unmeasured leaf.
@@ -128,11 +131,11 @@ pub enum SceneCompilationError {
         /// Tab whose close policy fact was missing.
         id: TabSceneId,
     },
-    /// Exact-set validation succeeded but the authoritative pane minimum was absent.
-    #[error("authoritative pane minimum answer is missing for {key:?}")]
-    MissingPaneMinimumMeasurement {
+    /// Exact-set validation succeeded but the authoritative pane sizing was absent.
+    #[error("authoritative pane sizing answer is missing for {key:?}")]
+    MissingPaneSizingMeasurement {
         /// Missing exact key.
-        key: PaneMinimumKey,
+        key: PaneSizingKey,
     },
     /// Exact-set validation succeeded but the authoritative tab answer was absent.
     #[error("authoritative tab intrinsic answer is missing for {key:?}")]

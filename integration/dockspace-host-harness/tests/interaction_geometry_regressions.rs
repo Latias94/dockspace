@@ -73,8 +73,8 @@ fn measure(
                     | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
                         SurfaceMeasurementAnswer::Bounds(bounds)
                     }
-                    SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
-                        SurfaceMeasurementAnswer::PaneMinimum(minimum(item))
+                    SurfaceMeasurementRequest::PaneSizing { item, .. } => {
+                        SurfaceMeasurementAnswer::PaneSizing((minimum(item)).into())
                     }
                     SurfaceMeasurementRequest::TabIntrinsic { .. } => {
                         SurfaceMeasurementAnswer::TabIntrinsic(96.0)
@@ -374,8 +374,8 @@ fn hidden_draggable_source_requests_exact_intrinsic_and_reaches_visible_gap() {
                     | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
                         SurfaceMeasurementAnswer::Bounds(bounds)
                     }
-                    SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                        SurfaceMeasurementAnswer::PaneMinimum(size(64.0, 48.0))
+                    SurfaceMeasurementRequest::PaneSizing { .. } => {
+                        SurfaceMeasurementAnswer::PaneSizing((size(64.0, 48.0)).into())
                     }
                     SurfaceMeasurementRequest::TabIntrinsic { item, .. } => {
                         saw_hidden_source_intrinsic |= surface == SOURCE && item == A;

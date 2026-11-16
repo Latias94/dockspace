@@ -69,8 +69,8 @@ fn measure(frame: &mut DockspaceHostFrame<'_>) {
                 Request::PopupPlaneBounds { .. } => {
                     Answer::Bounds(LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap())
                 }
-                Request::PaneMinimum { .. } => {
-                    Answer::PaneMinimum(LogicalSize::new(16.0, 16.0).unwrap())
+                Request::PaneSizing { .. } => {
+                    Answer::PaneSizing((LogicalSize::new(16.0, 16.0).unwrap()).into())
                 }
                 Request::TabIntrinsic { .. } => Answer::TabIntrinsic(96.0),
                 Request::TabStrip { .. } => Answer::TabStrip(

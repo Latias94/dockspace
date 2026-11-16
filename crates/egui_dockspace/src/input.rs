@@ -25,12 +25,25 @@ impl Default for DockingActivation {
     }
 }
 
+/// Action requested by a primary-button double click on an internal splitter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitterDoubleClick {
+    /// Equalizes adjacent pane extents within their current size constraints.
+    Equalize,
+    /// Restores declared preferred extents, equalizing when no preference exists.
+    ///
+    /// Current size constraints still apply. Preferred extents do not otherwise
+    /// replace the user's stored split proportions during ordinary layout.
+    Preferred,
+}
+
 /// Input bindings owned by one docking adapter instance.
 ///
 /// Ordinary egui control navigation and application document shortcuts retain
 /// their own input owners. Defaults pause docking while Shift is held, cancel
-/// a drag with Escape, close tabs with a middle click, and equalize adjacent
-/// panes with a primary-button double click on their splitter. Tab cycling is
+/// a drag with Escape, close tabs with a middle click, and restore preferred pane
+/// extents with a primary-button double click on their splitter. Without a
+/// preferred extent, double clicking equalizes the adjacent panes. Tab cycling is
 /// opt-in through [`Self::next_tab`] and [`Self::previous_tab`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DockInputConfig {
@@ -46,10 +59,11 @@ pub struct DockInputConfig {
     /// Uses the normal close policy and application decision workflow. It does
     /// not select an inactive tab or require its close icon to be visible.
     pub middle_click_closes_tab: bool,
-    /// Equalizes the adjacent panes when their splitter is double-clicked.
+    /// Action requested when a splitter is double-clicked; `None` disables it.
     ///
-    /// The core clamps the result to both panes' current size constraints.
-    pub double_click_equalizes_splitter: bool,
+    /// Defaults to [`SplitterDoubleClick::Preferred`]. Core clamps the result
+    /// to both panes' current size constraints.
+    pub splitter_double_click: Option<SplitterDoubleClick>,
     /// Cycles forward in the group whose pane, tab, or built-in strip control owns focus.
     ///
     /// Disabled by default so application document shortcuts keep their input.
@@ -68,7 +82,7 @@ impl Default for DockInputConfig {
             docking: DockingActivation::default(),
             cancel_drag: Some(KeyboardShortcut::new(Modifiers::NONE, Key::Escape)),
             middle_click_closes_tab: true,
-            double_click_equalizes_splitter: true,
+            splitter_double_click: Some(SplitterDoubleClick::Preferred),
             next_tab: None,
             previous_tab: None,
         }

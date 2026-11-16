@@ -5,7 +5,7 @@ use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-use dockspace::geometry::LogicalSize;
+use dockspace::geometry::PaneSizing;
 use dockspace::model::{ItemId, SurfaceId};
 use dockspace::policy::TabBarVisibility;
 use dockspace::runtime::{
@@ -193,13 +193,9 @@ impl<'a> SurfaceMeasurementContext<'a> {
             SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
                 Ok(SurfaceMeasurementAnswer::Bounds(popup_bounds))
             }
-            SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
-                let minimum = item.map_or(egui::Vec2::ZERO, |item| panes.minimum_size(item));
-                let minimum = LogicalSize::new(f64::from(minimum.x), f64::from(minimum.y))
-                    .map_err(|_| DockspaceErrorSource::InvalidMeasurement {
-                        what: "pane minimum",
-                    })?;
-                Ok(SurfaceMeasurementAnswer::PaneMinimum(minimum))
+            SurfaceMeasurementRequest::PaneSizing { item, .. } => {
+                let sizing = item.map_or_else(PaneSizing::default, |item| panes.sizing(item));
+                Ok(SurfaceMeasurementAnswer::PaneSizing(sizing))
             }
             SurfaceMeasurementRequest::TabIntrinsic {
                 visual: _,

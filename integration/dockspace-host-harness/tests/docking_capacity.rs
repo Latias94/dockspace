@@ -91,7 +91,7 @@ fn overflow_policy(session: &mut DockspaceSession, policy: PaneOverflowPolicy) {
 fn measure(
     session: &mut DockspaceSession,
     target: LogicalRect,
-    pane_minimum: impl Fn(Option<ItemId>) -> LogicalSize,
+    pane_sizing: impl Fn(Option<ItemId>) -> LogicalSize,
 ) {
     let mut frame = session.begin_host_frame().unwrap();
     for (surface, rect) in [(SOURCE, bounds(900.0, 600.0)), (TARGET, target)] {
@@ -101,7 +101,9 @@ fn measure(
                     Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
                         Answer::Bounds(rect)
                     }
-                    Question::PaneMinimum { item, .. } => Answer::PaneMinimum(pane_minimum(item)),
+                    Question::PaneSizing { item, .. } => {
+                        Answer::PaneSizing((pane_sizing(item)).into())
+                    }
                     Question::TabIntrinsic { item, .. } => {
                         Answer::TabIntrinsic(if item.get().is_multiple_of(2) {
                             4096.0

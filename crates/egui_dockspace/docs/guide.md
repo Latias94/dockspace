@@ -76,10 +76,51 @@ descendants, declare overlays, or establish a content focus target.
 
 Pane content stays within its allocated clip. Use an egui `ScrollArea` for long
 forms or logs, wrapping for text, and pan/zoom for canvases as appropriate.
-`PaneView::minimum_size` describes the smallest useful content viewport, not the
-size of the complete document. A host window can still be smaller than the
-combined layout minimum, so a minimum does not guarantee full content visibility.
-See [overflow policy](#styling) for clipping and proportional compression.
+`PaneView::sizing` returns validated `PaneSizing` metadata for the useful content
+viewport, before tab bars, floating titles, and borders. Build and retain the
+declaration alongside the pane's application state:
+
+```rust
+use egui_dockspace::{PaneSizing, PaneSizingError};
+
+fn inspector_sizing() -> Result<PaneSizing, PaneSizingError> {
+    PaneSizing::builder()
+        .min_width(160.0)
+        .max_width(420.0)
+        .preferred_width(280.0)
+        .fixed_height(72.0)
+        .build()
+}
+```
+
+Return the retained value from `fn sizing(&self, item: ItemId) -> PaneSizing`.
+Each axis is independent: `.max_width(420.0)` leaves height unconstrained, while
+`.fixed_width(240.0)` sets both width bounds to 240 points. Builder setters
+replace their named values in order, so a later maximum can widen a previously
+fixed range. `build()` rejects non-finite or negative extents, inverted bounds,
+and preferred extents outside the application's declared range. `AxisSizing::new`
+and `PaneSizing::new` support applications that already store axis metadata.
+
+The default declaration has zero minimums and no maximums or preferred extents.
+Core applies `DockStyle::minimum_pane_size` as the minimum floor, capped by an
+explicit application maximum. A fixed width smaller than the style floor
+therefore remains fixed. Preferred extents are explicit reset targets; ordinary
+layout, host resizing, and persistence restoration retain existing split weights
+instead of continually returning panes to those targets. The default splitter
+double click requests that reset, as described under [pointer input](#pointer-input).
+These measurements are live application metadata and are not serialized with
+the workspace layout.
+
+Sizing is measured for every non-hidden tab, including inactive and unloaded
+content, without calling its `ui` first. Only the selected tab determines its
+current pane allocation. Hidden tabs are measured again when shown; do not
+intersect the bounds of every tab in a group yourself.
+
+Declare the useful viewport rather than the full scrollable document extent.
+The application owns its host Ui allocation and Root native-window bounds;
+content sizing does not resize an application slot or promise full visibility
+in a host smaller than the combined minimum. See [overflow policy](#styling) for
+clipping and proportional compression.
 
 `PaneView` callbacks are synchronous and can run again in a later egui pass.
 Keep I/O and background computation in application-owned tasks. Transfer finished
@@ -328,11 +369,24 @@ Click activates its pane content.
 `middle_click_closes_tab` defaults to true and emits an ordinary close request
 without selecting the tab. Close policy and deferred application decisions still
 apply, including when the tab's close icon is hidden or clipped. Custom tab child
-widgets keep their own input. `double_click_equalizes_splitter` also defaults to
-true: a primary double click requests equal logical pixel extents for the two
-neighbors, clamped by their full nested size constraints. Either shortcut can be
-disabled independently through the same input configuration. These settings are
-also consumed by the native adapter's shared renderer.
+widgets keep their own input. `splitter_double_click` defaults to
+`Some(SplitterDoubleClick::Preferred)`: a primary double click restores declared
+preferred content extents, falling back to equal logical extents when no
+preference is available. Core clamps the result by the full nested size
+constraints. Choose `Some(SplitterDoubleClick::Equalize)` to always equalize, or
+`None` to disable double clicking:
+
+```rust
+use egui_dockspace::{DockInputConfig, SplitterDoubleClick};
+
+let input = DockInputConfig {
+    splitter_double_click: Some(SplitterDoubleClick::Equalize),
+    ..Default::default()
+};
+```
+
+Middle-click closure and splitter double clicking can be disabled independently.
+These settings are also consumed by the native adapter's shared renderer.
 
 To restrict internal splitters in one stable root, use
 `policy.set_allow_root_resize_axis(root, DockspaceAxis::Horizontal, false)`.

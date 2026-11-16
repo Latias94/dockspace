@@ -42,8 +42,14 @@ intents and perform external effects after the run succeeds. See
 For a `ScrollArea`, use `PaneResponse::with_scroll_area(ui, &output)` to declare
 its current scroll controls. Add its inner buttons and editors explicitly with
 `with_content`; the helper does not register descendants or infer focus. Use
-scrolling, wrapping or pan/zoom for content larger than its viewport. A pane's
-minimum size describes a useful viewport, not the size of its entire document.
+scrolling, wrapping or pan/zoom for content larger than its viewport. Return
+validated content-only `PaneSizing` from `PaneView::sizing`; retain the value in
+the pane registry rather than rebuilding fallible application settings during
+painting. Minimums describe useful viewports. Maximums/fixed extents cap the
+pane frame, while normal layout keeps stored weights. Configure
+`DockInputConfig::splitter_double_click` for preferred restoration, equalization
+or no reset; see the guide's
+[pane sizing section](../../../crates/egui_dockspace/docs/guide.md#pane-rendering).
 
 Derive geometry from the current egui style with `DockStyle::from_egui` or
 `from_egui_with_density(..., DockDensity::Compact)`, then apply overrides. Keep

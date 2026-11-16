@@ -29,8 +29,10 @@ fn inspect<T>(
                         LogicalRect::new(0.0, 0.0, 640.0, 480.0).unwrap(),
                     )
                 }
-                SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(32.0, 24.0).unwrap())
+                SurfaceMeasurementRequest::PaneSizing { .. } => {
+                    SurfaceMeasurementAnswer::PaneSizing(
+                        (LogicalSize::new(32.0, 24.0).unwrap()).into(),
+                    )
                 }
                 SurfaceMeasurementRequest::TabIntrinsic { .. } => {
                     SurfaceMeasurementAnswer::TabIntrinsic(180.0)

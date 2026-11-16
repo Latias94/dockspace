@@ -6,7 +6,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::engine::transition::WorkspaceVersion;
-use crate::geometry::{Constraints, GeometryError, LogicalRect, LogicalSize};
+use crate::geometry::{Constraints, GeometryError, LogicalRect, LogicalSize, PaneSizing};
 #[cfg(test)]
 use crate::graph::WorkspaceData;
 use crate::graph::command::NodeSource;
@@ -23,7 +23,10 @@ pub use projection::{
     ChildProjection, LayoutProjection, NodeMap, NodeResult, SplitMap, SplitProjection,
 };
 
+mod resize_contact;
 mod topology;
+pub(crate) use resize_contact::measure_resize_contacts;
+
 use crate::graph::root_structure::{RootNodeKind, RootStructure};
 
 /// Minimum and maximum extent accepted by one child on a split axis.
@@ -563,11 +566,34 @@ pub fn project_root_with_overrides(
         bounds,
         metrics,
         false,
+        None,
         &weight_overrides,
     )
 }
 
+/// Measures complete pane sizing before root bounds supply finite unbounded maxima.
+///
+/// Preferred sizes remain available to explicit sizing actions; ordinary projection
+/// continues to honor the workspace's stored or transient split weights.
+pub(crate) fn measure_root_sizing<'workspace>(
+    workspace: &'workspace Workspace,
+    root: RootId,
+    leaf_sizing: &BTreeMap<NodeId, PaneSizing>,
+    metrics: LayoutMetrics,
+) -> Result<RootMeasurement<'workspace>, LayoutError> {
+    let mut measured = measure_root_with_reader(workspace, root, metrics, true, &mut |node| {
+        let sizing = leaf_sizing
+            .get(&node)
+            .ok_or(LayoutError::MissingLeafConstraints { node })?;
+        let minimum = LogicalSize::new(sizing.width().minimum(), sizing.height().minimum())?;
+        Ok(Constraints::new(minimum, minimum)?)
+    })?;
+    measured.leaf_sizing = Some(leaf_sizing.clone());
+    Ok(measured)
+}
+
 /// Measures scene minima once, before root bounds determine the uniform leaf maximum.
+#[cfg(test)]
 pub(crate) fn measure_root_minimums<'workspace>(
     workspace: &'workspace Workspace,
     root: RootId,
@@ -592,6 +618,7 @@ pub(crate) struct RootMeasurement<'workspace> {
     values: Vec<NodeResult>,
     central_leaf_row: Option<usize>,
     minimums_only: bool,
+    leaf_sizing: Option<BTreeMap<NodeId, PaneSizing>>,
 }
 
 impl RootMeasurement<'_> {
@@ -637,11 +664,13 @@ impl RootMeasurement<'_> {
             bounds,
             self.metrics,
             self.minimums_only,
+            self.leaf_sizing.as_ref(),
             weight_overrides,
         )
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn project_measurements(
     topology: Arc<RootStructure>,
     mut values: Vec<NodeResult>,
@@ -649,6 +678,7 @@ fn project_measurements(
     bounds: LogicalRect,
     metrics: LayoutMetrics,
     minimums_only: bool,
+    leaf_sizing: Option<&BTreeMap<NodeId, PaneSizing>>,
     weight_overrides: &BTreeMap<NodeId, Vec<f64>>,
 ) -> Result<LayoutProjection, LayoutError> {
     if minimums_only {
@@ -657,13 +687,35 @@ fn project_measurements(
             bounds.width().max(minimum.width()),
             bounds.height().max(minimum.height()),
         )?;
+        let mut bounded_axes = [false; 2];
+        if let Some(sizings) = leaf_sizing {
+            for (node, sizing) in sizings {
+                if topology.row(node).is_some_and(|row| values[row].visible) {
+                    bounded_axes[0] |= sizing.width().maximum().is_some();
+                    bounded_axes[1] |= sizing.height().maximum().is_some();
+                }
+            }
+        }
         let mut child_values = Vec::new();
         for &row in &topology.postorder {
             if !values[row].visible {
                 continue;
             }
             let maximum = match &topology.nodes[row].kind {
-                RootNodeKind::Tabs => leaf_maximum,
+                RootNodeKind::Tabs => match leaf_sizing {
+                    Some(sizing) => {
+                        let sizing = sizing.get(&topology.nodes[row].id).ok_or(
+                            LayoutError::MissingLeafConstraints {
+                                node: topology.nodes[row].id,
+                            },
+                        )?;
+                        LogicalSize::new(
+                            sizing.width().maximum().unwrap_or(leaf_maximum.width()),
+                            sizing.height().maximum().unwrap_or(leaf_maximum.height()),
+                        )?
+                    }
+                    None => leaf_maximum,
+                },
                 RootNodeKind::Split {
                     payload, children, ..
                 } => {
@@ -694,7 +746,7 @@ fn project_measurements(
                             &child_values
                         }
                     };
-                    compose_maximum(
+                    compose_frame_maximum(
                         payload.axis(),
                         child_measurements,
                         total_splitter_extent(
@@ -702,6 +754,7 @@ fn project_measurements(
                             child_measurements.len(),
                             metrics,
                         )?,
+                        bounded_axes,
                     )?
                 }
             };
@@ -718,6 +771,7 @@ fn project_measurements(
         bounds,
         metrics,
         &mut central,
+        leaf_sizing.is_some(),
         weight_overrides,
         &mut projection,
     )?;
@@ -748,6 +802,7 @@ fn project_draft(
         .into_iter()
         .map(|value| NodeResult {
             visible: true,
+            slot: empty_rect,
             rect: empty_rect,
             constraints: value.constraints,
         })
@@ -759,6 +814,7 @@ fn project_draft(
         bounds,
         metrics,
         matches!(leaves, LeafMeasurements::Minimums(_)),
+        None,
         &BTreeMap::new(),
     )
 }
@@ -840,6 +896,7 @@ struct SubtreeMeasurement {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(test)]
 enum LeafMeasurements<'leaves> {
     #[allow(
         dead_code,
@@ -849,6 +906,7 @@ enum LeafMeasurements<'leaves> {
     Minimums(&'leaves BTreeMap<NodeId, LogicalSize>),
 }
 
+#[cfg(test)]
 impl LeafMeasurements<'_> {
     fn get(self, node: NodeId) -> Result<Constraints, LayoutError> {
         match self {
@@ -868,6 +926,7 @@ impl LeafMeasurements<'_> {
     }
 }
 
+#[cfg(test)]
 fn measure_root<'workspace>(
     workspace: &'workspace Workspace,
     root: RootId,
@@ -875,6 +934,18 @@ fn measure_root<'workspace>(
     metrics: LayoutMetrics,
 ) -> Result<RootMeasurement<'workspace>, LayoutError> {
     let minimums_only = matches!(leaves, LeafMeasurements::Minimums(_));
+    measure_root_with_reader(workspace, root, metrics, minimums_only, &mut |node| {
+        leaves.get(node)
+    })
+}
+
+fn measure_root_with_reader<'workspace>(
+    workspace: &'workspace Workspace,
+    root: RootId,
+    metrics: LayoutMetrics,
+    minimums_only: bool,
+    read_leaf: &mut impl FnMut(NodeId) -> Result<Constraints, LayoutError>,
+) -> Result<RootMeasurement<'workspace>, LayoutError> {
     let record = *workspace
         .root(root)
         .ok_or(LayoutError::MissingRoot { root })?;
@@ -887,7 +958,7 @@ fn measure_root<'workspace>(
         root,
         record.central,
         &mut |node| workspace.node_has_visible_content(node),
-        &mut |node| leaves.get(node),
+        read_leaf,
         metrics,
         minimums_only,
     )?;
@@ -900,6 +971,7 @@ fn measure_root<'workspace>(
         values,
         central_leaf_row: preferred_central_row(record.allocation, central_leaf_row),
         minimums_only,
+        leaf_sizing: None,
     })
 }
 
@@ -961,25 +1033,65 @@ fn compose_maximum(
     children: &[SubtreeMeasurement],
     splitter_extent: f64,
 ) -> Result<LogicalSize, LayoutError> {
-    let max_widths = children.iter().map(|child| child.constraints.max().width());
-    let max_heights = children
-        .iter()
-        .map(|child| child.constraints.max().height());
+    // Complete-constraint protocol tests retain a shared cross-axis rectangle.
+    compose_maximum_with_cross(axis, children, splitter_extent, CrossMaximum::Intersection)
+}
+
+fn compose_frame_maximum(
+    axis: Axis,
+    children: &[SubtreeMeasurement],
+    splitter_extent: f64,
+    bounded_axes: [bool; 2],
+) -> Result<LogicalSize, LayoutError> {
+    let cross_is_bounded = match axis {
+        Axis::Horizontal => bounded_axes[1],
+        Axis::Vertical => bounded_axes[0],
+    };
+    // A wholly unbounded axis keeps the legacy finite stand-in, which already
+    // covers the root slot and minimum. Declared caps bound independent frames.
+    let cross = if cross_is_bounded {
+        CrossMaximum::Envelope
+    } else {
+        CrossMaximum::Intersection
+    };
+    compose_maximum_with_cross(axis, children, splitter_extent, cross)
+}
+
+#[derive(Clone, Copy)]
+enum CrossMaximum {
+    Intersection,
+    Envelope,
+}
+
+fn compose_maximum_with_cross(
+    axis: Axis,
+    children: &[SubtreeMeasurement],
+    splitter_extent: f64,
+    cross: CrossMaximum,
+) -> Result<LogicalSize, LayoutError> {
+    let main_extents = children.iter().map(|child| match axis {
+        Axis::Horizontal => child.constraints.max().width(),
+        Axis::Vertical => child.constraints.max().height(),
+    });
+    let quantity = match axis {
+        Axis::Horizontal => "subtree maximum width",
+        Axis::Vertical => "subtree maximum height",
+    };
+    let main = checked_sum(
+        main_extents.chain(std::iter::once(splitter_extent)),
+        quantity,
+    )?;
+    let cross_extents = children.iter().map(|child| match axis {
+        Axis::Horizontal => child.constraints.max().height(),
+        Axis::Vertical => child.constraints.max().width(),
+    });
+    let cross = match cross {
+        CrossMaximum::Intersection => cross_extents.fold(f64::INFINITY, f64::min),
+        CrossMaximum::Envelope => cross_extents.fold(0.0, f64::max),
+    };
     let (width, height) = match axis {
-        Axis::Horizontal => (
-            checked_sum(
-                max_widths.chain(std::iter::once(splitter_extent)),
-                "subtree maximum width",
-            )?,
-            max_heights.fold(f64::INFINITY, f64::min),
-        ),
-        Axis::Vertical => (
-            max_widths.fold(f64::INFINITY, f64::min),
-            checked_sum(
-                max_heights.chain(std::iter::once(splitter_extent)),
-                "subtree maximum height",
-            )?,
-        ),
+        Axis::Horizontal => (main, cross),
+        Axis::Vertical => (cross, main),
     };
     Ok(LogicalSize::new(width, height)?)
 }
@@ -1058,6 +1170,7 @@ fn project_subtree(
     bounds: LogicalRect,
     metrics: LayoutMetrics,
     central: &mut CentralRoute,
+    cap_frames: bool,
     weight_overrides: &BTreeMap<NodeId, Vec<f64>>,
     projection: &mut LayoutProjection,
 ) -> Result<(), LayoutError> {
@@ -1081,6 +1194,7 @@ fn project_subtree(
                     bounds,
                     metrics,
                     central,
+                    cap_frames,
                     weight_overrides,
                     projection,
                     &mut scratch,
@@ -1105,13 +1219,27 @@ fn prepare_split_projection(
     bounds: LogicalRect,
     metrics: LayoutMetrics,
     central: &mut CentralRoute,
+    cap_frames: bool,
     weight_overrides: &BTreeMap<NodeId, Vec<f64>>,
     projection: &mut LayoutProjection,
     scratch: &mut ProjectionScratch,
 ) -> Result<Option<SplitProjectionState>, LayoutError> {
     let node = &topology.nodes[row];
     let node_id = node.id;
-    projection.nodes.record_rect(row, bounds);
+    let slot = bounds;
+    let bounds = if cap_frames {
+        let maximum = projection.nodes.at_row(row).constraints.max();
+        LogicalRect::new(
+            slot.x(),
+            slot.y(),
+            slot.width().min(maximum.width()),
+            slot.height().min(maximum.height()),
+        )?
+    } else {
+        // The complete-constraint test adapter retains the frozen traversal contract.
+        slot
+    };
+    projection.nodes.record_rect(row, slot, bounds);
     let RootNodeKind::Split {
         payload,
         children: child_range,
@@ -1259,9 +1387,16 @@ fn prepare_split_projection(
     {
         child.extent = extent;
     }
-    projection
-        .splits
-        .set_outcome(*split, central_index, solved.overflow, solved.unallocated);
+    projection.splits.set_outcome(
+        *split,
+        central_index,
+        solved.overflow,
+        solved.unallocated
+            + match axis {
+                Axis::Horizontal => slot.width() - bounds.width(),
+                Axis::Vertical => slot.height() - bounds.height(),
+            },
+    );
     let cursor = match axis {
         Axis::Horizontal => bounds.x(),
         Axis::Vertical => bounds.y(),
@@ -1592,6 +1727,9 @@ mod override_tests;
 
 #[cfg(test)]
 mod overflow_tests;
+
+#[cfg(test)]
+mod sizing_tests;
 
 #[cfg(test)]
 mod visibility_tests;

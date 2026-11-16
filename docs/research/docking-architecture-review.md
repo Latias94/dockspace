@@ -21,8 +21,9 @@ native lifetime protocols. The inspected code does not establish a need to
 replace them. One production design change has a concrete independent use case:
 separating an empty central anchor from its constraint-allocation preference.
 That separation is now implemented as the explicit `RootAllocation` contract.
-Maximum/fixed pane sizing is a capability decision that requires a complete
-public contract. It is not already supported by the internal solver's types.
+The subsequent sizing follow-up implements a complete public contract for
+maximum/fixed sizes and explicit preferred-size restoration under
+[ADR 0007][sizing]. Internal solver types alone did not establish that capability.
 
 The baseline's more urgent reliability gap was in the tests' expected behavior:
 a controlled mutation let the short property accept blanket rejection of legal
@@ -117,45 +118,38 @@ unreleased format remains version 1, with no compatibility reader. Structure
 fingerprints include allocation, so old presented authority cannot survive a
 change in allocation merely because membership stayed the same [D7], [D24], [D27].
 
-## Capability decision: maximum and fixed pane sizes
+## Adopted contract: complete pane sizing
 
-Public measurement asks for `PaneMinimum` for visible items, including inactive
-tabs; hidden items are omitted [D11]. The current visible selection supplies the
-leaf minimum. Inactive metadata supports future drag layouts, not a maximum
-over all tab minima [D12]. Changing selection can therefore change constraints.
+At the baseline, production measurement was minimum-only even though a
+test-oriented solver path accepted complete constraints. The follow-up replaces
+that public measurement with `PaneSizing` [D11], [D33]. Each content axis has
+validated minimum, optional maximum and optional preferred extent; equal bounds
+express a fixed size. The existing shared solver receives the full declaration.
 
-There is no public pane maximum, preferred width or fixed-width contract.
-Internal complete-constraint paths are partly test-only, while production uses
-minimum measurements. A minimum of 320 does not promise an Inspector stays 320
-wide when the host grows. Disabling splitter input does not provide that promise
-either.
+All visible items, including inactive tabs, supply complete metadata. The current
+visible selection supplies its leaf's declaration; inactive declarations support
+future drag layouts [D12]. Hidden items are omitted until shown again. There is
+no implicit intersection of incompatible tabs: switching tabs may change bounds.
+Sizing remains transient application data rather than durable node properties.
 
-First distinguish a bounded application content view from a bounded docking
-slot. An application can center, wrap or clip a narrow editor inside a larger
-pane without changing the solver. ImGui's [constraint discussion][upstream-size]
-explicitly considers that alternative. A slot that itself stays fixed or capped
-across moves does require a core layout contract.
+[ADR 0007][sizing] specifies content/chrome composition, selected-tab behavior,
+slot/frame geometry, infeasible minima and explicit preference restoration.
+Parents offer slots; capped pane frames anchor at their top-left and leave
+background after saturation. That background has no pane receiver. Current and
+candidate layouts retain the same declarations. Native outer placement remains
+an observed host fact and can exceed a capped content frame.
 
-If maximum/fixed size is a first-release requirement, extend the existing pane
-measurement seam and the shared solver. Define these rules first:
+Normal frames preserve user weights. `SurfaceSplitterAdjustment::Preferred`
+consumes preferences only on explicit request, then commits ordinary weights.
+There is no persistent automatic/manual sizing mode. The egui double-click
+binding can restore preferences, equalize or be disabled [D34].
 
-- Constraints describe content; chrome is composed by core. Invalid min/max
-  combinations are rejected as measurement errors.
-- Initially retain the current selected-tab rule. Do not silently intersect
-  incompatible inactive-tab constraints.
-- A fixed content extent can use equal minimum and maximum. Preferred extent
-  is a separate soft policy and should not be disguised as a hard maximum.
-- Current layout, future preview, splitter/junction solving and float/native
-  preparation must use the same constraints.
-- Define what remaining unallocated space looks like and whether it accepts
-  docking when all maxima are saturated. Preserve an explicit policy for
-  infeasible minima rather than treating smaller host bounds as a fatal error.
-- Keep application-supplied measurement metadata separate from durable node
-  identity and layout persistence; moving the item must move its constraint.
-
-These are acceptance requirements for a capability, not a request to implement
-a general constraint-policy language. Defer the feature if its users do not
-need it; otherwise replace the minimum-only public path without a second solver.
+The linear resize frontier still has a defined limit: when a capped descendant
+does not reach a moving slot edge, that contact change is unavailable. Its handle
+publishes no resize receiver; independent complete axes remain usable [D35].
+Supporting resize across such contact changes needs a piecewise-frontier design,
+not weaker validation. Directional placement, remembered closed-item slots and
+arbitrary conflict policies remain separate product decisions.
 
 ## Lifecycle and focus: reduce repeated rules without collapsing states
 
@@ -203,8 +197,8 @@ These classifications compare observable contracts with the problems in
 | Mutable node identity versus long-term location, [#5161][upstream-identity] | Already avoided at the public seam | `ItemId` and current item/central anchors express content intent; internal `NodeId` is not a persistent public docking target. Captured group authority freezes its scope [D1], [D2]. A stable item does not promise a permanent screen location; directional/largest/recent-region lookup remains absent. |
 | DockBuilder exposes mutable structure/call order, [#7892][upstream-rewrite] | Main coupling already avoided | Complete declarative layouts compile once; snapshots use local node numbers and restore fresh runtime nodes [D7], [D8]. Applications still choose explicit placement for programmatic open and cannot infer historic placement from an item ID. |
 | Central node combines retention, allocation and special behavior, [#5209][upstream-central] | Completed in this batch | Empty anchor retention, `Weighted`/explicit `PreferCentral` allocation and `CentralNodePolicy` permissions have independent meanings, with measured current/future and lifecycle checks [D23]–[D27]. Central preference does not promise fixed sidebars. |
-| Windows dictate node behavior, [#7892][upstream-rewrite] and [#5209][upstream-central] | Partial, with explicit ownership | Item operation/close policy and measured minima follow content; root allocation belongs to the root. The selected visible tab supplies the leaf minimum; inactive metadata supports future layouts [D11], [D12]. A general conflict policy for maximum/fixed/preferred sizes is not implemented. |
-| Docked size constraints, [#2849][upstream-size] | Missing capability, not an adopted contract | Public measurement remains minimum-only. Internal solver maxima are not public pane maxima. Selection-dependent minima are supported; fixed/max/preferred sizing and conflicting-tab aggregation require the complete contract described above. |
+| Windows dictate node behavior, [#7892][upstream-rewrite] and [#5209][upstream-central] | Explicit ownership, with bounded policies | Item operation/close policy and complete sizing follow content; root allocation belongs to the root. The selected visible tab supplies the leaf bounds; inactive metadata supports future layouts [D11], [D12]. Tabs are not silently intersected. A general aggregation/conflict-policy language is absent. |
+| Docked size constraints, [#2849][upstream-size] | Implemented by the sizing follow-up | `PaneSizing` supports minimum/maximum/fixed content bounds and explicit preferred restoration through one measurement seam [D33], [D34]. Slot/frame separation defines saturation background. The frozen linear frontier rejects capped contact changes; this is not a general piecewise resize solver [D35]. |
 | One visible docked window resembles an ordinary window, [#9123][upstream-single] | Partial presentation support | `AutoHideSingle` uses visible membership, while logical hidden membership remains intact [D3], [D14]. It is not a universal conversion to ordinary native title chrome. |
 | Hidden/closed content and remembered docking | Product boundary | Hide preserves a slot; approved close removes the item [D3], [D13]. Reusing the same `ItemId` does not automatically restore a deleted historical slot; reopening needs explicit placement. |
 | Automated tests support structural change, pinned Test Engine [I3] | Strengthened in this batch | The short oracle now predicts ordered groups, selection, full local MRU, hidden state, rejection and `changed`; mandatory workbench docking/resize cases require actual outcomes [D29]–[D32]. Long exploration, frozen geometry comparisons and bounded native schedules remain. This is not a proof over all sequences. |
@@ -233,8 +227,9 @@ The short semantic oracle, mandatory UI outcomes, central split and focus-handof
 deduplication are implemented. The [test design record][testing] distinguishes
 their source coverage from historical measurements and records the
 [restored implementation gates](docking-testing-design-options.md#restored-implementation-validation).
-Maximum/fixed constraints remain a separate capability decision. Optional trace
-replay and further composed platform observations remain bounded follow-up work,
+The complete sizing follow-up is recorded in [ADR 0007][sizing]; its validation is
+separate from the historical baseline measurements below. Optional trace replay
+and further composed platform observations remain bounded follow-up work,
 not prerequisites silently added to this batch.
 
 A batch completes when the changed observable contract has a discriminating
@@ -278,6 +273,7 @@ is caught; they do not replace the final restored implementation gates.
 [testing]: docking-testing-design-options.md
 [publication]: ../adr/0002-atomic-frames-and-presentation.md
 [motion]: ../adr/0005-motion-and-presentation-geometry.md
+[sizing]: ../adr/0007-pane-sizing-and-explicit-preferences.md
 [upstream-rewrite]: https://github.com/ocornut/imgui/issues/7892
 [upstream-size]: https://github.com/ocornut/imgui/issues/2849
 [upstream-identity]: https://github.com/ocornut/imgui/issues/5161#issuecomment-1087337677
@@ -319,3 +315,6 @@ is caught; they do not replace the final restored implementation gates.
 [D30]: ../../crates/dockspace/src/behavior_tests/command_model/shrinkable.rs
 [D31]: ../../crates/egui_dockspace/examples/workbench/tests/randomized/semantics.rs
 [D32]: ../../crates/egui_dockspace/examples/workbench/tests/randomized/resize.rs
+[D33]: ../../crates/dockspace/src/geometry/sizing.rs
+[D34]: ../../crates/dockspace/src/behavior_tests/runtime_surface_actions/splitter_preferences.rs
+[D35]: ../../crates/dockspace/src/presentation/layout/resize_contact.rs

@@ -242,9 +242,9 @@ fn deep_public_declaration_compiles_a_complete_measured_scene() {
                         Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
                             Answer::Bounds(bounds)
                         }
-                        Question::PaneMinimum { .. } => {
+                        Question::PaneSizing { .. } => {
                             pane_questions += 1;
-                            Answer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+                            Answer::PaneSizing((LogicalSize::new(64.0, 48.0).unwrap()).into())
                         }
                         Question::TabIntrinsic { .. } => Answer::TabIntrinsic(56.0),
                         Question::TabStrip { .. } => {

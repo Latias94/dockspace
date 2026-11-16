@@ -8,6 +8,7 @@ use crate::graph::{NORMALIZED_WEIGHT_TOLERANCE, normalized_weight_sum};
 #[cfg(test)]
 use crate::interaction::targeting::field::{pane_center_basin, root_edge_band};
 use crate::interaction::targeting::targets::DropTargetLocation;
+use crate::presentation::layout::measure_resize_contacts;
 
 mod record_order;
 mod target_catalog;
@@ -1871,6 +1872,24 @@ fn validate_splitter_geometry(
     policy: &DockPolicySnapshot,
 ) -> Result<(), SceneBuildError> {
     let splitters = &record_order.splitters;
+    let resize_contacts = ready
+        .layout_facts()
+        .map(|layout| {
+            layout
+                .roots()
+                .map(|root| {
+                    (
+                        root.root(),
+                        measure_resize_contacts(
+                            workspace,
+                            root.projection(),
+                            layout.config().splitter_thickness(),
+                        ),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
     let mut validated_resize_arrays: Option<&SplitterRecord> = None;
     for (id, record) in splitters.iter(&ready.facts.splitter_records) {
         let Some(Node::Split { axis, children, .. }) = workspace.node(id.split) else {
@@ -1937,6 +1956,13 @@ fn validate_splitter_geometry(
         if record.operable()
             != (policy.splitter_resize_is_allowed(id.root, record.axis(), ready.surface)
                 && !compressed
+                && resize_contacts.get(&id.root).is_some_and(|contacts| {
+                    contacts.splitter_is_operable(
+                        id.split,
+                        children[id.index],
+                        children[record.after_index()],
+                    )
+                })
                 && region_has_authoritative_area(
                     record.hit().rect(),
                     record.layer(),

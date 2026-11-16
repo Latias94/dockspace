@@ -56,11 +56,13 @@ fn publish_visible_surface(host: &mut DeterministicHost) {
                     | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
                         SurfaceMeasurementAnswer::Bounds(bounds)
                     }
-                    SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
+                    SurfaceMeasurementRequest::PaneSizing { item, .. } => {
                         let item = item.expect("hidden groups do not become empty logical leaves");
                         assert!(visible.contains(&item), "hidden content needs no metadata");
                         minimum_items.push(item);
-                        SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(32.0, 24.0).unwrap())
+                        SurfaceMeasurementAnswer::PaneSizing(
+                            (LogicalSize::new(32.0, 24.0).unwrap()).into(),
+                        )
                     }
                     SurfaceMeasurementRequest::TabIntrinsic { item, .. } => {
                         assert!(visible.contains(&item), "hidden tabs need no metadata");

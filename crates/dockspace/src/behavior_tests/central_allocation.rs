@@ -73,7 +73,7 @@ fn measured_panes(
                 | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
                     SurfaceMeasurementAnswer::Bounds(bounds)
                 }
-                SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
+                SurfaceMeasurementRequest::PaneSizing { item, .. } => {
                     let minimum = if constrained && item == Some(FIRST) {
                         match axis {
                             DockspaceAxis::Horizontal => LogicalSize::new(300.0, 0.0),
@@ -83,7 +83,7 @@ fn measured_panes(
                         LogicalSize::new(0.0, 0.0)
                     }
                     .unwrap();
-                    SurfaceMeasurementAnswer::PaneMinimum(minimum)
+                    SurfaceMeasurementAnswer::PaneSizing((minimum).into())
                 }
                 SurfaceMeasurementRequest::TabIntrinsic { .. } => {
                     SurfaceMeasurementAnswer::TabIntrinsic(60.0)

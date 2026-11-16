@@ -7,7 +7,7 @@ use crate::model::{DockspaceLayout, DockspaceNode, DockspaceRootLayout, Dockspac
 use crate::policy::DockPolicy;
 use crate::presentation::compiler::{reset_surface_compilation_count, surface_compilation_count};
 use crate::presentation::manifest::{
-    Measurement, PaneMinimumKey, TabIntrinsic, TabIntrinsicKey, TabStripMetrics,
+    Measurement, PaneSizingKey, TabIntrinsic, TabIntrinsicKey, TabStripMetrics,
 };
 use crate::runtime::{
     DockspaceSemanticOutput, DockspaceSession, PaintedSurfaceOutput, SurfacePresentationResult,
@@ -375,9 +375,9 @@ fn item_measurements(
             .set_popup_plane_bounds(key, Measurement::Measured(bounds))
             .unwrap();
     }
-    for key in requirements.pane_minimums() {
+    for key in requirements.pane_sizings() {
         measurements
-            .insert_pane_minimum(key, Measurement::Measured(minimum(key.selected())))
+            .insert_pane_sizing(key, Measurement::Measured((minimum(key.selected())).into()))
             .unwrap();
     }
     for key in requirements.tab_intrinsics() {
@@ -710,12 +710,12 @@ fn local_selection_rebuilds_when_another_items_measurements_change() {
             }
             ChangedAnswer::Minimum => {
                 assert_eq!(
-                    layout.root(ROOT).unwrap().pane_minimum(PaneMinimumKey::new(
+                    layout.root(ROOT).unwrap().pane_sizing(PaneSizingKey::new(
                         ROOT,
                         tabs,
                         Some(OTHER)
                     )),
-                    Some(LogicalSize::new(180.0, 120.0).unwrap()),
+                    Some(LogicalSize::new(180.0, 120.0).unwrap().into()),
                 );
             }
         }

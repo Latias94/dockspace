@@ -2,13 +2,14 @@
 
 use std::collections::BTreeMap;
 
-use egui::{Color32, Context, FontId, Frame, Margin, TextStyle, Theme, Vec2};
+use egui::{Color32, Context, FontId, Frame, Margin, TextStyle, Theme};
 use egui_dockspace::{
     CloseDecision, CloseItemDecisionState, DockStyle, Dockspace, DockspaceAxis,
     DockspaceContainedLayout, DockspaceError, DockspaceLayout, DockspaceNode, DockspaceOutput,
     DockspaceResponse, DockspaceRootLayout, DockspaceSurfaceLayout, DragPreview, DropGuide,
-    FloatingPresentationId, ItemId, LogicalRect, PaneResponse, PaneView, RootId, SurfaceId, Tab,
-    TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose, TabStylePreset, TabVisuals,
+    FloatingPresentationId, ItemId, LogicalRect, PaneResponse, PaneSizing, PaneView, RootId,
+    SurfaceId, Tab, TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose, TabStylePreset,
+    TabVisuals,
 };
 
 #[cfg(feature = "motion")]
@@ -532,8 +533,12 @@ impl PaneView for DemoPanes {
         (item == EDITOR).then(|| editor_id(item))
     }
 
-    fn minimum_size(&self, _item: ItemId) -> Vec2 {
-        egui::vec2(160.0, 100.0)
+    fn sizing(&self, _item: ItemId) -> PaneSizing {
+        PaneSizing::builder()
+            .min_width(160.0)
+            .min_height(100.0)
+            .build()
+            .expect("the workbench content minimums are valid")
     }
 }
 

@@ -123,13 +123,18 @@ impl PaneView for PartialFloatPanes {
         self.projection.ui(item, ui)
     }
 
-    fn minimum_size(&self, item: ItemId) -> egui::Vec2 {
-        match item {
-            SECOND => vec2(100.0, 90.0),
-            THIRD => vec2(160.0, 110.0),
-            FOURTH => vec2(320.0, 200.0),
-            _ => egui::Vec2::ZERO,
-        }
+    fn sizing(&self, item: ItemId) -> egui_dockspace::PaneSizing {
+        let (width, height) = match item {
+            SECOND => (100.0, 90.0),
+            THIRD => (160.0, 110.0),
+            FOURTH => (320.0, 200.0),
+            _ => (0.0, 0.0),
+        };
+        egui_dockspace::PaneSizing::builder()
+            .min_width(width)
+            .min_height(height)
+            .build()
+            .unwrap()
     }
 }
 

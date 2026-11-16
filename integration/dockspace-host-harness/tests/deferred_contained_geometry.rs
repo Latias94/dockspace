@@ -59,8 +59,8 @@ fn measure_frame(
                 Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
                     Answer::Bounds(rect(0.0, 0.0, surface_width, 650.0))
                 }
-                Question::PaneMinimum { item, .. } => Answer::PaneMinimum(
-                    LogicalSize::new(
+                Question::PaneSizing { item, .. } => Answer::PaneSizing(
+                    (LogicalSize::new(
                         if item == Some(FLOAT_ITEM) {
                             floating_minimum_width
                         } else {
@@ -68,7 +68,8 @@ fn measure_frame(
                         },
                         48.0,
                     )
-                    .unwrap(),
+                    .unwrap())
+                    .into(),
                 ),
                 Question::TabIntrinsic { .. } => Answer::TabIntrinsic(96.0),
                 Question::TabStrip { .. } => {

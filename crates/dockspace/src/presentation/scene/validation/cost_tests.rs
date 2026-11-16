@@ -62,11 +62,11 @@ fn compiled_split_with_config(
             ),
         )
         .unwrap();
-    for key in requirements.pane_minimums() {
+    for key in requirements.pane_sizings() {
         measurements
-            .insert_pane_minimum(
+            .insert_pane_sizing(
                 key,
-                Measurement::Measured(LogicalSize::new(0.0, 0.0).unwrap()),
+                Measurement::Measured((LogicalSize::new(0.0, 0.0).unwrap()).into()),
             )
             .unwrap();
     }

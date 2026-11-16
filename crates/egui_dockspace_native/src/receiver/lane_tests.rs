@@ -109,7 +109,9 @@ impl SplitterFixture {
                             .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
                             .unwrap(),
                         egui_dockspace::DockInputConfig {
-                            double_click_equalizes_splitter: self.equalize,
+                            splitter_double_click: self
+                                .equalize
+                                .then_some(egui_dockspace::SplitterDoubleClick::Equalize),
                             ..Default::default()
                         },
                         Arc::clone(&bridge),

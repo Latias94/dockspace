@@ -14,7 +14,9 @@ use dockspace::runtime::DockspaceSession;
 #[cfg(feature = "serde")]
 use dockspace::runtime::{DockspaceDocumentBootstrap, DockspaceDocumentId};
 use eframe::egui;
-use egui_dockspace::{DockDensity, DockStyle, DockspaceActionStatus, PaneResponse, PaneView};
+use egui_dockspace::{
+    DockDensity, DockStyle, DockspaceActionStatus, PaneResponse, PaneSizing, PaneView,
+};
 use egui_dockspace_native::{NativeActionStatus, NativeDockspaceApp};
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -951,11 +953,16 @@ impl PaneView for ExamplePanes {
             .map(|_| pane_focus_id(item))
     }
 
-    fn minimum_size(&self, item: ItemId) -> egui::Vec2 {
-        if item == PREVIEW {
-            egui::vec2(220.0, 160.0)
+    fn sizing(&self, item: ItemId) -> PaneSizing {
+        let (width, height) = if item == PREVIEW {
+            (220.0, 160.0)
         } else {
-            egui::vec2(120.0, 72.0)
-        }
+            (120.0, 72.0)
+        };
+        PaneSizing::builder()
+            .min_width(width)
+            .min_height(height)
+            .build()
+            .expect("the native editor content minimums are valid")
     }
 }

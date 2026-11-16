@@ -327,7 +327,7 @@ fn double_click_equalizes_the_actual_splitter_and_can_be_disabled() {
         .unwrap();
         harness.dockspace = Dockspace::builder(("pointer-equalize", enabled), layout)
             .input(crate::DockInputConfig {
-                double_click_equalizes_splitter: enabled,
+                splitter_double_click: enabled.then_some(crate::SplitterDoubleClick::Equalize),
                 ..Default::default()
             })
             .build()

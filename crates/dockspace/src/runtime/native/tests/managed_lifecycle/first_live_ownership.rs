@@ -311,8 +311,8 @@ fn emit_first_live_child_output(
                         popup_bounds_requests += 1;
                         SurfaceMeasurementAnswer::Bounds(metrics.bounds)
                     }
-                    SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                        SurfaceMeasurementAnswer::PaneMinimum(metrics.pane_minimum)
+                    SurfaceMeasurementRequest::PaneSizing { .. } => {
+                        SurfaceMeasurementAnswer::PaneSizing((metrics.pane_sizing).into())
                     }
                     SurfaceMeasurementRequest::TabIntrinsic { .. } => {
                         SurfaceMeasurementAnswer::TabIntrinsic(
@@ -1352,9 +1352,9 @@ fn first_live_measurements(
             .set_popup_plane_bounds(key, Measurement::Measured(bounds))
             .expect("the exact popup-plane bounds answer is unique");
     }
-    for key in requirements.pane_minimums() {
+    for key in requirements.pane_sizings() {
         measurements
-            .insert_pane_minimum(key, Measurement::Measured(minimum))
+            .insert_pane_sizing(key, Measurement::Measured((minimum).into()))
             .expect("each exact pane minimum answer is unique");
     }
     for key in requirements.tab_intrinsics() {

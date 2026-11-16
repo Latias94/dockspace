@@ -1,25 +1,25 @@
-//! Pane minimums and selection-dependent layout measurements.
+//! Complete pane sizing and selection-dependent layout measurements.
 
 use std::collections::BTreeMap;
 
 use super::SceneCompilationError;
 use super::tabs::{reveal_tab_range, tab_local_range};
-use crate::geometry::LogicalSize;
+use crate::geometry::{AxisSizing, LogicalSize, PaneSizing};
 use crate::graph::{Node, Workspace};
 use crate::ids::{NodeId, RootId};
 use crate::policy::TabBarVisibility;
 use crate::presentation::config::DockPresentationConfig;
 use crate::presentation::layout::{
-    LayoutError, LayoutMetrics, RootMeasurement, measure_root_minimums,
+    LayoutError, LayoutMetrics, RootMeasurement, measure_root_sizing,
 };
 use crate::presentation::manifest::{
-    AuthoritativeSurfaceMeasurements, PaneMinimumKey, SurfaceRequirements, TabBarRequirement,
+    AuthoritativeSurfaceMeasurements, PaneSizingKey, SurfaceRequirements, TabBarRequirement,
 };
 use crate::presentation::scene::{PresentationPlan, TabBarSceneId};
 use crate::presentation::tab_strip::{TabStripStateKey, TabStripStateStore};
 
 pub(super) struct RootLayoutMeasurement<'workspace> {
-    pub(super) pane_minimums: BTreeMap<PaneMinimumKey, LogicalSize>,
+    pub(super) pane_sizings: BTreeMap<PaneSizingKey, PaneSizing>,
     pub(super) layout: RootMeasurement<'workspace>,
 }
 
@@ -32,19 +32,19 @@ pub(super) fn measure_root_layout<'workspace>(
     tab_strip_states: &TabStripStateStore,
 ) -> Result<RootLayoutMeasurement<'workspace>, SceneCompilationError> {
     let surface = requirements.ticket().surface();
-    let pane_minimums = root_pane_minimum_measurements(requirements, measurements, root)?;
-    let minimums = root_leaf_minimums(
+    let pane_sizings = root_pane_sizing_measurements(requirements, measurements, root)?;
+    let sizing = root_leaf_sizing(
         workspace,
         config,
         requirements,
         root,
-        &pane_minimums,
+        &pane_sizings,
         tab_strip_states,
     )?;
-    let layout = measure_root_minimums(
+    let layout = measure_root_sizing(
         workspace,
         root,
-        &minimums,
+        &sizing,
         LayoutMetrics::new(config.splitter_thickness())?
             .with_pane_overflow_policy(config.pane_overflow_policy()),
     )
@@ -56,7 +56,7 @@ pub(super) fn measure_root_layout<'workspace>(
             node,
         },
         LayoutError::MissingLeafConstraints { node } => {
-            SceneCompilationError::MissingLeafMinimum { root, tabs: node }
+            SceneCompilationError::MissingLeafSizing { root, tabs: node }
         }
         LayoutError::Cycle { node } => SceneCompilationError::RepeatedNode {
             surface,
@@ -66,38 +66,38 @@ pub(super) fn measure_root_layout<'workspace>(
         error => error.into(),
     })?;
     Ok(RootLayoutMeasurement {
-        pane_minimums,
+        pane_sizings,
         layout,
     })
 }
 
-fn root_pane_minimum_measurements(
+fn root_pane_sizing_measurements(
     requirements: &SurfaceRequirements,
     measurements: AuthoritativeSurfaceMeasurements<'_>,
     root: RootId,
-) -> Result<BTreeMap<PaneMinimumKey, LogicalSize>, SceneCompilationError> {
+) -> Result<BTreeMap<PaneSizingKey, PaneSizing>, SceneCompilationError> {
     requirements
-        .pane_minimums()
+        .pane_sizings()
         .filter(|key| key.root() == root)
         .map(|key| {
             measurements
-                .pane_minimum(key)
+                .pane_sizing(key)
                 .map(|minimum| (key, minimum))
-                .ok_or(SceneCompilationError::MissingPaneMinimumMeasurement { key })
+                .ok_or(SceneCompilationError::MissingPaneSizingMeasurement { key })
         })
         .collect()
 }
 
-fn root_leaf_minimums(
+fn root_leaf_sizing(
     workspace: &Workspace,
     config: &DockPresentationConfig,
     requirements: &SurfaceRequirements,
     root: RootId,
-    pane_minimums: &BTreeMap<PaneMinimumKey, LogicalSize>,
+    pane_sizings: &BTreeMap<PaneSizingKey, PaneSizing>,
     tab_strip_states: &TabStripStateStore,
-) -> Result<BTreeMap<NodeId, LogicalSize>, SceneCompilationError> {
-    let mut minimums = BTreeMap::new();
-    for (key, measured) in pane_minimums.iter().filter(|(key, _)| key.root() == root) {
+) -> Result<BTreeMap<NodeId, PaneSizing>, SceneCompilationError> {
+    let mut sizing = BTreeMap::new();
+    for (key, measured) in pane_sizings.iter().filter(|(key, _)| key.root() == root) {
         let key = *key;
         let Some(Node::Tabs { .. }) = workspace.node(key.tabs()) else {
             continue;
@@ -114,9 +114,9 @@ fn root_leaf_minimums(
         let tab_bar = requirements
             .tab_bar(id)
             .ok_or(SceneCompilationError::MissingTabBarRequirement { id })?;
-        minimums.insert(
+        sizing.insert(
             key.tabs(),
-            pane_outer_minimum(
+            pane_outer_sizing(
                 *measured,
                 config,
                 tab_bar
@@ -125,28 +125,41 @@ fn root_leaf_minimums(
             )?,
         );
     }
-    Ok(minimums)
+    Ok(sizing)
 }
 
-pub(crate) fn pane_outer_minimum(
-    measured: LogicalSize,
+/// Resolves the style floor and adds core-owned chrome exactly once.
+pub(crate) fn pane_outer_sizing(
+    measured: PaneSizing,
     config: &DockPresentationConfig,
     tab_bar_visibility: TabBarVisibility,
-) -> Result<LogicalSize, SceneCompilationError> {
+) -> Result<PaneSizing, SceneCompilationError> {
     let minimum = config.minimum_pane_size();
-    let content_min = LogicalSize::new(
-        measured.width().max(minimum.width()),
-        measured.height().max(minimum.height()),
-    )?;
     let tab_height = if tab_bar_visibility == TabBarVisibility::Visible {
         config.tab_bar_height()
     } else {
         0.0
     };
-    Ok(LogicalSize::new(
-        content_min.width(),
-        content_min.height() + tab_height,
-    )?)
+    let resolve = |axis: AxisSizing, floor: f64, chrome: f64| {
+        let maximum = axis.maximum();
+        let minimum = axis.minimum().max(floor);
+        let minimum = maximum.map_or(minimum, |maximum| minimum.min(maximum));
+        let preferred = axis.preferred().map(|preferred| {
+            maximum.map_or(preferred.max(minimum), |maximum| {
+                preferred.clamp(minimum, maximum)
+            }) + chrome
+        });
+        AxisSizing::new(
+            minimum + chrome,
+            maximum.map(|maximum| maximum + chrome),
+            preferred,
+        )
+        .map_err(|_| SceneCompilationError::PaneSizingOverflow)
+    };
+    Ok(PaneSizing::new(
+        resolve(measured.width(), minimum.width(), 0.0)?,
+        resolve(measured.height(), minimum.height(), tab_height)?,
+    ))
 }
 
 /// Checks the selection-dependent inputs of an otherwise unchanged sealed surface.
@@ -165,20 +178,19 @@ pub(crate) fn selection_geometry_unchanged(
         return Ok(false);
     };
     let old_selected = plan.selected_in_tabs(bar.tabs);
-    let Some(old_minimum) =
-        root.pane_minimum(PaneMinimumKey::new(bar.root, bar.tabs, old_selected))
+    let Some(old_sizing) = root.pane_sizing(PaneSizingKey::new(bar.root, bar.tabs, old_selected))
     else {
         return Ok(false);
     };
-    let Some(new_minimum) = root.pane_minimum(PaneMinimumKey::new(bar.root, bar.tabs, selected))
+    let Some(new_sizing) = root.pane_sizing(PaneSizingKey::new(bar.root, bar.tabs, selected))
     else {
         return Ok(false);
     };
     let visibility = requirement
         .resolved_policy(plan.surface(), tab_strip_states)
         .visibility();
-    if pane_outer_minimum(old_minimum, config, visibility)?
-        != pane_outer_minimum(new_minimum, config, visibility)?
+    if pane_outer_sizing(old_sizing, config, visibility)?
+        != pane_outer_sizing(new_sizing, config, visibility)?
     {
         return Ok(false);
     }
@@ -240,4 +252,52 @@ pub(crate) fn contained_minimum_size(
         measured.width().max(configured.width()),
         measured.height().max(configured.height()),
     )?)
+}
+
+#[cfg(test)]
+mod sizing_tests {
+    use super::*;
+
+    #[test]
+    fn chrome_overflow_is_a_configuration_error_and_hidden_chrome_is_not_added() {
+        let sizing = PaneSizing::builder()
+            .fixed_height(f64::MAX)
+            .preferred_height(f64::MAX)
+            .build()
+            .unwrap();
+        let config = DockPresentationConfig::builder()
+            .tab_bar_height(f64::MAX)
+            .build()
+            .unwrap();
+        assert!(matches!(
+            pane_outer_sizing(sizing, &config, TabBarVisibility::Visible),
+            Err(SceneCompilationError::PaneSizingOverflow)
+        ));
+        let hidden = pane_outer_sizing(sizing, &config, TabBarVisibility::Hidden).unwrap();
+        assert_eq!(hidden.height(), sizing.height());
+    }
+
+    #[test]
+    fn a_style_floor_clamps_preferences_but_never_enlarges_an_explicit_cap() {
+        let measured = PaneSizing::builder()
+            .preferred_width(20.0)
+            .fixed_height(30.0)
+            .preferred_height(30.0)
+            .build()
+            .unwrap();
+        let actual = pane_outer_sizing(
+            measured,
+            &DockPresentationConfig::default(),
+            TabBarVisibility::Visible,
+        )
+        .unwrap();
+        assert_eq!(
+            actual.width(),
+            AxisSizing::new(80.0, None, Some(80.0)).unwrap()
+        );
+        assert_eq!(
+            actual.height(),
+            AxisSizing::new(58.0, Some(58.0), Some(58.0)).unwrap()
+        );
+    }
 }

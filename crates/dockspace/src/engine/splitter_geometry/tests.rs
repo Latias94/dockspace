@@ -1017,6 +1017,7 @@ fn small_far_central_keeps_nary_resize_available_on_both_axes() {
                     &[a, b, central],
                     weights,
                     1.0,
+                    true,
                 )
                 .is_some()
             );

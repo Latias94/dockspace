@@ -1668,9 +1668,9 @@ fn surface_measurements_with_bounds(
             .expect("popup-plane bounds answer must be unique");
     }
     let minimum = LogicalSize::new(0.0, 0.0).expect("test minimum must be valid");
-    for key in requirements.pane_minimums() {
+    for key in requirements.pane_sizings() {
         measurements
-            .insert_pane_minimum(key, Measurement::Measured(minimum))
+            .insert_pane_sizing(key, Measurement::Measured((minimum).into()))
             .expect("pane minimum answer must be unique");
     }
     for key in requirements.tab_intrinsics() {
@@ -1994,9 +1994,9 @@ fn tab_strip_reducer_measurements_with_popup_plane(
             .expect("popup-plane bounds answer must be unique");
     }
     let minimum = LogicalSize::new(0.0, 0.0).expect("minimum must be valid");
-    for key in requirements.pane_minimums() {
+    for key in requirements.pane_sizings() {
         measurements
-            .insert_pane_minimum(key, Measurement::Measured(minimum))
+            .insert_pane_sizing(key, Measurement::Measured((minimum).into()))
             .expect("pane answer must be unique");
     }
     for key in requirements.tab_intrinsics() {

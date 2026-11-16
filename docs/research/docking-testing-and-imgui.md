@@ -145,7 +145,7 @@ investigation or the pinned local references.
 | Group capability | Captured group scope is checked; moving its former item anchor must not silently redirect it | Preserve these semantics through future conveniences |
 | Declarative builder and persistence | Complete declarations compile fresh runtime structure; snapshots use local node numbers | Reopening a removed item still needs explicit placement; stable content identity is not an automatic historical-slot lookup |
 | Central behavior | Adopted: `central_tabs` retains the anchor; default `RootAllocation::Weighted` and explicit `PreferCentral` select allocation; `CentralNodePolicy` separately controls merge/split | PreferCentral requires an anchor. It redistributes constraint deltas, not fixed-width sidebars. Snapshots require the field, with no legacy fallback |
-| Pane sizing | Public host measurement supplies `PaneMinimum` | A general pane maximum/fixed-size policy and tab-constraint conflicts are not yet an adopted contract |
+| Pane sizing | Public host measurement supplies complete `PaneSizing`; selected visible tab defines the leaf's min/max/fixed bounds; preferences apply on explicit restoration | [ADR 0007](../adr/0007-pane-sizing-and-explicit-preferences.md) defines slot/frame background and infeasible minima. Resize across capped contact changes and general tab-conflict aggregation remain outside that contract |
 | Visibility | Hide retains logical placement; close removes it. `AutoHideSingle` uses visible membership | This is not universal ordinary-window title chrome; reusing an item ID does not recreate its removed slot |
 | Native resources | Typed effects and observed bindings are distinct from semantic publication and first-live presentation | Continue testing denied/adjusted placement and late platform callbacks in each real backend |
 | Motion | Logical targets and immutable animated output geometry are distinct | Overlap input must choose executable semantics consistently with the exact presented stack |
@@ -161,9 +161,10 @@ central preference.
 
 There is no evidence here that a second layout tree, universal host trait or new
 mock-window-manager layer is required. The adopted central split removes a
-concrete overloaded contract. Fixed/max/preferred sizes remain a separate
-capability: constraint aggregation, conflict behavior, infeasible bounds and
-split/merge ownership must be defined before exposing it.
+concrete overloaded contract. The subsequent sizing follow-up uses the same
+measurement seam and solver, with selected-tab bounds, capped frames and explicit
+preference restoration under ADR 0007. It leaves general conflict aggregation and
+resize through capped contact changes outside the adopted capability.
 
 ### Multi-viewport boundaries
 

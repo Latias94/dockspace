@@ -1024,7 +1024,7 @@ pub fn submit_inputs(
 
 #[derive(Debug, Clone, Copy)]
 pub struct MeasurementProfile {
-    pub pane_minimum: LogicalSize,
+    pub pane_sizing: LogicalSize,
     pub tab_content_width: f64,
     pub leading_reserved: f64,
     pub trailing_reserved: f64,
@@ -1035,7 +1035,7 @@ pub struct MeasurementProfile {
 impl Default for MeasurementProfile {
     fn default() -> Self {
         Self {
-            pane_minimum: LogicalSize::new(0.0, 0.0).expect("default minimum is valid"),
+            pane_sizing: LogicalSize::new(0.0, 0.0).expect("default minimum is valid"),
             tab_content_width: 56.0,
             leading_reserved: 0.0,
             trailing_reserved: 0.0,
@@ -1072,9 +1072,9 @@ fn measurements_from_requirements(
             .set_popup_plane_bounds(key, Measurement::Measured(bounds))
             .expect("popup-plane bounds answer is unique");
     }
-    for key in requirements.pane_minimums() {
+    for key in requirements.pane_sizings() {
         contribution
-            .insert_pane_minimum(key, Measurement::Measured(profile.pane_minimum))
+            .insert_pane_sizing(key, Measurement::Measured((profile.pane_sizing).into()))
             .expect("pane minimum answer is unique");
     }
     for key in requirements.tab_intrinsics() {

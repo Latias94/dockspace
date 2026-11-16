@@ -34,14 +34,14 @@ fn record_visibility(session: &mut DockspaceSession) -> RecordedVisibility {
                 Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => {
                     Answer::Bounds(bounds)
                 }
-                Request::PaneMinimum { item, .. } => {
+                Request::PaneSizing { item, .. } => {
                     let item = item.expect("an entirely hidden group has no empty-content request");
                     assert!(
                         visible.contains(&item),
                         "the hidden pane has no loaded metadata"
                     );
                     minima.push(item);
-                    Answer::PaneMinimum(LogicalSize::new(32.0, 24.0).unwrap())
+                    Answer::PaneSizing((LogicalSize::new(32.0, 24.0).unwrap()).into())
                 }
                 Request::TabIntrinsic { item, .. } => {
                     assert!(

@@ -69,8 +69,10 @@ fn public_owned_output_structure_and_retained_buffer_are_linear_in_panes() {
                             LogicalRect::new(0.0, 0.0, 8_192.0, 8_192.0).unwrap(),
                         )
                     }
-                    SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                        SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+                    SurfaceMeasurementRequest::PaneSizing { .. } => {
+                        SurfaceMeasurementAnswer::PaneSizing(
+                            (LogicalSize::new(64.0, 48.0).unwrap()).into(),
+                        )
                     }
                     SurfaceMeasurementRequest::TabIntrinsic { .. } => {
                         SurfaceMeasurementAnswer::TabIntrinsic(56.0)

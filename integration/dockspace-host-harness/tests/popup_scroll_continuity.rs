@@ -41,8 +41,10 @@ fn measure(frame: &mut DockspaceHostFrame<'_>, surface: SurfaceId) {
                         LogicalRect::new(0.0, 0.0, width, 600.0).unwrap(),
                     )
                 }
-                SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+                SurfaceMeasurementRequest::PaneSizing { .. } => {
+                    SurfaceMeasurementAnswer::PaneSizing(
+                        (LogicalSize::new(64.0, 48.0).unwrap()).into(),
+                    )
                 }
                 SurfaceMeasurementRequest::TabIntrinsic { .. } => {
                     SurfaceMeasurementAnswer::TabIntrinsic(96.0)

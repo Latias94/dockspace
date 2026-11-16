@@ -38,8 +38,8 @@ fn measure(
         | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
             SurfaceMeasurementAnswer::Bounds(LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap())
         }
-        SurfaceMeasurementRequest::PaneMinimum { .. } => {
-            SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+        SurfaceMeasurementRequest::PaneSizing { .. } => {
+            SurfaceMeasurementAnswer::PaneSizing((LogicalSize::new(64.0, 48.0).unwrap()).into())
         }
         SurfaceMeasurementRequest::TabIntrinsic { .. } => {
             SurfaceMeasurementAnswer::TabIntrinsic(96.0)

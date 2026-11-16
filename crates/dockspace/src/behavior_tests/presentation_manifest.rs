@@ -58,9 +58,9 @@ fn complete_measurements(engine: &DockEngine, surface: SurfaceId) -> SurfaceMeas
             .expect("popup-plane bounds should be submitted once");
     }
     let minimum = LogicalSize::new(0.0, 0.0).expect("minimum should be valid");
-    for key in requirements.pane_minimums() {
+    for key in requirements.pane_sizings() {
         measurements
-            .insert_pane_minimum(key, Measurement::Measured(minimum))
+            .insert_pane_sizing(key, Measurement::Measured((minimum).into()))
             .expect("pane minimum should be submitted once");
     }
     for key in requirements.tab_intrinsics() {
@@ -111,7 +111,7 @@ fn engine_exposes_a_core_derived_exact_surface_manifest() {
     assert_eq!(manifest.workspace(), engine.version());
     assert_eq!(manifest.surfaces().len(), 1);
     assert_eq!(requirements.ticket().surface(), SURFACE);
-    assert_eq!(requirements.pane_minimums().len(), 2);
+    assert_eq!(requirements.pane_sizings().len(), 2);
     assert_eq!(requirements.tab_intrinsics().len(), 2);
     assert_eq!(requirements.tab_strips().len(), 1);
 }

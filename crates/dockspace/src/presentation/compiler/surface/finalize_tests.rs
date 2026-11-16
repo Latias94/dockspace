@@ -68,11 +68,11 @@ fn inputs(
     measurements
         .set_bounds(requirements.bounds(), Measurement::Measured(bounds))
         .unwrap();
-    for key in requirements.pane_minimums() {
+    for key in requirements.pane_sizings() {
         measurements
-            .insert_pane_minimum(
+            .insert_pane_sizing(
                 key,
-                Measurement::Measured(LogicalSize::new(minimum, minimum).unwrap()),
+                Measurement::Measured((LogicalSize::new(minimum, minimum).unwrap()).into()),
             )
             .unwrap();
     }

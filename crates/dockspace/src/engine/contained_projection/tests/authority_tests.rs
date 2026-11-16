@@ -50,7 +50,7 @@ fn core_fixture_at(source_rect: LogicalRect) -> (DockEngine, TestPresentationHos
         SURFACE,
         rect(0.0, 0.0, 131_072.0, 720.0),
         MeasurementProfile {
-            pane_minimum: LogicalSize::new(64.0, 48.0).unwrap(),
+            pane_sizing: LogicalSize::new(64.0, 48.0).unwrap(),
             tab_content_width: 96.0,
             ..MeasurementProfile::default()
         },
@@ -304,7 +304,7 @@ fn presented_target_preview_survives_unpresented_measurements_without_borrowing_
     let mut frame = host.begin(&engine);
     submit_empty_core_pointer(&mut frame, &provider, 2);
     let profile = MeasurementProfile {
-        pane_minimum: LogicalSize::new(64.0, 48.0).unwrap(),
+        pane_sizing: LogicalSize::new(64.0, 48.0).unwrap(),
         tab_content_width: 96.0,
         ..MeasurementProfile::default()
     };

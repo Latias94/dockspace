@@ -6,6 +6,7 @@
 - [Host integration](#engine-host-integration)
 - [Logical surfaces](#incremental-logical-surfaces) and [nested splits](#nested-split-resizing)
 - [Pane visibility](#pane-visibility)
+- [Pane sizing](#pane-sizing)
 - [Central anchors and allocation](#central-anchors-and-allocation)
 - [Pointer input](#pointer-device-and-event-time), [stationary interaction](#stationary-interaction) and [touch](#local-touch)
 - [Native input budgets](#budgeted-native-input) and [window recovery](#native-creation-failure-and-recovery)
@@ -64,7 +65,7 @@ host; a single-window renderer does not need native hosting.
 
 | Host capability | Shared interface | Host-specific work |
 | --- | --- | --- |
-| Measurement | `prepare_surface_with`, or `measure_surface_with` for an independent measurement pass, with `SurfaceMeasurementRequest` and `SurfaceMeasurementAnswer` | Text shaping, pane minima and chrome metrics |
+| Measurement | `prepare_surface_with`, or `measure_surface_with` for an independent measurement pass, with `SurfaceMeasurementRequest` and `SurfaceMeasurementAnswer` | Text shaping, complete pane sizing and chrome metrics |
 | Drawing or retained nodes | `SurfacePaintPlan::execute_surface_program` | Accept every ordered step, clip content and retain framework nodes |
 | Pointer and semantic input | `HostPointerInput`, `HostPointerHit`, prepared surface actions | Event order, real widget delivery, overlays and keyboard/accessibility bindings |
 | Output and invalidation | Affine `PaintedSurfaceOutput`, `SurfacePresentationCommit`, `HostFrameReport` | Exact renderer terminals, installed hit records and redraw scheduling |
@@ -219,6 +220,56 @@ passes use `restart_encoding_pass` without replaying input; discarded receipts
 cannot confirm the replacement pass. `DeferredSurfaceAction` retains the
 original semantic witness for actions produced during encoding and validates
 its relevant scope in a subsequent update.
+
+## Pane sizing
+
+Answer `SurfaceMeasurementRequest::PaneSizing` with one validated `PaneSizing`
+for the requested content item. Values use logical points and describe the
+content viewport; core adds the active tab bar and other docking chrome.
+
+```rust
+use dockspace::geometry::{PaneSizing, PaneSizingError};
+
+fn inspector_sizing() -> Result<PaneSizing, PaneSizingError> {
+    PaneSizing::builder()
+        .min_width(160.0)
+        .max_width(420.0)
+        .preferred_width(280.0)
+        .fixed_height(72.0)
+        .build()
+}
+```
+
+Both axes are unbounded by default. `fixed_width`/`fixed_height` set equal
+minimum and maximum bounds. Invalid scalar values, inverted ranges and
+preferences outside the declared range return `PaneSizingError`. Store a
+validated declaration with application pane metadata, then return its copy from
+the measurement callback. For uniform or minimum-only hosts,
+`UniformSurfaceMetrics::new` also accepts a `LogicalSize` directly.
+
+The configured minimum pane size is a baseline floor, capped by an application's
+explicit maximum. A small fixed tool viewport can therefore be smaller than the
+style baseline. Only the selected visible tab determines its leaf's bounds;
+inactive visible tabs still supply full metadata for exact future moves. Hidden
+items supply fresh metadata when shown. Measurements do not become snapshot
+state; restore asks the application again.
+
+Stored weights and explicit placement determine ordinary layout within hard
+bounds. Preferred extents act only when the application submits
+`SurfaceSplitterAdjustment::Preferred` through the existing prepared splitter
+action. One hinted child requests an absolute extent; two divide their combined
+extent in the hinted ratio; no hints fall back to equal extents. The full touching
+layout constrains the result. Restoration updates ordinary weights once, so
+subsequent manual resizes and saved weights keep their meaning.
+
+An upper bound may leave background in a larger host. That background is not a
+pane hit target; root docking guides remain available. Infeasible minima retain
+the configured `Clip`/`Compress` behavior. A resize that would cross a capped
+frame's unsupported contact change is unavailable; complete frontiers and
+unrelated axes remain usable. Native outer-window bounds remain host facts and
+may exceed a capped content viewport. See the
+[sizing decision](../../../docs/adr/0007-pane-sizing-and-explicit-preferences.md)
+for composition, motion and interaction rules.
 
 ## Central anchors and allocation
 

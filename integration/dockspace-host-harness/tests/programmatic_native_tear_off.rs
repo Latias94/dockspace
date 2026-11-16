@@ -2,7 +2,7 @@
 
 use std::num::NonZeroUsize;
 
-use dockspace::geometry::{LogicalRect, LogicalSize, PhysicalRect, ScaleFactor};
+use dockspace::geometry::{LogicalRect, LogicalSize, PaneSizing, PhysicalRect, ScaleFactor};
 use dockspace::model::{
     DockAnchor, DockPlacement, DockspaceActionOutcome, DockspaceActionRejection, DockspaceAxis,
     DockspaceContainedLayout, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
@@ -295,20 +295,35 @@ fn paint(
     binding: NativeSurfaceBinding,
     bounds: PhysicalRect,
 ) -> PaintedSurfaceOutput {
+    paint_with_sizing(
+        session,
+        binding,
+        bounds,
+        LogicalSize::new(32.0, 24.0).unwrap().into(),
+    )
+    .0
+}
+
+fn paint_with_sizing(
+    session: &mut DockspaceSession,
+    binding: NativeSurfaceBinding,
+    bounds: PhysicalRect,
+    sizing: PaneSizing,
+) -> (PaintedSurfaceOutput, Vec<OwnedRecord>) {
     let mut frame = native_frame(session);
     frame
         .measure_surface(
             binding.surface(),
             UniformSurfaceMetrics::new(
                 LogicalRect::new(0.0, 0.0, bounds.width(), bounds.height()).unwrap(),
-                LogicalSize::new(32.0, 24.0).unwrap(),
+                sizing,
                 80.0,
             )
             .unwrap(),
         )
         .unwrap();
     finish(frame);
-    execute_paint(session, binding).0
+    execute_paint(session, binding)
 }
 
 fn execute_paint(
@@ -821,13 +836,15 @@ fn paint_distinct_minima(
                         LogicalRect::new(0.0, 0.0, bounds.width(), bounds.height()).unwrap(),
                     )
                 }
-                SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
+                SurfaceMeasurementRequest::PaneSizing { item, .. } => {
                     let (width, height) = match item {
                         Some(A) => (700.0, 260.0),
                         Some(SIBLING) => (420.0, 300.0),
                         _ => (40.0, 30.0),
                     };
-                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(width, height).unwrap())
+                    SurfaceMeasurementAnswer::PaneSizing(
+                        (LogicalSize::new(width, height).unwrap()).into(),
+                    )
                 }
                 SurfaceMeasurementRequest::TabIntrinsic { .. } => {
                     SurfaceMeasurementAnswer::TabIntrinsic(80.0)
@@ -981,4 +998,56 @@ fn main_split_partial_defaults_use_exact_pane_and_payload_minimum() {
 #[test]
 fn contained_split_partial_defaults_do_not_inherit_window_or_sibling_minimum() {
     assert_partial_default_geometry(true);
+}
+
+#[test]
+fn capped_content_does_not_replace_native_placement_or_first_live_authority() {
+    let mut fixture = Fixture::new();
+    let sizing = PaneSizing::builder()
+        .fixed_width(180.0)
+        .fixed_height(90.0)
+        .preferred_width(180.0)
+        .build()
+        .unwrap();
+    let (output, _) = paint_with_sizing(&mut fixture.session, fixture.root, root_bounds(), sizing);
+    fixture
+        .session
+        .report_surface_presentation(output, SurfacePresentationResult::Presented)
+        .unwrap();
+    idle(&mut fixture.session);
+    let requested = placement();
+    let command = fixture
+        .session
+        .native_window_command(NativeTearOffSource::Item(B), requested)
+        .unwrap();
+    let mut request = fixture.request(command.into_prepared().unwrap());
+    assert_eq!(request.placement, requested.outer_rect());
+    assert!(request.placement.width() > 180.0);
+    let before = fixture.session.version();
+    let ack = request.accept();
+    fixture.observe(&request, NativeCreateReadiness::Created, Some(ack));
+    fixture.observe(&request, NativeCreateReadiness::Prepared, None);
+    let (output, records) = paint_with_sizing(
+        &mut fixture.session,
+        request.binding,
+        request.placement,
+        sizing,
+    );
+    let (_, content) = selected_pane_geometry(&records, B);
+    assert_eq!(content.width(), 180.0);
+    assert_eq!(content.height(), 90.0);
+    assert_eq!(fixture.session.version(), before);
+    assert_eq!(fixture.session.view().item(B).unwrap().surface(), HOST);
+    fixture
+        .session
+        .report_surface_presentation(output, SurfacePresentationResult::Presented)
+        .unwrap();
+    assert_eq!(
+        idle(&mut fixture.session).native_admissions(),
+        &[request.binding]
+    );
+    assert_eq!(
+        fixture.session.view().item(B).unwrap().surface(),
+        request.binding.surface()
+    );
 }

@@ -1,6 +1,7 @@
 //! Core-owned host-frame capabilities and their atomic phase transitions.
 
 use super::*;
+use crate::ids::NodeId;
 
 #[cfg(test)]
 mod error_tests;
@@ -470,6 +471,17 @@ impl<'frame> HostFrameView<'frame> {
     ) -> Option<crate::interaction::ResizeDeltaInterval> {
         self.engine
             .splitter_resize_delta_interval(plan, target, axis)
+    }
+
+    pub(crate) fn splitter_resize_axis_extents(
+        &self,
+        plan: &PresentationPlan,
+        target: crate::presentation::scene::SplitterResizeTarget,
+        axis: Axis,
+        delta: f64,
+    ) -> Option<BTreeMap<NodeId, f64>> {
+        self.engine
+            .splitter_resize_axis_extents(plan, target, axis, delta)
     }
 
     /// Returns the post-observation workspace visible to this frame.

@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::engine::transition::WorkspaceVersion;
-use crate::geometry::{LogicalPoint, LogicalRect, LogicalSize};
+use crate::geometry::{LogicalPoint, LogicalRect, LogicalSize, PaneSizing};
 use crate::graph::command::MovePayload;
 use crate::graph::transaction::WorkspaceTransaction;
 use crate::graph::workspace::WorkspaceIndex;
@@ -37,6 +37,7 @@ const ROOT: RootId = RootId::new(1);
 const MOVED: ItemId = ItemId::new(1);
 
 mod allocation;
+mod sizing;
 mod visibility;
 
 fn compile(
@@ -77,6 +78,29 @@ fn compile_on_surface_with_minimums(
     surface: SurfaceId,
     minimums: &BTreeMap<ItemId, LogicalSize>,
 ) -> PresentationPlan {
+    compile_on_surface_with_sizing(
+        workspace,
+        policy,
+        config,
+        strip,
+        states,
+        surface,
+        &minimums
+            .iter()
+            .map(|(&item, &minimum)| (Some(item), PaneSizing::from_minimum(minimum)))
+            .collect(),
+    )
+}
+
+fn compile_on_surface_with_sizing(
+    workspace: &Workspace,
+    policy: &DockPolicySnapshot,
+    config: &DockPresentationConfig,
+    strip: TabStripMetrics,
+    states: &mut TabStripStateStore,
+    surface: SurfaceId,
+    sizing: &BTreeMap<Option<ItemId>, PaneSizing>,
+) -> PresentationPlan {
     let manifest = derive_scene_requirement_draft(
         EngineAuthorityDomainId::new_for_test(1),
         workspace,
@@ -115,13 +139,10 @@ fn compile_on_surface_with_minimums(
             Measurement::Measured(LogicalRect::new(0.0, 0.0, 1000.0, 600.0).unwrap()),
         )
         .unwrap();
-    for key in requirements.pane_minimums() {
-        let minimum = key
-            .selected()
-            .and_then(|item| minimums.get(&item).copied())
-            .unwrap_or_else(|| LogicalSize::new(0.0, 0.0).unwrap());
+    for key in requirements.pane_sizings() {
+        let measured = sizing.get(&key.selected()).copied().unwrap_or_default();
         measurements
-            .insert_pane_minimum(key, Measurement::Measured(minimum))
+            .insert_pane_sizing(key, Measurement::Measured(measured))
             .unwrap();
     }
     for key in requirements.tab_intrinsics() {

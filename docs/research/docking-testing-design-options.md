@@ -406,9 +406,12 @@ Cargo work. Record backend/configuration; more seeds alone are not completion.
 Recoverable cancellation, legitimate pending external results and permanently
 rejected FIFO ingress have different terminal contracts; retain those distinctions.
 
-Fixed/max/preferred pane sizing and conflicting tab constraints still require
-explicit product decisions [R1]. Empty-central retention/allocation is now
-separate, with the adopted contract and tests above. Define each new observable
+Fixed/max/preferred pane sizing is adopted by the subsequent
+[sizing decision](../adr/0007-pane-sizing-and-explicit-preferences.md), with
+selected-tab constraints and explicit preference restoration. General tab
+conflict aggregation and piecewise capped-edge resizing remain outside that
+contract. Empty-central retention/allocation is separate, with the adopted
+contract and tests above. Define each new observable
 result before adding its discriminating fixture. Stronger test oracles do not
 make an unimplemented product capability part of the public contract.
 

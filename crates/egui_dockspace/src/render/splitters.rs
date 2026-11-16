@@ -8,6 +8,8 @@ use dockspace::runtime::{
 use egui::accesskit::{Action, Orientation, Role};
 use egui::{CursorIcon, Event, EventFilter, Key, PointerButton, Sense, UiBuilder};
 
+use crate::SplitterDoubleClick;
+
 use super::RenderContext;
 use super::actions::{effective_enabled, unambiguous_pointer_click};
 use super::geometry::{accesskit_bounds, egui_rect, inset_ui_rect};
@@ -30,14 +32,16 @@ pub(crate) fn paint_splitter(
         .make_persistent_id((context.instance_id, "splitter", splitter.visual_id()));
     let enabled = effective_enabled(context.ui, splitter.operable());
     let drag_enabled = enabled && context.pointer_authority.supports_preview_gestures();
-    let equalize_enabled = enabled && context.input.double_click_equalizes_splitter;
+    let double_click = enabled
+        .then_some(context.input.splitter_double_click)
+        .flatten();
     let sense = if drag_enabled {
-        if equalize_enabled {
+        if double_click.is_some() {
             Sense::click_and_drag()
         } else {
             Sense::drag()
         }
-    } else if equalize_enabled {
+    } else if double_click.is_some() {
         Sense::click()
     } else if enabled {
         Sense::focusable_noninteractive()
@@ -48,14 +52,26 @@ pub(crate) fn paint_splitter(
         .then(|| context.plan.receiver_for_splitter(splitter))
         .flatten();
     let response = context.interact_receiver(hit, id, sense, receiver);
-    let response = response.on_hover_text(if drag_enabled && equalize_enabled {
-        "Drag to resize panes; double-click to equalize adjacent panes. Use Tab to focus, then arrows or Home/End."
-    } else if drag_enabled {
-        "Drag to resize panes. Use Tab to focus, then arrows to adjust or Home/End for limits."
-    } else if enabled {
-        "Use Tab to focus, then arrows or Home/End to resize panes. Drag resizing is unavailable in this host."
-    } else {
-        "Pane resizing is unavailable."
+    let response = response.on_hover_text(match (drag_enabled, double_click) {
+        (true, Some(SplitterDoubleClick::Equalize)) => {
+            "Drag to resize panes; double-click to equalize adjacent panes. Use Tab to focus, then arrows or Home/End."
+        }
+        (true, Some(SplitterDoubleClick::Preferred)) => {
+            "Drag to resize panes; double-click to restore preferred sizes, or equalize when none are declared. Use Tab to focus, then arrows or Home/End."
+        }
+        (false, Some(SplitterDoubleClick::Equalize)) => {
+            "Double-click to equalize adjacent panes. Use Tab to focus, then arrows or Home/End. Drag resizing is unavailable in this host."
+        }
+        (false, Some(SplitterDoubleClick::Preferred)) => {
+            "Double-click to restore preferred sizes, or equalize when none are declared. Use Tab to focus, then arrows or Home/End. Drag resizing is unavailable in this host."
+        }
+        (true, None) => {
+            "Drag to resize panes. Use Tab to focus, then arrows to adjust or Home/End for limits."
+        }
+        (false, None) if enabled => {
+            "Use Tab to focus, then arrows or Home/End to resize panes. Drag resizing is unavailable in this host."
+        }
+        (false, None) => "Pane resizing is unavailable.",
     });
     configure_accessibility(context.ui, context.plan, &response, splitter, enabled);
     let focused = enabled && response.has_focus();
@@ -83,16 +99,19 @@ pub(crate) fn paint_splitter(
             );
         });
     }
-    let equalization = (equalize_enabled
-        && response.double_clicked_by(PointerButton::Primary)
-        && unambiguous_pointer_click(context.ui, &response, PointerButton::Primary))
-    .then(|| {
-        (
-            id.with("pointer-equalize"),
-            SurfaceSplitterAdjustment::Equalize,
-        )
-    });
-    let adjustment = if let Some((origin, adjustment)) = equalization {
+    let pointer_reset = double_click
+        .filter(|_| {
+            response.double_clicked_by(PointerButton::Primary)
+                && unambiguous_pointer_click(context.ui, &response, PointerButton::Primary)
+        })
+        .map(|action| {
+            let adjustment = match action {
+                SplitterDoubleClick::Equalize => SurfaceSplitterAdjustment::Equalize,
+                SplitterDoubleClick::Preferred => SurfaceSplitterAdjustment::Preferred,
+            };
+            (id.with("pointer-size-reset"), adjustment)
+        });
+    let adjustment = if let Some((origin, adjustment)) = pointer_reset {
         context
             .plan
             .prepare_splitter_adjustment(splitter.visual_id(), adjustment)

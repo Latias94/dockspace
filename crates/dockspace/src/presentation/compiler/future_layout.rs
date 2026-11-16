@@ -6,10 +6,10 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use super::surface::{
-    clip_rect, operable_tab_chrome, pane_outer_minimum, tab_strip_optional_chrome_layout,
+    clip_rect, operable_tab_chrome, pane_outer_sizing, tab_strip_optional_chrome_layout,
 };
 use super::tab_strip_layout::{TabStripFlow, desired_tab_width, select_menu_host};
-use crate::geometry::{GeometryError, LogicalRect, LogicalSize};
+use crate::geometry::{GeometryError, LogicalRect, PaneSizing};
 use crate::graph::command::{MovePayload, TabTarget};
 use crate::graph::error::CommandError;
 use crate::graph::workspace::RootPresentationOwner;
@@ -17,9 +17,9 @@ use crate::graph::{Node, Workspace};
 use crate::ids::{ItemId, NodeId, RootId};
 use crate::policy::{DockPolicySnapshot, TabBarPolicy, TabBarVisibility};
 use crate::presentation::layout::{
-    LayoutError, LayoutMetrics, LayoutMetricsError, LayoutProjection, measure_root_minimums,
+    LayoutError, LayoutMetrics, LayoutMetricsError, LayoutProjection, measure_root_sizing,
 };
-use crate::presentation::manifest::{PaneMinimumKey, TabIntrinsicKey, TabStripKey};
+use crate::presentation::manifest::{PaneSizingKey, TabIntrinsicKey, TabStripKey};
 use crate::presentation::scene::{
     PresentationLayoutFacts, PresentationPlan, TabBarSceneId, TabSceneId,
 };
@@ -103,13 +103,13 @@ pub(crate) fn project_future_root(
     let target_root = target_facts
         .root(root)
         .ok_or(FutureLayoutProjectionError::TargetRootNotPresented { root })?;
-    let mut pane_minimums = BTreeMap::<PaneMinimumKey, LogicalSize>::new();
-    collect_pane_minimums(target_facts, &mut pane_minimums)?;
+    let mut pane_sizings = BTreeMap::<PaneSizingKey, PaneSizing>::new();
+    collect_pane_sizings(target_facts, &mut pane_sizings)?;
     if let Some(source_facts) = source_layout_facts {
         if source_facts.config() != target_facts.config() {
             return Err(FutureLayoutProjectionError::PresentationConfigMismatch);
         }
-        collect_pane_minimums(source_facts, &mut pane_minimums)?;
+        collect_pane_sizings(source_facts, &mut pane_sizings)?;
     }
 
     match workspace.presentation_for_root(root) {
@@ -138,16 +138,27 @@ pub(crate) fn project_future_root(
                 }
                 let selected = workspace.visible_tab_selection(node);
                 let measured = match selected {
-                    Some(item) => {
-                        candidate_pane_minimum(original, &pane_minimums, root, node, item)?
-                    }
-                    None => LogicalSize::new(0.0, 0.0)?,
+                    Some(item) => candidate_pane_sizing(original, &pane_sizings, root, node, item)?,
+                    None => match pane_sizings.get(&PaneSizingKey::new(root, node, None)) {
+                        Some(measured) => *measured,
+                        None if original.node_has_visible_content(node)
+                            && original.visible_tab_selection(node).is_none() =>
+                        {
+                            return Err(FutureLayoutProjectionError::EmptyPaneSizingUnavailable {
+                                root,
+                                tabs: node,
+                            });
+                        }
+                        // Removing the last item can create a newly empty anchor
+                        // for which no prior empty-content declaration existed.
+                        None => PaneSizing::default(),
+                    },
                 };
                 let tab_bar =
                     candidate_tab_bar_policy(original, workspace, policy, target_plan, root, node)?;
                 leaf_minimums.insert(
                     node,
-                    pane_outer_minimum(measured, target_facts.config(), tab_bar.visibility())?,
+                    pane_outer_sizing(measured, target_facts.config(), tab_bar.visibility())?,
                 );
             }
             Node::Split { children, .. } => {
@@ -156,7 +167,7 @@ pub(crate) fn project_future_root(
         }
     }
 
-    let measured = measure_root_minimums(
+    let measured = measure_root_sizing(
         workspace,
         root,
         &leaf_minimums,
@@ -541,44 +552,44 @@ fn payload_items(original: &Workspace, payload: &MovePayload) -> Vec<ItemId> {
     items
 }
 
-fn collect_pane_minimums(
+fn collect_pane_sizings(
     facts: &PresentationLayoutFacts,
-    minimums: &mut BTreeMap<PaneMinimumKey, LogicalSize>,
+    minimums: &mut BTreeMap<PaneSizingKey, PaneSizing>,
 ) -> Result<(), FutureLayoutProjectionError> {
-    for (key, minimum) in facts.roots().flat_map(|root| root.pane_minimums()) {
+    for (key, minimum) in facts.roots().flat_map(|root| root.pane_sizings()) {
         if let Some(previous) = minimums.insert(key, minimum)
             && previous != minimum
         {
-            return Err(FutureLayoutProjectionError::ConflictingPaneMinimum { key });
+            return Err(FutureLayoutProjectionError::ConflictingPaneSizing { key });
         }
     }
     Ok(())
 }
 
-fn candidate_pane_minimum(
+fn candidate_pane_sizing(
     original: &Workspace,
-    minimums: &BTreeMap<PaneMinimumKey, LogicalSize>,
+    minimums: &BTreeMap<PaneSizingKey, PaneSizing>,
     candidate_root: RootId,
     candidate_tabs: NodeId,
     item: ItemId,
-) -> Result<LogicalSize, FutureLayoutProjectionError> {
-    let candidate_key = PaneMinimumKey::new(candidate_root, candidate_tabs, Some(item));
+) -> Result<PaneSizing, FutureLayoutProjectionError> {
+    let candidate_key = PaneSizingKey::new(candidate_root, candidate_tabs, Some(item));
     if let Some(minimum) = minimums.get(&candidate_key) {
         return Ok(*minimum);
     }
 
     let source = original.capture_item_source_by_id(item)?.ok_or(
-        FutureLayoutProjectionError::PaneMinimumUnavailable {
+        FutureLayoutProjectionError::PaneSizingUnavailable {
             root: candidate_root,
             tabs: candidate_tabs,
             item,
         },
     )?;
-    let source_key = PaneMinimumKey::new(source.root(), source.tabs(), Some(item));
+    let source_key = PaneSizingKey::new(source.root(), source.tabs(), Some(item));
     minimums
         .get(&source_key)
         .copied()
-        .ok_or(FutureLayoutProjectionError::PaneMinimumUnavailable {
+        .ok_or(FutureLayoutProjectionError::PaneSizingUnavailable {
             root: candidate_root,
             tabs: candidate_tabs,
             item,
@@ -588,6 +599,8 @@ fn candidate_pane_minimum(
 /// Failure to project the post-transaction layout from retained authority.
 #[derive(Debug, Error)]
 pub(crate) enum FutureLayoutProjectionError {
+    #[error("empty pane sizing in {root}/{tabs:?} was not presented")]
+    EmptyPaneSizingUnavailable { root: RootId, tabs: NodeId },
     #[error("target root {root} has no retained layout facts")]
     TargetRootNotPresented { root: RootId },
     #[error("candidate workspace is missing target root {root}")]
@@ -600,14 +613,14 @@ pub(crate) enum FutureLayoutProjectionError {
     MissingNodeProjection { root: RootId, node: NodeId },
     #[error("candidate target {root}/{node:?} is not a tabs leaf")]
     TargetIsNotTabs { root: RootId, node: NodeId },
-    #[error("pane minimum for item {item} in {root}/{tabs:?} was not presented")]
-    PaneMinimumUnavailable {
+    #[error("pane sizing for item {item} in {root}/{tabs:?} was not presented")]
+    PaneSizingUnavailable {
         root: RootId,
         tabs: NodeId,
         item: ItemId,
     },
-    #[error("retained outputs disagree about the pane minimum for exact key {key:?}")]
-    ConflictingPaneMinimum { key: PaneMinimumKey },
+    #[error("retained outputs disagree about the pane sizing for exact key {key:?}")]
+    ConflictingPaneSizing { key: PaneSizingKey },
     #[error("target presentation omitted retained layout facts")]
     TargetLayoutFactsMissing,
     #[error("tab intrinsic measurement {key:?} is unavailable")]

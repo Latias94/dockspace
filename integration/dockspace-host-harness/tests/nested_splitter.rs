@@ -221,13 +221,13 @@ fn measure(
                 Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
                     Answer::Bounds(bounds)
                 }
-                Question::PaneMinimum { item, .. } => {
+                Question::PaneSizing { item, .. } => {
                     let (_, width, height) = minimums
                         .iter()
                         .copied()
                         .find(|(candidate, _, _)| Some(*candidate) == item)
                         .unwrap_or((A, 64.0, 48.0));
-                    Answer::PaneMinimum(LogicalSize::new(width, height).unwrap())
+                    Answer::PaneSizing((LogicalSize::new(width, height).unwrap()).into())
                 }
                 Question::TabIntrinsic { .. } => Answer::TabIntrinsic(56.0),
                 Question::TabStrip { .. } => {

@@ -538,7 +538,9 @@ fn overflow_measurement(question: Question) -> Answer {
         Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
             Answer::Bounds(rect(0.0, 0.0, 260.0, 220.0))
         }
-        Question::PaneMinimum { .. } => Answer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap()),
+        Question::PaneSizing { .. } => {
+            Answer::PaneSizing((LogicalSize::new(64.0, 48.0).unwrap()).into())
+        }
         Question::TabIntrinsic { .. } => Answer::TabIntrinsic(96.0),
         Question::TabStrip { .. } => Answer::TabStrip(
             TabStripMetrics::new(0.0, 0.0)

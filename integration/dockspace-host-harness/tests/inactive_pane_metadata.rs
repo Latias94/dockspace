@@ -35,12 +35,12 @@ fn missing_inactive_minimum_defers_output_and_never_blocks_accepted_selection() 
                     Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => {
                         Answer::Bounds(LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap())
                     }
-                    Request::PaneMinimum { item, .. } => {
+                    Request::PaneSizing { item, .. } => {
                         requested.push(item);
                         if missing && item == Some(SECOND) {
                             Answer::Unavailable(SurfaceUnavailableReason::ContentUnavailable)
                         } else {
-                            Answer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+                            Answer::PaneSizing((LogicalSize::new(64.0, 48.0).unwrap()).into())
                         }
                     }
                     Request::TabIntrinsic { .. } => Answer::TabIntrinsic(96.0),

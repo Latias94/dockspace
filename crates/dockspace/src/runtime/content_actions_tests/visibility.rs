@@ -82,13 +82,15 @@ fn hidden_content_needs_no_measurement_metadata_until_it_is_shown_again() {
                             LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
                         )
                     }
-                    SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
+                    SurfaceMeasurementRequest::PaneSizing { item, .. } => {
                         assert!(
                             visible || item != Some(SECOND),
                             "hidden content has no loaded size metadata"
                         );
                         pane_items.push(item.unwrap());
-                        SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(80.0, 60.0).unwrap())
+                        SurfaceMeasurementAnswer::PaneSizing(
+                            (LogicalSize::new(80.0, 60.0).unwrap()).into(),
+                        )
                     }
                     SurfaceMeasurementRequest::TabIntrinsic { item, .. } => {
                         assert!(

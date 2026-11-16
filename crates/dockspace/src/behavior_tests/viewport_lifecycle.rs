@@ -1059,9 +1059,9 @@ fn publish_surface_for_fixture(
             .set_popup_plane_bounds(key, Measurement::Measured(bounds))
             .expect("the exact popup-plane bounds answer is unique");
     }
-    for key in requirements.pane_minimums() {
+    for key in requirements.pane_sizings() {
         measurements
-            .insert_pane_minimum(key, Measurement::Measured(profile.pane_minimum))
+            .insert_pane_sizing(key, Measurement::Measured((profile.pane_sizing).into()))
             .expect("each exact pane minimum answer is unique");
     }
     for key in requirements.tab_intrinsics() {

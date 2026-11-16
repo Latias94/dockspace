@@ -828,7 +828,7 @@ fn junction_resize_clamps_one_axis_and_commits_both_axes_in_one_revision() {
         &mut engine,
         &mut host,
         support::MeasurementProfile {
-            pane_minimum: size(180.0, 20.0),
+            pane_sizing: size(180.0, 20.0),
             ..support::MeasurementProfile::default()
         },
     );
@@ -962,7 +962,7 @@ fn cross_junction_clamps_all_touching_handles_to_one_common_axis_delta() {
         SURFACE,
         rect(400.0, 500.0),
         support::MeasurementProfile {
-            pane_minimum: size(0.0, 20.0),
+            pane_sizing: size(0.0, 20.0),
             ..support::MeasurementProfile::default()
         },
     );

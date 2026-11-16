@@ -12,8 +12,8 @@ fn menu_measurement(request: SurfaceMeasurementRequest) -> SurfaceMeasurementAns
         | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
             SurfaceMeasurementAnswer::Bounds(LogicalRect::new(0.0, 0.0, 260.0, 480.0).unwrap())
         }
-        SurfaceMeasurementRequest::PaneMinimum { .. } => {
-            SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(32.0, 24.0).unwrap())
+        SurfaceMeasurementRequest::PaneSizing { .. } => {
+            SurfaceMeasurementAnswer::PaneSizing((LogicalSize::new(32.0, 24.0).unwrap()).into())
         }
         SurfaceMeasurementRequest::TabIntrinsic { .. } => {
             SurfaceMeasurementAnswer::TabIntrinsic(80.0)

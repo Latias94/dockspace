@@ -53,7 +53,7 @@ pub(crate) fn derive_scene_requirement_draft_with_index(
     }
     let mut surfaces = BTreeMap::new();
     for (surface, presentation) in workspace.surfaces() {
-        let mut pane_minimums = BTreeSet::new();
+        let mut pane_sizings = BTreeSet::new();
         let mut tab_intrinsics = BTreeSet::new();
         let mut tab_strips = BTreeSet::new();
         let mut tab_bars = BTreeMap::new();
@@ -80,7 +80,7 @@ pub(crate) fn derive_scene_requirement_draft_with_index(
                 policy,
                 surface,
                 root,
-                &mut pane_minimums,
+                &mut pane_sizings,
                 &mut tab_intrinsics,
                 &mut tab_strips,
                 &mut tab_bars,
@@ -99,7 +99,7 @@ pub(crate) fn derive_scene_requirement_draft_with_index(
             surface,
         );
         let requirements =
-            SurfaceRequirements::new(ticket, pane_minimums, tab_intrinsics, tab_strips, tab_bars)
+            SurfaceRequirements::new(ticket, pane_sizings, tab_intrinsics, tab_strips, tab_bars)
                 .map_err(SceneRequirementDerivationError::Requirement)?;
         surfaces.insert(surface, requirements);
     }
@@ -122,7 +122,7 @@ fn derive_root_requirements(
     policy: &DockPolicySnapshot,
     surface: SurfaceId,
     root: RootId,
-    pane_minimums: &mut BTreeSet<PaneMinimumKey>,
+    pane_sizings: &mut BTreeSet<PaneSizingKey>,
     tab_intrinsics: &mut BTreeSet<TabIntrinsicKey>,
     tab_strips: &mut BTreeSet<TabStripKey>,
     tab_bars: &mut BTreeMap<TabBarSceneId, TabBarRequirement>,
@@ -157,13 +157,13 @@ fn derive_root_requirements(
                 let visible_items = workspace.visible_tab_items(node);
                 if items.is_empty() {
                     debug_assert!(selected.is_none());
-                    pane_minimums.insert(PaneMinimumKey::new(root, node, None));
+                    pane_sizings.insert(PaneSizingKey::new(root, node, None));
                 } else {
-                    pane_minimums.extend(
+                    pane_sizings.extend(
                         visible_items
                             .iter()
                             .copied()
-                            .map(|item| PaneMinimumKey::new(root, node, Some(item))),
+                            .map(|item| PaneSizingKey::new(root, node, Some(item))),
                     );
                 }
                 let target = workspace_index

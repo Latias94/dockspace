@@ -83,8 +83,8 @@ fn measure(request: SurfaceMeasurementRequest) -> SurfaceMeasurementAnswer {
         | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
             SurfaceMeasurementAnswer::Bounds(LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap())
         }
-        SurfaceMeasurementRequest::PaneMinimum { .. } => {
-            SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+        SurfaceMeasurementRequest::PaneSizing { .. } => {
+            SurfaceMeasurementAnswer::PaneSizing((LogicalSize::new(64.0, 48.0).unwrap()).into())
         }
         SurfaceMeasurementRequest::TabIntrinsic { .. } => {
             SurfaceMeasurementAnswer::TabIntrinsic(96.0)
@@ -353,9 +353,11 @@ fn equalization_uses_actual_equal_geometry_without_rewriting_constrained_weights
     frame
         .measure_surface_with(SURFACE, |request| {
             Ok::<_, crate::runtime::DockspaceRuntimeError>(match request {
-                SurfaceMeasurementRequest::PaneMinimum {
+                SurfaceMeasurementRequest::PaneSizing {
                     item: Some(FIRST), ..
-                } => SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(half, 48.0).unwrap()),
+                } => SurfaceMeasurementAnswer::PaneSizing(
+                    (LogicalSize::new(half, 48.0).unwrap()).into(),
+                ),
                 request => measure(request),
             })
         })
@@ -410,9 +412,11 @@ fn a_nested_touching_minimum_stops_equalization_before_the_remote_pane_moves() {
     frame
         .measure_surface_with(SURFACE, |request| {
             Ok::<_, crate::runtime::DockspaceRuntimeError>(match request {
-                SurfaceMeasurementRequest::PaneMinimum {
+                SurfaceMeasurementRequest::PaneSizing {
                     item: Some(THIRD), ..
-                } => SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(240.0, 48.0).unwrap()),
+                } => SurfaceMeasurementAnswer::PaneSizing(
+                    (LogicalSize::new(240.0, 48.0).unwrap()).into(),
+                ),
                 request => measure(request),
             })
         })
@@ -438,9 +442,11 @@ fn a_nested_touching_minimum_stops_equalization_before_the_remote_pane_moves() {
     frame
         .measure_surface_with(SURFACE, |request| {
             Ok::<_, crate::runtime::DockspaceRuntimeError>(match request {
-                SurfaceMeasurementRequest::PaneMinimum {
+                SurfaceMeasurementRequest::PaneSizing {
                     item: Some(THIRD), ..
-                } => SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(240.0, 48.0).unwrap()),
+                } => SurfaceMeasurementAnswer::PaneSizing(
+                    (LogicalSize::new(240.0, 48.0).unwrap()).into(),
+                ),
                 request => measure(request),
             })
         })

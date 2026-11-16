@@ -1067,9 +1067,9 @@ fn repeated_show_in_one_pass_survives_context_rebinding_and_then_recovers() {
 
 #[test]
 fn recoverable_error_after_claim_abandons_the_exact_terminal_pass() {
-    struct InvalidMinimumPanes(SmokePanes);
+    struct InvalidTabWidthPanes(SmokePanes);
 
-    impl PaneView for InvalidMinimumPanes {
+    impl PaneView for InvalidTabWidthPanes {
         fn title(&self, item: ItemId) -> Option<egui::WidgetText> {
             self.0.title(item)
         }
@@ -1079,8 +1079,8 @@ fn recoverable_error_after_claim_abandons_the_exact_terminal_pass() {
             egui_dockspace::PaneResponse::default()
         }
 
-        fn minimum_size(&self, _item: ItemId) -> egui::Vec2 {
-            egui::Vec2::new(f32::NAN, 0.0)
+        fn tab_content_width(&self, _: ItemId, _: &Ui, _: &egui::Galley) -> f32 {
+            f32::NAN
         }
     }
 
@@ -1098,12 +1098,12 @@ fn recoverable_error_after_claim_abandons_the_exact_terminal_pass() {
         output.textures_delta.clear();
     }
 
-    let mut invalid = InvalidMinimumPanes(SmokePanes::default());
+    let mut invalid = InvalidTabWidthPanes(SmokePanes::default());
     let mut output = run_headless(&context, raw_input(), |ui| {
         let error = dockspace
             .show_single_surface(SURFACE, ui, &mut invalid)
             .expect_err("invalid measurement fails after the settlement claim");
-        assert_eq!(error.kind(), DockspaceErrorKind::InvalidConfiguration);
+        assert_eq!(error.kind(), DockspaceErrorKind::HostProtocol);
     });
     output.textures_delta.clear();
 

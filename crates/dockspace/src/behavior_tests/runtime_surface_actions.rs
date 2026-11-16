@@ -28,6 +28,7 @@ use crate::runtime::{
 
 mod contained_resize_sequence;
 mod splitter_equalization;
+mod splitter_preferences;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const TARGET_SURFACE: SurfaceId = SurfaceId::new(2);
@@ -658,8 +659,10 @@ fn overflow_measurement(request: SurfaceMeasurementRequest) -> SurfaceMeasuremen
         | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => SurfaceMeasurementAnswer::Bounds(
             LogicalRect::new(0.0, 0.0, 260.0, 180.0).expect("overflow bounds validate"),
         ),
-        SurfaceMeasurementRequest::PaneMinimum { .. } => SurfaceMeasurementAnswer::PaneMinimum(
-            LogicalSize::new(64.0, 48.0).expect("overflow pane minimum validates"),
+        SurfaceMeasurementRequest::PaneSizing { .. } => SurfaceMeasurementAnswer::PaneSizing(
+            LogicalSize::new(64.0, 48.0)
+                .expect("overflow pane minimum validates")
+                .into(),
         ),
         SurfaceMeasurementRequest::TabIntrinsic { .. } => {
             SurfaceMeasurementAnswer::TabIntrinsic(88.0)

@@ -97,9 +97,9 @@ fn compile_ready_plan_with_config(
         .set_bounds(requirements.bounds(), Measurement::Measured(bounds))
         .expect("bounds answer is unique");
     let minimum = LogicalSize::new(0.0, 0.0).expect("minimum should be valid");
-    for key in requirements.pane_minimums() {
+    for key in requirements.pane_sizings() {
         measurements
-            .insert_pane_minimum(key, Measurement::Measured(minimum))
+            .insert_pane_sizing(key, Measurement::Measured((minimum).into()))
             .expect("pane answer is unique");
     }
     for key in requirements.tab_intrinsics() {
@@ -1440,9 +1440,9 @@ fn balanced_hot_root_fixture(
         )
         .expect("bounds answer is unique");
     let minimum = LogicalSize::new(0.0, 0.0).expect("minimum should be valid");
-    for key in requirements.pane_minimums() {
+    for key in requirements.pane_sizings() {
         measurements
-            .insert_pane_minimum(key, Measurement::Measured(minimum))
+            .insert_pane_sizing(key, Measurement::Measured((minimum).into()))
             .expect("pane answer is unique");
     }
     for key in requirements.tab_intrinsics() {
@@ -2225,9 +2225,9 @@ fn overflowing_tab_strip_fixture_with_geometry(
         .set_bounds(requirements.bounds(), Measurement::Measured(layout_bounds))
         .expect("bounds answer is unique");
     let minimum = LogicalSize::new(0.0, 0.0).expect("minimum should be valid");
-    for key in requirements.pane_minimums() {
+    for key in requirements.pane_sizings() {
         measurements
-            .insert_pane_minimum(key, Measurement::Measured(minimum))
+            .insert_pane_sizing(key, Measurement::Measured((minimum).into()))
             .expect("pane answer is unique");
     }
     for key in requirements.tab_intrinsics() {
@@ -2947,10 +2947,10 @@ fn single_central_leaf_derives_every_exact_question() {
         SurfaceRequirementRevision::new(1)
     );
     assert_eq!(
-        requirements.pane_minimums().collect::<Vec<_>>(),
+        requirements.pane_sizings().collect::<Vec<_>>(),
         [
-            PaneMinimumKey::new(root, tabs, Some(ItemId::new(10))),
-            PaneMinimumKey::new(root, tabs, Some(ItemId::new(11))),
+            PaneSizingKey::new(root, tabs, Some(ItemId::new(10))),
+            PaneSizingKey::new(root, tabs, Some(ItemId::new(11))),
         ]
     );
     assert_eq!(requirements.tab_intrinsics().len(), 2);
@@ -3015,7 +3015,7 @@ fn nested_split_and_rootless_contained_roster_are_complete() {
         .surface(surface)
         .expect("surface should be present");
 
-    assert_eq!(requirements.pane_minimums().len(), 4);
+    assert_eq!(requirements.pane_sizings().len(), 4);
     assert_eq!(requirements.tab_intrinsics().len(), 4);
     assert_eq!(requirements.tab_strips().len(), 3);
     assert_eq!(requirements.ticket().surface(), surface);
@@ -3141,9 +3141,9 @@ fn compilation_rejects_a_policy_snapshot_newer_than_the_exact_ticket() {
         )
         .expect("bounds answer is unique");
     let minimum = LogicalSize::new(0.0, 0.0).expect("minimum should be valid");
-    for key in requirements.pane_minimums() {
+    for key in requirements.pane_sizings() {
         measurements
-            .insert_pane_minimum(key, Measurement::Measured(minimum))
+            .insert_pane_sizing(key, Measurement::Measured((minimum).into()))
             .expect("pane answer is unique");
     }
     for key in requirements.tab_intrinsics() {

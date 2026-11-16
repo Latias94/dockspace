@@ -122,7 +122,7 @@ pub(super) fn prepare_resize_axis_groups(
                 let root_facts = facts.root(root)?;
                 let projection = root_facts.projection();
                 let root_node = workspace.root(root)?.node;
-                if projection.nodes.get(&root_node).map(|result| result.rect)
+                if projection.nodes.get(&root_node).map(|result| result.slot)
                     != Some(root_facts.bounds())
                 {
                     return None;
@@ -156,6 +156,15 @@ pub(super) fn prepare_resize_axis_groups(
                     let incident = incidents.get(&(root, node));
                     let affected = outer_edges != [0.0, 0.0] || incident.is_some();
                     if affected || check_extent {
+                        // A capped frame inside a larger slot does not share its
+                        // moving edge. This frozen linear frontier cannot cross
+                        // that contact change without a new geometric solve.
+                        if outer_edges[1] != outer_edges[0]
+                            && (rect_extent(result.slot, axis) - rect_extent(rect, axis)).abs()
+                                > rect_extent_tolerance(result.slot, axis)
+                        {
+                            return None;
+                        }
                         let constraints = result.constraints;
                         intersect_extent_interval(
                             &mut group.common_delta,
@@ -208,6 +217,7 @@ pub(super) fn prepare_resize_axis_groups(
                             children,
                             weights,
                             facts.config().splitter_thickness(),
+                            *split_axis == axis,
                         )?;
                         let coefficients = if *split_axis == axis {
                             edges
@@ -427,6 +437,7 @@ fn validate_split_projection(
     children: &[NodeId],
     weights: &[SplitWeight],
     thickness: f64,
+    require_full_slot: bool,
 ) -> Option<()> {
     let count = children.len();
     if count < 2
@@ -461,7 +472,7 @@ fn validate_split_projection(
         || split.overflow > extent_tolerance
         || !split.unallocated.is_finite()
         || split.unallocated < 0.0
-        || split.unallocated > extent_tolerance
+        || (require_full_slot && split.unallocated > extent_tolerance)
         || (available + gaps - extent).abs() > extent_tolerance
         || split.splitter_rects().any(|gap| {
             (rect_extent(gap, axis) - thickness).abs()

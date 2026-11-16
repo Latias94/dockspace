@@ -7,8 +7,8 @@ use crate::model::{
     DockspaceActionOutcome, DockspaceActionRejection, NativeTearOffSource, NativeWindowPlacement,
 };
 use crate::platform::ObservedWorkArea;
-use crate::presentation::compiler::{contained_minimum_size, pane_outer_minimum};
-use crate::presentation::manifest::PaneMinimumKey;
+use crate::presentation::compiler::{contained_minimum_size, pane_outer_sizing};
+use crate::presentation::manifest::PaneSizingKey;
 
 #[cfg(test)]
 mod tests;
@@ -89,10 +89,10 @@ impl DockEngine {
         if !complete_root {
             let facts = plan.layout_facts().ok_or(unavailable)?;
             let root_facts = facts.root(root).ok_or(unavailable)?;
-            let pane_minimum = match payload {
+            let pane_sizing = match payload {
                 MovePayload::Item(source) => {
                     let measured = root_facts
-                        .pane_minimum(PaneMinimumKey::new(root, node, Some(source.item())))
+                        .pane_sizing(PaneSizingKey::new(root, node, Some(source.item())))
                         .ok_or(unavailable)?;
                     let visibility = self
                         .presentation_requirements()
@@ -107,8 +107,9 @@ impl DockEngine {
                         // it cannot inherit the source group's temporary reveal.
                         .map(|bar| bar.policy().resolved(1, false).visibility())
                         .ok_or(unavailable)?;
-                    pane_outer_minimum(measured, facts.config(), visibility)
+                    pane_outer_sizing(measured, facts.config(), visibility)
                         .map_err(|_| DockspaceActionRejection::Conflict)?
+                        .minimum_size()
                 }
                 MovePayload::Tabs(_) | MovePayload::Subtree(_) => root_facts
                     .projection()
@@ -117,7 +118,7 @@ impl DockEngine {
                     .map(|result| result.constraints.min())
                     .ok_or(unavailable)?,
             };
-            let minimum = contained_minimum_size(facts.config(), pane_minimum)
+            let minimum = contained_minimum_size(facts.config(), pane_sizing)
                 .map_err(|_| DockspaceActionRejection::Conflict)?;
             let pane = plan
                 .pane_records()

@@ -82,6 +82,14 @@ pub enum SurfaceSplitterAdjustment {
     /// other direct children of this split keep their current extents. A junction
     /// axis is available only when its incident pairs admit the same displacement.
     Equalize,
+    /// Restore the adjacent children's preferred sizes once, within the full layout limits.
+    ///
+    /// Two preferences divide their combined extent proportionally; one preference
+    /// sets that child's extent. Without either preference this equalizes the pair.
+    /// The resulting split weights persist, so later resizing and ordinary layout
+    /// do not repeatedly impose the preferences. A junction axis requires the same
+    /// constrained displacement from every incident pair.
+    Preferred,
 }
 
 /// Product-facing signed adjustment of one contained-floating edge.

@@ -43,8 +43,8 @@ fn answer(request: SurfaceMeasurementRequest, bounds: LogicalRect) -> SurfaceMea
         | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
             SurfaceMeasurementAnswer::Bounds(bounds)
         }
-        SurfaceMeasurementRequest::PaneMinimum { .. } => {
-            SurfaceMeasurementAnswer::PaneMinimum(minimum())
+        SurfaceMeasurementRequest::PaneSizing { .. } => {
+            SurfaceMeasurementAnswer::PaneSizing((minimum()).into())
         }
         SurfaceMeasurementRequest::TabIntrinsic { .. } => {
             SurfaceMeasurementAnswer::TabIntrinsic(96.0)
@@ -78,10 +78,10 @@ fn product_measurement_seam_hides_manifest_keys_and_builds_a_ready_plan() {
                     assert_eq!(surface, SURFACE);
                     SurfaceMeasurementAnswer::Bounds(bounds())
                 }
-                SurfaceMeasurementRequest::PaneMinimum { visual, item } => {
+                SurfaceMeasurementRequest::PaneSizing { visual, item } => {
                     assert_eq!(visual.kind(), DockspaceVisualKind::Pane);
                     pane_items.insert(item);
-                    SurfaceMeasurementAnswer::PaneMinimum(minimum())
+                    SurfaceMeasurementAnswer::PaneSizing((minimum()).into())
                 }
                 SurfaceMeasurementRequest::TabIntrinsic { visual, bar, item } => {
                     assert_eq!(visual.kind(), DockspaceVisualKind::Tab);
@@ -293,7 +293,7 @@ fn independent_measurement_error_preserves_ready_geometry_and_can_retry_without_
     let error = frame
         .measure_surface_with(SURFACE, |request| {
             assert!(!stopped, "a measurement error ends this resolver traversal");
-            if matches!(request, SurfaceMeasurementRequest::PaneMinimum { .. }) {
+            if matches!(request, SurfaceMeasurementRequest::PaneSizing { .. }) {
                 stopped = true;
                 Err::<_, Box<dyn std::error::Error>>(
                     std::io::Error::other("pane metadata is invalid").into(),
@@ -370,7 +370,7 @@ fn mismatched_measurement_answer_rolls_back_without_poisoning_the_session() {
         .begin_host_frame()
         .expect("invalid measurement frame begins")
         .measure_surface_with(SURFACE, |_| {
-            Ok::<_, DockspaceRuntimeError>(SurfaceMeasurementAnswer::PaneMinimum(minimum()))
+            Ok::<_, DockspaceRuntimeError>(SurfaceMeasurementAnswer::PaneSizing((minimum()).into()))
         })
         .expect_err("a pane-size answer cannot satisfy a bounds request");
     assert_eq!(

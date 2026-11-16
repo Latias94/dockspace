@@ -3,13 +3,13 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::geometry::{LogicalRect, LogicalSize};
+use crate::geometry::{LogicalRect, PaneSizing};
 use crate::ids::{FloatingPresentationId, RootId, SurfaceId};
 use crate::interaction::{ContainedTransformSessionId, DragSessionId};
 use crate::presentation::config::DockPresentationConfig;
 use crate::presentation::layout::LayoutProjection;
 use crate::presentation::manifest::{
-    AuthoritativeSurfaceMeasurements, PaneMinimumKey, SurfaceMeasurements, TabIntrinsic,
+    AuthoritativeSurfaceMeasurements, PaneSizingKey, SurfaceMeasurements, TabIntrinsic,
     TabIntrinsicKey, TabStripKey, TabStripMetrics,
 };
 
@@ -114,12 +114,12 @@ impl PresentationLayoutFacts {
     }
 }
 
-/// Surface-local bounds and raw pane minima measured for one presented root.
+/// Surface-local bounds and raw pane sizing measured for one presented root.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RootLayoutFacts {
     root: RootId,
     bounds: LogicalRect,
-    pane_minimums: BTreeMap<PaneMinimumKey, LogicalSize>,
+    pane_sizings: BTreeMap<PaneSizingKey, PaneSizing>,
     projection: Arc<LayoutProjection>,
 }
 
@@ -127,13 +127,13 @@ impl RootLayoutFacts {
     pub(crate) fn new(
         root: RootId,
         bounds: LogicalRect,
-        pane_minimums: BTreeMap<PaneMinimumKey, LogicalSize>,
+        pane_sizings: BTreeMap<PaneSizingKey, PaneSizing>,
         projection: Arc<LayoutProjection>,
     ) -> Self {
         Self {
             root,
             bounds,
-            pane_minimums,
+            pane_sizings,
             projection,
         }
     }
@@ -150,13 +150,13 @@ impl RootLayoutFacts {
         &self.projection
     }
 
-    pub(crate) fn pane_minimums(&self) -> impl Iterator<Item = (PaneMinimumKey, LogicalSize)> + '_ {
-        self.pane_minimums
+    pub(crate) fn pane_sizings(&self) -> impl Iterator<Item = (PaneSizingKey, PaneSizing)> + '_ {
+        self.pane_sizings
             .iter()
             .map(|(key, minimum)| (*key, *minimum))
     }
 
-    pub(crate) fn pane_minimum(&self, key: PaneMinimumKey) -> Option<LogicalSize> {
-        self.pane_minimums.get(&key).copied()
+    pub(crate) fn pane_sizing(&self, key: PaneSizingKey) -> Option<PaneSizing> {
+        self.pane_sizings.get(&key).copied()
     }
 }

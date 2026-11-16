@@ -1,5 +1,9 @@
 use thiserror::Error;
 
+mod sizing;
+
+pub use sizing::{AxisSizing, PaneSizing, PaneSizingBuilder, PaneSizingError};
+
 /// A failure to construct or convert validated geometry.
 #[derive(Clone, Debug, Error, PartialEq)]
 pub enum GeometryError {

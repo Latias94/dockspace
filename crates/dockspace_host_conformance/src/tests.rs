@@ -2835,9 +2835,9 @@ fn runtime_paint_plan_exposes_complete_stable_renderer_geometry() {
                     | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
                         SurfaceMeasurementAnswer::Bounds(bounds)
                     }
-                    SurfaceMeasurementRequest::PaneMinimum { visual, .. } => {
+                    SurfaceMeasurementRequest::PaneSizing { visual, .. } => {
                         assert_eq!(visual.kind(), DockspaceVisualKind::Pane);
-                        SurfaceMeasurementAnswer::PaneMinimum(minimum)
+                        SurfaceMeasurementAnswer::PaneSizing((minimum).into())
                     }
                     SurfaceMeasurementRequest::TabIntrinsic { visual, .. } => {
                         assert_eq!(visual.kind(), DockspaceVisualKind::Tab);

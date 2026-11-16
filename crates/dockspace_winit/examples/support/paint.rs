@@ -35,7 +35,7 @@ pub(super) fn measure(
     frame.measure_surface_with(surface, |request| {
         Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
             Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => Answer::Bounds(bounds),
-            Request::PaneMinimum { .. } => Answer::PaneMinimum(minimum),
+            Request::PaneSizing { .. } => Answer::PaneSizing((minimum).into()),
             Request::TabIntrinsic { item, .. } => {
                 Answer::TabIntrinsic(title(item).len() as f64 * 8.0)
             }
