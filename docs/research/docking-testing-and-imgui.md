@@ -100,9 +100,9 @@ constraint aggregation, conflict behavior and split/merge inheritance before
 adding such a contract. The project is unreleased, so a necessary breaking change
 can replace the existing semantics rather than adding compatibility layers.
 
-## Current implementation checkpoint
+## Related regression coverage
 
-Finish and verify the already reproduced defects before expanding the research:
+The reproduced defects were reduced to the following contracts and regressions:
 
 1. Retire physical endpoints without reclaiming presentation streams that a
    legitimate pending child still references.
@@ -114,9 +114,10 @@ Finish and verify the already reproduced defects before expanding the research:
    smaller candidates or hiding intrinsically invalid geometry.
 5. Resolve executable click/drag overlaps using the exact presented stack; keep
    real framework evidence and do not hide a core conflict in an adapter blocker.
-6. Verify the shrinkable command model and complete UI trace, then run the fixed
-   journeys and applicable workspace/consumer gates. Test results and unfinished
-   work must be rechecked against the current revision.
+6. Keep the shrinkable command model and complete timed UI trace alongside the
+   fixed journeys and applicable workspace/consumer gates. Test outcomes must be
+   rechecked against the current revision; a recorded result does not qualify a
+   different platform or future change.
 
 Further research should start with the remaining questions in the comparison
 table. It should not assume that ImGui's exploratory v3 direction is a required
