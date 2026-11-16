@@ -23,7 +23,9 @@ A tab bar's six-dot grip moves its tab group; the same grip in a floating title
 bar moves or docks the whole floating window, including its splits.
 
 The workbench starts with Rounded tabs. Use **Tab style** and **Custom tabs** to
-compare chrome, and the motion toolbar to try timing, curves and reduced motion. The
+compare chrome, and the motion toolbar to try timing, curves and reduced motion.
+Enable **Sizing → Pane sizing demo** to try a capped Inspector, a fixed-height
+Console, and double-clicking the Outline divider to restore its preferred width. The
 [workbench pane code](examples/workbench/editor.rs) demonstrates these features;
 start with the [small editor](examples/winit.rs) when integrating your own app.
 

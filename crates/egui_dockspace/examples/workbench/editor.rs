@@ -14,6 +14,7 @@ use egui_dockspace::{
 
 #[cfg(feature = "motion")]
 mod motion;
+mod sizing;
 mod tabs;
 
 pub(super) const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -58,6 +59,7 @@ fn toolbar(
     restore_layout: &mut bool,
     custom_tabs: &mut bool,
     tab_preset: &mut TabStylePreset,
+    sizing_demo: &mut bool,
 ) {
     egui::Panel::top("workbench-toolbar").show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
@@ -75,6 +77,7 @@ fn toolbar(
                 ui.label("The dotted window-title grip moves the entire floating window, including its splits.");
                 ui.label("Close panes freely; Restore layout keeps your edits.");
             });
+            sizing::controls(ui, sizing_demo);
             ui.checkbox(custom_tabs, "Custom tabs");
             egui::ComboBox::from_id_salt("workbench-tab-style")
                 .selected_text(preset_name(*tab_preset))
@@ -126,12 +129,19 @@ pub(super) fn run_editor(
     }
     let mut custom_tabs = panes.custom_tabs;
     let mut tab_preset = panes.tab_preset;
+    let mut sizing_demo = panes.sizing_demo;
     #[cfg(feature = "motion")]
     let (mut motion_settings, mut motion_preference) =
         (*dockspace.motion_settings(), dockspace.motion_preference());
     if dockspace.view().surfaces().next().is_none() {
         let output = egui_dockspace::run_ui(context, input, |ui| {
-            toolbar(ui, restore_layout, &mut custom_tabs, &mut tab_preset);
+            toolbar(
+                ui,
+                restore_layout,
+                &mut custom_tabs,
+                &mut tab_preset,
+                &mut sizing_demo,
+            );
             ui.centered_and_justified(|ui| {
                 ui.label(
                     "All panes are closed. Restore layout to reopen them and keep your edits.",
@@ -140,17 +150,24 @@ pub(super) fn run_editor(
         });
         panes.custom_tabs = custom_tabs;
         update_tab_preset(context, panes, tab_preset);
+        sizing::apply_mode(context, panes, sizing_demo);
         return Ok((output, None));
     }
-    let result = dockspace
-        .run_single_surface_with_ui(context, input, SURFACE, panes, |ui| {
-            toolbar(ui, restore_layout, &mut custom_tabs, &mut tab_preset);
+    let (output, response) =
+        dockspace.run_single_surface_with_ui(context, input, SURFACE, panes, |ui| {
+            toolbar(
+                ui,
+                restore_layout,
+                &mut custom_tabs,
+                &mut tab_preset,
+                &mut sizing_demo,
+            );
             #[cfg(feature = "motion")]
             motion::controls(ui, &mut motion_settings, &mut motion_preference);
-        })
-        .map(|(output, response)| (output, Some(response)));
+        })?;
     panes.custom_tabs = custom_tabs;
     update_tab_preset(context, panes, tab_preset);
+    sizing::apply_mode(context, panes, sizing_demo);
     #[cfg(feature = "motion")]
     {
         if *dockspace.motion_settings() != motion_settings
@@ -161,7 +178,7 @@ pub(super) fn run_editor(
         dockspace.set_motion_settings(motion_settings);
         dockspace.set_motion_preference(motion_preference);
     }
-    result
+    Ok((output, Some(response)))
 }
 
 fn update_tab_preset(context: &Context, panes: &mut DemoPanes, preset: TabStylePreset) {
@@ -244,6 +261,7 @@ pub(super) struct DemoPane {
 pub(super) struct DemoPanes {
     pub(super) custom_tabs: bool,
     pub(super) tab_preset: TabStylePreset,
+    sizing_demo: bool,
     tab_accent: usize,
     pub(super) panes: BTreeMap<ItemId, DemoPane>,
     selection: usize,
@@ -272,6 +290,7 @@ impl DemoPanes {
         Self {
             custom_tabs: false,
             tab_preset: TabStylePreset::Rounded,
+            sizing_demo: false,
             tab_accent: 0,
             panes: [
                 (EDITOR, "Editor", "// src/main.rs\n\nfn main() {\n    let mut scene = Scene::new();\n    scene.add(\"Player\");\n    scene.run();\n}\n"),
@@ -533,12 +552,8 @@ impl PaneView for DemoPanes {
         (item == EDITOR).then(|| editor_id(item))
     }
 
-    fn sizing(&self, _item: ItemId) -> PaneSizing {
-        PaneSizing::builder()
-            .min_width(160.0)
-            .min_height(100.0)
-            .build()
-            .expect("the workbench content minimums are valid")
+    fn sizing(&self, item: ItemId) -> PaneSizing {
+        sizing::pane_sizing(item, self.sizing_demo)
     }
 }
 

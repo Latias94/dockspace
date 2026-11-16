@@ -6,6 +6,8 @@ use egui_dockspace::{DockspaceActionOutcome, DockspaceActionStatus};
 
 #[path = "tests/randomized.rs"]
 mod randomized;
+#[path = "tests/sizing.rs"]
+mod sizing;
 #[path = "tests/tab_presets.rs"]
 mod tab_presets;
 
