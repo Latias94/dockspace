@@ -147,6 +147,17 @@ pub enum NativeCommand {
         /// Existing surface that will contain the floating group.
         surface: SurfaceId,
     },
+    /// Float a complete layout, including every split and tabs group, inside an existing surface.
+    ///
+    /// Preserves the root identity, split proportions, central leaf and tab selections.
+    /// This creates contained content, not an OS window. Native source ownership
+    /// remains until the target's exact presentation permits the existing transfer.
+    FloatRoot {
+        /// Complete layout to float as one unit.
+        root: RootId,
+        /// Existing surface that will contain the floating layout.
+        surface: SurfaceId,
+    },
     /// Raise the contained window owning this pane without selecting the pane.
     RaiseContained {
         /// Any pane in the contained group.

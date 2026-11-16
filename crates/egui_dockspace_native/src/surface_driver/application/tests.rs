@@ -28,6 +28,7 @@ use super::NativeRuntimeState;
 
 mod deferred_move;
 mod policy;
+mod root_float;
 mod visibility;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);

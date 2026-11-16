@@ -93,6 +93,14 @@ consume its exact committed result with `take_action_status` before submitting
 another. Use the returned close tokens for deferred saving. Apply completed pane
 data through `with_panes_mut` and request repaint on the affected egui viewport.
 
+Use `NativeCommand::FloatRoot { root, surface }` for the layout menu's **Float
+Layout** operation: the complete root becomes one contained floating window,
+preserving its splits, tab order and selections. `FloatItem` moves one pane;
+`FloatTabs` moves a captured tabs group. `FloatRoot` keeps the stable root identity
+and uses the core's current geometry and existing presentation barrier. Missing
+geometry, unavailable destinations and policy restrictions are returned through
+`take_action_status`. `DockRootBack` uses the core-derived return destination.
+
 `NativeCommand::SetItemVisibility { item, visible }` retains the pane's tab order,
 split proportions and window ownership. Showing does not activate the window or
 request focus; submit `SelectItem` separately when needed. Entirely hidden roots

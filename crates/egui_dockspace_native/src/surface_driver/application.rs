@@ -360,6 +360,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
                 NativeCommand::FloatTabs { group, surface } => {
                     session.prepare_float_tabs(group, surface).into()
                 }
+                NativeCommand::FloatRoot { root, surface } => {
+                    session.prepare_float_root(root, surface).into()
+                }
                 NativeCommand::RaiseContained { item } => {
                     session.prepare_raise_contained(item).into()
                 }
@@ -476,6 +479,10 @@ impl<P: PaneView> NativeRuntimeState<P> {
             NativeCommand::FloatTabs { group, surface } if complete_tabs(group) => {
                 view.surface(*surface).map(|surface| surface.id())
             }
+            NativeCommand::FloatRoot {
+                root: source,
+                surface,
+            } if *source == root.id() => view.surface(*surface).map(|surface| surface.id()),
             _ => None,
         };
         target.is_some_and(|target| target != self.root_surface)
