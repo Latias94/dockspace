@@ -28,6 +28,7 @@ pub(crate) struct NativeCreateProposal {
     surface: SurfaceId,
     physical_placement: PhysicalRect,
     converted_main: ConvertedMainRecovery,
+    drag_tear_off: Option<crate::interaction::NativeDragTearOff>,
 }
 
 impl NativeCreateProposal {
@@ -40,6 +41,7 @@ impl NativeCreateProposal {
             surface,
             physical_placement,
             converted_main,
+            drag_tear_off: None,
         }
     }
 
@@ -49,6 +51,14 @@ impl NativeCreateProposal {
             proposal.physical_placement(),
             proposal.converted_main(),
         )
+    }
+
+    pub(crate) fn with_drag_tear_off(
+        mut self,
+        drag: crate::interaction::NativeDragTearOff,
+    ) -> Self {
+        self.drag_tear_off = Some(drag);
+        self
     }
 
     pub(crate) const fn surface(&self) -> SurfaceId {
@@ -328,6 +338,7 @@ impl ViewportCoordinator {
                 binding,
                 placement: proposal.physical_placement(),
                 role: ViewportRole::Child,
+                drag_tear_off: proposal.drag_tear_off,
             })
             .map_err(ViewportCoordinatorError::Effect)?;
         candidate.native_creates.last_saga = saga;

@@ -161,6 +161,7 @@ enum NativeEffectCorrelationKind {
 #[derive(Debug)]
 pub struct NativeEffectRequest {
     operation: NativeEffectOperation,
+    drag_tear_off: Option<crate::runtime::NativeDragTearOff>,
     provider: PlatformObservationLease,
     binding: ViewportBinding,
     effect: EffectId,
@@ -174,6 +175,18 @@ pub struct NativeEffectRequest {
 }
 
 impl NativeEffectRequest {
+    /// Returns the exact drag whose provisional window this create may adopt.
+    ///
+    /// This is present only for a pointer-driven create. A host may bind its
+    /// unregistered provisional resource with the same key instead of allocating
+    /// another window. Consume the affine request normally and report readiness
+    /// for its exact binding. Source content remains retained until first-live
+    /// presentation; adopting a resource does not transfer content ownership.
+    #[must_use]
+    pub const fn drag_tear_off(&self) -> Option<crate::runtime::NativeDragTearOff> {
+        self.drag_tear_off
+    }
+
     #[cfg(test)]
     pub(super) fn from_emission(
         emission: &PlatformEffectEmission,
@@ -190,6 +203,10 @@ impl NativeEffectRequest {
     fn prepare_emission(emission: &PlatformEffectEmission) -> Self {
         let binding = emission.effect().binding();
         let native_binding = NativeSurfaceBinding::from_binding(emission.provider(), binding);
+        let drag_tear_off = match emission.effect() {
+            PlatformEffect::CreateWindow { drag_tear_off, .. } => *drag_tear_off,
+            _ => None,
+        };
         let (operation, correlation) = match emission.effect() {
             PlatformEffect::CreateWindow {
                 placement, role, ..
@@ -276,6 +293,7 @@ impl NativeEffectRequest {
         };
         Self {
             operation,
+            drag_tear_off,
             provider: emission.provider(),
             binding,
             effect: emission.id(),
@@ -397,6 +415,7 @@ impl NativeEffectRequest {
 impl PartialEq for NativeEffectRequest {
     fn eq(&self, other: &Self) -> bool {
         self.operation == other.operation
+            && self.drag_tear_off == other.drag_tear_off
             && self.provider == other.provider
             && self.binding == other.binding
             && self.effect == other.effect
@@ -447,6 +466,12 @@ pub struct NativeEffectDispatch {
 }
 
 impl NativeEffectDispatch {
+    /// Returns the original drag identity retained by this exact create request.
+    #[must_use]
+    pub const fn drag_tear_off(&self) -> Option<crate::runtime::NativeDragTearOff> {
+        self.request.drag_tear_off()
+    }
+
     /// Returns the exact operation being dispatched.
     #[must_use]
     pub const fn operation(&self) -> &NativeEffectOperation {
@@ -1209,6 +1234,7 @@ mod tests {
                 binding,
                 placement,
                 role: ViewportRole::Child,
+                drag_tear_off: None,
             },
             PlatformEffect::RequestReplacement {
                 binding,

@@ -144,6 +144,28 @@ documents. Unit tests also require incomplete destruction, uncommitted create
 failures and occupied prepaid roster buffers to retain their obligations. A
 handler detach is not a substitute for destruction evidence.
 
+Test permanently rejected ingress separately from recoverable fatal cleanup.
+`native_drag_tear_off.rs` in the public host harness repeats a contradictory raw
+release after a committed create request, retains the rejected FIFO head and
+appends its original effect result plus exact binding-retirement/destruction
+facts. None can pass the rejected head or become a successful drain. A fresh
+session rejects the old result and returns its original ownership. Whole-host
+physical termination remains backend qualification; see the
+[failed-generation contract](../crates/dockspace/docs/guide.md#permanently-rejected-native-ingress).
+
+For interaction-only invalidation, use the public report rather than global
+repaint. The public `host_pointer_report_` cases switch hover from B to C with
+unchanged layout, remove a blocked destination's ghost on cancellation and
+refresh equivalent presented outputs. Assert the exact old/new surface set,
+unrelated surfaces staying idle and provenance-only updates staying quiet.
+
+Native placement tests must preserve real Foreign hover while separately
+authorizing native tear-off. Verify same-resource adoption and retained source
+content until exact first-live, including atomic press/move/release, discarded
+candidates, stale drag identities, revoked work areas, framework blockers,
+capture loss and late cancelled outputs. A mocked Foreign route does not qualify
+OS hit testing, point-scoped z-order or physical presentation.
+
 ## Interaction entry points
 
 Build an entry-point inventory from the union of this adapter and its reference

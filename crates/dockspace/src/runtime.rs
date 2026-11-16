@@ -35,7 +35,7 @@ mod terminal_replacement_tests;
 mod touch;
 mod update;
 
-pub use crate::interaction::PointerContinuationToken;
+pub use crate::interaction::{NativeDragTearOff, PointerContinuationToken};
 pub use action_status::DockspaceActionStatus;
 pub use events::{DockspaceEvent, DockspaceEventId, DockspaceEventKind};
 pub use host_frame::{DockspaceHostFrame, PreparedDockspaceHostFrameCommit};
@@ -839,11 +839,14 @@ impl HostFrameReport {
         std::mem::take(&mut self.native_effects)
     }
 
-    /// Returns every logical surface whose scene or pending presentation needs paint.
+    /// Returns every logical surface whose scene, interaction visuals, or pending
+    /// presentation needs paint.
     ///
     /// The roster is sorted and deduplicated. Presentation-provenance changes
     /// remain visible through [`Self::affected_surfaces`] but are omitted here
-    /// when scene, coordinates, and endpoint stay equivalent. Pending release and
+    /// when scene, coordinates, endpoint, and visuals stay equivalent. Changes to
+    /// previews, guides and pointer ghosts include both their old and new surfaces
+    /// even when scene stamps do not change. Pending release and
     /// root-rehome targets are included while they lack an exact emitted output.
     /// An output awaiting its terminal result requires a commit continuation,
     /// rather than repeated paint requests for the same obligation. A renderer

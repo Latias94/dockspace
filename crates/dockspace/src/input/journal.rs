@@ -1152,6 +1152,13 @@ pub enum PointerEdgeKind {
     Scrolled(ScrollEdge),
 }
 
+/// Native placement intent kept separate from the edge's actual hover facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NativeTearOffIntent {
+    pub(crate) drag: Option<crate::interaction::NativeDragTearOff>,
+    pub(crate) work_area: DesktopWorkAreaRoute,
+}
+
 /// One lossless pointer edge with the authority facts observed at event time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PointerEdge {
@@ -1163,6 +1170,7 @@ pub struct PointerEdge {
     capture_owner: Authority<PointerCaptureOwner>,
     metadata: PointerEventMetadata,
     native_routes: Option<NativePointerRoutes>,
+    native_tear_off: Option<NativeTearOffIntent>,
 }
 
 impl PointerEdge {
@@ -1219,6 +1227,7 @@ impl PointerEdge {
             capture_owner,
             metadata: PointerEventMetadata::unknown(),
             native_routes: None,
+            native_tear_off: None,
         }
     }
 
@@ -1233,6 +1242,15 @@ impl PointerEdge {
     #[must_use]
     pub const fn metadata(&self) -> PointerEventMetadata {
         self.metadata
+    }
+
+    pub(crate) const fn with_native_tear_off(mut self, intent: NativeTearOffIntent) -> Self {
+        self.native_tear_off = Some(intent);
+        self
+    }
+
+    pub(crate) const fn native_tear_off(&self) -> Option<NativeTearOffIntent> {
+        self.native_tear_off
     }
 
     /// Returns this edge's provider-owned sequence.

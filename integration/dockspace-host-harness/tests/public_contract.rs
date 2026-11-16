@@ -1394,6 +1394,200 @@ fn host_pointer_independent_targets_fixture() -> (DockspaceSession, [HostPointer
     (session, scenes)
 }
 
+#[test]
+fn host_pointer_report_repaints_source_and_both_targets_when_hover_changes_surfaces() {
+    let (mut session, [mut scene, next_target]) = host_pointer_independent_targets_fixture();
+    let before = session.version();
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .submit_host_pointer_batch([scene.press(), scene.target_edge(SurfacePointerEvent::Moved)])
+        .unwrap();
+    let mut started = frame.commit().unwrap();
+    assert_eq!(started.repaint_surfaces(), &[A, B]);
+    assert!(started.take_painted_outputs().is_empty());
+    assert!(!started.workspace_changed());
+    assert!(session.has_active_gesture());
+
+    let mut paint = session.begin_host_frame().unwrap();
+    let recordings = record_host_pointer_surfaces(&mut paint);
+    assert_target_preview(&recordings[1]);
+    let mut painted = paint.commit().unwrap();
+    settle_pointer_outputs(&mut session, &mut painted, ResultKind::Presented);
+
+    // Only hover changes surface: the original item and manipulation route stay on A.
+    scene.a = session.presented_surface(A).unwrap();
+    scene.b = next_target.b;
+    scene.target = next_target.target;
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .submit_host_pointer_batch([scene.target_edge(SurfacePointerEvent::Moved)])
+        .unwrap();
+    let mut moved = frame.commit().unwrap();
+    assert_eq!(
+        moved.repaint_surfaces(),
+        &[A, B, C],
+        "the source, old target and new target must invalidate without a layout edit"
+    );
+    assert!(moved.take_painted_outputs().is_empty());
+    assert!(!moved.workspace_changed());
+    assert_eq!(session.version(), before);
+
+    let mut inspect = session.begin_host_frame().unwrap();
+    for surface in [B, C] {
+        let plan = inspect.paint_plan(surface).unwrap().unwrap();
+        let mut preview = false;
+        plan.visit_surface_program(|step| {
+            if let Step::DragPreview(candidate) = step {
+                assert!(matches!(
+                    candidate.visual(),
+                    DockspacePreviewVisual::Dock { surface: C, .. }
+                ));
+                preview = true;
+            }
+            Ok::<(), ()>(())
+        })
+        .unwrap();
+        assert_eq!(preview, surface == C, "preview owner: {surface:?}");
+    }
+    drop(inspect);
+    assert!(
+        session
+            .begin_host_frame()
+            .unwrap()
+            .commit()
+            .unwrap()
+            .repaint_surfaces()
+            .is_empty(),
+        "unchanged hover must not keep the old or new target repainting"
+    );
+}
+
+#[test]
+fn host_pointer_report_cancel_repaints_a_blocked_destinations_ghost() {
+    let (mut session, [scene, _]) = host_pointer_independent_targets_fixture();
+    let before = session.version();
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .submit_host_pointer_batch([
+            scene.press(),
+            HostPointerInput::new(
+                SurfacePointerId::new(1),
+                SurfacePointerEvent::Moved,
+                HostPointerRoute::new(scene.a, scene.moved),
+                HostPointerRoute::new(scene.b, scene.target.center()),
+                SurfacePointerCapture::ProviderEndpoint,
+                SurfacePointerReceiverFacts::blocked_hover(&scene.b),
+            ),
+        ])
+        .unwrap();
+    let plan = frame.paint_plan(B).unwrap().unwrap();
+    let mut ghost = false;
+    plan.visit_surface_program(|step| {
+        match step {
+            Step::DragDecoration(decoration) => {
+                assert_eq!(decoration.source_surface(), A);
+                assert_eq!(decoration.ghost_item(), Some(FIRST));
+                assert!(!decoration.source_is_projected());
+                ghost = true;
+            }
+            Step::DragPreview(_)
+            | Step::DropGuide {
+                affordance: Some(_),
+                ..
+            } => {
+                panic!("the blocked destination must not expose a preview or active guides")
+            }
+            _ => {}
+        }
+        Ok::<(), ()>(())
+    })
+    .unwrap();
+    assert!(ghost, "the blocked target still carries a pointer ghost");
+    record_host_pointer_surfaces(&mut frame);
+    let mut blocked = frame.commit().unwrap();
+    assert_eq!(blocked.repaint_surfaces(), &[A, B]);
+    assert!(!blocked.workspace_changed());
+    assert!(session.has_active_gesture());
+    settle_pointer_outputs(&mut session, &mut blocked, ResultKind::Presented);
+
+    let source = session.presented_surface(A).unwrap();
+    let target = session.presented_surface(B).unwrap();
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .submit_host_pointer_batch([HostPointerInput::new(
+            SurfacePointerId::new(1),
+            SurfacePointerEvent::StreamCancelled(
+                dockspace::runtime::SurfacePointerCancelReason::ExplicitCancellation,
+            ),
+            HostPointerRoute::new(source, scene.moved),
+            HostPointerRoute::new(target, scene.target.center()),
+            SurfacePointerCapture::ProviderEndpoint,
+            SurfacePointerReceiverFacts::unknown(),
+        )])
+        .unwrap();
+    let mut cancelled = frame.commit().unwrap();
+    assert_eq!(
+        cancelled.repaint_surfaces(),
+        &[A, B],
+        "cancellation must erase the old ghost while unrelated C stays idle"
+    );
+    assert!(cancelled.take_painted_outputs().is_empty());
+    assert!(!cancelled.workspace_changed());
+    assert!(
+        matches!(cancelled.manipulation_feedback(), [feedback] if matches!(feedback.status(), Status::Cancelled(_)))
+    );
+    assert!(!session.has_active_gesture());
+    assert_eq!(session.version(), before);
+    assert!(
+        session
+            .begin_host_frame()
+            .unwrap()
+            .commit()
+            .unwrap()
+            .repaint_surfaces()
+            .is_empty(),
+        "a settled cancellation must not request another repaint"
+    );
+}
+
+#[test]
+fn host_pointer_report_ignores_unchanged_and_provenance_only_drag_frames() {
+    let (mut session, scene) = host_pointer_fixture();
+    let before = session.version();
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .submit_host_pointer_batch([scene.press(), scene.target_edge(SurfacePointerEvent::Moved)])
+        .unwrap();
+    let recordings = record_host_pointer_surfaces(&mut frame);
+    assert_target_preview(&recordings[1]);
+    let mut initial = frame.commit().unwrap();
+    settle_pointer_outputs(&mut session, &mut initial, ResultKind::Presented);
+
+    for _ in 0..2 {
+        let idle = session.begin_host_frame().unwrap().commit().unwrap();
+        assert!(idle.repaint_surfaces().is_empty());
+        let previous_presentation = session.presented_surface(B).unwrap();
+        let mut frame = session.begin_host_frame().unwrap();
+        let recordings = record_host_pointer_surfaces(&mut frame);
+        assert_target_preview(&recordings[1]);
+        let mut output = frame.commit().unwrap();
+        assert!(output.repaint_surfaces().is_empty());
+        let settled = settle_pointer_outputs(&mut session, &mut output, ResultKind::Presented);
+        assert!(
+            settled.repaint_surfaces().is_empty(),
+            "equivalent presentation provenance must not create a repaint loop"
+        );
+        assert_eq!(settled.surface_presentation_commits().len(), 2);
+        assert_ne!(
+            session.presented_surface(B).unwrap(),
+            previous_presentation,
+            "the test must settle a newer actual output, not only an empty frame"
+        );
+        assert!(session.has_active_gesture());
+        assert_eq!(session.version(), before);
+    }
+}
+
 fn assert_immediate_dock(report: &HostFrameReport) -> DockspaceManipulationFeedback {
     assert!(report.workspace_changed());
     let [delivered] = report.manipulation_feedback() else {

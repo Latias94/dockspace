@@ -127,6 +127,7 @@ pub enum PlatformEffect {
         binding: ViewportBinding,
         placement: PhysicalRect,
         role: ViewportRole,
+        drag_tear_off: Option<crate::interaction::NativeDragTearOff>,
     },
     CompensatingClose {
         binding: ViewportBinding,

@@ -183,7 +183,7 @@ Recover at the layer which lost authority:
 | DPI, UI scale, window position or client size changes | Publish current window facts, cancel invalid interactions, then measure and present fresh controls. Returning to the same numeric geometry still requires fresh authority. |
 | Speculative UI pass is discarded before publication | Drop the candidate and retry against committed state. Preserve ordered input; do not replay application text or IME events. |
 | An exact committed output is discarded | Report that original output as `Dropped` and let its settlement advance. Receiver authority requires a later presented output. |
-| Fatal protocol or internal runtime error | Keep the diagnostic cause, quarantine semantic input and drain the old host's cleanup before reconnecting a new runtime. |
+| Fatal protocol or internal runtime error | Keep the cause and quarantine semantic input. Drain cleanup while the accepted prefix remains reducible; otherwise physically terminate and dispose of the complete old host generation as failed before creating a fresh runtime. |
 
 The public view remains readable during a fatal stop. Capture an owned logical
 checkpoint without taking the application command slot or enabling `serde`:
@@ -199,13 +199,23 @@ so capture at the boundary whose layout the application intends to retain.
 Pane data, policy, style, presentation settings and document sidecars remain
 application-owned or in their existing persistence interfaces.
 
-Before replacing a native host, keep driving cleanup until
+For a fatal stop whose cleanup input remains reducible, keep driving cleanup until
 `is_shutdown_drained()` returns true, and settle the remaining `output_backlog()`
 owners. Reconstruct a `DockspaceSession` from the checkpoint and the application's
 configuration, then create a fresh
 `NativeDockspaceApp` and host handler. Old receivers, prepared actions, output
 handles and window bindings belong to the old runtime. An in-place restart
 which clears the error would leave those outstanding owners unresolved.
+
+A permanently rejected accepted FIFO prefix is a different terminal failure:
+later destruction observations cannot make `is_shutdown_drained()` true by
+passing that prefix. This adapter does not automatically reconstruct that case.
+The owning backend must freeze admission and retain the failed generation while
+all physical resources, callbacks, renderer outputs and asynchronous handoffs
+terminate. Only then can the complete generation be disposed of as failed and
+a fresh host be created. Clearing individual affine results, detaching the
+handler or assuming that requested closes completed is insufficient. See the
+[core failure contract](../dockspace/docs/guide.md#permanently-rejected-native-ingress).
 
 Cleanup also advances through the existing handler's `on_service(&context)`;
 it does not require another UI output. Keep the handler and egui context alive

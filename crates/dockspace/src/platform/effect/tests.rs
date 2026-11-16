@@ -21,6 +21,7 @@ fn create_effect(binding: ViewportBinding) -> PlatformEffect {
         binding,
         placement: PhysicalRect::new(0.0, 0.0, 100.0, 80.0).expect("test placement must be valid"),
         role: ViewportRole::Child,
+        drag_tear_off: None,
     }
 }
 

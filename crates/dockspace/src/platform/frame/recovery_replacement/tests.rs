@@ -248,6 +248,7 @@ fn initial_start_requires_exact_capability_and_preserves_atomic_ownership() {
             binding: target,
             placement: placement(),
             role: ViewportRole::Child,
+            drag_tear_off: None,
 
         }
     ));
@@ -648,6 +649,7 @@ fn initial_retry_after_dispatch_failure_uses_a_fresh_binding_and_existing_obliga
                 binding: successor,
                 placement: requested,
                 role: ViewportRole::Child,
+                drag_tear_off: None,
             }
         ));
         assert!(coordinator.take_new_effects().is_empty());

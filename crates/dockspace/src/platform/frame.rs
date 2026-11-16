@@ -1811,6 +1811,7 @@ impl ViewportCoordinator {
                 binding,
                 placement,
                 role: ViewportRole::Child,
+                drag_tear_off: None,
             })
             .map_err(ViewportCoordinatorError::Effect)?;
         if retry_initial {

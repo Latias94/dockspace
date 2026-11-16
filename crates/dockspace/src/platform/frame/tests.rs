@@ -5025,6 +5025,7 @@ fn cross_epoch_create_failure_settles_only_its_exact_unobserved_retirement() {
                     binding,
                     placement: PhysicalRect::new(0.0, 0.0, 640.0, 480.0).unwrap(),
                     role: ViewportRole::Child,
+                    drag_tear_off: None,
                 })
                 .unwrap();
             let _ = coordinator.take_new_effects();

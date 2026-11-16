@@ -432,6 +432,13 @@ pub enum NativePointerLocation {
     LocalToDesktop(NativeLocalToDesktopHandoff),
 }
 
+/// Host placement intent with optional exact provisional-resource correlation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct NativePointerTearOffIntent {
+    drag: Option<crate::runtime::NativeDragTearOff>,
+    work_area: NativeWorkAreaBinding,
+}
+
 /// One native pointer edge. Sequence and receiver receipts are minted by the
 /// runtime, never supplied by the adapter.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -442,6 +449,7 @@ pub struct NativePointerInput {
     delivery: NativePointerOwner,
     capture: NativePointerOwner,
     metadata: crate::runtime::PointerEventMetadata,
+    tear_off: Option<NativePointerTearOffIntent>,
 }
 
 impl NativePointerInput {
@@ -461,6 +469,7 @@ impl NativePointerInput {
             delivery,
             capture,
             metadata: crate::runtime::PointerEventMetadata::unknown(),
+            tear_off: None,
         }
     }
 
@@ -483,6 +492,7 @@ impl NativePointerInput {
             delivery,
             capture,
             metadata: crate::runtime::PointerEventMetadata::unknown(),
+            tear_off: None,
         }
     }
 
@@ -505,6 +515,7 @@ impl NativePointerInput {
             delivery,
             capture,
             metadata: crate::runtime::PointerEventMetadata::unknown(),
+            tear_off: None,
         }
     }
 
@@ -512,6 +523,28 @@ impl NativePointerInput {
     #[must_use]
     pub const fn with_metadata(mut self, metadata: crate::runtime::PointerEventMetadata) -> Self {
         self.metadata = metadata;
+        self
+    }
+
+    /// Requests native tear-off at this edge's exact desktop position.
+    ///
+    /// Real Foreign hover still blocks docking into every window below it. This
+    /// intent permits core to evaluate native placement independently, subject to
+    /// the same source, policy, delivery, capture, and work-area checks as an
+    /// outside-all drag. Unknown hover and framework blockers remain blocked.
+    /// The request is edge-local: release must carry its own fresh intent.
+    ///
+    /// Pass a retained drag identity when a provisional window already belongs
+    /// to that gesture. A stale identity never authorizes another drag. Pass
+    /// `None` when no provisional resource exists, including when press, motion,
+    /// and release arrive in one atomic batch before a drag can be queried.
+    #[must_use]
+    pub const fn with_native_tear_off(
+        mut self,
+        work_area: NativeWorkAreaBinding,
+        drag: Option<crate::runtime::NativeDragTearOff>,
+    ) -> Self {
+        self.tear_off = Some(NativePointerTearOffIntent { drag, work_area });
         self
     }
 
@@ -942,7 +975,7 @@ impl RuntimeNativeState {
                 PointerEdgeKind::Scrolled(Self::scroll_edge(scroll)?)
             }
         };
-        let edge = PointerEdge::new_with_delivery(
+        let mut edge = PointerEdge::new_with_delivery(
             sequence,
             input.pointer().into_core(),
             kind,
@@ -951,6 +984,41 @@ impl RuntimeNativeState {
             capture,
         )
         .with_metadata(input.metadata);
+        if let Some(intent) = input.tear_off {
+            if !matches!(
+                input.location(),
+                NativePointerLocation::Desktop(_) | NativePointerLocation::LocalToDesktop(_)
+            ) || !matches!(
+                kind,
+                PointerEdgeKind::Moved
+                    | PointerEdgeKind::ButtonReleased(PointerButton::Primary)
+                    | PointerEdgeKind::ContactEnded(PointerButton::Primary)
+                    | PointerEdgeKind::Continuation(_)
+                    | PointerEdgeKind::CaptureAcquired(_)
+            ) || intent.drag.is_some_and(|drag| {
+                drag.stream().lease() != self.recorder.lease().pointer_provider()
+                    || drag.stream().pointer() != input.pointer().into_core()
+            }) {
+                return Err(NativePlatformError::InvalidPointerFacts);
+            }
+            self.validate_work_area_binding(intent.work_area)?;
+            if let Some(route_area) = match input.location() {
+                NativePointerLocation::Desktop(location) => location.work_area(),
+                NativePointerLocation::LocalToDesktop(packet) => packet.desktop().work_area(),
+                NativePointerLocation::NativeLocal(_) => None,
+            } && route_area != intent.work_area
+            {
+                return Err(NativePlatformError::InvalidPointerFacts);
+            }
+            edge = edge.with_native_tear_off(crate::input::journal::NativeTearOffIntent {
+                drag: intent.drag,
+                work_area: DesktopWorkAreaRoute::new(
+                    intent.work_area.provider,
+                    intent.work_area.generation,
+                    intent.work_area.token,
+                ),
+            });
+        }
         PointerEdgeJournal::new(previous, sequence, vec![edge])
             .map_err(|_| NativePlatformError::ProtocolInvariant)
     }

@@ -1,4 +1,4 @@
-//! Read-only stationary requests for the current joined native gesture.
+//! Read-only identity, capture and stationary requests for joined native gestures.
 
 use std::time::Duration;
 
@@ -151,6 +151,32 @@ impl NativePointerContinuation {
 }
 
 impl DockspaceSession {
+    /// Returns the committed desktop drag's provisional-resource identity.
+    ///
+    /// Pending input must commit before this projection is available. An ended
+    /// drag also returns `None`; neither result proves native resource cleanup.
+    /// Retain a provisional resource until a committed create effect claims its
+    /// identity, or the ended gesture has no pending create or release delivery.
+    /// Process committed effects before cleanup, and consult
+    /// [`Self::has_pending_presentation`] and [`Self::has_pending_native_create`].
+    /// This query grants no permission to infer hover or capture observations.
+    #[must_use]
+    pub fn native_drag_tear_off(&self) -> Option<crate::runtime::NativeDragTearOff> {
+        let (owner, _, _) = self.native_pointer_continuation_source()?;
+        let crate::interaction::InteractionStatus::Dragging { session } =
+            self.engine.interaction().status()
+        else {
+            return None;
+        };
+        if !owner.is_desktop() {
+            return None;
+        }
+        Some(crate::interaction::NativeDragTearOff::new(
+            owner.stream(),
+            session,
+        ))
+    }
+
     /// Returns the committed native desktop mouse drag's capture requirement.
     ///
     /// The gesture need not have a finite stationary action. Hover target or

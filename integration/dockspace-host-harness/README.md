@@ -123,6 +123,15 @@ failure and cancellation, explicit/default placement, policy and finite storage.
 Central group transfers leave the original central container empty. These
 recording traces do not qualify new physical multiview or mixed-DPI profiles.
 
+`tests/native_drag_tear_off.rs` separates Foreign hover from explicit native
+placement and correlates an existing provisional window with its committed
+create request. It checks same-resource adoption, original first-live ownership,
+atomic input, revoked placement facts, failed-generation isolation and late
+output. `public_contract.rs` also checks exact repaint reports for interaction
+visuals without scene changes, including old/new target surfaces and quiet
+provenance-only updates. These cases exercise the shared public contracts;
+native hit testing and physical teardown remain backend responsibilities.
+
 The explicit Root-rebinding journeys remove the old logical host while preserving
 its external window token under a new exact binding. They force a retired incoming
 Root through exact instance replacement, check Child recovery/placement references, failed/dropped

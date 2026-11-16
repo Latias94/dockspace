@@ -2,8 +2,10 @@
 
 use std::sync::Arc;
 
+mod native_tear_off;
 pub(crate) mod targeting;
 mod timed;
+pub use native_tear_off::NativeDragTearOff;
 use targeting::{TargetAcquisition, TargetLatchDecision, TargetObservation, reconcile_target};
 pub use timed::PointerContinuationToken;
 pub(crate) use timed::{

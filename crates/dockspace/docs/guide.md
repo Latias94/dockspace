@@ -758,6 +758,47 @@ The cancellation API does not itself impose ingress record/byte/age caps or
 reserve a host overload latch. Those adapter responsibilities, release latency,
 and physical OS behavior remain separate qualification work.
 
+## Permanently rejected native ingress
+
+The adapter owns fatal-state admission. Distinguish these outcomes at the
+failing operation, rather than treating every `HostProtocol` category as fatal:
+
+| State | Host behavior |
+| --- | --- |
+| Retryable candidate or unaccepted capacity-limited input | Retain its original data; retry after fixing receiver evidence or committing the accepted prefix. |
+| Waiting for a real lifecycle or renderer terminal | Keep the exact callback/output/effect owner alive and wake when new facts arrive. A timeout or handler detach does not establish destruction. |
+| Permanently rejected accepted prefix | Stop semantic admission, retain the original FIFO and owners, and terminate the old host generation as failed. Physical termination does not make its session drained. |
+
+For example, a second raw button release after its accepted release contradicts
+the button journal. Once that immutable record heads the accepted FIFO, repeating
+the frame cannot repair it. Later destruction facts cannot bypass it. In
+contrast, a discarded candidate or repairable receiver answer can still retry
+the original input against unchanged committed state.
+
+During fatal cleanup, keep the old session, accepted records, undispatched
+requests, started dispatch guards, renderer outputs and callbacks together.
+An unsuccessful `report_native_effect_result` returns the original affine result
+for retention. Successful append transfers its custody to the old recorder; it
+does not prove semantic consumption. Do not resend that result or transfer it
+to a replacement session. Dropping a started guard records indeterminate
+completion and does not prove that its native window is gone.
+
+If the old protocol can still commit, complete its ordinary cleanup and exact
+quiescence barriers. If its accepted prefix is irreparable, independently finish
+all physical destruction, callbacks, output ownership and asynchronous handoffs
+in the owning backend. Until those real owners terminate, retain the entire old
+generation. Afterwards it may be disposed of as failed, including its
+unconsumable records; this is whole-generation termination, not clearing a
+queue to resume the old session or claiming successful compensation.
+
+Reconstruct from an owned checkpoint of the last committed logical layout and
+application pane data using a fresh `DockspaceSession` and native provider.
+Queued commands, drag previews, pending creates and physical inventories are not
+part of that checkpoint. Old bindings, drag identities, prepared actions,
+results and outputs remain confined to the failed authority domain. A ready-made
+adapter must expose its own failed-versus-drained state; core does not perform
+automatic native teardown or restart.
+
 ## Native local readiness
 
 Use `NativeWindowFacts::with_local_readiness(NativeLocalReadiness::Ready)` when
@@ -775,6 +816,36 @@ presentation is required. Desktop routes, cross-window handoff and managed
 Child preparation retain their independent authority requirements.
 
 ## Native creation failure and recovery
+
+Native placement and docking eligibility are independent. A real
+`NativePointerHover::Foreign` blocks docking into every covered window. A host
+that supports native drag-out over foreign windows may attach
+`input.with_native_tear_off(work_area, drag)` to the actual move and release
+edges. The separate work-area capability never changes their hover facts.
+Release needs its own intent and exact desktop position. Unknown hover or
+framework occlusion inside a docking window cannot use this path. Existing
+delivery, capture, source, policy and recovery checks still apply; exact source
+release delivery may preserve a gesture when persistent native capture is
+unobservable, while known Foreign capture cancels it.
+
+For a provisional native window, retain `session.native_drag_tear_off()` as the
+opaque resource key and pass `Some(key)` with the edge. Only a committed
+`CreateWindow` request whose `drag_tear_off()` returns the same key may adopt
+that window. Move the same host-owned `(window_id, resources)` into
+`NativeWindows::insert` under the requested binding, then dispatch and report
+preparation normally. Core does not receive raw OS handles or allocate another
+provisional resource registry. If there is no provisional window, pass `None`;
+an atomic press/move/release batch can request placement before a committed
+drag identity exists. The resulting create request still retains that original
+drag's identity.
+
+Pending input temporarily hides the drag projection. A release can also end
+the gesture before its preview has presented or the create effect is handled.
+Process committed effects before cleaning up provisional resources, and retain
+them while `has_pending_presentation()` or `has_pending_native_create()` still
+owns the handoff. Another drag's key cannot adopt the previous window. Host keys
+must include their physical incarnation or drain old callbacks before reuse;
+promotion never upgrades old input, geometry or output authority.
 
 The host owns window and renderer preparation. Native enrollment no longer
 selects a core preparation strategy. An engine may prepare its render target

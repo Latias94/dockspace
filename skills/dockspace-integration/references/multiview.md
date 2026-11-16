@@ -100,6 +100,29 @@ Read the adapter's window-options API for the needed stacking behavior; a manage
 Child's lifecycle ownership does not by itself imply a transient OS parent or a
 relative z-order guarantee.
 
+For provisional drag-out, keep actual Foreign hover opaque and attach the
+edge-local `NativePointerInput::with_native_tear_off(work_area, drag)` intent.
+Retain the key from `session.native_drag_tear_off()` and pass `Some(key)` only
+for that same gesture; use `None` when no provisional resource exists, including
+a complete gesture in one atomic batch. Release needs its own fresh intent. A matching committed
+`CreateWindow` request's `drag_tear_off()` lets the host move its original
+provisional `(window_id, resources)` into `NativeWindows` under the requested
+binding. Process effects before cleanup: pending input can temporarily hide the
+drag projection, and pending presentation can outlive the active gesture.
+Adoption still waits for exact first-live to transfer source content. Follow
+the core guide's [native placement contract](../../../crates/dockspace/docs/guide.md#native-creation-failure-and-recovery)
+and `tests/native_drag_tear_off.rs`; do not fabricate OutsideAll or rebuild the
+original pane view to get past a Foreign blocker.
+
+Keep retryable candidates, waiting for real terminal observations and permanently
+failed ingress distinct. A rejected accepted FIFO head cannot be bypassed by
+later destruction or an empty inventory. Retain the old generation's FIFO and
+affine owners during actual backend cleanup; successful append transfers a
+result to the old recorder without proving consumption. Only after every old
+physical, callback, renderer and asynchronous owner terminates may the complete
+generation be disposed of as failed and reconstructed with fresh authority.
+See the [failed-generation contract](../../../crates/dockspace/docs/guide.md#permanently-rejected-native-ingress).
+
 ## Use the egui native command slot
 
 Construct `NativeDockspaceApp` with a session, host surface, pane provider and a
