@@ -102,6 +102,98 @@ fn open_menu(harness: &mut Harness) {
     }
 }
 
+fn accesskit_scroll_event(
+    target: egui::accesskit::NodeId,
+    action: egui::accesskit::Action,
+) -> Event {
+    Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
+        action,
+        target_tree: egui::accesskit::TreeId::ROOT,
+        target_node: target,
+        data: None,
+    })
+}
+
+fn accesskit_scroll_fixture(callback: bool) -> (Harness, egui::accesskit::NodeId) {
+    let mut harness = setup();
+    if callback {
+        harness.local_style = Some((*harness.context.global_style()).clone());
+    }
+    open_menu(&mut harness);
+    let output = harness.run(WIDTH, Vec::new());
+    let target = nodes(&output)
+        .iter()
+        .find_map(|(id, node)| {
+            (node.role() == Role::ScrollBar && node.label() == Some("Open tabs scroll position"))
+                .then_some(*id)
+        })
+        .expect("the overflowing menu exposes its actual accessible scrollbar");
+    assert_eq!(menu(&mut harness).1, 0.0);
+    (harness, target)
+}
+
+#[test]
+fn accesskit_tab_list_scroll_batch_preserves_steps_order_and_endpoint_clamping() {
+    use egui::accesskit::Action::{Decrement, Increment};
+    for callback in [false, true] {
+        for discards in [0, 2] {
+            for actions in [
+                vec![Increment, Increment],
+                vec![Increment, Decrement],
+                vec![Decrement, Increment],
+                vec![Decrement, Increment, Increment],
+            ] {
+                let (mut separate, target) = accesskit_scroll_fixture(callback);
+                for &action in &actions {
+                    separate.run(WIDTH, vec![accesskit_scroll_event(target, action)]);
+                    for _ in 0..3 {
+                        separate.run(WIDTH, Vec::new());
+                    }
+                }
+                let expected = menu(&mut separate).1;
+
+                let (mut batched, target) = accesskit_scroll_fixture(callback);
+                batched.context.options_mut(|options| {
+                    options.max_passes = (discards + 1).try_into().unwrap();
+                });
+                batched.context.add_plugin(LateWheelDiscard {
+                    remaining: discards,
+                });
+                let output = batched.run(
+                    WIDTH,
+                    actions
+                        .iter()
+                        .map(|&action| accesskit_scroll_event(target, action))
+                        .collect(),
+                );
+                assert_eq!(output.platform_output.num_completed_passes, discards + 1);
+                for _ in 0..3 {
+                    batched.run(WIDTH, Vec::new());
+                }
+                let actual = menu(&mut batched).1;
+                assert!(
+                    (actual - expected).abs() < 1e-6,
+                    "callback={callback}, discards={discards}, actions={actions:?}: {actual} != {expected}",
+                );
+                assert!(
+                    batched
+                        .dockspace
+                        .view()
+                        .item(ItemId::new(1))
+                        .unwrap()
+                        .is_selected()
+                );
+                batched.run(WIDTH, Vec::new());
+                assert_eq!(
+                    menu(&mut batched).1,
+                    actual,
+                    "idle must not replay the batch"
+                );
+            }
+        }
+    }
+}
+
 fn run_with(
     harness: &mut Harness,
     events: Vec<Event>,

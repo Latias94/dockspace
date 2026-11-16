@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod accesskit;
+
 fn splitter_values(output: &FullOutput) -> (f64, f64, f64) {
     let (_, node) = nodes(output)
         .iter()
@@ -137,9 +139,14 @@ fn resize_key_events(keys: &[Key]) -> Vec<Event> {
 }
 
 fn separator_geometry(output: &FullOutput) -> Vec<[f64; 7]> {
-    nodes(output)
+    let mut separators: Vec<_> = nodes(output)
         .iter()
         .filter(|(_, node)| node.role() == Role::Splitter && node.label() == Some("Resize panes"))
+        .collect();
+    // AccessKit nodes come from an IdMap, not the surface's layout order.
+    separators.sort_unstable_by_key(|(id, _)| id.0);
+    separators
+        .into_iter()
         .map(|(_, node)| {
             let bounds = node.bounds().unwrap();
             [

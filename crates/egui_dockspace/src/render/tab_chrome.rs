@@ -573,30 +573,38 @@ fn paint_scrollbar(
             node.set_disabled();
         }
     });
-    let adjustment = enabled
-        .then(|| {
-            context.ui.input(|input| {
-                if input.has_accesskit_action_request(id, Action::Increment) {
-                    Some((id.with("scrollbar-accesskit-increment"), 1.0))
-                } else if input.has_accesskit_action_request(id, Action::Decrement) {
-                    Some((id.with("scrollbar-accesskit-decrement"), -1.0))
-                } else {
-                    None
-                }
-            })
+    let step = menu
+        .rows()
+        .next()
+        .map_or(24.0, |row| row.bounds().height().max(1.0));
+    if enabled
+        && let Some(action) = context.ui.input(|input| {
+            context.plan.prepare_tab_list_menu_scroll_sequence(
+                menu,
+                input.events.iter().filter_map(|event| {
+                    let egui::Event::AccessKitActionRequest(request) = event else {
+                        return None;
+                    };
+                    if request.target_node != id.accesskit_id()
+                        || request.target_tree != egui::accesskit::TreeId::ROOT
+                    {
+                        return None;
+                    }
+                    match request.action {
+                        Action::Increment => Some(step),
+                        Action::Decrement => Some(-step),
+                        _ => None,
+                    }
+                }),
+            )
         })
-        .flatten();
-    if let Some((origin, direction)) = adjustment {
-        let step = menu
-            .rows()
-            .next()
-            .map_or(24.0, |row| row.bounds().height().max(1.0));
-        if let Some(action) = context
-            .plan
-            .prepare_tab_list_menu_scroll_by(menu, direction * step)
-        {
-            context.push_local_action(origin, action);
-        }
+    {
+        context.ui.input_mut(|input| {
+            input.consume_accesskit_action_requests(id, |request| {
+                matches!(request.action, Action::Increment | Action::Decrement)
+            });
+        });
+        context.push_local_action(id.with("scrollbar-accesskit-adjust"), action);
     }
     capture_scrollbar_pointer(context, menu, track, thumb, &response);
 }

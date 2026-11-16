@@ -3,9 +3,11 @@
 use egui::containers::menu::{MenuConfig, menu_style};
 use egui::emath::TSTransform;
 use egui::{
-    Area, AreaState, FocusDirection, Id, InnerResponse, Key, LayerId, Layout, Order, Popup,
-    RectAlign, Response, ScrollArea, Sense, Ui, UiKind, UiStackInfo, ViewportId,
+    Area, AreaState, Id, InnerResponse, LayerId, Layout, Order, Popup, RectAlign, Response,
+    ScrollArea, Sense, Ui, UiKind, UiStackInfo, ViewportId,
 };
+
+use super::keyboard;
 
 #[derive(Clone, Copy)]
 struct MenuRun {
@@ -45,7 +47,7 @@ pub(super) fn show(
     touch_requested: bool,
     style: &crate::DockStyle,
     content: impl FnOnce(&mut Ui) -> Vec<Id>,
-) -> Option<InnerResponse<()>> {
+) -> Option<InnerResponse<Option<keyboard::Outcome>>> {
     let context = source.ctx();
     let frame = (
         context.viewport_id(),
@@ -137,10 +139,9 @@ pub(super) fn show(
                         .inner
                 })
                 .inner;
-            navigate(ui, anchor.id, &entries);
+            keyboard::capture(ui, anchor.id, &entries, source.is_enabled())
         });
-    let escape = source.input(|input| input.key_pressed(Key::Escape));
-    if output.response.should_close() || escape || (run.press_started_while_open && clicked) {
+    if output.response.should_close() || (run.press_started_while_open && clicked) {
         Popup::close_id(context, popup);
         output.response.set_close();
         run.press_started_while_open = false;
@@ -148,42 +149,4 @@ pub(super) fn show(
     run.visible_pass = pass;
     context.data_mut(|data| data.insert_temp(run_id(), run));
     Some(output)
-}
-
-fn navigate(ui: &Ui, anchor: Id, entries: &[Id]) {
-    if ui.is_sizing_pass() {
-        return;
-    }
-    let (focused, allowed) =
-        ui.memory(|memory| (memory.focused(), memory.allows_interaction(ui.layer_id())));
-    let index = entries.iter().position(|entry| Some(*entry) == focused);
-    if !allowed || (index.is_none() && focused != Some(anchor) && focused.is_some()) {
-        return;
-    }
-    let key = ui.input_mut(|input| {
-        [Key::ArrowDown, Key::ArrowUp, Key::ArrowLeft]
-            .into_iter()
-            .find(|&key| input.consume_key(egui::Modifiers::NONE, key))
-    });
-    let next = match key {
-        Some(Key::ArrowDown) => index
-            .and_then(|index| entries.get(index + 1))
-            .or_else(|| entries.first())
-            .copied(),
-        Some(Key::ArrowUp) => index
-            .and_then(|index| index.checked_sub(1))
-            .and_then(|index| entries.get(index))
-            .or_else(|| entries.last())
-            .copied(),
-        Some(Key::ArrowLeft) => Some(anchor),
-        // Framework Tab traversal remains free to leave this menu.
-        _ => return,
-    };
-    ui.memory_mut(|memory| {
-        memory.move_focus(FocusDirection::None);
-        if let Some(next) = next {
-            memory.request_focus(next);
-        }
-    });
-    ui.request_repaint();
 }

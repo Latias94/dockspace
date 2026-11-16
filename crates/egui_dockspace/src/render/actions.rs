@@ -81,23 +81,3 @@ pub(super) fn button_activation_origin(
         && unambiguous_pointer_click(ui, response, PointerButton::Primary))
     .then(|| response.id.with("pointer-click"))
 }
-
-/// Classifies an activation already accepted by an egui button without consuming input.
-pub(super) fn clicked_response_origin(ui: &Ui, response: &Response) -> Option<Id> {
-    if !response.clicked() {
-        return None;
-    }
-    if response.has_focus()
-        && let Some(key) = ui.input(|input| {
-            [Key::Enter, Key::Space]
-                .into_iter()
-                .find(|&key| input.key_pressed(key))
-        })
-    {
-        return Some(response.id.with(("keyboard-activate", key)));
-    }
-    if ui.input(|input| input.has_accesskit_action_request(response.id, Action::Click)) {
-        return Some(response.id.with("accesskit-click"));
-    }
-    Some(response.id.with("pointer-click"))
-}

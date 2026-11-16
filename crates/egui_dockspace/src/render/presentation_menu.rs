@@ -7,14 +7,15 @@ use dockspace::runtime::{
     DockspaceRuntimeError, PresentationMenuAnchorPaintRecord, SurfacePaintDisposition,
 };
 use egui::accesskit::{Action, HasPopup, Role};
-use egui::{Button, Popup, Sense, UiBuilder, vec2};
+use egui::{Button, PointerButton, Popup, Sense, UiBuilder, vec2};
 
 use crate::touch_menu::take_touch_context_menu;
 
 use super::RenderContext;
-use super::actions::{clicked_response_origin, effective_enabled};
+use super::actions::{effective_enabled, unambiguous_pointer_click};
 use super::geometry::{accesskit_bounds, egui_rect};
 
+mod keyboard;
 mod popup;
 pub(crate) use popup::prepare_layer;
 
@@ -108,8 +109,7 @@ pub(super) fn paint(
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
-    let mut activated = None;
-    let mut close_layout = None;
+    let mut entries = Vec::with_capacity(COMMANDS.len() + 1);
     let popup = popup::show(
         context.ui,
         context.instance_id,
@@ -119,7 +119,6 @@ pub(super) fn paint(
         touch_requested,
         context.style,
         |ui| {
-            let mut entries = Vec::with_capacity(COMMANDS.len() + 1);
             ui.ctx().accesskit_node_builder(ui.unique_id(), |node| {
                 node.set_role(Role::Menu);
                 node.set_label("Layout actions");
@@ -155,11 +154,7 @@ pub(super) fn paint(
                     response
                 };
                 if enabled {
-                    entries.push(response.id);
-                }
-                if let Some(origin) = clicked_response_origin(ui, &response) {
-                    activated = Some((origin, command));
-                    ui.close();
+                    entries.push((response, Some(command)));
                 }
             }
             ui.separator();
@@ -185,36 +180,43 @@ pub(super) fn paint(
                     node.clear_actions();
                 }
             });
-            if let Some(origin) = clicked_response_origin(ui, &response) {
-                close_layout = Some(origin);
-                ui.close();
-            }
             if response.enabled() {
-                entries.push(response.id);
+                entries.push((response, None));
             }
-            entries
+            entries.iter().map(|(response, _)| response.id).collect()
         },
     );
 
-    if ui_enabled
-        && activated.is_none()
-        && close_layout.is_none()
-        && popup.is_some_and(|popup| popup.response.should_close())
-        && context
-            .ui
-            .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-    {
-        response.request_focus();
-    }
-
-    if let Some((origin, command)) = activated
-        && let Some(action) = context.plan.prepare_presentation_command(command)
-    {
-        context.push_local_action(origin, action);
-    }
-    if let Some(origin) = close_layout
-        && let Some(action) = context.plan.prepare_root_close(anchor.root())
-    {
+    let keyboard_activation = match popup.and_then(|popup| popup.inner) {
+        Some(keyboard::Outcome::Activate(target)) => Some(target),
+        Some(keyboard::Outcome::Dismiss) => return Ok(()),
+        Some(keyboard::Outcome::Focus(_)) | None => None,
+    };
+    let activated = entries.into_iter().find_map(|(response, command)| {
+        let origin = if keyboard_activation == Some(response.id) {
+            Some(response.id.with("keyboard-activate"))
+        } else if keyboard_activation.is_none()
+            && response.clicked()
+            && context
+                .ui
+                .input(|input| input.has_accesskit_action_request(response.id, Action::Click))
+        {
+            Some(response.id.with("accesskit-click"))
+        } else if keyboard_activation.is_none()
+            && unambiguous_pointer_click(context.ui, &response, PointerButton::Primary)
+        {
+            Some(response.id.with("pointer-click"))
+        } else {
+            None
+        }?;
+        let action = match command {
+            Some(command) => context.plan.prepare_presentation_command(command),
+            None => context.plan.prepare_root_close(anchor.root()),
+        }?;
+        Some((origin, action))
+    });
+    if let Some((origin, action)) = activated {
+        Popup::close_id(context.ui.ctx(), popup_id);
         context.push_local_action(origin, action);
     }
     Ok(())

@@ -311,43 +311,57 @@ fn splitter_adjustment(
     if !effective_enabled(ui, true) {
         return None;
     }
-    if focused {
-        let keyboard: Vec<_> = ui.input(|input| {
-            input
-                .events
-                .iter()
-                .filter_map(|event| keyboard_adjustment(event, horizontal))
-                .collect()
-        });
-        if !keyboard.is_empty() {
-            let action = prepare(&keyboard)?;
-            ui.input_mut(|input| {
-                input
-                    .events
-                    .retain(|event| keyboard_adjustment(event, horizontal).is_none());
-            });
-            // A newly focused control may not have installed its arrow filter
-            // before begin_pass scheduled spatial traversal for this batch.
-            ui.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
-            return Some((id.with("keyboard-adjust"), action));
-        }
+    let adjustments: Vec<_> = ui.input(|input| {
+        input
+            .events
+            .iter()
+            .filter_map(|event| input_adjustment(event, id, horizontal, focused))
+            .collect()
+    });
+    if adjustments.is_empty() {
+        return None;
     }
-    let (origin, adjustment) = ui.input(|input| {
-        if input.has_accesskit_action_request(id, Action::Decrement) {
-            Some((
-                id.with("accesskit-decrement"),
-                SurfaceSplitterAdjustment::Decrement,
-            ))
-        } else if input.has_accesskit_action_request(id, Action::Increment) {
-            Some((
-                id.with("accesskit-increment"),
-                SurfaceSplitterAdjustment::Increment,
-            ))
-        } else {
-            None
+    let action = prepare(&adjustments)?;
+    let mut keyboard = false;
+    ui.input_mut(|input| {
+        input.events.retain(|event| {
+            if input_adjustment(event, id, horizontal, focused).is_some() {
+                keyboard |= matches!(event, Event::Key { .. });
+                false
+            } else {
+                true
+            }
+        });
+    });
+    if keyboard {
+        // A newly focused control may not have installed its arrow filter
+        // before begin_pass scheduled spatial traversal for this batch.
+        ui.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
+    }
+    Some((id.with("ordered-adjust"), action))
+}
+
+fn input_adjustment(
+    event: &Event,
+    id: egui::Id,
+    horizontal: bool,
+    focused: bool,
+) -> Option<SurfaceSplitterAdjustment> {
+    if let Event::AccessKitActionRequest(request) = event {
+        if request.target_node != id.accesskit_id()
+            || request.target_tree != egui::accesskit::TreeId::ROOT
+        {
+            return None;
         }
-    })?;
-    Some((origin, prepare(&[adjustment])?))
+        return match request.action {
+            Action::Decrement => Some(SurfaceSplitterAdjustment::Decrement),
+            Action::Increment => Some(SurfaceSplitterAdjustment::Increment),
+            _ => None,
+        };
+    }
+    focused
+        .then(|| keyboard_adjustment(event, horizontal))
+        .flatten()
 }
 
 fn keyboard_adjustment(event: &Event, horizontal: bool) -> Option<SurfaceSplitterAdjustment> {

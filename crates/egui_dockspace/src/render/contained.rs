@@ -1,11 +1,11 @@
 //! Contained-floating chrome and semantic keyboard/accessibility actions.
 
 use dockspace::runtime::{
-    ContainedPaintRecord, ContainedResizeDirection, SurfaceContainedResizeAdjustment,
-    SurfacePaintDisposition, SurfacePaintProgramRoot,
+    ContainedPaintRecord, ContainedResizeDirection, PreparedSurfaceAction,
+    SurfaceContainedResizeAdjustment, SurfacePaintDisposition, SurfacePaintProgramRoot,
 };
 use egui::accesskit::{Action, Orientation, Role};
-use egui::{CursorIcon, EventFilter, Key, Sense};
+use egui::{CursorIcon, Event, EventFilter, Key, Sense};
 
 use crate::style::ResolvedContainedWindowVisuals;
 
@@ -291,16 +291,18 @@ pub(crate) fn paint_controls(
                 });
             }
             if enabled
-                && let Some((origin, adjustment)) = contained_resize_adjustment(
+                && let Some((origin, action)) = contained_resize_adjustment(
                     context.ui,
                     id,
                     resize.direction(),
                     response.has_focus(),
-                )
-                && let Some(action) = context.plan.prepare_contained_resize_adjustment(
-                    contained.floating(),
-                    resize.direction(),
-                    adjustment,
+                    |adjustments| {
+                        context.plan.prepare_contained_resize_adjustment_sequence(
+                            contained.floating(),
+                            resize.direction(),
+                            adjustments.iter().copied(),
+                        )
+                    },
                 )
             {
                 context.push_local_action(origin, action);
@@ -320,52 +322,104 @@ fn contained_resize_adjustment(
     id: egui::Id,
     direction: ContainedResizeDirection,
     focused: bool,
-) -> Option<(egui::Id, SurfaceContainedResizeAdjustment)> {
-    if focused {
-        let keyboard = ui.input_mut(|input| {
-            let (increment, decrement) = match direction {
-                ContainedResizeDirection::North => (Key::ArrowDown, Key::ArrowUp),
-                ContainedResizeDirection::East => (Key::ArrowRight, Key::ArrowLeft),
-                ContainedResizeDirection::South => (Key::ArrowDown, Key::ArrowUp),
-                ContainedResizeDirection::West => (Key::ArrowRight, Key::ArrowLeft),
-                ContainedResizeDirection::NorthEast
-                | ContainedResizeDirection::SouthEast
-                | ContainedResizeDirection::SouthWest
-                | ContainedResizeDirection::NorthWest => return None,
-            };
-            if input.consume_key(egui::Modifiers::NONE, increment) {
-                Some((
-                    id.with(("keyboard-resize", increment)),
-                    SurfaceContainedResizeAdjustment::Increment,
-                ))
-            } else if input.consume_key(egui::Modifiers::NONE, decrement) {
-                Some((
-                    id.with(("keyboard-resize", decrement)),
-                    SurfaceContainedResizeAdjustment::Decrement,
-                ))
-            } else {
-                None
-            }
-        });
-        if keyboard.is_some() {
-            return keyboard;
-        }
+    prepare: impl FnOnce(&[SurfaceContainedResizeAdjustment]) -> Option<PreparedSurfaceAction>,
+) -> Option<(egui::Id, PreparedSurfaceAction)> {
+    let (events, adjustments): (Vec<_>, Vec<_>) = ui.input(|input| {
+        input
+            .events
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, event)| {
+                contained_input_adjustment(event, id, direction, focused)
+                    .map(|adjustment| ((slot, event.clone()), adjustment))
+            })
+            .unzip()
+    });
+    if adjustments.is_empty() {
+        return None;
     }
-    ui.input(|input| {
-        if input.has_accesskit_action_request(id, Action::Increment) {
-            Some((
-                id.with("accesskit-increment"),
-                SurfaceContainedResizeAdjustment::Increment,
-            ))
-        } else if input.has_accesskit_action_request(id, Action::Decrement) {
-            Some((
-                id.with("accesskit-decrement"),
-                SurfaceContainedResizeAdjustment::Decrement,
-            ))
-        } else {
-            None
+    let action = prepare(&adjustments)?;
+    if !ui.input_mut(|input| {
+        if events
+            .iter()
+            .any(|(slot, event)| input.events.get(*slot) != Some(event))
+        {
+            return false;
         }
-    })
+        for (slot, _) in events.iter().rev() {
+            input.events.remove(*slot);
+        }
+        true
+    }) {
+        return None;
+    }
+    if events
+        .iter()
+        .any(|(_, event)| matches!(event, Event::Key { .. }))
+    {
+        ui.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
+    }
+    Some((id.with("resize-input"), action))
+}
+
+fn contained_input_adjustment(
+    event: &Event,
+    id: egui::Id,
+    direction: ContainedResizeDirection,
+    focused: bool,
+) -> Option<SurfaceContainedResizeAdjustment> {
+    if let Event::AccessKitActionRequest(request) = event
+        && request.target_node == id.accesskit_id()
+        && request.target_tree == egui::accesskit::TreeId::ROOT
+    {
+        return match request.action {
+            Action::Increment => Some(SurfaceContainedResizeAdjustment::Increment),
+            Action::Decrement => Some(SurfaceContainedResizeAdjustment::Decrement),
+            _ => None,
+        };
+    }
+    if focused {
+        contained_keyboard_adjustment(event, direction)
+    } else {
+        None
+    }
+}
+
+fn contained_keyboard_adjustment(
+    event: &Event,
+    direction: ContainedResizeDirection,
+) -> Option<SurfaceContainedResizeAdjustment> {
+    let Event::Key {
+        key,
+        pressed: true,
+        modifiers,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    if !modifiers.matches_logically(egui::Modifiers::NONE) {
+        return None;
+    }
+    let (increment, decrement) = match direction {
+        ContainedResizeDirection::North | ContainedResizeDirection::South => {
+            (Key::ArrowDown, Key::ArrowUp)
+        }
+        ContainedResizeDirection::East | ContainedResizeDirection::West => {
+            (Key::ArrowRight, Key::ArrowLeft)
+        }
+        ContainedResizeDirection::NorthEast
+        | ContainedResizeDirection::SouthEast
+        | ContainedResizeDirection::SouthWest
+        | ContainedResizeDirection::NorthWest => return None,
+    };
+    if *key == increment {
+        Some(SurfaceContainedResizeAdjustment::Increment)
+    } else if *key == decrement {
+        Some(SurfaceContainedResizeAdjustment::Decrement)
+    } else {
+        None
+    }
 }
 
 fn configure_resize_accessibility(
