@@ -106,15 +106,16 @@ impl DockEngine {
     /// core-committed prefix. Every binding named by that prefix must still have
     /// a terminal-binding guard owned by the same platform provider. A failed
     /// validation publishes nothing and leaves the receipt available for an
-    /// exact retry.
+    /// exact retry. Retired endpoint streams remain allocated while core still
+    /// retains their emissions, for example during cleanup of a staging child
+    /// that borrowed the predecessor root's presentation.
     ///
     /// # Errors
     ///
     /// Returns an error when the receipt is consumed, belongs to another active
     /// backend, no longer ends at the exact core commit boundary, names a
     /// binding guard that is absent or owned by another platform provider, or
-    /// references a presentation stream that is not yet terminal and
-    /// unreferenced.
+    /// references a presentation stream with unsettled output.
     pub fn settle_backend_ingress_prefix_retirement(
         &mut self,
         receipt: &mut BackendIngressPrefixRetirementReceipt,
@@ -149,6 +150,13 @@ impl DockEngine {
                     .presentation
                     .prepare_stream_quiescence(presentation_host, stream)
                     .map_err(presentation_ledger_error)?;
+                // Host quiescence retires the endpoint independently of the
+                // core resource that may still borrow one of its emissions.
+                // Ordinary presentation reclamation compacts the stream once
+                // the exact staging cleanup releases that remaining reference.
+                if retained_streams.contains(&stream) {
+                    continue;
+                }
                 candidate
                     .presentation_authority
                     .presentation

@@ -2101,4 +2101,214 @@ mod fatal_pre_transfer {
         assert_repeated_shutdown_waits_for_destroyed(&mut native, source, child);
         finish_model_destroyed(&mut native, source, child, window);
     }
+
+    #[test]
+    fn model_reset_then_shutdown_keeps_a_late_created_child_until_exact_destruction() {
+        let (mut native, source, child, window) = captured_child();
+        native
+            .session
+            .configure_output_capacity(std::num::NonZeroUsize::MIN)
+            .unwrap();
+        let assert_successor_stream_slot = |native: &mut NativeCoordinator, available| {
+            let mut frame = native
+                .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
+                .unwrap();
+            frame
+                .frame
+                .measure_surface(
+                    SOURCE_SURFACE,
+                    UniformSurfaceMetrics::new(
+                        LogicalRect::new(0.0, 0.0, 640.0, 360.0).unwrap(),
+                        LogicalSize::new(0.0, 0.0).unwrap(),
+                        80.0,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let work = frame.frame.surface_work(SOURCE_SURFACE).unwrap();
+            if available {
+                assert!(matches!(work, dockspace::runtime::SurfaceWork::Ready(_)));
+            } else {
+                assert!(matches!(
+                    work,
+                    dockspace::runtime::SurfaceWork::Deferred(
+                        dockspace::runtime::SurfaceWorkDeferred::OutputCapacity
+                    )
+                ));
+            }
+            // Only probe admission: dropping this candidate emits no pixels,
+            // output, native effect, or successor presentation authority.
+        };
+        let context = egui::Context::default();
+        let viewport = viewport_id_for(child);
+        let create = native
+            .effects
+            .awaiting_viewport_callbacks()
+            .find(|plan| plan.binding() == child)
+            .expect("the captured physical child still owns its original Create");
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            SOURCE_SURFACE,
+            DockspaceRootLayout::new(SOURCE_ROOT, DockspaceNode::central_tabs([SOURCE_ITEM])),
+        )])
+        .unwrap();
+        let reset = native.session.prepare_layout_reset(layout).unwrap();
+        let mut frame = native
+            .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
+            .unwrap();
+        frame.frame.submit_layout_reset(&reset).unwrap();
+        frame
+            .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+            .unwrap();
+        let mut report = frame.commit().unwrap();
+        assert!(matches!(
+            report.inputs(),
+            [HostInputOutcome::LayoutReset { .. }]
+        ));
+        assert!(report.native_admissions().is_empty());
+        assert!(report.take_native_effects().is_empty());
+        assert!(native.settle_host_frame_report(&report).unwrap());
+        let successor = native.viewport_binding(ViewportId::ROOT).unwrap();
+        assert_ne!(successor, source);
+        assert_eq!(successor.window_token(), source.window_token());
+        let version = native.session.version();
+        assert!(!native.session.is_current_native_binding(child));
+        assert!(native.session.recognizes_native_binding(child));
+        assert!(!native.session.has_pending_native_create());
+        assert_source_retained(&native, successor);
+
+        for _ in 0..2 {
+            assert!(native.quarantine_after_fatal().is_empty());
+            assert!(!native.bridge.accepts_new_work());
+            assert_eq!(native.viewport_binding(viewport), Some(child));
+            assert!(
+                native
+                    .effects
+                    .awaiting_viewport_callbacks()
+                    .any(|plan| plan == create)
+            );
+            native.bridge.with_viewports(|routes| {
+                assert!(routes.has_create_lifetime_owner(viewport, child));
+                assert!(routes.has_window_receipt(viewport, child));
+                assert_eq!(routes.window(ViewportId::ROOT), Some(source_window()));
+                assert!(routes.has_window_receipt(ViewportId::ROOT, successor));
+            });
+        }
+        let waiting = native.advance_shutdown_boundary(&context, &mut test_budget());
+        assert!(waiting.errors.is_empty(), "{:#?}", waiting.errors);
+        assert!(!waiting.transition_source_exhausted);
+        assert!(native.effects.references_binding(child));
+        assert!(native.bridge.retirement_can_begin_release(viewport, child));
+
+        // Model the late Created callback with the original affine acknowledgement,
+        // not a fabricated fork output token or a first-live presentation.
+        let roster = hidden_create_roster(&mut native, successor, child, window);
+        native.bridge.require_terminal_roster();
+        native.bridge.push_terminal_viewport_roster(roster);
+        for _ in 0..4 {
+            let advance = native.advance_shutdown_boundary(&context, &mut test_budget());
+            assert!(advance.errors.is_empty(), "{:#?}", advance.errors);
+            assert!(!advance.transition_source_exhausted);
+            assert!(!advance.commands_dispatched);
+            assert!(advance.abandoned_outputs.is_empty());
+            assert!(advance.pointer_passthrough.is_none());
+            assert_eq!(native.session.version(), version);
+            assert_source_retained(&native, successor);
+            assert!(!native.session.is_current_native_binding(child));
+            assert!(!native.session.has_pending_native_create());
+        }
+        assert!(!native.effects.references_binding(child));
+        assert!(native.deferred_viewport_specs().is_empty());
+        assert_eq!(native.output_backlog().awaiting_staging(), 0);
+        assert_eq!(native.viewport_binding(viewport), Some(child));
+        assert!(native.session.recognizes_native_binding(child));
+        assert!(native.bridge.references_binding(child));
+        assert!(
+            !native.bridge.retirement_can_begin_release(viewport, child),
+            "the late Create must enter one compensating physical close"
+        );
+        // The retired Root endpoint cannot lend the handoff overflow slot.
+        // Its source stream still occupies the sole ordinary slot while the
+        // exact child cleanup retains its staging resource.
+        assert_successor_stream_slot(&mut native, false);
+
+        let destroyed = native.bridge.with_viewports_mut(|routes| {
+            NativeWindowEventRecord::for_test_ingress(
+                98,
+                window,
+                Some(viewport),
+                WindowEvent::Destroyed,
+                routes,
+            )
+        });
+        assert_eq!(destroyed.binding(), Some(child));
+        native
+            .bridge
+            .push_record(HostRecord::WindowEvent(destroyed.clone()));
+        native
+            .bridge
+            .push_record(HostRecord::WindowEvent(destroyed));
+        let observed = native.advance_shutdown_boundary(&context, &mut test_budget());
+        assert!(observed.errors.is_empty(), "{:#?}", observed.errors);
+        assert!(!observed.transition_source_exhausted);
+        assert_eq!(native.lifecycle_progress().destroyed_observations(), 1);
+        assert_eq!(native.viewport_binding(viewport), Some(child));
+        assert!(native.session.recognizes_native_binding(child));
+        let tombstones = native.bridge.retirement_destroyed_observations();
+        assert_eq!(tombstones.len(), 1);
+        assert_eq!(tombstones[0].0, child);
+
+        // The complete final roster keeps the same live physical Root. Only the
+        // child's received Destroyed receipt supplies its terminal tombstone.
+        native.bridge.push_terminal_viewport_roster(
+            NativeViewportRosterRecord::for_test_with_backend_and_work_areas(
+                [CompiledWindowObservation::new(
+                    successor,
+                    ready_window_facts(0.0),
+                )],
+                FrozenWorkAreaRoster::Unknown,
+                eframe::NativeWindowingBackend::X11,
+            ),
+        );
+        for _ in 0..8 {
+            let advance = native.advance_shutdown_boundary(&context, &mut test_budget());
+            assert!(advance.errors.is_empty(), "{:#?}", advance.errors);
+            assert!(!advance.commands_dispatched);
+            assert!(advance.abandoned_outputs.is_empty());
+            assert!(advance.pointer_passthrough.is_none());
+            assert_eq!(native.session.version(), version);
+            assert_source_retained(&native, successor);
+            assert_root_preserves_pointer_input(&native, successor);
+        }
+        assert_eq!(native.viewport_binding(viewport), None);
+        assert!(!native.session.recognizes_native_binding(child));
+        assert!(!native.session.recognizes_native_binding(source));
+        assert!(!native.bridge.references_binding(child));
+        assert!(!native.bridge.references_binding(source));
+        assert!(!native.effects.has_pending_work());
+        assert!(native.pending_effect_results.is_empty());
+        assert!(native.queued_snapshot.is_none());
+        assert!(!native.bridge.retirement_has_pending_work());
+        assert!(native.bridge.retirement_destroyed_observations().is_empty());
+        assert_eq!(native.lifecycle_progress().destroyed_observations(), 1);
+        assert_eq!(native.lifecycle_progress().quiescent_retirements(), 2);
+        assert_eq!(native.lifecycle_progress().first_live_admissions(), 0);
+        assert!(!native.session.has_pending_native_create());
+        assert!(!native.session.has_pending_native_input());
+        assert_eq!(native.bridge.create_ack_count(), 0);
+        assert_eq!(native.output_backlog().awaiting_staging(), 0);
+        // Physical cleanup does not reopen this quarantined host or grant the
+        // successor any presentation authority from the predecessor's pixels.
+        assert!(!native.bridge.accepts_new_work());
+        assert!(native.session.presented_surface(SOURCE_SURFACE).is_none());
+        // Core compaction removes the old detailed stream and the runtime's
+        // matching admission sidecar, restoring the same single-slot baseline.
+        assert_successor_stream_slot(&mut native, true);
+        assert!(native.session.presented_surface(SOURCE_SURFACE).is_none());
+        assert_eq!(native.bridge.pending_output_count(), 0);
+        assert_eq!(native.session.version(), version);
+        native.bridge.with_viewports(|routes| {
+            assert_eq!(routes.window(ViewportId::ROOT), Some(source_window()));
+            assert!(routes.has_window_receipt(ViewportId::ROOT, successor));
+        });
+    }
 }
