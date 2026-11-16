@@ -303,11 +303,15 @@ test('motion produces intermediate pane geometry, accepts tuning and settles to 
     .filter(value => value > 30 && value < 900));
   expect(disabledPositions).toEqual([]);
   await page.mouse.move(10, 980);
-  // A finite quiet interval verifies the absence of a perpetual animation loop.
-  await page.waitForTimeout(700);
-  const settled = (await state(page)).frames;
-  await page.waitForTimeout(300);
-  expect((await state(page)).frames).toBe(settled);
+  await expect.poll(async () => (await state(page)).input.pointer).toBeNull();
+  // Slow renderers may still settle accepted outputs after pointer departure.
+  // Require a full quiet second within a bounded deadline, without assuming
+  // that a fixed startup delay has already drained those outputs.
+  await expect.poll(async () => {
+    const settled = (await state(page)).frames;
+    await page.waitForTimeout(1000);
+    return (await state(page)).frames - settled;
+  }, { timeout: 10_000, intervals: [100] }).toBe(0);
 });
 
 test('tab presets switch live, follow themes and retain custom tabs and docking', async ({ page }) => {
