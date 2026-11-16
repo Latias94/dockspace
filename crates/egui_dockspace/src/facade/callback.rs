@@ -176,44 +176,34 @@ impl Dockspace {
             frame
                 .begin_encoding_pass()
                 .map_err(DockspaceError::from_detail)?;
-            let (measure, backpressured) = match frame
-                .surface_work(surface)
-                .map_err(DockspaceError::from_detail)?
-            {
-                SurfaceWork::Ready(plan) => (plan.measurement_refresh().is_allowed(), false),
-                SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured) => (true, false),
-                SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity) => (false, true),
-            };
             let mut resources = render::PaintResources::default();
+            let presented_focus_bindings = pointer.presented_focus_bindings(&frame, surface);
+            let candidate_version = frame.version();
+            let (work, measured_missing) = render::prepare_surface(
+                &mut frame,
+                surface,
+                ui,
+                dock_rect,
+                popup_rect,
+                panes,
+                &self.style,
+                Some(&mut resources),
+            )?;
+            missing.extend(measured_missing);
+            let backpressured = matches!(
+                &work,
+                SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity)
+            );
             output_backpressured = backpressured;
-            if measure {
-                missing.extend(render::measure_surface(
-                    &mut frame,
-                    surface,
-                    ui,
-                    dock_rect,
-                    popup_rect,
-                    panes,
-                    &self.style,
-                    Some(&mut resources),
-                )?);
-            }
             self.ui_actions
-                .stage_touch_menu(run_sequence, ui, self.id, surface, frame.version());
+                .stage_touch_menu(run_sequence, ui, self.id, surface, candidate_version);
             let capture = settlement_claim
                 .as_ref()
                 .map(|_| crate::output_proof::SurfaceOutputCapture::begin_multilayer(ui.painter()));
             if backpressured {
-                crate::focus::retain_presented_pane_focus(
-                    ui.ctx(),
-                    pointer.presented_focus_bindings(&frame, surface),
-                );
+                crate::focus::retain_presented_pane_focus(ui.ctx(), presented_focus_bindings);
             }
-            if !backpressured
-                && let Some(plan) = frame
-                    .paint_plan(surface)
-                    .map_err(DockspaceError::from_detail)?
-            {
+            if let SurfaceWork::Ready(plan) = work {
                 let paint = render::paint_surface(
                     ui,
                     self.id,
@@ -274,20 +264,19 @@ impl Dockspace {
         };
         self.ui_actions
             .publish(pending_actions, run_sequence, &report);
-        let output = report.take_painted_outputs().pop();
-        pointer.observe(report.surface_presentation_commits());
-        if let Some(output) = output.as_ref() {
-            pointer.emitted(
-                output.presentation_artifact(),
-                ui.layer_id(),
-                ui.ctx().cumulative_pass_nr().saturating_add(1),
-                ui.ctx()
+        let output = pointer.settle_report(
+            &mut report,
+            crate::pointer::ProductPointerPresentation {
+                layer: ui.layer_id(),
+                completed_pass: ui.ctx().cumulative_pass_nr().saturating_add(1),
+                coordinates_supported: ui
+                    .ctx()
                     .layer_transform_to_global(ui.layer_id())
                     .is_none_or(|transform| transform == egui::emath::TSTransform::IDENTITY),
-                pointer_receivers,
+                receivers: pointer_receivers,
                 focus_bindings,
-            );
-        }
+            },
+        );
         self.pointer = pointer;
         self.pending_focus.settle(&accepted_focus, &report);
         deferred_focus.apply(ui.ctx());

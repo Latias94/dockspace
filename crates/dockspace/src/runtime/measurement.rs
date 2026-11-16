@@ -13,7 +13,7 @@ use crate::presentation::scene::{PaneSceneId, SurfaceScene};
 
 use super::{
     DockspaceHostFrame, DockspaceInteractionError, DockspaceRuntimeError, DockspaceVisualId,
-    SurfaceUnavailableReason,
+    SurfaceUnavailableReason, SurfaceWork, SurfaceWorkDeferred,
 };
 
 /// Uniform measurements for a renderer whose panes and tabs share one metric.
@@ -213,33 +213,108 @@ impl DockspaceHostFrame<'_> {
         surface: SurfaceId,
         mut resolve: impl FnMut(SurfaceMeasurementRequest) -> SurfaceMeasurementAnswer,
     ) -> Result<(), DockspaceRuntimeError> {
-        self.complete_pointer_journal()?;
+        self.try_measure_surface_with(surface, |request| {
+            Ok::<_, DockspaceRuntimeError>(resolve(request))
+        })
+    }
+
+    /// Prepares one surface for measurement and painting in the current encoding pass.
+    ///
+    /// This convenience entry point owns the repeated host decision of whether a
+    /// surface may refresh its measurements. It first admits the surface's output,
+    /// then measures only an unanswered unmeasured surface or a ready surface whose
+    /// [`SurfaceMeasurementRefresh`](super::SurfaceMeasurementRefresh) is
+    /// [`Allowed`](super::SurfaceMeasurementRefresh::Allowed).
+    /// A retained gesture or preview keeps its existing geometry, and output
+    /// backpressure returns [`SurfaceWorkDeferred::OutputCapacity`] without invoking
+    /// the resolver. A surface answered earlier in the same pass is also retained;
+    /// its resolver is not called twice.
+    ///
+    /// To emit an output, execute the returned ready plan's complete program and
+    /// call [`DockspaceHostFrame::confirm_surface_painted`] before committing.
+    /// Frames that retain their existing output may commit without painting.
+    /// This method seals input and starts a retry checkpoint; use
+    /// [`Self::restart_encoding_pass`] to retry encoding without replaying input.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter error from `resolve`, or a converted core runtime error.
+    /// Dropping the host frame rolls back any measurement contribution staged here.
+    pub fn prepare_surface_with<E>(
+        &mut self,
+        surface: SurfaceId,
+        mut resolve: impl FnMut(SurfaceMeasurementRequest) -> Result<SurfaceMeasurementAnswer, E>,
+    ) -> Result<SurfaceWork<'_>, E>
+    where
+        E: From<DockspaceRuntimeError>,
+    {
+        self.begin_encoding_pass().map_err(E::from)?;
+        let should_measure = match self.surface_work(surface).map_err(E::from)? {
+            SurfaceWork::Ready(plan) => {
+                let allowed = plan.measurement_refresh().is_allowed();
+                !self.surface_answered(surface) && allowed
+            }
+            SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured) => {
+                !self.surface_answered(surface)
+            }
+            SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity) => {
+                return Ok(SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity));
+            }
+        };
+        if should_measure {
+            self.try_measure_surface_with(surface, &mut resolve)?;
+        }
+        self.surface_work(surface).map_err(E::from)
+    }
+
+    fn try_measure_surface_with<E>(
+        &mut self,
+        surface: SurfaceId,
+        mut resolve: impl FnMut(SurfaceMeasurementRequest) -> Result<SurfaceMeasurementAnswer, E>,
+    ) -> Result<(), E>
+    where
+        E: From<DockspaceRuntimeError>,
+    {
+        let core_error = |error: DockspaceRuntimeError| E::from(error);
+        self.complete_pointer_journal()
+            .map_err(|error| core_error(error.into()))?;
         if self.surface_answered(surface) || self.frame.surface_is_measured(surface) {
-            return Err(DockspaceInteractionError::SurfaceAlreadyAnswered { surface }.into());
+            return Err(core_error(
+                DockspaceInteractionError::SurfaceAlreadyAnswered { surface }.into(),
+            ));
         }
         self.frame
-            .refresh_presentation_layout_except(Some(surface))?;
+            .refresh_presentation_layout_except(Some(surface))
+            .map_err(|error| core_error(error.into()))?;
         let requirements = self
             .frame
             .view()
             .presentation_requirements()
             .surface(surface)
-            .ok_or(DockspaceInteractionError::SurfaceOutsideRoster { surface })?;
+            .ok_or(DockspaceInteractionError::SurfaceOutsideRoster { surface })
+            .map_err(|error| core_error(error.into()))?;
         let mut measurements = SurfaceMeasurements::new(requirements.ticket());
         measurements
             .set_bounds(
                 requirements.bounds(),
-                resolve(SurfaceMeasurementRequest::DockBounds { surface }).into_bounds()?,
+                resolve(SurfaceMeasurementRequest::DockBounds { surface })?
+                    .into_bounds()
+                    .map_err(|error| core_error(error.into()))?,
             )
-            .map_err(|_| DockspaceInteractionError::MeasurementRosterInvariant)?;
+            .map_err(|_| {
+                core_error(DockspaceInteractionError::MeasurementRosterInvariant.into())
+            })?;
         if let Some(key) = requirements.popup_plane_bounds() {
             measurements
                 .set_popup_plane_bounds(
                     key,
-                    resolve(SurfaceMeasurementRequest::PopupPlaneBounds { surface })
-                        .into_bounds()?,
+                    resolve(SurfaceMeasurementRequest::PopupPlaneBounds { surface })?
+                        .into_bounds()
+                        .map_err(|error| core_error(error.into()))?,
                 )
-                .map_err(|_| DockspaceInteractionError::MeasurementRosterInvariant)?;
+                .map_err(|_| {
+                    core_error(DockspaceInteractionError::MeasurementRosterInvariant.into())
+                })?;
         }
         for key in requirements.pane_minimums() {
             let visual = DockspaceVisualId::from_pane_scene(PaneSceneId {
@@ -252,10 +327,13 @@ impl DockspaceHostFrame<'_> {
                     resolve(SurfaceMeasurementRequest::PaneMinimum {
                         visual,
                         item: key.selected(),
-                    })
-                    .into_pane_minimum()?,
+                    })?
+                    .into_pane_minimum()
+                    .map_err(|error| core_error(error.into()))?,
                 )
-                .map_err(|_| DockspaceInteractionError::MeasurementRosterInvariant)?;
+                .map_err(|_| {
+                    core_error(DockspaceInteractionError::MeasurementRosterInvariant.into())
+                })?;
         }
         for key in requirements.tab_intrinsics() {
             let tab = key.tab();
@@ -271,16 +349,20 @@ impl DockspaceHostFrame<'_> {
                             },
                         ),
                         item: tab.item,
-                    })
-                    .into_tab_intrinsic()?,
+                    })?
+                    .into_tab_intrinsic()
+                    .map_err(|error| core_error(error.into()))?,
                 )
-                .map_err(|_| DockspaceInteractionError::MeasurementRosterInvariant)?;
+                .map_err(|_| {
+                    core_error(DockspaceInteractionError::MeasurementRosterInvariant.into())
+                })?;
         }
         for key in requirements.tab_strips() {
             let bar = key.bar();
             let visibility = requirements
                 .tab_bar(bar)
-                .ok_or(DockspaceInteractionError::MeasurementRosterInvariant)?
+                .ok_or(DockspaceInteractionError::MeasurementRosterInvariant)
+                .map_err(|error| core_error(error.into()))?
                 .policy()
                 .visibility();
             let visibility = if visibility == TabBarVisibility::AutoHideSingle {
@@ -294,17 +376,27 @@ impl DockspaceHostFrame<'_> {
                     resolve(SurfaceMeasurementRequest::TabStrip {
                         visual: DockspaceVisualId::from_tab_bar_scene(bar),
                         visibility,
-                    })
-                    .into_tab_strip()?,
+                    })?
+                    .into_tab_strip()
+                    .map_err(|error| core_error(error.into()))?,
                 )
-                .map_err(|_| DockspaceInteractionError::MeasurementRosterInvariant)?;
+                .map_err(|_| {
+                    core_error(DockspaceInteractionError::MeasurementRosterInvariant.into())
+                })?;
         }
-        let token = self.frame.view().begin_surface_contribution(surface)?;
+        let token = self
+            .frame
+            .view()
+            .begin_surface_contribution(surface)
+            .map_err(|error| core_error(error.into()))?;
         let contribution = self
             .frame
             .view()
-            .prepare_surface_contribution(token, measurements)?;
-        self.frame.compile_surface_contribution(contribution)?;
+            .prepare_surface_contribution(token, measurements)
+            .map_err(|error| core_error(error.into()))?;
+        self.frame
+            .compile_surface_contribution(contribution)
+            .map_err(|error| core_error(error.into()))?;
         Ok(())
     }
 

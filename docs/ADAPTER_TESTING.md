@@ -86,9 +86,13 @@ completed hit graph.
 
 Exercise tails after terminal input, not only well-paired gestures: duplicate
 release, cancelled input followed by stale window events, provider reset, and a
-fresh press after each case. Check that the terminal is emitted at most once and
-the next interaction succeeds. Random seeds cannot cover a callback sequence
-which the generator's grammar excludes.
+fresh press after recoverable cases. Check that each semantic terminal is emitted
+at most once and the next legal interaction succeeds after cancellation or a
+properly rejected stale callback. Deduplicate physical callbacks only when their
+actual callback identity proves duplication. A contradictory raw edge already
+accepted into the immutable core FIFO follows the permanent-failure contract
+below; it need not permit another gesture in that session. Random seeds cannot
+cover a callback sequence which the generator's grammar excludes.
 
 Cancellation must also repaint the old preview, guides and drag decoration when
 the layout version and scene stamps stay unchanged. Verify both source and target,

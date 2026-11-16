@@ -271,7 +271,3 @@ and the core preview result in that order. For keyboard regressions after a
 journal click, also inspect framework focus on the tab widget before navigation.
 These are diagnostic prerequisites, not a conclusion about any particular failing
 fixture.
-
-Renderer cleanup can be checked with direct `rustfmt`, `git diff --check`, and
-workspace searches for the removed symbols. Cargo builds and product integration
-tests remain the responsibility of the main integration owner.

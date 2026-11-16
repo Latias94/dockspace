@@ -58,6 +58,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 See the [adapter testing guide](../../../docs/ADAPTER_TESTING.md) for integration
 responsibilities, retained UI publication and reusable semantic scenarios.
 
+Every UI adapter uses the same public seams. Implement the rows needed by the
+host; a single-window renderer does not need native hosting.
+
+| Host capability | Shared interface | Host-specific work |
+| --- | --- | --- |
+| Measurement | `prepare_surface_with`, or `measure_surface_with` for an independent measurement pass, with `SurfaceMeasurementRequest` and `SurfaceMeasurementAnswer` | Text shaping, pane minima and chrome metrics |
+| Drawing or retained nodes | `SurfacePaintPlan::execute_surface_program` | Accept every ordered step, clip content and retain framework nodes |
+| Pointer and semantic input | `HostPointerInput`, `HostPointerHit`, prepared surface actions | Event order, real widget delivery, overlays and keyboard/accessibility bindings |
+| Output and invalidation | Affine `PaintedSurfaceOutput`, `SurfacePresentationCommit`, `HostFrameReport` | Exact renderer terminals, installed hit records and redraw scheduling |
+| OS multiview | Native facts/effects, `NativeWindows<K, T>` | Platform observations, resource creation and destruction, physical callback lifetime |
+
+The egui adapter is an implementation reference:
+[`render/mod.rs`](../../egui_dockspace/src/render/mod.rs) executes the surface
+program, [`facade/owned_run.rs`](../../egui_dockspace/src/facade/owned_run.rs)
+coordinates candidate publication and repaint, and
+[`pass_settlement.rs`](../../egui_dockspace/src/pass_settlement.rs) retains the
+actual complete-output terminal. Its egui widget, layer and pass checks belong
+to that framework. Reuse the core contracts when implementing another UI,
+while keeping that UI's own drawing, event delivery and presentation boundary.
+Applications using egui should start with its public runner or complete-output
+facade instead of reproducing these adapter internals.
+
 Application commands submitted through a host frame return a
 `DockspaceSubmittedAction`. Keep each identity when batching commands, then use
 `HostFrameReport::submitted_action_outcome` to obtain its exact committed result.
@@ -87,7 +109,13 @@ group or look its old anchor up again. `DockspaceHostFrame` supplies the
 corresponding `dock_tabs_current` and `float_tabs_current` conveniences.
 
 1. Begin a host frame, submit ordered input and application commands, then
-   begin encoding and supply surface measurements in logical coordinates.
+   prepare each surface that will be encoded with `prepare_surface_with` in
+   logical coordinates. The helper begins the encoding pass, admits output,
+   refreshes measurements only when the surface is unmeasured or its current
+   plan allows a refresh, and returns `SurfaceWork`. Use
+   `measure_surface_with` instead when measurement must be staged separately
+   from a later paint pass (for example, a native callback that retains an
+   accepted plan). Both paths use the same request/answer contract.
    A surface is a logical layout and input domain; it need not be a platform
    window. Items and roots retain their stable application identities.
 2. Obtain `SurfaceWork::Ready(SurfacePaintPlan)` and call `execute_surface_program` to accept its
@@ -119,6 +147,14 @@ corresponding `dock_tabs_current` and `float_tabs_current` conveniences.
    and `bind_presented_receiver` to bind current descriptors. Later results may
    arrive first, but cannot bypass an unsettled earlier output in the same
    stream or resurrect an obsolete artifact.
+
+After every successful commit, map `report.repaint_surfaces()` to the host's
+actual surface or window invalidation. This includes input-only and
+presentation-settlement reports: previews, guides and pointer ghosts can change
+without a layout version or scene-stamp change. Deduplicate several dirty
+surfaces hosted by the same native window. Equivalent provenance-only changes
+remain quiet. Motion samples and finite pointer-continuation deadlines have
+their own scheduling; a repaint roster is not a request for continuous polling.
 
 Application commands and prepared surface actions can operate without native
 registration. For pointer input, call `enable_host_pointer` once on the session

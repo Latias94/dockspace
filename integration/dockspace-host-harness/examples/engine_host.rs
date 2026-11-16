@@ -13,12 +13,13 @@ use dockspace::model::{
 };
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
-    DockspaceCloseOutcome, DockspaceFocusTarget, DockspaceHostFrame, DockspaceManipulationFeedback,
+    DockspaceCloseOutcome, DockspaceFocusTarget, DockspaceManipulationFeedback,
     DockspaceManipulationFeedbackId, DockspaceManipulationStatus, DockspacePaneFocusObservation,
-    DockspaceReceiverRole, DockspaceSession, HostFrameReport, HostInputOutcome, HostPointerInput,
-    HostPointerRoute, SurfacePointerButton, SurfacePointerCancelReason, SurfacePointerCapture,
-    SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts, SurfacePresentationResult,
-    UniformSurfaceMetrics,
+    DockspaceReceiverRole, DockspaceRuntimeError, DockspaceSession, HostFrameReport,
+    HostInputOutcome, HostPointerInput, HostPointerRoute, SurfaceMeasurementAnswer,
+    SurfaceMeasurementRequest, SurfacePointerButton, SurfacePointerCancelReason,
+    SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId, SurfacePresentationResult,
+    TabStripMetrics,
 };
 use dockspace_host_harness::{OwnedRecord, RecordingRenderer};
 
@@ -28,17 +29,25 @@ const ROOT_A: RootId = RootId::new(1);
 const FIRST: ItemId = ItemId::new(1);
 const SECOND: ItemId = ItemId::new(2);
 
-fn measure(frame: &mut DockspaceHostFrame<'_>) {
-    // Both render targets use local logical coordinates, independently of any window or DPI.
-    let metrics = UniformSurfaceMetrics::new(
-        LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
-        LogicalSize::new(64.0, 48.0).unwrap(),
-        96.0,
-    )
-    .unwrap();
-    for surface in frame.surfaces() {
-        frame.measure_surface(surface, metrics).unwrap();
-    }
+fn measure(
+    request: SurfaceMeasurementRequest,
+) -> Result<SurfaceMeasurementAnswer, DockspaceRuntimeError> {
+    // Both targets use local logical coordinates, independently of any window or DPI.
+    Ok(match request {
+        SurfaceMeasurementRequest::DockBounds { .. }
+        | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+            SurfaceMeasurementAnswer::Bounds(LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap())
+        }
+        SurfaceMeasurementRequest::PaneMinimum { .. } => {
+            SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+        }
+        SurfaceMeasurementRequest::TabIntrinsic { .. } => {
+            SurfaceMeasurementAnswer::TabIntrinsic(96.0)
+        }
+        SurfaceMeasurementRequest::TabStrip { .. } => {
+            SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+        }
+    })
 }
 
 fn settle(session: &mut DockspaceSession) -> HostFrameReport {
@@ -88,11 +97,13 @@ fn main() {
     let (recordings, mut painted) = {
         let mut frame = session.begin_host_frame().unwrap();
         let submitted = frame.submit_prepared_action(select).unwrap();
-        frame.begin_encoding_pass().unwrap();
-        measure(&mut frame);
         let mut recordings = Vec::new();
         for surface in frame.surfaces() {
-            let plan = frame.paint_plan(surface).unwrap().unwrap();
+            let plan = frame
+                .prepare_surface_with(surface, measure)
+                .unwrap()
+                .ready()
+                .expect("the recording host has measurement data and no unsettled outputs");
             let (recording, receipt) = RecordingRenderer::execute(plan).unwrap();
             frame.confirm_surface_painted(receipt).unwrap();
             recordings.push((surface, recording));
@@ -233,18 +244,9 @@ fn cancel_logical_press(
     session.enable_host_pointer().unwrap();
     let hit = session.host_pointer_hit(A, point).unwrap();
     let surface = hit.surface();
-    let delivery = hit.delivery().unwrap();
-    let drag = hit.drag_delivery();
-    let hover = hit.hover();
-    let facts = SurfacePointerReceiverFacts::delivery(&delivery);
-    let facts = match drag.as_ref() {
-        Some(receiver) => facts.with_drag_delivery(receiver),
-        None => facts.with_empty_drag_delivery_lane(&surface),
-    };
-    let facts = match hover.as_ref() {
-        Some(receiver) => facts.with_hover(receiver),
-        None => facts.with_empty_hover_lane(&surface),
-    };
+    // This recording host has no framework overlays. Real UI adapters must
+    // establish that clearance before using the shared click/drag lane helper.
+    let facts = hit.unobstructed_receiver_facts();
     let route = HostPointerRoute::new(surface, point);
     let mut frame = session.begin_host_frame().unwrap();
     frame

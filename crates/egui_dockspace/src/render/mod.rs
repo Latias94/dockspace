@@ -45,7 +45,9 @@ use crate::pass_settlement::PendingPaneFocusObservation;
 use crate::response::{DockspaceCapability, DockspaceUnavailableReason};
 use crate::style::{DockStyle, ResolvedDockVisuals};
 
-pub(crate) use measurement::{PaintResources, measure_surface};
+#[cfg(feature = "native-render-support")]
+pub(crate) use measurement::measure_surface;
+pub(crate) use measurement::{PaintResources, prepare_surface};
 pub(crate) use presentation_menu::prepare_layer as prepare_menu_layer;
 
 /// One action captured from a stable egui widget and response source.

@@ -9,10 +9,11 @@ use dockspace::geometry::LogicalPoint;
 use dockspace::model::SurfaceId;
 use dockspace::runtime::{
     DockspaceHostFrame, DockspaceInteractionError, DockspacePointerContinuation,
-    DockspaceRuntimeError, DockspaceSession, HostPointerInput, HostPointerRoute, PointerDeviceKind,
-    PointerEventMetadata, PresentedDockReceiver, PresentedDockspaceSurface, SurfacePointerButton,
-    SurfacePointerCancelReason, SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId,
-    SurfacePointerReceiverFacts, SurfacePresentationArtifact, SurfacePresentationCommit,
+    DockspaceRuntimeError, DockspaceSession, HostFrameReport, HostPointerInput, HostPointerRoute,
+    PaintedSurfaceOutput, PointerDeviceKind, PointerEventMetadata, PresentedDockReceiver,
+    PresentedDockspaceSurface, SurfacePointerButton, SurfacePointerCancelReason,
+    SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts,
+    SurfacePresentationArtifact, SurfacePresentationCommit,
 };
 use egui::{Context, Event, Id, LayerId, Modifiers, PointerButton, Pos2, Rect, Ui, WidgetRects};
 
@@ -39,6 +40,20 @@ pub(crate) struct ProductPointerInputSnapshot {
     transformed_layers: HashSet<LayerId>,
     layer_at: Box<dyn Fn(Pos2) -> Option<LayerId> + Send + Sync>,
     foreign_drag: bool,
+}
+
+/// Metadata pairing one committed egui output with its new receiver graph.
+///
+/// Preceding output observations settle before this pass's graph is queued.
+/// Keeping that ordering in one private helper prevents the callback and
+/// owned-run facades from drifting apart while their focus and repaint
+/// lifecycles remain intentionally separate.
+pub(crate) struct ProductPointerPresentation {
+    pub(crate) layer: LayerId,
+    pub(crate) completed_pass: u64,
+    pub(crate) coordinates_supported: bool,
+    pub(crate) receivers: Vec<ProductReceiverBinding>,
+    pub(crate) focus_bindings: Vec<(dockspace::model::ItemId, Id)>,
 }
 
 impl ProductPointerInputSnapshot {
@@ -343,6 +358,26 @@ impl ProductPointer {
             receivers: receivers.into(),
             focus_bindings: focus_bindings.into(),
         });
+    }
+
+    pub(crate) fn settle_report(
+        &mut self,
+        report: &mut HostFrameReport,
+        presentation: ProductPointerPresentation,
+    ) -> Option<PaintedSurfaceOutput> {
+        let output = report.take_painted_outputs().pop();
+        self.observe(report.surface_presentation_commits());
+        if let Some(output) = output.as_ref() {
+            self.emitted(
+                output.presentation_artifact(),
+                presentation.layer,
+                presentation.completed_pass,
+                presentation.coordinates_supported,
+                presentation.receivers,
+                presentation.focus_bindings,
+            );
+        }
+        output
     }
 
     pub(crate) fn presented_focus_bindings(

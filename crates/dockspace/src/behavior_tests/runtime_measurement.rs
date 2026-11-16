@@ -5,8 +5,10 @@ use crate::ids::{ItemId, RootId, SurfaceId};
 use crate::model::{DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout};
 use crate::policy::{DockPolicy, TabBarVisibility};
 use crate::runtime::{
-    DockPresentationConfig, DockspaceInteractionError, DockspaceSession, DockspaceVisualKind,
-    SurfaceMeasurementAnswer, SurfaceMeasurementRequest, TabStripMetrics, UniformSurfaceMetrics,
+    DockPresentationConfig, DockspaceInteractionError, DockspaceRuntimeError, DockspaceSession,
+    DockspaceVisualKind, SurfaceMeasurementAnswer, SurfaceMeasurementRequest,
+    SurfaceUnavailableReason, SurfaceWork, SurfaceWorkDeferred, TabStripMetrics,
+    UniformSurfaceMetrics,
 };
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -33,6 +35,24 @@ fn bounds() -> LogicalRect {
 
 fn minimum() -> LogicalSize {
     LogicalSize::new(64.0, 48.0).expect("test minimum validates")
+}
+
+fn answer(request: SurfaceMeasurementRequest, bounds: LogicalRect) -> SurfaceMeasurementAnswer {
+    match request {
+        SurfaceMeasurementRequest::DockBounds { .. }
+        | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+            SurfaceMeasurementAnswer::Bounds(bounds)
+        }
+        SurfaceMeasurementRequest::PaneMinimum { .. } => {
+            SurfaceMeasurementAnswer::PaneMinimum(minimum())
+        }
+        SurfaceMeasurementRequest::TabIntrinsic { .. } => {
+            SurfaceMeasurementAnswer::TabIntrinsic(96.0)
+        }
+        SurfaceMeasurementRequest::TabStrip { .. } => SurfaceMeasurementAnswer::TabStrip(
+            TabStripMetrics::new(0.0, 0.0).expect("test strip metrics validate"),
+        ),
+    }
 }
 
 #[test]
@@ -97,6 +117,160 @@ fn product_measurement_seam_hides_manifest_keys_and_builds_a_ready_plan() {
         .visual_id();
     assert!(plan.panes().all(|pane| pane.tab_bar_visual_id() == bar));
     assert!(plan.tabs().all(|tab| tab.tab_bar_visual_id() == bar));
+}
+
+#[test]
+fn prepare_surface_with_measures_once_and_reuses_the_answered_surface() {
+    let mut session = session();
+    let mut frame = session
+        .begin_host_frame()
+        .expect("preparation frame begins");
+    let mut requests = 0;
+    {
+        let work = frame
+            .prepare_surface_with(SURFACE, |request| {
+                requests += 1;
+                Ok::<_, DockspaceRuntimeError>(answer(request, bounds()))
+            })
+            .expect("the first preparation measures the unmeasured surface");
+        assert!(matches!(work, SurfaceWork::Ready(_)));
+    }
+    assert!(requests > 0, "the unmeasured surface needs renderer facts");
+    {
+        let work = frame
+            .prepare_surface_with::<DockspaceRuntimeError>(SURFACE, |_| {
+                panic!("an answered surface must not be measured twice")
+            })
+            .expect("the answered surface remains paintable");
+        assert!(matches!(work, SurfaceWork::Ready(_)));
+    }
+    frame.commit().expect("the preparation frame commits");
+}
+
+#[test]
+fn prepare_surface_with_refreshes_a_ready_surface_and_remeasures_only_after_restart() {
+    let mut session = session();
+    let mut initial = session.begin_host_frame().unwrap();
+    initial
+        .measure_surface(
+            SURFACE,
+            UniformSurfaceMetrics::new(bounds(), minimum(), 96.0).unwrap(),
+        )
+        .unwrap();
+    initial.commit().unwrap();
+
+    let mut frame = session.begin_host_frame().unwrap();
+    frame.select_item_current(SECOND).unwrap();
+    for width in [1000.0, 600.0] {
+        if width == 600.0 {
+            frame.restart_encoding_pass().unwrap();
+        }
+        let target = LogicalRect::new(0.0, 0.0, width, 600.0).unwrap();
+        let plan = frame
+            .prepare_surface_with(SURFACE, |request| {
+                Ok::<_, DockspaceRuntimeError>(answer(request, target))
+            })
+            .unwrap()
+            .ready()
+            .expect("each new pass refreshes the eligible ready surface");
+        assert_eq!(plan.bounds(), target);
+    }
+    frame.commit().unwrap();
+    assert!(session.view().item(SECOND).unwrap().is_selected());
+    let mut inspect = session.begin_host_frame().unwrap();
+    assert_eq!(
+        inspect
+            .paint_plan(SURFACE)
+            .unwrap()
+            .unwrap()
+            .bounds()
+            .width(),
+        600.0
+    );
+}
+
+#[test]
+fn prepare_surface_with_retains_an_unavailable_answer_until_a_new_encoding_pass() {
+    let mut session = session();
+    let mut frame = session.begin_host_frame().unwrap();
+    let work = frame
+        .prepare_surface_with(SURFACE, |_| {
+            Ok::<_, DockspaceRuntimeError>(SurfaceMeasurementAnswer::Unavailable(
+                SurfaceUnavailableReason::ContentUnavailable,
+            ))
+        })
+        .unwrap();
+    assert!(matches!(
+        work,
+        SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured)
+    ));
+    let repeated = frame
+        .prepare_surface_with::<DockspaceRuntimeError>(SURFACE, |_| {
+            panic!("an unavailable answer also completes the surface's measurement pass")
+        })
+        .unwrap();
+    assert!(matches!(
+        repeated,
+        SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured)
+    ));
+
+    frame.restart_encoding_pass().unwrap();
+    assert!(
+        frame
+            .prepare_surface_with(SURFACE, |request| {
+                Ok::<_, DockspaceRuntimeError>(answer(request, bounds()))
+            })
+            .unwrap()
+            .ready()
+            .is_some()
+    );
+    frame.commit().unwrap();
+}
+
+#[test]
+fn prepare_surface_with_preserves_the_adapter_error_and_rolls_back_partial_measurements() {
+    let mut session = session();
+    let before = session.version();
+    let mut frame = session.begin_host_frame().unwrap();
+    frame.select_item_current(SECOND).unwrap();
+    let mut failed = false;
+    let error = frame
+        .prepare_surface_with(SURFACE, |request| {
+            assert!(
+                !failed,
+                "the first adapter error stops measurement callbacks"
+            );
+            if matches!(request, SurfaceMeasurementRequest::TabIntrinsic { .. }) {
+                failed = true;
+                Err::<_, Box<dyn std::error::Error>>(
+                    std::io::Error::other("font unavailable").into(),
+                )
+            } else {
+                Ok(answer(request, bounds()))
+            }
+        })
+        .err()
+        .expect("an adapter error is returned without a partial paint plan");
+    assert_eq!(
+        error.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::Other
+    );
+    assert!(failed);
+    drop(frame);
+    assert_eq!(session.version(), before);
+    assert!(session.view().item(FIRST).unwrap().is_selected());
+
+    let mut retry = session.begin_host_frame().unwrap();
+    assert!(
+        retry
+            .prepare_surface_with(SURFACE, |request| {
+                Ok::<_, DockspaceRuntimeError>(answer(request, bounds()))
+            })
+            .unwrap()
+            .ready()
+            .is_some()
+    );
+    retry.commit().unwrap();
 }
 
 #[test]

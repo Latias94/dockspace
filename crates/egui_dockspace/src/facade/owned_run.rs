@@ -442,32 +442,24 @@ impl Dockspace {
                                 .begin_encoding_pass()
                                 .map_err(DockspaceError::from_detail)?;
                         }
-                        let (measure, backpressured) = match frame
-                            .surface_work(surface)
-                            .map_err(DockspaceError::from_detail)?
-                        {
-                            SurfaceWork::Ready(plan) => {
-                                (plan.measurement_refresh().is_allowed(), false)
-                            }
-                            SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured) => (true, false),
-                            SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity) => {
-                                (false, true)
-                            }
-                        };
-                        let mut missing = BTreeSet::new();
                         let mut resources = render::PaintResources::default();
-                        if measure {
-                            missing.extend(render::measure_surface(
-                                &mut frame,
-                                surface,
-                                ui,
-                                ui.available_rect_before_wrap(),
-                                ui.ctx().input(egui::InputState::content_rect).round_ui(),
-                                panes,
-                                &self.style,
-                                Some(&mut resources),
-                            )?);
-                        }
+                        let presented_focus_bindings =
+                            pointer.presented_focus_bindings(&frame, surface);
+                        let candidate_version = frame.version();
+                        let (work, missing) = render::prepare_surface(
+                            &mut frame,
+                            surface,
+                            ui,
+                            ui.available_rect_before_wrap(),
+                            ui.ctx().input(egui::InputState::content_rect).round_ui(),
+                            panes,
+                            &self.style,
+                            Some(&mut resources),
+                        )?;
+                        let backpressured = matches!(
+                            &work,
+                            SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity)
+                        );
                         if first {
                             // Opening is an input intent, not repeated painting.
                             // Later passes retain egui's popup state, including
@@ -477,7 +469,7 @@ impl Dockspace {
                                 ui,
                                 self.id,
                                 surface,
-                                frame.version(),
+                                candidate_version,
                             );
                         }
                         let capture = crate::output_proof::SurfaceOutputCapture::begin_multilayer(
@@ -486,31 +478,26 @@ impl Dockspace {
                         if backpressured {
                             crate::focus::retain_presented_pane_focus(
                                 &context,
-                                pointer.presented_focus_bindings(&frame, surface),
+                                presented_focus_bindings,
                             );
                         }
-                        let paint = if !backpressured {
-                            frame
-                                .paint_plan(surface)
-                                .map_err(DockspaceError::from_detail)?
-                                .map(|plan| {
-                                    render::paint_surface(
-                                        ui,
-                                        self.id,
-                                        plan,
-                                        panes,
-                                        &self.style,
-                                        &self.pointer.input(),
-                                        resources,
-                                        render::PointerActionAuthority::HostJournal,
-                                        #[cfg(feature = "native-render-support")]
-                                        None,
-                                    )
-                                })
-                                .transpose()
-                                .map_err(DockspaceError::from_detail)?
-                        } else {
-                            None
+                        let paint = match work {
+                            SurfaceWork::Ready(plan) => Some(
+                                render::paint_surface(
+                                    ui,
+                                    self.id,
+                                    plan,
+                                    panes,
+                                    &self.style,
+                                    &self.pointer.input(),
+                                    resources,
+                                    render::PointerActionAuthority::HostJournal,
+                                    #[cfg(feature = "native-render-support")]
+                                    None,
+                                )
+                                .map_err(DockspaceError::from_detail)?,
+                            ),
+                            SurfaceWork::Deferred(_) => None,
                         };
                         let had_plan = paint.is_some();
                         let mut pass = EncodedPass {
@@ -610,18 +597,16 @@ impl Dockspace {
         }
         self.ui_actions
             .publish(pending_actions, run_sequence.unwrap(), &report);
-        let painted = report.take_painted_outputs().pop();
-        pointer.observe(report.surface_presentation_commits());
-        if let Some(painted) = painted.as_ref() {
-            pointer.emitted(
-                painted.presentation_artifact(),
-                pass.layer,
-                pass.completed_pass,
-                pass.coordinates_supported,
-                pass.receivers,
-                pass.focus_bindings,
-            );
-        }
+        let painted = pointer.settle_report(
+            &mut report,
+            crate::pointer::ProductPointerPresentation {
+                layer: pass.layer,
+                completed_pass: pass.completed_pass,
+                coordinates_supported: pass.coordinates_supported,
+                receivers: pass.receivers,
+                focus_bindings: pass.focus_bindings,
+            },
+        );
         self.pointer = pointer;
         self.pending_focus.settle(&accepted_focus, &report);
         crate::pointer::schedule_pointer_continuation(

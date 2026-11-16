@@ -21,8 +21,8 @@ use dockspace::runtime::{
     PointerDeviceKind, PointerEventMetadata, SurfacePaintDisposition, SurfacePaintPlan,
     SurfacePaintProgramOperation as Operation, SurfacePaintProgramStep as Step,
     SurfacePointerButton, SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId,
-    SurfacePointerReceiverFacts, SurfacePresentationResult, SurfaceProgramExecutionReceipt,
-    SurfaceUnavailableReason, SurfaceWork, UniformSurfaceMetrics,
+    SurfacePresentationResult, SurfaceProgramExecutionReceipt, SurfaceUnavailableReason,
+    SurfaceWork, UniformSurfaceMetrics,
 };
 use dockspace_host_harness::OwnedRecord;
 
@@ -372,16 +372,7 @@ impl Harness {
         }
         if let Some((event, point, hit)) = pointer {
             let surface = hit.surface();
-            let click = hit.delivery();
-            let drag = hit.drag_delivery();
-            let facts = click.as_ref().map_or_else(
-                || SurfacePointerReceiverFacts::unknown().with_empty_delivery_lane(&surface),
-                SurfacePointerReceiverFacts::delivery,
-            );
-            let facts = drag.as_ref().map_or_else(
-                || facts.with_empty_drag_delivery_lane(&surface),
-                |receiver| facts.with_drag_delivery(receiver),
-            );
+            let facts = hit.unobstructed_receiver_facts();
             let route = HostPointerRoute::new(surface, point);
             let capture = if matches!(event, SurfacePointerEvent::ButtonReleased(_)) {
                 SurfacePointerCapture::None
@@ -396,7 +387,7 @@ impl Harness {
                         route,
                         route,
                         capture,
-                        facts.with_clear_hover_lane(&surface),
+                        facts,
                     )
                     .with_metadata(PointerEventMetadata::new(
                         PointerDeviceKind::Mouse,

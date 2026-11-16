@@ -6,37 +6,60 @@ Read **Engine host integration** in `crates/dockspace/docs/guide.md`,
 
 ## Commit, render and present
 
-Own one `DockspaceSession`. Submit ordered input and semantic commands through
-its host frame, then supply logical measurements and traverse the complete
-ordered surface program. A retained UI copies the required geometry, pane
-references and stable `DockspaceVisualId` values into staged owned records.
-Preserve program clipping, ordering and `SourceGap` semantics.
+Own one `DockspaceSession` and follow four phases:
 
-Confirm the execution receipt and commit before publishing staged UI changes.
-Failed or abandoned candidates leave the installed artifact intact. Input-only
-and presentation-settlement frames can commit without painting.
-Commit those frames directly when retaining the current measured scene. Use
-explicit surface deferral when its scene really is unavailable; deferring every
-unpainted surface can withdraw geometry needed by native recovery commands.
+1. **Admit input.** Submit ordered input and semantic commands through its host
+   frame. For a command batch, retain each `DockspaceSubmittedAction` and resolve
+   it against that frame's `HostFrameReport::submitted_action_outcome`.
+2. **Prepare and encode.** Use `DockspaceHostFrame::prepare_surface_with` to admit
+   output, resolve logical measurements only when core permits a refresh, and
+   obtain `SurfaceWork`. The resolver returns `Result<SurfaceMeasurementAnswer,
+   E>` where `E: From<DockspaceRuntimeError>`. Gesture/preview geometry and full
+   output budgets skip the resolver. Execute the complete ordered program;
+   preserve clipping, ordering and `SourceGap` semantics. A retained UI stages
+   owned geometry, pane references and stable `DockspaceVisualId` values. Use
+   `visit_tab_resources` when preparing titles or icons for the complete program,
+   including drag and popup decorations.
+3. **Publish.** Confirm the execution receipt and commit before installing
+   staged UI. Failed or abandoned candidates leave the installed artifact
+   intact. Map every successful report's `repaint_surfaces()` to real UI/window
+   invalidation, including input-only and settlement-only reports. Follow the
+   core guide's [shared interface and invalidation flow](../../../crates/dockspace/docs/guide.md#engine-host-integration).
+4. **Settle presentation.** Pair each committed output handle with its artifact
+   and hit records. Consume it with
+   `report_surface_presentation(Presented | Dropped)` after the renderer knows
+   the result. Commit a subsequent frame and use its exact
+   `surface_presentation_commits` and `bind_presented_receiver` to promote input
+   authority. Sink acceptance, frame commit and submission alone do not prove
+   presentation. An unsettled earlier output still bounds its stream even when
+   later results arrive first.
 
-Keep each committed output handle paired with the artifact and its hit records.
-Consume it with `report_surface_presentation(Presented | Dropped)` after the
-renderer knows the result. Commit a subsequent host frame, then use its exact
-`surface_presentation_commits` and `bind_presented_receiver` to promote receiver
-authority. Sink acceptance, frame commit and renderer submission each establish
-less than actual presentation. Rendering completion may arrive out of order;
-an unsettled earlier output still bounds admission in its stream.
-
-For batched application commands, retain each `DockspaceSubmittedAction` and
-resolve it against that frame's `HostFrameReport::submitted_action_outcome`.
-This preserves the connection between a command and its committed result.
+Input-only and presentation-settlement frames can commit directly while
+retaining the current measured scene. Explicitly defer a surface only when its
+scene really is unavailable; deferring every unpainted surface can withdraw
+geometry needed by native recovery. Use `measure_surface_with` for an
+independent measurement pass, such as a native callback that must retain an
+accepted plan for a later paint/output coordinator.
 
 Keep input admission, encoding retries and later updates distinct. A repeated
 encoding pass uses `restart_encoding_pass` on the same candidate without
-replaying input or advancing its observation time. Actions produced while
-encoding retain their candidate witness through `DeferredSurfaceAction` and
-enter a subsequent update. An input-only update that commits has consumed its
-accepted prefix even when no new output was painted.
+replaying input or advancing its observation time. Actions discovered while
+encoding retain their witness through `DeferredSurfaceAction` and enter a later
+update. An input-only commit consumes its accepted prefix even without painting.
+
+Choose a reference with the same presentation timing:
+
+- For a synchronous renderer, follow
+  `crates/dockspace_winit/examples/software/app.rs` and its real `buffer.present()`
+  result. `integration/dockspace-host-harness/examples/engine_host.rs` shows
+  deferred owned records using only public core interfaces.
+- For a retained renderer crossing framework hooks, follow
+  `integration/gpui-harness/src/element.rs` and `presentation.rs`. Use the existing
+  `DockspaceUpdate` to keep the same candidate until the framework accepts it;
+  wait for the actual submission terminal before reporting its disposition.
+- For egui pass retries, the core guide maps the renderer, complete-output owner
+  and terminal receipt modules. Reuse their core contracts while supplying the
+  new framework's own widget, layer and presentation facts.
 
 ## Route real input facts
 

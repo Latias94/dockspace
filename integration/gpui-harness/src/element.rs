@@ -2,15 +2,14 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use dockspace::{
     geometry::{LogicalRect, LogicalSize},
     model::ItemId,
     runtime::{
         DockspaceReceiverDescriptor, DockspaceReceiverRole, DockspaceUpdate,
         SurfaceMeasurementAnswer as Answer, SurfaceMeasurementRequest as Request,
-        SurfacePointerButton, SurfacePointerCancelReason, SurfacePointerEvent, SurfaceWork,
-        SurfaceWorkDeferred, TabStripMetrics,
+        SurfacePointerButton, SurfacePointerCancelReason, SurfacePointerEvent, TabStripMetrics,
     },
 };
 use open_gpui::{
@@ -708,16 +707,8 @@ fn build_candidate(
     for input in inputs {
         input.submit(&mut frame)?;
     }
-    frame.begin_encoding_pass()?;
-    let measure = match frame.surface_work(surface)? {
-        SurfaceWork::Ready(plan) => plan.measurement_refresh().is_allowed(),
-        SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured) => true,
-        SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity) => {
-            return Err(anyhow!("renderer output capacity is exhausted"));
-        }
-    };
-    if measure {
-        frame.measure_surface_with(surface, |request| match request {
+    let work = frame.prepare_surface_with(surface, |request| -> Result<Answer> {
+        Ok(match request {
             Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => Answer::Bounds(bounds),
             Request::PaneMinimum { item, .. } => {
                 Answer::PaneMinimum(item.and_then(|item| panels.get(&item)).map_or_else(
@@ -745,11 +736,11 @@ fn build_candidate(
             Request::TabStrip { .. } => Answer::TabStrip(
                 TabStripMetrics::new(0.0, 0.0).expect("zero chrome reservation is valid"),
             ),
-        })?;
-    }
-    let plan = frame
-        .paint_plan(surface)?
-        .context("measured surface has no ready paint plan")?;
+        })
+    })?;
+    let plan = work
+        .ready()
+        .context("prepared surface has no ready paint plan")?;
     let (packet, receipt) = record(plan, panels, pointer, &config.colors)?;
     frame.confirm_surface_painted(receipt)?;
     Ok((Rc::new(packet), frame.suspend()))

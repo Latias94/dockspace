@@ -7,17 +7,17 @@ use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
     DockspaceHostFrame, DockspaceManipulationDelivery as Delivery, DockspaceManipulationFeedback,
     DockspaceManipulationStatus as Status, DockspacePreviewVisual, DockspaceReceiverDescriptor,
-    DockspaceReceiverRole, DockspaceSession, DockspaceVisualId, DockspaceVisualKind,
-    HostFrameReport, HostInputOutcome, HostPointerInput, HostPointerRoute, PaintedSurfaceOutput,
-    PresentedDockReceiver, PresentedDockspaceSurface, SurfaceMeasurementAnswer,
-    SurfaceMeasurementRequest, SurfacePaintDisposition, SurfacePaintProgramOperation as Operation,
-    SurfacePaintProgramStep as Step, SurfacePointerButton, SurfacePointerCapture,
-    SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts,
-    SurfacePresentationResult as ResultKind, SurfaceScrollDelta, SurfaceScrollDeviceId,
-    SurfaceScrollEvent, SurfaceScrollModifiers, SurfaceScrollMomentum, SurfaceScrollPhase,
-    SurfaceUnavailableReason, TabGroupDragRegionKind, TabListMenuMetrics, TabStripControlKind,
-    TabStripControlMetric, TabStripControlMetrics, TabStripControlPlacement, TabStripMetrics,
-    UniformSurfaceMetrics,
+    DockspaceReceiverRole, DockspaceRuntimeError, DockspaceSession, DockspaceVisualId,
+    DockspaceVisualKind, HostFrameReport, HostInputOutcome, HostPointerInput, HostPointerRoute,
+    PaintedSurfaceOutput, PresentedDockReceiver, PresentedDockspaceSurface,
+    SurfaceMeasurementAnswer, SurfaceMeasurementRequest, SurfacePaintDisposition,
+    SurfacePaintProgramOperation as Operation, SurfacePaintProgramStep as Step,
+    SurfacePointerButton, SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId,
+    SurfacePointerReceiverFacts, SurfacePresentationResult as ResultKind, SurfaceScrollDelta,
+    SurfaceScrollDeviceId, SurfaceScrollEvent, SurfaceScrollModifiers, SurfaceScrollMomentum,
+    SurfaceScrollPhase, SurfaceUnavailableReason, TabGroupDragRegionKind, TabListMenuMetrics,
+    TabStripControlKind, TabStripControlMetric, TabStripControlMetrics, TabStripControlPlacement,
+    TabStripMetrics, UniformSurfaceMetrics,
 };
 use dockspace_host_harness::{OwnedRecord, RecordingRenderer};
 
@@ -1234,9 +1234,7 @@ fn host_pointer_fixture() -> (DockspaceSession, HostPointerScene) {
 }
 
 #[test]
-fn active_source_retains_its_measurements_while_an_unrelated_surface_refreshes() {
-    use dockspace::runtime::SurfaceMeasurementRefresh;
-
+fn prepare_surface_retains_active_source_geometry_while_an_unrelated_surface_refreshes() {
     let (mut session, scene) = host_pointer_fixture();
     let mut frame = session.begin_host_frame().unwrap();
     frame.submit_host_pointer_batch([scene.press()]).unwrap();
@@ -1247,35 +1245,106 @@ fn active_source_retains_its_measurements_while_an_unrelated_surface_refreshes()
     assert!(session.has_active_gesture());
 
     let mut frame = session.begin_host_frame().unwrap();
-    assert_eq!(
-        frame.paint_plan(A).unwrap().unwrap().measurement_refresh(),
-        SurfaceMeasurementRefresh::RetainGesture
-    );
-    assert_eq!(
-        frame.paint_plan(B).unwrap().unwrap().measurement_refresh(),
-        SurfaceMeasurementRefresh::Allowed
-    );
-    frame
-        .measure_surface(
-            B,
-            UniformSurfaceMetrics::new(bounds(900.0), LogicalSize::new(80.0, 64.0).unwrap(), 144.0)
-                .unwrap(),
-        )
+    let source = frame
+        .prepare_surface_with::<DockspaceRuntimeError>(A, |_| {
+            panic!("the pressed source must retain its measured geometry")
+        })
+        .unwrap()
+        .ready()
         .unwrap();
+    assert_eq!(source.bounds(), bounds(800.0));
+    assert_eq!(
+        source.tab_receiver(FIRST).unwrap().bounds(),
+        scene.source.bounds()
+    );
+
+    let mut measured = false;
+    let target = frame
+        .prepare_surface_with::<DockspaceRuntimeError>(B, |request| {
+            measured = true;
+            Ok(match request {
+                SurfaceMeasurementRequest::DockBounds { .. }
+                | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+                    SurfaceMeasurementAnswer::Bounds(bounds(900.0))
+                }
+                SurfaceMeasurementRequest::PaneMinimum { .. } => {
+                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(80.0, 64.0).unwrap())
+                }
+                SurfaceMeasurementRequest::TabIntrinsic { .. } => {
+                    SurfaceMeasurementAnswer::TabIntrinsic(144.0)
+                }
+                SurfaceMeasurementRequest::TabStrip { .. } => {
+                    SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+                }
+            })
+        })
+        .unwrap()
+        .ready()
+        .unwrap();
+    assert!(measured);
+    assert_eq!(target.bounds(), bounds(900.0));
+    assert!(target.tab_receiver(THIRD).unwrap().bounds().width() > scene.source.bounds().width());
+    let repeated = frame
+        .prepare_surface_with::<DockspaceRuntimeError>(B, |_| {
+            panic!("a second preparation in the same pass must preserve its first measurements")
+        })
+        .unwrap()
+        .ready()
+        .unwrap();
+    assert_eq!(repeated.bounds(), bounds(900.0));
     frame
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
     frame.commit().unwrap();
     assert!(session.has_active_gesture());
     let mut frame = session.begin_host_frame().unwrap();
+    let source = frame.paint_plan(A).unwrap().unwrap();
+    assert_eq!(source.bounds(), bounds(800.0));
     assert_eq!(
-        frame.paint_plan(A).unwrap().unwrap().measurement_refresh(),
-        SurfaceMeasurementRefresh::RetainGesture
+        source.tab_receiver(FIRST).unwrap().bounds(),
+        scene.source.bounds()
     );
     assert_eq!(
-        frame.paint_plan(B).unwrap().unwrap().measurement_refresh(),
-        SurfaceMeasurementRefresh::Allowed
+        frame.paint_plan(B).unwrap().unwrap().bounds(),
+        bounds(900.0)
     );
+}
+
+#[test]
+fn prepare_surface_retains_cross_surface_preview_geometry_without_measuring_the_target() {
+    let (mut session, scene) = host_pointer_fixture();
+    let before = session.version();
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .submit_host_pointer_batch([scene.press(), scene.target_edge(SurfacePointerEvent::Moved)])
+        .unwrap();
+    let plan = frame
+        .prepare_surface_with::<DockspaceRuntimeError>(B, |_| {
+            panic!("the cross-surface preview must retain its target measurements")
+        })
+        .unwrap()
+        .ready()
+        .unwrap();
+    assert_eq!(plan.bounds(), bounds(800.0));
+    let (recording, receipt) = RecordingRenderer::execute(plan).unwrap();
+    assert_target_preview(&recording);
+    frame.confirm_surface_painted(receipt).unwrap();
+    let mut report = frame.commit().unwrap();
+    assert!(!report.workspace_changed());
+    assert!(report.manipulation_feedback().is_empty());
+    assert_eq!(session.version(), before);
+    assert_eq!(session.view().item(FIRST).unwrap().surface(), A);
+    let [output] = report.take_painted_outputs().try_into().unwrap();
+    assert_eq!(output.surface(), B);
+    assert!(matches!(
+        recording.records.last(),
+        Some(OwnedRecord::SurfaceEnd(semantic)) if output.matches_semantic_output(*semantic)
+    ));
+    session
+        .report_surface_presentation(output, ResultKind::Presented)
+        .unwrap();
+    assert_eq!(settle(&mut session).surface_presentation_commits().len(), 1);
+    assert!(session.has_active_gesture());
 }
 
 fn host_pointer_fixture_for_item(source_item: ItemId) -> (DockspaceSession, HostPointerScene) {

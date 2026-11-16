@@ -12,13 +12,13 @@ use dockspace::model::{
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
     DockspaceHostFrame, DockspaceManipulationDelivery, DockspaceManipulationStatus,
-    DockspaceReceiverDescriptor, DockspaceRuntimeErrorKind, DockspaceSemanticOutput,
-    DockspaceSession, DockspaceUpdate, HostFrameReport, HostInputOutcome, HostPointerInput,
-    HostPointerRoute, PaintedSurfaceOutput, PointerDeviceKind, PointerEventMetadata,
-    SurfacePaintPlan, SurfacePaintProgramOperation as Operation, SurfacePaintProgramStep as Step,
-    SurfacePointerButton, SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId,
-    SurfacePointerReceiverFacts, SurfacePresentationResult, SurfaceUnavailableReason, SurfaceWork,
-    SurfaceWorkDeferred, UniformSurfaceMetrics,
+    DockspaceReceiverDescriptor, DockspaceRuntimeError, DockspaceRuntimeErrorKind,
+    DockspaceSemanticOutput, DockspaceSession, DockspaceUpdate, HostFrameReport, HostInputOutcome,
+    HostPointerInput, HostPointerRoute, PaintedSurfaceOutput, PointerDeviceKind,
+    PointerEventMetadata, SurfacePaintPlan, SurfacePaintProgramOperation as Operation,
+    SurfacePaintProgramStep as Step, SurfacePointerButton, SurfacePointerCapture,
+    SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts, SurfacePresentationResult,
+    SurfaceUnavailableReason, SurfaceWork, SurfaceWorkDeferred, UniformSurfaceMetrics,
 };
 use dockspace_host_harness::{OwnedRecord, RecordingRenderer};
 
@@ -535,7 +535,7 @@ fn abandoned_and_failed_encoded_updates_preserve_scene_version_and_producer_wate
 }
 
 #[test]
-fn full_output_capacity_defers_encoding_but_allows_zero_output_selection_and_close() {
+fn full_output_capacity_skips_prepare_resolver_but_allows_zero_output_selection_and_close() {
     let mut session = session();
     session
         .configure_output_capacity(NonZeroUsize::new(1).unwrap())
@@ -544,9 +544,12 @@ fn full_output_capacity_defers_encoding_but_allows_zero_output_selection_and_clo
 
     let mut frame = session.begin_host_frame().unwrap();
     frame.select_item_current(SECOND).unwrap();
-    frame.measure_surface(A, metrics(800.0, 96.0)).unwrap();
     assert!(matches!(
-        frame.surface_work(A).unwrap(),
+        frame
+            .prepare_surface_with::<DockspaceRuntimeError>(A, |_| {
+                panic!("output backpressure must defer measurement without blocking selection")
+            })
+            .unwrap(),
         SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity)
     ));
     assert!(frame.paint_plan(A).unwrap().is_none());
@@ -560,6 +563,16 @@ fn full_output_capacity_defers_encoding_but_allows_zero_output_selection_and_clo
 
     let mut close = session.begin_host_frame().unwrap();
     close.request_close_item_current(FIRST).unwrap();
+    assert!(matches!(
+        close
+            .prepare_surface_with::<DockspaceRuntimeError>(A, |_| {
+                panic!(
+                    "output backpressure must defer measurement without blocking a close request"
+                )
+            })
+            .unwrap(),
+        SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity)
+    ));
     close
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
@@ -576,6 +589,16 @@ fn full_output_capacity_defers_encoding_but_allows_zero_output_selection_and_clo
             CloseDecision::Allow,
         )
         .unwrap();
+    assert!(matches!(
+        decision
+            .prepare_surface_with::<DockspaceRuntimeError>(A, |_| {
+                panic!(
+                    "output backpressure must defer measurement without blocking a close decision"
+                )
+            })
+            .unwrap(),
+        SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity)
+    ));
     decision
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
