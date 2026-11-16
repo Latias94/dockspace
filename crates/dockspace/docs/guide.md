@@ -116,6 +116,11 @@ corresponding `dock_tabs_current` and `float_tabs_current` conveniences.
    `measure_surface_with` instead when measurement must be staged separately
    from a later paint pass (for example, a native callback that retains an
    accepted plan). Both paths use the same request/answer contract.
+   Both resolvers return `Result<SurfaceMeasurementAnswer, E>` with
+   `E: From<DockspaceRuntimeError>`; use `Ok::<_, DockspaceRuntimeError>(answer)`
+   for a resolver that cannot fail. An adapter error stops the traversal without
+   installing a partial measurement contribution. Use `Unavailable` for genuinely
+   unavailable content, keeping invalid metadata and renderer failures as errors.
    A surface is a logical layout and input domain; it need not be a platform
    window. Items and roots retain their stable application identities.
 2. Obtain `SurfaceWork::Ready(SurfacePaintPlan)` and call `execute_surface_program` to accept its

@@ -212,22 +212,26 @@ fn fixture_with_controls(
                 .unwrap()
                 .with_controls(controls);
             frame
-                .measure_surface_with(surface, |request| match request {
-                    SurfaceMeasurementRequest::DockBounds { .. }
-                    | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
-                        SurfaceMeasurementAnswer::Bounds(
-                            LogicalRect::new(0.0, 0.0, width, 600.0).unwrap(),
-                        )
-                    }
-                    SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                        SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
-                    }
-                    SurfaceMeasurementRequest::TabIntrinsic { .. } => {
-                        SurfaceMeasurementAnswer::TabIntrinsic(96.0)
-                    }
-                    SurfaceMeasurementRequest::TabStrip { .. } => {
-                        SurfaceMeasurementAnswer::TabStrip(strip)
-                    }
+                .measure_surface_with(surface, |request| {
+                    Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
+                        SurfaceMeasurementRequest::DockBounds { .. }
+                        | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+                            SurfaceMeasurementAnswer::Bounds(
+                                LogicalRect::new(0.0, 0.0, width, 600.0).unwrap(),
+                            )
+                        }
+                        SurfaceMeasurementRequest::PaneMinimum { .. } => {
+                            SurfaceMeasurementAnswer::PaneMinimum(
+                                LogicalSize::new(64.0, 48.0).unwrap(),
+                            )
+                        }
+                        SurfaceMeasurementRequest::TabIntrinsic { .. } => {
+                            SurfaceMeasurementAnswer::TabIntrinsic(96.0)
+                        }
+                        SurfaceMeasurementRequest::TabStrip { .. } => {
+                            SurfaceMeasurementAnswer::TabStrip(strip)
+                        }
+                    })
                 })
                 .unwrap();
             continue;

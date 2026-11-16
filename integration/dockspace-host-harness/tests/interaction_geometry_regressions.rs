@@ -67,20 +67,22 @@ fn measure(
     let mut frame = session.begin_host_frame().unwrap();
     for &(surface, bounds) in bounds {
         frame
-            .measure_surface_with(surface, |question| match question {
-                SurfaceMeasurementRequest::DockBounds { .. }
-                | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
-                    SurfaceMeasurementAnswer::Bounds(bounds)
-                }
-                SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
-                    SurfaceMeasurementAnswer::PaneMinimum(minimum(item))
-                }
-                SurfaceMeasurementRequest::TabIntrinsic { .. } => {
-                    SurfaceMeasurementAnswer::TabIntrinsic(96.0)
-                }
-                SurfaceMeasurementRequest::TabStrip { .. } => {
-                    SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
-                }
+            .measure_surface_with(surface, |question| {
+                Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match question {
+                    SurfaceMeasurementRequest::DockBounds { .. }
+                    | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+                        SurfaceMeasurementAnswer::Bounds(bounds)
+                    }
+                    SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
+                        SurfaceMeasurementAnswer::PaneMinimum(minimum(item))
+                    }
+                    SurfaceMeasurementRequest::TabIntrinsic { .. } => {
+                        SurfaceMeasurementAnswer::TabIntrinsic(96.0)
+                    }
+                    SurfaceMeasurementRequest::TabStrip { .. } => {
+                        SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+                    }
+                })
             })
             .unwrap();
     }
@@ -366,21 +368,23 @@ fn hidden_draggable_source_requests_exact_intrinsic_and_reaches_visible_gap() {
         (TARGET, rect(0.0, 0.0, 400.0, 300.0)),
     ] {
         frame
-            .measure_surface_with(surface, |question| match question {
-                SurfaceMeasurementRequest::DockBounds { .. }
-                | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
-                    SurfaceMeasurementAnswer::Bounds(bounds)
-                }
-                SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                    SurfaceMeasurementAnswer::PaneMinimum(size(64.0, 48.0))
-                }
-                SurfaceMeasurementRequest::TabIntrinsic { item, .. } => {
-                    saw_hidden_source_intrinsic |= surface == SOURCE && item == A;
-                    SurfaceMeasurementAnswer::TabIntrinsic(96.0)
-                }
-                SurfaceMeasurementRequest::TabStrip { .. } => {
-                    SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
-                }
+            .measure_surface_with(surface, |question| {
+                Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match question {
+                    SurfaceMeasurementRequest::DockBounds { .. }
+                    | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+                        SurfaceMeasurementAnswer::Bounds(bounds)
+                    }
+                    SurfaceMeasurementRequest::PaneMinimum { .. } => {
+                        SurfaceMeasurementAnswer::PaneMinimum(size(64.0, 48.0))
+                    }
+                    SurfaceMeasurementRequest::TabIntrinsic { item, .. } => {
+                        saw_hidden_source_intrinsic |= surface == SOURCE && item == A;
+                        SurfaceMeasurementAnswer::TabIntrinsic(96.0)
+                    }
+                    SurfaceMeasurementRequest::TabStrip { .. } => {
+                        SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+                    }
+                })
             })
             .unwrap();
     }

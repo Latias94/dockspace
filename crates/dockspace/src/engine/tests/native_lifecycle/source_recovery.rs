@@ -494,7 +494,7 @@ fn source_recovery_cancels_first_live_projection_without_workspace_or_version_ch
         .expect("the public measurement frame must begin");
     assert!(!frame.surfaces().contains(&target));
     let error = frame
-        .measure_surface_with(target, |_| {
+        .measure_surface_with::<crate::runtime::DockspaceRuntimeError>(target, |_| {
             panic!("the revoked target must be rejected before requesting any measurements");
         })
         .expect_err("public measurement must reject the removed target at roster lookup");

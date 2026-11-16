@@ -29,28 +29,32 @@ fn record_visibility(session: &mut DockspaceSession) -> RecordedVisibility {
     let mut intrinsics = Vec::new();
     let bounds = LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap();
     frame
-        .measure_surface_with(SURFACE, |request| match request {
-            Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => Answer::Bounds(bounds),
-            Request::PaneMinimum { item, .. } => {
-                let item = item.expect("an entirely hidden group has no empty-content request");
-                assert!(
-                    visible.contains(&item),
-                    "the hidden pane has no loaded metadata"
-                );
-                minima.push(item);
-                Answer::PaneMinimum(LogicalSize::new(32.0, 24.0).unwrap())
-            }
-            Request::TabIntrinsic { item, .. } => {
-                assert!(
-                    visible.contains(&item),
-                    "the hidden tab has no text metadata"
-                );
-                intrinsics.push(item);
-                Answer::TabIntrinsic(72.0)
-            }
-            Request::TabStrip { .. } => {
-                Answer::TabStrip(dockspace::runtime::TabStripMetrics::new(0.0, 0.0).unwrap())
-            }
+        .measure_surface_with(SURFACE, |request| {
+            Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
+                Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => {
+                    Answer::Bounds(bounds)
+                }
+                Request::PaneMinimum { item, .. } => {
+                    let item = item.expect("an entirely hidden group has no empty-content request");
+                    assert!(
+                        visible.contains(&item),
+                        "the hidden pane has no loaded metadata"
+                    );
+                    minima.push(item);
+                    Answer::PaneMinimum(LogicalSize::new(32.0, 24.0).unwrap())
+                }
+                Request::TabIntrinsic { item, .. } => {
+                    assert!(
+                        visible.contains(&item),
+                        "the hidden tab has no text metadata"
+                    );
+                    intrinsics.push(item);
+                    Answer::TabIntrinsic(72.0)
+                }
+                Request::TabStrip { .. } => {
+                    Answer::TabStrip(dockspace::runtime::TabStripMetrics::new(0.0, 0.0).unwrap())
+                }
+            })
         })
         .unwrap();
     minima.sort_unstable();

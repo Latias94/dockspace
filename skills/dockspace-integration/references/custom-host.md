@@ -39,7 +39,10 @@ retaining the current measured scene. Explicitly defer a surface only when its
 scene really is unavailable; deferring every unpainted surface can withdraw
 geometry needed by native recovery. Use `measure_surface_with` for an
 independent measurement pass, such as a native callback that must retain an
-accepted plan for a later paint/output coordinator.
+accepted plan for a later paint/output coordinator. Its resolver uses the same
+fallible contract as `prepare_surface_with`; propagate invalid metadata or
+renderer errors directly, and reserve `Unavailable` for content that is actually
+unavailable. A failed resolver installs none of that invocation's answers.
 
 Keep input admission, encoding retries and later updates distinct. A repeated
 encoding pass uses `restart_encoding_pass` on the same candidate without

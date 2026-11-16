@@ -40,15 +40,20 @@ fn review_zero_displacement_splitter_click_preserves_durable_intent() {
     let gap = session.presentation_config().splitter_thickness();
     let mut measured = session.begin_host_frame().unwrap();
     measured
-        .measure_surface_with(SURFACE, |question| match question {
-            Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
-                Answer::Bounds(LogicalRect::new(0.0, 0.0, 400.0 + gap, 600.0).unwrap())
-            }
-            Question::PaneMinimum { item, .. } => Answer::PaneMinimum(
-                LogicalSize::new(if item == Some(FIRST) { 200.0 } else { 100.0 }, 48.0).unwrap(),
-            ),
-            Question::TabIntrinsic { .. } => Answer::TabIntrinsic(56.0),
-            Question::TabStrip { .. } => Answer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap()),
+        .measure_surface_with(SURFACE, |question| {
+            Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match question {
+                Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
+                    Answer::Bounds(LogicalRect::new(0.0, 0.0, 400.0 + gap, 600.0).unwrap())
+                }
+                Question::PaneMinimum { item, .. } => Answer::PaneMinimum(
+                    LogicalSize::new(if item == Some(FIRST) { 200.0 } else { 100.0 }, 48.0)
+                        .unwrap(),
+                ),
+                Question::TabIntrinsic { .. } => Answer::TabIntrinsic(56.0),
+                Question::TabStrip { .. } => {
+                    Answer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+                }
+            })
         })
         .unwrap();
     measured.commit().unwrap();

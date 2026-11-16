@@ -54,23 +54,27 @@ fn measure_frame(
     background_minimum_width: f64,
 ) {
     frame
-        .measure_surface_with(SURFACE, |question| match question {
-            Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
-                Answer::Bounds(rect(0.0, 0.0, surface_width, 650.0))
-            }
-            Question::PaneMinimum { item, .. } => Answer::PaneMinimum(
-                LogicalSize::new(
-                    if item == Some(FLOAT_ITEM) {
-                        floating_minimum_width
-                    } else {
-                        background_minimum_width
-                    },
-                    48.0,
-                )
-                .unwrap(),
-            ),
-            Question::TabIntrinsic { .. } => Answer::TabIntrinsic(96.0),
-            Question::TabStrip { .. } => Answer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap()),
+        .measure_surface_with(SURFACE, |question| {
+            Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match question {
+                Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
+                    Answer::Bounds(rect(0.0, 0.0, surface_width, 650.0))
+                }
+                Question::PaneMinimum { item, .. } => Answer::PaneMinimum(
+                    LogicalSize::new(
+                        if item == Some(FLOAT_ITEM) {
+                            floating_minimum_width
+                        } else {
+                            background_minimum_width
+                        },
+                        48.0,
+                    )
+                    .unwrap(),
+                ),
+                Question::TabIntrinsic { .. } => Answer::TabIntrinsic(96.0),
+                Question::TabStrip { .. } => {
+                    Answer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+                }
+            })
         })
         .unwrap();
 }

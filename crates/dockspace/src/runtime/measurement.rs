@@ -179,20 +179,22 @@ impl DockspaceHostFrame<'_> {
         surface: SurfaceId,
         metrics: UniformSurfaceMetrics,
     ) -> Result<(), DockspaceRuntimeError> {
-        self.measure_surface_with(surface, |request| match request {
-            SurfaceMeasurementRequest::DockBounds { .. }
-            | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
-                SurfaceMeasurementAnswer::Bounds(metrics.bounds)
-            }
-            SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                SurfaceMeasurementAnswer::PaneMinimum(metrics.pane_minimum)
-            }
-            SurfaceMeasurementRequest::TabIntrinsic { .. } => {
-                SurfaceMeasurementAnswer::TabIntrinsic(metrics.tab_intrinsic.content_width())
-            }
-            SurfaceMeasurementRequest::TabStrip { .. } => {
-                SurfaceMeasurementAnswer::TabStrip(metrics.tab_strip)
-            }
+        self.measure_surface_with(surface, |request| {
+            Ok::<_, DockspaceRuntimeError>(match request {
+                SurfaceMeasurementRequest::DockBounds { .. }
+                | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+                    SurfaceMeasurementAnswer::Bounds(metrics.bounds)
+                }
+                SurfaceMeasurementRequest::PaneMinimum { .. } => {
+                    SurfaceMeasurementAnswer::PaneMinimum(metrics.pane_minimum)
+                }
+                SurfaceMeasurementRequest::TabIntrinsic { .. } => {
+                    SurfaceMeasurementAnswer::TabIntrinsic(metrics.tab_intrinsic.content_width())
+                }
+                SurfaceMeasurementRequest::TabStrip { .. } => {
+                    SurfaceMeasurementAnswer::TabStrip(metrics.tab_strip)
+                }
+            })
         })
     }
 
@@ -200,74 +202,18 @@ impl DockspaceHostFrame<'_> {
     ///
     /// Core owns deterministic traversal, structural identities, exact-set
     /// assembly, and validation. The resolver may return an explicit
-    /// [`SurfaceMeasurementAnswer::Unavailable`] for any individual value.
+    /// [`SurfaceMeasurementAnswer::Unavailable`] for any individual value, or an
+    /// adapter error to stop measurement without compiling a partial contribution.
+    /// This entry point does not reserve output capacity or begin an encoding pass.
     ///
     /// # Errors
     ///
     /// Returns an error when the surface is outside the frozen roster, already
     /// answered, an answer variant does not match its request, or the resulting
-    /// exact contribution is invalid. Dropping the host frame rolls the entire
-    /// contribution back.
-    pub fn measure_surface_with(
-        &mut self,
-        surface: SurfaceId,
-        mut resolve: impl FnMut(SurfaceMeasurementRequest) -> SurfaceMeasurementAnswer,
-    ) -> Result<(), DockspaceRuntimeError> {
-        self.try_measure_surface_with(surface, |request| {
-            Ok::<_, DockspaceRuntimeError>(resolve(request))
-        })
-    }
-
-    /// Prepares one surface for measurement and painting in the current encoding pass.
-    ///
-    /// This convenience entry point owns the repeated host decision of whether a
-    /// surface may refresh its measurements. It first admits the surface's output,
-    /// then measures only an unanswered unmeasured surface or a ready surface whose
-    /// [`SurfaceMeasurementRefresh`](super::SurfaceMeasurementRefresh) is
-    /// [`Allowed`](super::SurfaceMeasurementRefresh::Allowed).
-    /// A retained gesture or preview keeps its existing geometry, and output
-    /// backpressure returns [`SurfaceWorkDeferred::OutputCapacity`] without invoking
-    /// the resolver. A surface answered earlier in the same pass is also retained;
-    /// its resolver is not called twice.
-    ///
-    /// To emit an output, execute the returned ready plan's complete program and
-    /// call [`DockspaceHostFrame::confirm_surface_painted`] before committing.
-    /// Frames that retain their existing output may commit without painting.
-    /// This method seals input and starts a retry checkpoint; use
-    /// [`Self::restart_encoding_pass`] to retry encoding without replaying input.
-    ///
-    /// # Errors
-    ///
-    /// Returns the adapter error from `resolve`, or a converted core runtime error.
-    /// Dropping the host frame rolls back any measurement contribution staged here.
-    pub fn prepare_surface_with<E>(
-        &mut self,
-        surface: SurfaceId,
-        mut resolve: impl FnMut(SurfaceMeasurementRequest) -> Result<SurfaceMeasurementAnswer, E>,
-    ) -> Result<SurfaceWork<'_>, E>
-    where
-        E: From<DockspaceRuntimeError>,
-    {
-        self.begin_encoding_pass().map_err(E::from)?;
-        let should_measure = match self.surface_work(surface).map_err(E::from)? {
-            SurfaceWork::Ready(plan) => {
-                let allowed = plan.measurement_refresh().is_allowed();
-                !self.surface_answered(surface) && allowed
-            }
-            SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured) => {
-                !self.surface_answered(surface)
-            }
-            SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity) => {
-                return Ok(SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity));
-            }
-        };
-        if should_measure {
-            self.try_measure_surface_with(surface, &mut resolve)?;
-        }
-        self.surface_work(surface).map_err(E::from)
-    }
-
-    fn try_measure_surface_with<E>(
+    /// exact contribution is invalid. Core errors are converted into `E`. The first
+    /// resolver error is returned unchanged; earlier answers from that invocation
+    /// are discarded. Dropping the host frame rolls the whole candidate back.
+    pub fn measure_surface_with<E>(
         &mut self,
         surface: SurfaceId,
         mut resolve: impl FnMut(SurfaceMeasurementRequest) -> Result<SurfaceMeasurementAnswer, E>,
@@ -278,7 +224,7 @@ impl DockspaceHostFrame<'_> {
         let core_error = |error: DockspaceRuntimeError| E::from(error);
         self.complete_pointer_journal()
             .map_err(|error| core_error(error.into()))?;
-        if self.surface_answered(surface) || self.frame.surface_is_measured(surface) {
+        if self.surface_answered(surface) {
             return Err(core_error(
                 DockspaceInteractionError::SurfaceAlreadyAnswered { surface }.into(),
             ));
@@ -398,6 +344,55 @@ impl DockspaceHostFrame<'_> {
             .compile_surface_contribution(contribution)
             .map_err(|error| core_error(error.into()))?;
         Ok(())
+    }
+
+    /// Prepares one surface for measurement and painting in the current encoding pass.
+    ///
+    /// This convenience entry point owns the repeated host decision of whether a
+    /// surface may refresh its measurements. It first admits the surface's output,
+    /// then measures only an unanswered unmeasured surface or a ready surface whose
+    /// [`SurfaceMeasurementRefresh`](super::SurfaceMeasurementRefresh) is
+    /// [`Allowed`](super::SurfaceMeasurementRefresh::Allowed).
+    /// A retained gesture or preview keeps its existing geometry, and output
+    /// backpressure returns [`SurfaceWorkDeferred::OutputCapacity`] without invoking
+    /// the resolver. A surface answered earlier in the same pass is also retained;
+    /// its resolver is not called twice.
+    ///
+    /// To emit an output, execute the returned ready plan's complete program and
+    /// call [`DockspaceHostFrame::confirm_surface_painted`] before committing.
+    /// Frames that retain their existing output may commit without painting.
+    /// This method seals input and starts a retry checkpoint; use
+    /// [`Self::restart_encoding_pass`] to retry encoding without replaying input.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter error from `resolve`, or a converted core runtime error.
+    /// Dropping the host frame rolls back any measurement contribution staged here.
+    pub fn prepare_surface_with<E>(
+        &mut self,
+        surface: SurfaceId,
+        mut resolve: impl FnMut(SurfaceMeasurementRequest) -> Result<SurfaceMeasurementAnswer, E>,
+    ) -> Result<SurfaceWork<'_>, E>
+    where
+        E: From<DockspaceRuntimeError>,
+    {
+        self.begin_encoding_pass().map_err(E::from)?;
+        let should_measure = match self.surface_work(surface).map_err(E::from)? {
+            SurfaceWork::Ready(plan) => {
+                let allowed = plan.measurement_refresh().is_allowed();
+                !self.surface_answered(surface) && allowed
+            }
+            SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured) => {
+                !self.surface_answered(surface)
+            }
+            SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity) => {
+                return Ok(SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity));
+            }
+        };
+        if should_measure {
+            self.measure_surface_with(surface, &mut resolve)?;
+        }
+        self.surface_work(surface).map_err(E::from)
     }
 
     /// Explicitly settles every unanswered surface by retaining a current

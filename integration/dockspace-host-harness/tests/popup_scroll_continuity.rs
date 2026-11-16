@@ -33,44 +33,54 @@ struct StripSnapshot {
 fn measure(frame: &mut DockspaceHostFrame<'_>, surface: SurfaceId) {
     let width = if surface == A { 160.0 } else { 240.0 };
     frame
-        .measure_surface_with(surface, |request| match request {
-            SurfaceMeasurementRequest::DockBounds { .. }
-            | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
-                SurfaceMeasurementAnswer::Bounds(LogicalRect::new(0.0, 0.0, width, 600.0).unwrap())
-            }
-            SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
-            }
-            SurfaceMeasurementRequest::TabIntrinsic { .. } => {
-                SurfaceMeasurementAnswer::TabIntrinsic(96.0)
-            }
-            SurfaceMeasurementRequest::TabStrip { .. } => {
-                let controls = TabStripControlMetrics::new(4.0)
-                    .unwrap()
-                    .with_scroll_backward(
-                        TabStripControlMetric::new(18.0, TabStripControlPlacement::OverlayLeading)
-                            .unwrap(),
+        .measure_surface_with(surface, |request| {
+            Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
+                SurfaceMeasurementRequest::DockBounds { .. }
+                | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+                    SurfaceMeasurementAnswer::Bounds(
+                        LogicalRect::new(0.0, 0.0, width, 600.0).unwrap(),
                     )
-                    .with_scroll_forward(
-                        TabStripControlMetric::new(18.0, TabStripControlPlacement::OverlayTrailing)
-                            .unwrap(),
-                    )
-                    .with_tab_list_menu(
-                        TabStripControlMetric::new(
-                            20.0,
-                            TabStripControlPlacement::ReservedTrailing,
-                        )
-                        .unwrap(),
-                    );
-                SurfaceMeasurementAnswer::TabStrip(
-                    TabStripMetrics::new(0.0, 0.0)
+                }
+                SurfaceMeasurementRequest::PaneMinimum { .. } => {
+                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+                }
+                SurfaceMeasurementRequest::TabIntrinsic { .. } => {
+                    SurfaceMeasurementAnswer::TabIntrinsic(96.0)
+                }
+                SurfaceMeasurementRequest::TabStrip { .. } => {
+                    let controls = TabStripControlMetrics::new(4.0)
                         .unwrap()
-                        .with_controls(controls)
+                        .with_scroll_backward(
+                            TabStripControlMetric::new(
+                                18.0,
+                                TabStripControlPlacement::OverlayLeading,
+                            )
+                            .unwrap(),
+                        )
+                        .with_scroll_forward(
+                            TabStripControlMetric::new(
+                                18.0,
+                                TabStripControlPlacement::OverlayTrailing,
+                            )
+                            .unwrap(),
+                        )
                         .with_tab_list_menu(
-                            TabListMenuMetrics::new(24.0, 8.0, 8.0, 2.0, 92.0, 10.0).unwrap(),
-                        ),
-                )
-            }
+                            TabStripControlMetric::new(
+                                20.0,
+                                TabStripControlPlacement::ReservedTrailing,
+                            )
+                            .unwrap(),
+                        );
+                    SurfaceMeasurementAnswer::TabStrip(
+                        TabStripMetrics::new(0.0, 0.0)
+                            .unwrap()
+                            .with_controls(controls)
+                            .with_tab_list_menu(
+                                TabListMenuMetrics::new(24.0, 8.0, 8.0, 2.0, 92.0, 10.0).unwrap(),
+                            ),
+                    )
+                }
+            })
         })
         .unwrap();
 }

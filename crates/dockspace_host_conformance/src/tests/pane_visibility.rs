@@ -50,25 +50,27 @@ fn publish_visible_surface(host: &mut DeterministicHost) {
         let mut minimum_items = Vec::new();
         let mut intrinsic_items = Vec::new();
         frame
-            .measure_surface_with(SURFACE, |request| match request {
-                SurfaceMeasurementRequest::DockBounds { .. }
-                | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
-                    SurfaceMeasurementAnswer::Bounds(bounds)
-                }
-                SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
-                    let item = item.expect("hidden groups do not become empty logical leaves");
-                    assert!(visible.contains(&item), "hidden content needs no metadata");
-                    minimum_items.push(item);
-                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(32.0, 24.0).unwrap())
-                }
-                SurfaceMeasurementRequest::TabIntrinsic { item, .. } => {
-                    assert!(visible.contains(&item), "hidden tabs need no metadata");
-                    intrinsic_items.push(item);
-                    SurfaceMeasurementAnswer::TabIntrinsic(72.0)
-                }
-                SurfaceMeasurementRequest::TabStrip { .. } => {
-                    SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
-                }
+            .measure_surface_with(SURFACE, |request| {
+                Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
+                    SurfaceMeasurementRequest::DockBounds { .. }
+                    | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+                        SurfaceMeasurementAnswer::Bounds(bounds)
+                    }
+                    SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
+                        let item = item.expect("hidden groups do not become empty logical leaves");
+                        assert!(visible.contains(&item), "hidden content needs no metadata");
+                        minimum_items.push(item);
+                        SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(32.0, 24.0).unwrap())
+                    }
+                    SurfaceMeasurementRequest::TabIntrinsic { item, .. } => {
+                        assert!(visible.contains(&item), "hidden tabs need no metadata");
+                        intrinsic_items.push(item);
+                        SurfaceMeasurementAnswer::TabIntrinsic(72.0)
+                    }
+                    SurfaceMeasurementRequest::TabStrip { .. } => {
+                        SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+                    }
+                })
             })
             .unwrap();
         minimum_items.sort_unstable();

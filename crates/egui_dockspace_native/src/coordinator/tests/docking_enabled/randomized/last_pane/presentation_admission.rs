@@ -46,7 +46,9 @@ fn target_output_with_menu_control(
         .unwrap();
     frame
         .frame
-        .measure_surface_with(FIRST_SURFACE, menu_measurement)
+        .measure_surface_with(FIRST_SURFACE, |request| {
+            Ok::<_, dockspace::runtime::DockspaceRuntimeError>(menu_measurement(request))
+        })
         .unwrap();
     let plan = frame.frame.paint_plan(FIRST_SURFACE).unwrap().unwrap();
     let mut menu_action = None;
@@ -171,7 +173,9 @@ fn a_popup_change_cannot_admit_an_older_preview_to_release_the_last_native_pane(
     frame.frame.submit_surface_action(menu_action).unwrap();
     frame
         .frame
-        .measure_surface_with(FIRST_SURFACE, menu_measurement)
+        .measure_surface_with(FIRST_SURFACE, |request| {
+            Ok::<_, dockspace::runtime::DockspaceRuntimeError>(menu_measurement(request))
+        })
         .unwrap();
     let mut menus = 0;
     frame

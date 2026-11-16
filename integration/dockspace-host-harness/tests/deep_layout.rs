@@ -237,18 +237,20 @@ fn deep_public_declaration_compiles_a_complete_measured_scene() {
             let mut pane_questions = 0;
             let mut frame = session.begin_host_frame().unwrap();
             frame
-                .measure_surface_with(SURFACE, |question| match question {
-                    Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
-                        Answer::Bounds(bounds)
-                    }
-                    Question::PaneMinimum { .. } => {
-                        pane_questions += 1;
-                        Answer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
-                    }
-                    Question::TabIntrinsic { .. } => Answer::TabIntrinsic(56.0),
-                    Question::TabStrip { .. } => {
-                        Answer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
-                    }
+                .measure_surface_with(SURFACE, |question| {
+                    Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match question {
+                        Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
+                            Answer::Bounds(bounds)
+                        }
+                        Question::PaneMinimum { .. } => {
+                            pane_questions += 1;
+                            Answer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+                        }
+                        Question::TabIntrinsic { .. } => Answer::TabIntrinsic(56.0),
+                        Question::TabStrip { .. } => {
+                            Answer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+                        }
+                    })
                 })
                 .unwrap();
             assert!(!frame.commit().unwrap().workspace_changed());

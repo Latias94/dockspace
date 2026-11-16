@@ -351,11 +351,13 @@ fn equalization_uses_actual_equal_geometry_without_rewriting_constrained_weights
     let mut frame = session.begin_host_frame().unwrap();
     let half = (800.0 - frame.presentation_config().splitter_thickness()) * 0.5;
     frame
-        .measure_surface_with(SURFACE, |request| match request {
-            SurfaceMeasurementRequest::PaneMinimum {
-                item: Some(FIRST), ..
-            } => SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(half, 48.0).unwrap()),
-            request => measure(request),
+        .measure_surface_with(SURFACE, |request| {
+            Ok::<_, crate::runtime::DockspaceRuntimeError>(match request {
+                SurfaceMeasurementRequest::PaneMinimum {
+                    item: Some(FIRST), ..
+                } => SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(half, 48.0).unwrap()),
+                request => measure(request),
+            })
         })
         .unwrap();
     frame.commit().unwrap();
@@ -406,11 +408,13 @@ fn a_nested_touching_minimum_stops_equalization_before_the_remote_pane_moves() {
     );
     let mut frame = session.begin_host_frame().unwrap();
     frame
-        .measure_surface_with(SURFACE, |request| match request {
-            SurfaceMeasurementRequest::PaneMinimum {
-                item: Some(THIRD), ..
-            } => SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(240.0, 48.0).unwrap()),
-            request => measure(request),
+        .measure_surface_with(SURFACE, |request| {
+            Ok::<_, crate::runtime::DockspaceRuntimeError>(match request {
+                SurfaceMeasurementRequest::PaneMinimum {
+                    item: Some(THIRD), ..
+                } => SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(240.0, 48.0).unwrap()),
+                request => measure(request),
+            })
         })
         .unwrap();
     frame.commit().unwrap();
@@ -432,11 +436,13 @@ fn a_nested_touching_minimum_stops_equalization_before_the_remote_pane_moves() {
         .unwrap();
     frame.submit_surface_action(action).unwrap();
     frame
-        .measure_surface_with(SURFACE, |request| match request {
-            SurfaceMeasurementRequest::PaneMinimum {
-                item: Some(THIRD), ..
-            } => SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(240.0, 48.0).unwrap()),
-            request => measure(request),
+        .measure_surface_with(SURFACE, |request| {
+            Ok::<_, crate::runtime::DockspaceRuntimeError>(match request {
+                SurfaceMeasurementRequest::PaneMinimum {
+                    item: Some(THIRD), ..
+                } => SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(240.0, 48.0).unwrap()),
+                request => measure(request),
+            })
         })
         .unwrap();
     assert!(frame.commit().unwrap().workspace_changed());

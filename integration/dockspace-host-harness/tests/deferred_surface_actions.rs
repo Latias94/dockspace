@@ -567,7 +567,9 @@ fn capture_overflow(
 ) -> DeferredSurfaceAction {
     let mut discarded_pass = session.begin_host_frame().unwrap();
     discarded_pass
-        .measure_surface_with(SURFACE, overflow_measurement)
+        .measure_surface_with(SURFACE, |request| {
+            Ok::<_, dockspace::runtime::DockspaceRuntimeError>(overflow_measurement(request))
+        })
         .unwrap();
     let action = prepare(discarded_pass.paint_plan(SURFACE).unwrap().unwrap()).into_deferred();
     drop(discarded_pass);
@@ -651,7 +653,11 @@ fn tab_control_validates_its_own_membership_without_freezing_a_sibling_bar() {
             );
             let mut frame = session.begin_host_frame().unwrap();
             frame
-                .measure_surface_with(SURFACE, overflow_measurement)
+                .measure_surface_with(SURFACE, |request| {
+                    Ok::<_, dockspace::runtime::DockspaceRuntimeError>(overflow_measurement(
+                        request,
+                    ))
+                })
                 .unwrap();
             let mut menu = false;
             frame
@@ -756,7 +762,9 @@ fn only_the_owner_surface_mints_a_witness_to_dismiss_its_exact_global_popup() {
     let (dismiss, stale) = {
         let mut discarded_pass = session.begin_host_frame().unwrap();
         discarded_pass
-            .measure_surface_with(SURFACE, overflow_measurement)
+            .measure_surface_with(SURFACE, |request| {
+                Ok::<_, dockspace::runtime::DockspaceRuntimeError>(overflow_measurement(request))
+            })
             .unwrap();
         let plan = discarded_pass.paint_plan(SURFACE).unwrap().unwrap();
         let mut backdrop = None;
@@ -777,7 +785,9 @@ fn only_the_owner_surface_mints_a_witness_to_dismiss_its_exact_global_popup() {
                 .into_deferred(),
         );
         discarded_pass
-            .measure_surface_with(OTHER, overflow_measurement)
+            .measure_surface_with(OTHER, |request| {
+                Ok::<_, dockspace::runtime::DockspaceRuntimeError>(overflow_measurement(request))
+            })
             .unwrap();
         let plan = discarded_pass.paint_plan(OTHER).unwrap().unwrap();
         plan.visit_surface_program(|step| {
@@ -802,7 +812,9 @@ fn only_the_owner_surface_mints_a_witness_to_dismiss_its_exact_global_popup() {
     {
         let mut frame = session.begin_host_frame().unwrap();
         frame
-            .measure_surface_with(SURFACE, overflow_measurement)
+            .measure_surface_with(SURFACE, |request| {
+                Ok::<_, dockspace::runtime::DockspaceRuntimeError>(overflow_measurement(request))
+            })
             .unwrap();
         let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
         let mut menu = false;

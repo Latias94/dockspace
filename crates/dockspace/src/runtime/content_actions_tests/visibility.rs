@@ -74,32 +74,34 @@ fn hidden_content_needs_no_measurement_metadata_until_it_is_shown_again() {
         let mut tab_items = Vec::new();
         let mut frame = session.begin_host_frame().unwrap();
         frame
-            .measure_surface_with(SURFACE, |request| match request {
-                SurfaceMeasurementRequest::DockBounds { .. }
-                | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
-                    SurfaceMeasurementAnswer::Bounds(
-                        LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
-                    )
-                }
-                SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
-                    assert!(
-                        visible || item != Some(SECOND),
-                        "hidden content has no loaded size metadata"
-                    );
-                    pane_items.push(item.unwrap());
-                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(80.0, 60.0).unwrap())
-                }
-                SurfaceMeasurementRequest::TabIntrinsic { item, .. } => {
-                    assert!(
-                        visible || item != SECOND,
-                        "hidden tabs have no text measurement"
-                    );
-                    tab_items.push(item);
-                    SurfaceMeasurementAnswer::TabIntrinsic(96.0)
-                }
-                SurfaceMeasurementRequest::TabStrip { .. } => {
-                    SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
-                }
+            .measure_surface_with(SURFACE, |request| {
+                Ok::<_, crate::runtime::DockspaceRuntimeError>(match request {
+                    SurfaceMeasurementRequest::DockBounds { .. }
+                    | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+                        SurfaceMeasurementAnswer::Bounds(
+                            LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
+                        )
+                    }
+                    SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
+                        assert!(
+                            visible || item != Some(SECOND),
+                            "hidden content has no loaded size metadata"
+                        );
+                        pane_items.push(item.unwrap());
+                        SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(80.0, 60.0).unwrap())
+                    }
+                    SurfaceMeasurementRequest::TabIntrinsic { item, .. } => {
+                        assert!(
+                            visible || item != SECOND,
+                            "hidden tabs have no text measurement"
+                        );
+                        tab_items.push(item);
+                        SurfaceMeasurementAnswer::TabIntrinsic(96.0)
+                    }
+                    SurfaceMeasurementRequest::TabStrip { .. } => {
+                        SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+                    }
+                })
             })
             .unwrap();
         assert!(frame.paint_plan(SURFACE).unwrap().is_some());

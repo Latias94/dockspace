@@ -23,8 +23,12 @@ operating-system integration.
 | Time and focus | Continuation deadlines and typed pane-focus requests | A monotonic clock, fresh observations at wake time and framework focus execution |
 | Native hosting | Typed effects, bindings and lifecycle obligations | Window creation, client/desktop mapping, physical focus and destruction observations |
 
-Use `measure_surface_with` for measurements and
-`SurfacePaintPlan::execute_surface_program` for the complete ordered program.
+Use `prepare_surface_with` to combine output admission and permitted measurement
+refresh, or `measure_surface_with` for an independent measurement pass. Both
+resolvers return `Result<SurfaceMeasurementAnswer, E>` with
+`E: From<DockspaceRuntimeError>`. Verify that a measurement error stops subsequent
+callbacks and does not install partial or fabricated unavailable measurements.
+Use `SurfacePaintPlan::execute_surface_program` for the complete ordered program.
 An adapter can draw during traversal or copy the required data into owned
 records for later consumption. `DockspaceVisualId` can key retained nodes.
 Preserve `SourceGap` identity and semantic geometry while suppressing its ordinary

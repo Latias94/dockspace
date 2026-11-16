@@ -219,22 +219,24 @@ fn popup_on_another_surface_preserves_the_running_layout_sample() {
         .with_tab_list_menu(TabListMenuMetrics::new(24.0, 8.0, 8.0, 2.0, 92.0, 10.0).unwrap());
     let measure_menu = |frame: &mut DockspaceHostFrame<'_>| {
         frame
-            .measure_surface_with(menu_surface, |request| match request {
-                SurfaceMeasurementRequest::DockBounds { .. }
-                | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
-                    SurfaceMeasurementAnswer::Bounds(
-                        LogicalRect::new(0.0, 0.0, 260.0, 180.0).unwrap(),
-                    )
-                }
-                SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(40.0, 30.0).unwrap())
-                }
-                SurfaceMeasurementRequest::TabIntrinsic { .. } => {
-                    SurfaceMeasurementAnswer::TabIntrinsic(80.0)
-                }
-                SurfaceMeasurementRequest::TabStrip { .. } => {
-                    SurfaceMeasurementAnswer::TabStrip(strip)
-                }
+            .measure_surface_with(menu_surface, |request| {
+                Ok::<_, crate::runtime::DockspaceRuntimeError>(match request {
+                    SurfaceMeasurementRequest::DockBounds { .. }
+                    | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+                        SurfaceMeasurementAnswer::Bounds(
+                            LogicalRect::new(0.0, 0.0, 260.0, 180.0).unwrap(),
+                        )
+                    }
+                    SurfaceMeasurementRequest::PaneMinimum { .. } => {
+                        SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(40.0, 30.0).unwrap())
+                    }
+                    SurfaceMeasurementRequest::TabIntrinsic { .. } => {
+                        SurfaceMeasurementAnswer::TabIntrinsic(80.0)
+                    }
+                    SurfaceMeasurementRequest::TabStrip { .. } => {
+                        SurfaceMeasurementAnswer::TabStrip(strip)
+                    }
+                })
             })
             .unwrap();
     };

@@ -67,35 +67,37 @@ fn product_measurement_seam_hides_manifest_keys_and_builds_a_ready_plan() {
         .begin_host_frame()
         .expect("measurement frame begins");
     frame
-        .measure_surface_with(SURFACE, |request| match request {
-            SurfaceMeasurementRequest::DockBounds { surface } => {
-                assert_eq!(surface, SURFACE);
-                dock_bounds += 1;
-                SurfaceMeasurementAnswer::Bounds(bounds())
-            }
-            SurfaceMeasurementRequest::PopupPlaneBounds { surface } => {
-                assert_eq!(surface, SURFACE);
-                SurfaceMeasurementAnswer::Bounds(bounds())
-            }
-            SurfaceMeasurementRequest::PaneMinimum { visual, item } => {
-                assert_eq!(visual.kind(), DockspaceVisualKind::Pane);
-                pane_items.insert(item);
-                SurfaceMeasurementAnswer::PaneMinimum(minimum())
-            }
-            SurfaceMeasurementRequest::TabIntrinsic { visual, bar, item } => {
-                assert_eq!(visual.kind(), DockspaceVisualKind::Tab);
-                assert_eq!(bar.kind(), DockspaceVisualKind::TabBar);
-                tab_items.insert(item);
-                SurfaceMeasurementAnswer::TabIntrinsic(96.0)
-            }
-            SurfaceMeasurementRequest::TabStrip { visual, visibility } => {
-                assert_eq!(visual.kind(), DockspaceVisualKind::TabBar);
-                assert_eq!(visibility, TabBarVisibility::Visible);
-                tab_strips += 1;
-                SurfaceMeasurementAnswer::TabStrip(
-                    TabStripMetrics::new(0.0, 0.0).expect("test strip metrics validate"),
-                )
-            }
+        .measure_surface_with(SURFACE, |request| {
+            Ok::<_, crate::runtime::DockspaceRuntimeError>(match request {
+                SurfaceMeasurementRequest::DockBounds { surface } => {
+                    assert_eq!(surface, SURFACE);
+                    dock_bounds += 1;
+                    SurfaceMeasurementAnswer::Bounds(bounds())
+                }
+                SurfaceMeasurementRequest::PopupPlaneBounds { surface } => {
+                    assert_eq!(surface, SURFACE);
+                    SurfaceMeasurementAnswer::Bounds(bounds())
+                }
+                SurfaceMeasurementRequest::PaneMinimum { visual, item } => {
+                    assert_eq!(visual.kind(), DockspaceVisualKind::Pane);
+                    pane_items.insert(item);
+                    SurfaceMeasurementAnswer::PaneMinimum(minimum())
+                }
+                SurfaceMeasurementRequest::TabIntrinsic { visual, bar, item } => {
+                    assert_eq!(visual.kind(), DockspaceVisualKind::Tab);
+                    assert_eq!(bar.kind(), DockspaceVisualKind::TabBar);
+                    tab_items.insert(item);
+                    SurfaceMeasurementAnswer::TabIntrinsic(96.0)
+                }
+                SurfaceMeasurementRequest::TabStrip { visual, visibility } => {
+                    assert_eq!(visual.kind(), DockspaceVisualKind::TabBar);
+                    assert_eq!(visibility, TabBarVisibility::Visible);
+                    tab_strips += 1;
+                    SurfaceMeasurementAnswer::TabStrip(
+                        TabStripMetrics::new(0.0, 0.0).expect("test strip metrics validate"),
+                    )
+                }
+            })
         })
         .expect("product measurement answers satisfy the frozen manifest");
     frame.commit().expect("measurement frame commits");
@@ -274,6 +276,56 @@ fn prepare_surface_with_preserves_the_adapter_error_and_rolls_back_partial_measu
 }
 
 #[test]
+fn independent_measurement_error_preserves_ready_geometry_and_can_retry_without_encoding() {
+    let mut session = session();
+    let mut initial = session.begin_host_frame().unwrap();
+    initial
+        .measure_surface(
+            SURFACE,
+            UniformSurfaceMetrics::new(bounds(), minimum(), 96.0).unwrap(),
+        )
+        .unwrap();
+    initial.commit().unwrap();
+
+    let mut frame = session.begin_host_frame().unwrap();
+    let updated = LogicalRect::new(0.0, 0.0, 1000.0, 700.0).unwrap();
+    let mut stopped = false;
+    let error = frame
+        .measure_surface_with(SURFACE, |request| {
+            assert!(!stopped, "a measurement error ends this resolver traversal");
+            if matches!(request, SurfaceMeasurementRequest::PaneMinimum { .. }) {
+                stopped = true;
+                Err::<_, Box<dyn std::error::Error>>(
+                    std::io::Error::other("pane metadata is invalid").into(),
+                )
+            } else {
+                Ok(answer(request, updated))
+            }
+        })
+        .unwrap_err();
+    assert_eq!(error.to_string(), "pane metadata is invalid");
+    assert!(stopped);
+    assert_eq!(
+        frame.paint_plan(SURFACE).unwrap().unwrap().bounds(),
+        bounds()
+    );
+
+    frame
+        .measure_surface_with(SURFACE, |request| {
+            Ok::<_, DockspaceRuntimeError>(answer(request, updated))
+        })
+        .unwrap();
+    let report = frame.commit().unwrap();
+    assert!(!report.workspace_changed());
+    assert!(session.view().item(FIRST).unwrap().is_selected());
+    let mut inspect = session.begin_host_frame().unwrap();
+    assert_eq!(
+        inspect.paint_plan(SURFACE).unwrap().unwrap().bounds(),
+        updated
+    );
+}
+
+#[test]
 fn explicit_presentation_config_controls_compiled_geometry() {
     let config = DockPresentationConfig::builder()
         .tab_bar_height(44.0)
@@ -317,10 +369,9 @@ fn mismatched_measurement_answer_rolls_back_without_poisoning_the_session() {
     let error = session
         .begin_host_frame()
         .expect("invalid measurement frame begins")
-        .measure_surface_with(
-            SURFACE,
-            |_| SurfaceMeasurementAnswer::PaneMinimum(minimum()),
-        )
+        .measure_surface_with(SURFACE, |_| {
+            Ok::<_, DockspaceRuntimeError>(SurfaceMeasurementAnswer::PaneMinimum(minimum()))
+        })
         .expect_err("a pane-size answer cannot satisfy a bounds request");
     assert_eq!(
         error.interaction_error(),

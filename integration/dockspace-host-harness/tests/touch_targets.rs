@@ -72,41 +72,43 @@ fn measure(frame: &mut DockspaceHostFrame<'_>, bounds: LogicalRect, controls: bo
         return;
     }
     frame
-        .measure_surface_with(SURFACE, |question| match question {
-            Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
-                Answer::Bounds(bounds)
-            }
-            Question::PaneMinimum { .. } => {
-                Answer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
-            }
-            Question::TabIntrinsic { .. } => Answer::TabIntrinsic(96.0),
-            Question::TabStrip { .. } => Answer::TabStrip(
-                TabStripMetrics::new(0.0, 0.0).unwrap().with_controls(
-                    TabStripControlMetrics::new(0.0)
-                        .unwrap()
-                        .with_scroll_backward(
-                            TabStripControlMetric::new(
-                                18.0,
-                                TabStripControlPlacement::OverlayLeading,
+        .measure_surface_with(SURFACE, |question| {
+            Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match question {
+                Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
+                    Answer::Bounds(bounds)
+                }
+                Question::PaneMinimum { .. } => {
+                    Answer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+                }
+                Question::TabIntrinsic { .. } => Answer::TabIntrinsic(96.0),
+                Question::TabStrip { .. } => Answer::TabStrip(
+                    TabStripMetrics::new(0.0, 0.0).unwrap().with_controls(
+                        TabStripControlMetrics::new(0.0)
+                            .unwrap()
+                            .with_scroll_backward(
+                                TabStripControlMetric::new(
+                                    18.0,
+                                    TabStripControlPlacement::OverlayLeading,
+                                )
+                                .unwrap(),
                             )
-                            .unwrap(),
-                        )
-                        .with_scroll_forward(
-                            TabStripControlMetric::new(
-                                18.0,
-                                TabStripControlPlacement::OverlayTrailing,
+                            .with_scroll_forward(
+                                TabStripControlMetric::new(
+                                    18.0,
+                                    TabStripControlPlacement::OverlayTrailing,
+                                )
+                                .unwrap(),
                             )
-                            .unwrap(),
-                        )
-                        .with_tab_list_menu(
-                            TabStripControlMetric::new(
-                                20.0,
-                                TabStripControlPlacement::ReservedTrailing,
-                            )
-                            .unwrap(),
-                        ),
+                            .with_tab_list_menu(
+                                TabStripControlMetric::new(
+                                    20.0,
+                                    TabStripControlPlacement::ReservedTrailing,
+                                )
+                                .unwrap(),
+                            ),
+                    ),
                 ),
-            ),
+            })
         })
         .unwrap();
 }

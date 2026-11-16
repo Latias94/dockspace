@@ -8,8 +8,6 @@ use std::sync::Arc;
 use dockspace::geometry::LogicalSize;
 use dockspace::model::{ItemId, SurfaceId};
 use dockspace::policy::TabBarVisibility;
-#[cfg(feature = "native-render-support")]
-use dockspace::runtime::SurfaceUnavailableReason;
 use dockspace::runtime::{
     DockspaceHostFrame, DockspaceRuntimeError, DockspaceVisualId, SurfaceMeasurementAnswer,
     SurfaceMeasurementRequest, SurfaceWork, TabListMenuMetrics, TabStripControlMetric,
@@ -304,26 +302,7 @@ pub(crate) fn measure_surface(
 ) -> Result<BTreeSet<ItemId>, DockspaceError> {
     let mut measurement =
         SurfaceMeasurementContext::new(ui, dock_rect, popup_rect, panes, style, resources)?;
-    let mut adapter_error = None;
-
-    frame
-        .measure_surface_with(surface, |request| {
-            let answer = measurement.resolve(request);
-            match answer {
-                Ok(answer) => answer,
-                Err(error) => {
-                    adapter_error.get_or_insert(error);
-                    SurfaceMeasurementAnswer::Unavailable(
-                        SurfaceUnavailableReason::ContentUnavailable,
-                    )
-                }
-            }
-        })
-        .map_err(DockspaceError::from_detail)?;
-
-    if let Some(error) = adapter_error {
-        return Err(error);
-    }
+    frame.measure_surface_with(surface, |request| measurement.resolve(request))?;
     Ok(measurement.missing())
 }
 

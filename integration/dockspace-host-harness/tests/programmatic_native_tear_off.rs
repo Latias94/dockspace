@@ -813,27 +813,29 @@ fn paint_distinct_minima(
 ) -> (PaintedSurfaceOutput, Vec<OwnedRecord>) {
     let mut frame = native_frame(session);
     frame
-        .measure_surface_with(binding.surface(), |request| match request {
-            SurfaceMeasurementRequest::DockBounds { .. }
-            | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
-                SurfaceMeasurementAnswer::Bounds(
-                    LogicalRect::new(0.0, 0.0, bounds.width(), bounds.height()).unwrap(),
-                )
-            }
-            SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
-                let (width, height) = match item {
-                    Some(A) => (700.0, 260.0),
-                    Some(SIBLING) => (420.0, 300.0),
-                    _ => (40.0, 30.0),
-                };
-                SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(width, height).unwrap())
-            }
-            SurfaceMeasurementRequest::TabIntrinsic { .. } => {
-                SurfaceMeasurementAnswer::TabIntrinsic(80.0)
-            }
-            SurfaceMeasurementRequest::TabStrip { .. } => {
-                SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
-            }
+        .measure_surface_with(binding.surface(), |request| {
+            Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
+                SurfaceMeasurementRequest::DockBounds { .. }
+                | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+                    SurfaceMeasurementAnswer::Bounds(
+                        LogicalRect::new(0.0, 0.0, bounds.width(), bounds.height()).unwrap(),
+                    )
+                }
+                SurfaceMeasurementRequest::PaneMinimum { item, .. } => {
+                    let (width, height) = match item {
+                        Some(A) => (700.0, 260.0),
+                        Some(SIBLING) => (420.0, 300.0),
+                        _ => (40.0, 30.0),
+                    };
+                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(width, height).unwrap())
+                }
+                SurfaceMeasurementRequest::TabIntrinsic { .. } => {
+                    SurfaceMeasurementAnswer::TabIntrinsic(80.0)
+                }
+                SurfaceMeasurementRequest::TabStrip { .. } => {
+                    SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+                }
+            })
         })
         .unwrap();
     finish(frame);

@@ -699,7 +699,9 @@ fn measure_overflow_surface_on(
     surface: SurfaceId,
 ) {
     frame
-        .measure_surface_with(surface, overflow_measurement)
+        .measure_surface_with(surface, |request| {
+            Ok::<_, crate::runtime::DockspaceRuntimeError>(overflow_measurement(request))
+        })
         .expect("overflow surface measurement succeeds");
 }
 

@@ -96,21 +96,23 @@ fn measure(
     let mut frame = session.begin_host_frame().unwrap();
     for (surface, rect) in [(SOURCE, bounds(900.0, 600.0)), (TARGET, target)] {
         frame
-            .measure_surface_with(surface, |question| match question {
-                Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
-                    Answer::Bounds(rect)
-                }
-                Question::PaneMinimum { item, .. } => Answer::PaneMinimum(pane_minimum(item)),
-                Question::TabIntrinsic { item, .. } => {
-                    Answer::TabIntrinsic(if item.get().is_multiple_of(2) {
-                        4096.0
-                    } else {
-                        96.0
-                    })
-                }
-                Question::TabStrip { .. } => {
-                    Answer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
-                }
+            .measure_surface_with(surface, |question| {
+                Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match question {
+                    Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
+                        Answer::Bounds(rect)
+                    }
+                    Question::PaneMinimum { item, .. } => Answer::PaneMinimum(pane_minimum(item)),
+                    Question::TabIntrinsic { item, .. } => {
+                        Answer::TabIntrinsic(if item.get().is_multiple_of(2) {
+                            4096.0
+                        } else {
+                            96.0
+                        })
+                    }
+                    Question::TabStrip { .. } => {
+                        Answer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+                    }
+                })
             })
             .unwrap_or_else(|error| {
                 panic!("measurement failed for {surface:?}, target {target:?}: {error:?}")

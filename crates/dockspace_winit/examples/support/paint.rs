@@ -32,11 +32,15 @@ pub(super) fn measure(
 ) -> super::AppResult<()> {
     let minimum = LogicalSize::new(100.0, 64.0)?;
     let strip = TabStripMetrics::new(0.0, 0.0)?;
-    frame.measure_surface_with(surface, |request| match request {
-        Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => Answer::Bounds(bounds),
-        Request::PaneMinimum { .. } => Answer::PaneMinimum(minimum),
-        Request::TabIntrinsic { item, .. } => Answer::TabIntrinsic(title(item).len() as f64 * 8.0),
-        Request::TabStrip { .. } => Answer::TabStrip(strip),
+    frame.measure_surface_with(surface, |request| {
+        Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
+            Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => Answer::Bounds(bounds),
+            Request::PaneMinimum { .. } => Answer::PaneMinimum(minimum),
+            Request::TabIntrinsic { item, .. } => {
+                Answer::TabIntrinsic(title(item).len() as f64 * 8.0)
+            }
+            Request::TabStrip { .. } => Answer::TabStrip(strip),
+        })
     })?;
     Ok(())
 }

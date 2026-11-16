@@ -30,22 +30,24 @@ fn missing_inactive_minimum_defers_output_and_never_blocks_accepted_selection() 
         }
         let mut requested = Vec::new();
         frame
-            .measure_surface_with(SURFACE, |request| match request {
-                Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => {
-                    Answer::Bounds(LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap())
-                }
-                Request::PaneMinimum { item, .. } => {
-                    requested.push(item);
-                    if missing && item == Some(SECOND) {
-                        Answer::Unavailable(SurfaceUnavailableReason::ContentUnavailable)
-                    } else {
-                        Answer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+            .measure_surface_with(SURFACE, |request| {
+                Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
+                    Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => {
+                        Answer::Bounds(LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap())
                     }
-                }
-                Request::TabIntrinsic { .. } => Answer::TabIntrinsic(96.0),
-                Request::TabStrip { .. } => {
-                    Answer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
-                }
+                    Request::PaneMinimum { item, .. } => {
+                        requested.push(item);
+                        if missing && item == Some(SECOND) {
+                            Answer::Unavailable(SurfaceUnavailableReason::ContentUnavailable)
+                        } else {
+                            Answer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+                        }
+                    }
+                    Request::TabIntrinsic { .. } => Answer::TabIntrinsic(96.0),
+                    Request::TabStrip { .. } => {
+                        Answer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+                    }
+                })
             })
             .unwrap();
         assert_eq!(requested, [Some(FIRST), Some(SECOND)]);

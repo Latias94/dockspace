@@ -301,24 +301,28 @@ fn emit_first_live_child_output(
         };
         let mut popup_bounds_requests = 0;
         measure
-            .measure_surface_with(surface, |request| match request {
-                SurfaceMeasurementRequest::DockBounds { .. } => {
-                    SurfaceMeasurementAnswer::Bounds(metrics.bounds)
-                }
-                SurfaceMeasurementRequest::PopupPlaneBounds { surface: requested } => {
-                    assert_eq!(requested, surface);
-                    popup_bounds_requests += 1;
-                    SurfaceMeasurementAnswer::Bounds(metrics.bounds)
-                }
-                SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                    SurfaceMeasurementAnswer::PaneMinimum(metrics.pane_minimum)
-                }
-                SurfaceMeasurementRequest::TabIntrinsic { .. } => {
-                    SurfaceMeasurementAnswer::TabIntrinsic(metrics.tab_intrinsic.content_width())
-                }
-                SurfaceMeasurementRequest::TabStrip { .. } => {
-                    SurfaceMeasurementAnswer::TabStrip(strip)
-                }
+            .measure_surface_with(surface, |request| {
+                Ok::<_, crate::runtime::DockspaceRuntimeError>(match request {
+                    SurfaceMeasurementRequest::DockBounds { .. } => {
+                        SurfaceMeasurementAnswer::Bounds(metrics.bounds)
+                    }
+                    SurfaceMeasurementRequest::PopupPlaneBounds { surface: requested } => {
+                        assert_eq!(requested, surface);
+                        popup_bounds_requests += 1;
+                        SurfaceMeasurementAnswer::Bounds(metrics.bounds)
+                    }
+                    SurfaceMeasurementRequest::PaneMinimum { .. } => {
+                        SurfaceMeasurementAnswer::PaneMinimum(metrics.pane_minimum)
+                    }
+                    SurfaceMeasurementRequest::TabIntrinsic { .. } => {
+                        SurfaceMeasurementAnswer::TabIntrinsic(
+                            metrics.tab_intrinsic.content_width(),
+                        )
+                    }
+                    SurfaceMeasurementRequest::TabStrip { .. } => {
+                        SurfaceMeasurementAnswer::TabStrip(strip)
+                    }
+                })
             })
             .expect("the publicly enumerated surface measures");
         assert_eq!(

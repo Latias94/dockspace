@@ -61,7 +61,7 @@ fn public_owned_output_structure_and_retained_buffer_are_linear_in_panes() {
         frame
             .measure_surface_with(SURFACE, |request| {
                 measurement_requests += 1;
-                match request {
+                Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
                     SurfaceMeasurementRequest::DockBounds { .. }
                     | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
                         // Even the largest fixture leaves ample room for every singleton tab.
@@ -78,7 +78,7 @@ fn public_owned_output_structure_and_retained_buffer_are_linear_in_panes() {
                     SurfaceMeasurementRequest::TabStrip { .. } => {
                         SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
                     }
-                }
+                })
             })
             .unwrap();
         frame.commit().unwrap();

@@ -70,44 +70,52 @@ fn measure_overflow(frame: &mut DockspaceHostFrame<'_>) {
 
 fn measure_overflow_surface(frame: &mut DockspaceHostFrame<'_>, surface: SurfaceId) {
     frame
-        .measure_surface_with(surface, |request| match request {
-            SurfaceMeasurementRequest::DockBounds { .. }
-            | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
-                SurfaceMeasurementAnswer::Bounds(bounds(160.0))
-            }
-            SurfaceMeasurementRequest::PaneMinimum { .. } => {
-                SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
-            }
-            SurfaceMeasurementRequest::TabIntrinsic { .. } => {
-                SurfaceMeasurementAnswer::TabIntrinsic(96.0)
-            }
-            SurfaceMeasurementRequest::TabStrip { .. } => {
-                let controls = TabStripControlMetrics::new(4.0)
-                    .unwrap()
-                    .with_scroll_backward(
-                        TabStripControlMetric::new(18.0, TabStripControlPlacement::OverlayLeading)
-                            .unwrap(),
-                    )
-                    .with_scroll_forward(
-                        TabStripControlMetric::new(18.0, TabStripControlPlacement::OverlayTrailing)
-                            .unwrap(),
-                    )
-                    .with_tab_list_menu(
-                        TabStripControlMetric::new(
-                            20.0,
-                            TabStripControlPlacement::ReservedTrailing,
-                        )
-                        .unwrap(),
-                    );
-                SurfaceMeasurementAnswer::TabStrip(
-                    TabStripMetrics::new(0.0, 0.0)
+        .measure_surface_with(surface, |request| {
+            Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
+                SurfaceMeasurementRequest::DockBounds { .. }
+                | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+                    SurfaceMeasurementAnswer::Bounds(bounds(160.0))
+                }
+                SurfaceMeasurementRequest::PaneMinimum { .. } => {
+                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(64.0, 48.0).unwrap())
+                }
+                SurfaceMeasurementRequest::TabIntrinsic { .. } => {
+                    SurfaceMeasurementAnswer::TabIntrinsic(96.0)
+                }
+                SurfaceMeasurementRequest::TabStrip { .. } => {
+                    let controls = TabStripControlMetrics::new(4.0)
                         .unwrap()
-                        .with_controls(controls)
+                        .with_scroll_backward(
+                            TabStripControlMetric::new(
+                                18.0,
+                                TabStripControlPlacement::OverlayLeading,
+                            )
+                            .unwrap(),
+                        )
+                        .with_scroll_forward(
+                            TabStripControlMetric::new(
+                                18.0,
+                                TabStripControlPlacement::OverlayTrailing,
+                            )
+                            .unwrap(),
+                        )
                         .with_tab_list_menu(
-                            TabListMenuMetrics::new(24.0, 8.0, 8.0, 2.0, 92.0, 10.0).unwrap(),
-                        ),
-                )
-            }
+                            TabStripControlMetric::new(
+                                20.0,
+                                TabStripControlPlacement::ReservedTrailing,
+                            )
+                            .unwrap(),
+                        );
+                    SurfaceMeasurementAnswer::TabStrip(
+                        TabStripMetrics::new(0.0, 0.0)
+                            .unwrap()
+                            .with_controls(controls)
+                            .with_tab_list_menu(
+                                TabListMenuMetrics::new(24.0, 8.0, 8.0, 2.0, 92.0, 10.0).unwrap(),
+                            ),
+                    )
+                }
+            })
         })
         .unwrap();
 }
@@ -1461,6 +1469,159 @@ fn host_pointer_independent_targets_fixture() -> (DockspaceSession, [HostPointer
         )
     });
     (session, scenes)
+}
+
+#[test]
+fn host_pointer_input_only_preview_cancel_and_repress_allow_independent_prepare_and_one_delivery() {
+    let (mut session, [scene, _]) = host_pointer_independent_targets_fixture();
+    let before = session.version();
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .submit_host_pointer_batch([scene.press(), scene.target_edge(SurfacePointerEvent::Moved)])
+        .unwrap();
+    let mut preview = false;
+    let mut guides = false;
+    frame
+        .paint_plan(B)
+        .unwrap()
+        .unwrap()
+        .visit_surface_program(|step| {
+            match step {
+                Step::DragPreview(candidate) => {
+                    assert!(matches!(
+                        candidate.visual(),
+                        DockspacePreviewVisual::Dock { surface: B, .. }
+                    ));
+                    preview = true;
+                }
+                Step::DropGuide {
+                    affordance: Some(cluster),
+                    ..
+                } => guides |= cluster.targets().next().is_some(),
+                _ => {}
+            }
+            Ok::<(), ()>(())
+        })
+        .unwrap();
+    assert!(preview && guides);
+    let mut started = frame.commit().unwrap();
+    assert_eq!(started.repaint_surfaces(), &[A, B]);
+    assert!(started.take_painted_outputs().is_empty());
+    assert!(started.manipulation_feedback().is_empty());
+    assert!(!started.workspace_changed());
+    assert!(session.has_active_gesture());
+
+    // Keep the original pixels installed; cancellation and the fresh press share one batch.
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .submit_host_pointer_batch([
+            scene.target_edge(SurfacePointerEvent::StreamCancelled(
+                dockspace::runtime::SurfacePointerCancelReason::ExplicitCancellation,
+            )),
+            scene.press(),
+        ])
+        .unwrap();
+    assert!(frame.has_active_gesture());
+    let mut measured = false;
+    let independent = frame
+        .prepare_surface_with::<DockspaceRuntimeError>(C, |request| {
+            measured = true;
+            Ok(match request {
+                SurfaceMeasurementRequest::DockBounds { .. }
+                | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+                    SurfaceMeasurementAnswer::Bounds(bounds(900.0))
+                }
+                SurfaceMeasurementRequest::PaneMinimum { .. } => {
+                    SurfaceMeasurementAnswer::PaneMinimum(LogicalSize::new(80.0, 64.0).unwrap())
+                }
+                SurfaceMeasurementRequest::TabIntrinsic { .. } => {
+                    SurfaceMeasurementAnswer::TabIntrinsic(144.0)
+                }
+                SurfaceMeasurementRequest::TabStrip { .. } => {
+                    SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+                }
+            })
+        })
+        .unwrap()
+        .ready()
+        .unwrap();
+    assert!(measured);
+    assert_eq!(independent.bounds(), bounds(900.0));
+    let mut source_restored = false;
+    for surface in [A, B] {
+        frame
+            .paint_plan(surface)
+            .unwrap()
+            .unwrap()
+            .visit_surface_program(|step| {
+                match step {
+                    Step::DragPreview(_)
+                    | Step::DragDecoration(_)
+                    | Step::DropGuide {
+                        affordance: Some(_),
+                        ..
+                    } => panic!("the new press must not inherit the cancelled drag's visuals"),
+                    Step::Operation {
+                        operation: Operation::Tab(tab),
+                        paint,
+                        ..
+                    } if tab.visual_id() == scene.source_visual => {
+                        assert_eq!(paint, SurfacePaintDisposition::Visible);
+                        source_restored = true;
+                    }
+                    _ => {}
+                }
+                Ok::<(), ()>(())
+            })
+            .unwrap();
+    }
+    assert!(source_restored);
+    let mut restarted = frame.commit().unwrap();
+    assert_eq!(restarted.repaint_surfaces(), &[A, B, C]);
+    assert!(restarted.take_painted_outputs().is_empty());
+    assert!(!restarted.workspace_changed());
+    let [cancelled] = restarted.manipulation_feedback() else {
+        panic!("only the previous drag must terminate in the cancellation batch")
+    };
+    assert_eq!(
+        cancelled.status(),
+        Status::Cancelled(
+            dockspace::runtime::DockspaceManipulationCancelReason::ExplicitCancellation
+        )
+    );
+    assert_eq!(session.version(), before);
+    assert!(session.has_active_gesture());
+    let quiet = settle(&mut session);
+    assert!(quiet.repaint_surfaces().is_empty());
+    assert!(quiet.manipulation_feedback().is_empty());
+
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .submit_host_pointer_batch([
+            scene.target_edge(SurfacePointerEvent::Moved),
+            scene.target_edge(SurfacePointerEvent::ButtonReleased(
+                SurfacePointerButton::Primary,
+            )),
+        ])
+        .unwrap();
+    let mut released = frame.commit().unwrap();
+    let delivered = assert_immediate_dock(&released);
+    assert_ne!(delivered.manipulation_id(), cancelled.manipulation_id());
+    assert!(released.take_painted_outputs().is_empty());
+    assert_eq!(session.view().item(FIRST).unwrap().surface(), B);
+    assert_eq!(
+        session.view().item(SECOND).unwrap().tabs().items(),
+        &[SECOND]
+    );
+    assert_eq!(
+        session.view().item(FIRST).unwrap().tabs().items(),
+        &[THIRD, FOURTH, FIRST]
+    );
+    assert!(!session.has_active_gesture());
+    assert!(!session.has_pending_presentation());
+    let settled = settle(&mut session);
+    assert!(!settled.workspace_changed());
+    assert!(settled.manipulation_feedback().is_empty());
 }
 
 #[test]

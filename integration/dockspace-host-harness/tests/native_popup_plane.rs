@@ -63,33 +63,35 @@ fn idle(session: &mut DockspaceSession) -> HostFrameReport {
 
 fn measure(frame: &mut DockspaceHostFrame<'_>) {
     frame
-        .measure_surface_with(SURFACE, |request| match request {
-            Request::DockBounds { .. } => Answer::Bounds(dock_bounds()),
-            Request::PopupPlaneBounds { .. } => {
-                Answer::Bounds(LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap())
-            }
-            Request::PaneMinimum { .. } => {
-                Answer::PaneMinimum(LogicalSize::new(16.0, 16.0).unwrap())
-            }
-            Request::TabIntrinsic { .. } => Answer::TabIntrinsic(96.0),
-            Request::TabStrip { .. } => Answer::TabStrip(
-                TabStripMetrics::new(0.0, 0.0)
-                    .unwrap()
-                    .with_controls(
-                        TabStripControlMetrics::new(0.0)
-                            .unwrap()
-                            .with_tab_list_menu(
-                                TabStripControlMetric::new(
-                                    20.0,
-                                    TabStripControlPlacement::ReservedTrailing,
-                                )
-                                .unwrap(),
-                            ),
-                    )
-                    .with_tab_list_menu(
-                        TabListMenuMetrics::new(24.0, 8.0, 8.0, 2.0, 92.0, 10.0).unwrap(),
-                    ),
-            ),
+        .measure_surface_with(SURFACE, |request| {
+            Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
+                Request::DockBounds { .. } => Answer::Bounds(dock_bounds()),
+                Request::PopupPlaneBounds { .. } => {
+                    Answer::Bounds(LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap())
+                }
+                Request::PaneMinimum { .. } => {
+                    Answer::PaneMinimum(LogicalSize::new(16.0, 16.0).unwrap())
+                }
+                Request::TabIntrinsic { .. } => Answer::TabIntrinsic(96.0),
+                Request::TabStrip { .. } => Answer::TabStrip(
+                    TabStripMetrics::new(0.0, 0.0)
+                        .unwrap()
+                        .with_controls(
+                            TabStripControlMetrics::new(0.0)
+                                .unwrap()
+                                .with_tab_list_menu(
+                                    TabStripControlMetric::new(
+                                        20.0,
+                                        TabStripControlPlacement::ReservedTrailing,
+                                    )
+                                    .unwrap(),
+                                ),
+                        )
+                        .with_tab_list_menu(
+                            TabListMenuMetrics::new(24.0, 8.0, 8.0, 2.0, 92.0, 10.0).unwrap(),
+                        ),
+                ),
+            })
         })
         .unwrap();
 }

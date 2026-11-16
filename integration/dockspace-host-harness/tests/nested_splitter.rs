@@ -216,20 +216,24 @@ fn measure(
     minimums: &[(ItemId, f64, f64)],
 ) {
     frame
-        .measure_surface_with(SURFACE, |question| match question {
-            Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
-                Answer::Bounds(bounds)
-            }
-            Question::PaneMinimum { item, .. } => {
-                let (_, width, height) = minimums
-                    .iter()
-                    .copied()
-                    .find(|(candidate, _, _)| Some(*candidate) == item)
-                    .unwrap_or((A, 64.0, 48.0));
-                Answer::PaneMinimum(LogicalSize::new(width, height).unwrap())
-            }
-            Question::TabIntrinsic { .. } => Answer::TabIntrinsic(56.0),
-            Question::TabStrip { .. } => Answer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap()),
+        .measure_surface_with(SURFACE, |question| {
+            Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match question {
+                Question::DockBounds { .. } | Question::PopupPlaneBounds { .. } => {
+                    Answer::Bounds(bounds)
+                }
+                Question::PaneMinimum { item, .. } => {
+                    let (_, width, height) = minimums
+                        .iter()
+                        .copied()
+                        .find(|(candidate, _, _)| Some(*candidate) == item)
+                        .unwrap_or((A, 64.0, 48.0));
+                    Answer::PaneMinimum(LogicalSize::new(width, height).unwrap())
+                }
+                Question::TabIntrinsic { .. } => Answer::TabIntrinsic(56.0),
+                Question::TabStrip { .. } => {
+                    Answer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
+                }
+            })
         })
         .unwrap();
 }

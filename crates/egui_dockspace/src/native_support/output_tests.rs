@@ -186,6 +186,147 @@ fn only_ready_surfaces_require_a_complete_proof() {
 }
 
 #[test]
+fn native_measurement_error_stops_callbacks_and_preserves_ready_scene_for_retry() {
+    use std::cell::Cell;
+
+    use dockspace::model::{
+        DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, RootId,
+    };
+    use dockspace::policy::DockPolicy;
+    use dockspace::runtime::DockspaceSession;
+    use egui::{RawInput, Rect, Ui};
+
+    use crate::{
+        DockInputConfig, DockStyle, DockspaceErrorKind, PaneResponse, PaneView, TabBarId,
+        TabBarLayout,
+    };
+
+    #[derive(Default)]
+    struct Panes {
+        invalid_minimum: bool,
+        minimum_calls: Cell<usize>,
+        title_calls: Cell<usize>,
+        chrome_calls: Cell<usize>,
+    }
+
+    impl PaneView for Panes {
+        fn title(&self, _: ItemId) -> Option<egui::WidgetText> {
+            self.title_calls.set(self.title_calls.get() + 1);
+            Some("Document".into())
+        }
+
+        fn ui(&mut self, _: ItemId, ui: &mut Ui) -> PaneResponse {
+            PaneResponse::from(&ui.label("Document content"))
+        }
+
+        fn minimum_size(&self, _: ItemId) -> egui::Vec2 {
+            self.minimum_calls.set(self.minimum_calls.get() + 1);
+            if self.invalid_minimum {
+                egui::vec2(f32::NAN, 40.0)
+            } else {
+                egui::vec2(80.0, 40.0)
+            }
+        }
+
+        fn tab_bar_layout(&self, _: TabBarId, _: &Ui) -> TabBarLayout {
+            self.chrome_calls.set(self.chrome_calls.get() + 1);
+            TabBarLayout::default()
+        }
+    }
+
+    let surface = SurfaceId::new(1);
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        surface,
+        DockspaceRootLayout::new(
+            RootId::new(1),
+            DockspaceNode::central_tabs([ItemId::new(1), ItemId::new(2)]),
+        ),
+    )])
+    .unwrap();
+    let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+    let context = Context::default();
+    context.options_mut(|options| options.max_passes = 1.try_into().unwrap());
+    let style = DockStyle::default();
+    let mut panes = Panes::default();
+    let mut ready_output = None;
+
+    for pass in 0..3 {
+        panes.invalid_minimum = pass == 1;
+        panes.minimum_calls.set(0);
+        panes.title_calls.set(0);
+        panes.chrome_calls.set(0);
+        let mut output = context.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(640.0, 480.0),
+                )),
+                time: Some(f64::from(pass) * 0.1),
+                ..RawInput::default()
+            },
+            |ui| {
+                let mut frame = session.begin_host_frame().unwrap();
+                let bounds = ui.available_rect_before_wrap();
+                let measured =
+                    super::measure_surface(&mut frame, surface, ui, bounds, bounds, &panes, &style);
+                if pass == 1 {
+                    let error = measured.unwrap_err();
+                    assert_eq!(error.kind(), DockspaceErrorKind::InvalidConfiguration);
+                    assert_eq!(
+                        error.to_string(),
+                        "egui measurement for pane minimum is invalid"
+                    );
+                    assert_eq!(panes.minimum_calls.get(), 1);
+                    assert_eq!(panes.title_calls.get(), 0);
+                    assert_eq!(panes.chrome_calls.get(), 0);
+                    assert_eq!(
+                        frame
+                            .paint_plan(surface)
+                            .unwrap()
+                            .map(|plan| plan.semantic_output()),
+                        ready_output,
+                        "a failed measurement must not retract the previous Ready scene"
+                    );
+                    drop(frame);
+                    return;
+                }
+
+                assert!(measured.unwrap().is_empty());
+                assert!(panes.minimum_calls.get() > 0);
+                assert!(panes.title_calls.get() > 0);
+                assert!(panes.chrome_calls.get() > 0);
+                if pass == 0 {
+                    ready_output = Some(
+                        frame
+                            .paint_plan(surface)
+                            .unwrap()
+                            .expect("valid metadata establishes a Ready scene")
+                            .semantic_output(),
+                    );
+                } else {
+                    let mut register_scroll = |ui: &Ui, _: Rect, id: Id| (id, ui.layer_id());
+                    let mut paint = super::paint_surface(
+                        &mut frame,
+                        Id::unique("native-measurement-error-retry"),
+                        surface,
+                        ui,
+                        &mut panes,
+                        &style,
+                        &DockInputConfig::default(),
+                        &mut register_scroll,
+                    )
+                    .unwrap();
+                    assert!(paint.had_ready_plan());
+                    assert!(paint.confirm_into(&mut frame).unwrap());
+                }
+                drop(frame.commit().unwrap());
+            },
+        );
+        output.textures_delta.clear();
+    }
+}
+
+#[test]
 fn repeated_pending_focus_observations_remain_available_without_requesting_another_paint() {
     use dockspace::model::{
         DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, RootId,

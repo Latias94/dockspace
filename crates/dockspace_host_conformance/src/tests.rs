@@ -2829,26 +2829,28 @@ fn runtime_paint_plan_exposes_complete_stable_renderer_geometry() {
     let minimum = LogicalSize::new(80.0, 60.0).expect("the fixture minimum is valid");
     host.run(|frame| {
         frame
-            .measure_surface_with(SURFACE, |request| match request {
-                SurfaceMeasurementRequest::DockBounds { .. }
-                | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
-                    SurfaceMeasurementAnswer::Bounds(bounds)
-                }
-                SurfaceMeasurementRequest::PaneMinimum { visual, .. } => {
-                    assert_eq!(visual.kind(), DockspaceVisualKind::Pane);
-                    SurfaceMeasurementAnswer::PaneMinimum(minimum)
-                }
-                SurfaceMeasurementRequest::TabIntrinsic { visual, .. } => {
-                    assert_eq!(visual.kind(), DockspaceVisualKind::Tab);
-                    SurfaceMeasurementAnswer::TabIntrinsic(96.0)
-                }
-                SurfaceMeasurementRequest::TabStrip { visual, .. } => {
-                    assert_eq!(visual.kind(), DockspaceVisualKind::TabBar);
-                    SurfaceMeasurementAnswer::TabStrip(
-                        TabStripMetrics::new(0.0, 0.0)
-                            .expect("the fixture tab-strip metrics are valid"),
-                    )
-                }
+            .measure_surface_with(SURFACE, |request| {
+                Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
+                    SurfaceMeasurementRequest::DockBounds { .. }
+                    | SurfaceMeasurementRequest::PopupPlaneBounds { .. } => {
+                        SurfaceMeasurementAnswer::Bounds(bounds)
+                    }
+                    SurfaceMeasurementRequest::PaneMinimum { visual, .. } => {
+                        assert_eq!(visual.kind(), DockspaceVisualKind::Pane);
+                        SurfaceMeasurementAnswer::PaneMinimum(minimum)
+                    }
+                    SurfaceMeasurementRequest::TabIntrinsic { visual, .. } => {
+                        assert_eq!(visual.kind(), DockspaceVisualKind::Tab);
+                        SurfaceMeasurementAnswer::TabIntrinsic(96.0)
+                    }
+                    SurfaceMeasurementRequest::TabStrip { visual, .. } => {
+                        assert_eq!(visual.kind(), DockspaceVisualKind::TabBar);
+                        SurfaceMeasurementAnswer::TabStrip(
+                            TabStripMetrics::new(0.0, 0.0)
+                                .expect("the fixture tab-strip metrics are valid"),
+                        )
+                    }
+                })
             })
             .expect("the renderer supplies the complete measurement manifest");
     });
