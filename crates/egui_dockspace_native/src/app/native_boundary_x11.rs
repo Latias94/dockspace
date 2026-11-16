@@ -699,44 +699,59 @@ fn root_tab_point(
     facts: &Shared,
     item: ItemId,
     fraction: f64,
-) -> (WindowId, [i32; 2]) {
-    let mut state = lock_state(state);
-    let native = state.boundary_coordinator();
-    let (receiver, bounds) = {
-        // Read only the current presented scene; dropping this candidate publishes nothing.
-        let mut frame = native
-            .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
-            .unwrap();
-        let plan = frame.frame.paint_plan(ROOT).unwrap().unwrap();
-        let mut bounds = None;
-        plan.visit_surface_program(|step| {
-            if let SurfacePaintProgramStep::Operation {
-                operation: SurfacePaintProgramOperation::Tab(tab),
-                ..
-            } = step
-                && tab.item() == item
+    deadline: Instant,
+) -> Result<(WindowId, [i32; 2]), String> {
+    let mut point = None;
+    wait_until(
+        deadline,
+        "an idle boundary with the exact presented tab",
+        || {
+            let mut state = lock_state(state);
+            // A GUI pass may retain its unpublished update after releasing this lock.
+            let Some(native) = state.idle_boundary_coordinator() else {
+                return false;
+            };
+            let (receiver, bounds) = {
+                // Inspect a candidate without publishing it; only a presented match
+                // below may supply the physical input point.
+                let mut frame = native
+                    .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
+                    .unwrap();
+                let plan = frame.frame.paint_plan(ROOT).unwrap().unwrap();
+                let mut bounds = None;
+                plan.visit_surface_program(|step| {
+                    if let SurfacePaintProgramStep::Operation {
+                        operation: SurfacePaintProgramOperation::Tab(tab),
+                        ..
+                    } = step
+                        && tab.item() == item
+                    {
+                        assert!(tab.operable());
+                        assert_eq!(tab.full_bounds(), tab.visible_bounds());
+                        bounds = Some(tab.visible_bounds());
+                    }
+                    Ok::<(), ()>(())
+                })
+                .unwrap();
+                (plan.tab_receiver(item).unwrap(), bounds.unwrap())
+            };
+            if native
+                .session()
+                .bind_presented_receiver(&receiver)
+                .is_none()
             {
-                assert!(tab.operable());
-                assert_eq!(tab.full_bounds(), tab.visible_bounds());
-                bounds = Some(tab.visible_bounds());
+                return false;
             }
-            Ok::<(), ()>(())
-        })
-        .unwrap();
-        (plan.tab_receiver(item).unwrap(), bounds.unwrap())
-    };
-    assert!(
-        native
-            .session()
-            .bind_presented_receiver(&receiver)
-            .is_some()
-    );
-    let (token, window) = lock_state(facts).root.unwrap();
-    let rect = window.inner_rect().expect("actual X11 content origin");
-    let scale = window.presentation_scale_factor();
-    let x = f64::from(rect.x()) + (bounds.x() + bounds.width() * fraction) * scale;
-    let y = f64::from(rect.y()) + (bounds.y() + bounds.height() * 0.5) * scale;
-    (token.window_id(), [x.round() as i32, y.round() as i32])
+            let (token, window) = lock_state(facts).root.unwrap();
+            let rect = window.inner_rect().expect("actual X11 content origin");
+            let scale = window.presentation_scale_factor();
+            let x = f64::from(rect.x()) + (bounds.x() + bounds.width() * fraction) * scale;
+            let y = f64::from(rect.y()) + (bounds.y() + bounds.height() * 0.5) * scale;
+            point = Some((token.window_id(), [x.round() as i32, y.round() as i32]));
+            true
+        },
+    )?;
+    Ok(point.expect("the exact presented tab supplied its point"))
 }
 
 fn drive_pointer_lineage(
@@ -745,8 +760,8 @@ fn drive_pointer_lineage(
     host: &BoundaryHost,
     deadline: Instant,
 ) -> Result<(), String> {
-    let (window, press) = root_tab_point(state, &host.facts, TABS[0], 0.5);
-    let (_, hover) = root_tab_point(state, &host.facts, TABS[1], 0.5);
+    let (window, press) = root_tab_point(state, &host.facts, TABS[0], 0.5, deadline)?;
+    let (_, hover) = root_tab_point(state, &host.facts, TABS[1], 0.5, deadline)?;
     {
         let mut state = lock_state(state);
         let mut facts = lock_state(&host.facts);
@@ -774,7 +789,7 @@ fn drive_pointer_lineage(
         || lock_state(&host.facts).pointer_phase == PointerPhase::Retained,
     )?;
     let (first, first_key) = lock_state(&host.facts).pointer_first.unwrap();
-    let (_, moved) = root_tab_point(state, &host.facts, TABS[1], 0.65);
+    let (_, moved) = root_tab_point(state, &host.facts, TABS[1], 0.65, deadline)?;
     assert_ne!(
         moved, hover,
         "a distinct physical motion updates the challenge"
@@ -984,23 +999,30 @@ fn drive(state: &State, context: &egui::Context, host: &BoundaryHost) -> Result<
         routes.has_admitted_create_attempt(b_attempt.viewport_id(), b_binding)
             && routes.binding_for_create_attempt(b_attempt) == Some(b_binding)
     }));
-    {
-        let mut state = lock_state(state);
-        let native = state.boundary_coordinator();
-        let mut frame = native
-            .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
-            .unwrap();
-        assert!(frame.frame.cancel_next_native_create().unwrap());
-        frame
-            .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
-            .unwrap();
-        let mut report = frame.commit().unwrap();
-        native.settle_host_frame_report(&report).unwrap();
-        native
-            .accept_native_effects(context, report.take_native_effects())
-            .unwrap();
-        assert!(!native.session().has_pending_native_create());
-    }
+    wait_until(
+        deadline,
+        "B cancellation after the active output pass",
+        || {
+            let mut state = lock_state(state);
+            let Some(native) = state.idle_boundary_coordinator() else {
+                return false;
+            };
+            let mut frame = native
+                .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
+                .unwrap();
+            assert!(frame.frame.cancel_next_native_create().unwrap());
+            frame
+                .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+                .unwrap();
+            let mut report = frame.commit().unwrap();
+            native.settle_host_frame_report(&report).unwrap();
+            native
+                .accept_native_effects(context, report.take_native_effects())
+                .unwrap();
+            assert!(!native.session().has_pending_native_create());
+            true
+        },
+    )?;
     assert_eq!(source(state), initial_source);
     assert!(bridge.with_viewports(|routes| {
         routes.has_admitted_create_attempt(b_attempt.viewport_id(), b_binding)

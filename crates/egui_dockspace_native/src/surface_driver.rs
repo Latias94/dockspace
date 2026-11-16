@@ -286,6 +286,11 @@ impl<P: PaneView> NativeRuntimeState<P> {
     }
 
     #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn idle_boundary_coordinator(&mut self) -> Option<&mut NativeCoordinator> {
+        self.owned_update.is_none().then_some(&mut self.coordinator)
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn boundary_close_policy(&mut self) -> &mut NativeWindowClosePolicy {
         &mut self.close_policy
     }
