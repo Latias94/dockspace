@@ -142,6 +142,15 @@ compressed separators still invalidate the frozen witness. Handle publication
 and action preparation apply those same geometric requirements; a visible line
 must not advertise an input receiver for a resize the candidate cannot prepare.
 
+For example, a 300-point-wide column may contain a top pane capped at 120 points
+and an uncapped bottom pane. The outside divider is unavailable because the top
+pane does not reach the moving column edge. Hiding that pane restores a complete
+frontier without changing stored weights. Resizing through the 180-point slack
+would need a breakpoint where the capped pane begins to shrink. Even a partial
+implementation that stops at that breakpoint must preserve batch/separate-action
+equivalence, preferred restoration, junction limits and pointer reversals. Keep
+the existing restriction until that complete interaction has a shared design.
+
 ## Alternatives considered
 
 | Alternative | Benefit | Cost and decision |

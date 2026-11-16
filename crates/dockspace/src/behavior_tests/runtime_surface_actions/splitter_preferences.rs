@@ -4,6 +4,8 @@ use super::*;
 use crate::geometry::{AxisSizing, PaneSizing};
 use crate::runtime::{DockPresentationConfig, DockspaceHostFrame, SplitterPaintRecord};
 
+mod sequences;
+
 fn width_sizing(preferred: Option<f64>, maximum: Option<f64>) -> PaneSizing {
     PaneSizing::new(
         AxisSizing::new(0.0, maximum, preferred).unwrap(),
