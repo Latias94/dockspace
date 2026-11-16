@@ -113,6 +113,7 @@ impl DockEngine {
     pub(super) fn activate_prepared_journal_contained_gesture(
         &mut self,
         cause: ReductionCause,
+        focus_causal: FocusCausalStamp,
         intent: SourcePressIntent,
         owner: GestureOwner,
         capture_authority: Authority<PointerCaptureOwner>,
@@ -171,6 +172,11 @@ impl DockEngine {
                         ),
                     }
                 })?;
+                if intent == SourcePressIntent::Activate
+                    && let Some(item) = self.pointer_payload_focus_item(&payload)
+                {
+                    self.request_pointer_pane_focus(prepared.surface, item, focus_causal, events)?;
+                }
                 let source_roster = self
                     .workspace
                     .capture_contained_roster(prepared.surface)

@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 use crate::ids::{ItemId, SurfaceId};
-use crate::presentation::scene::{PresentationPlan, TabBarSceneId, TabSceneId};
+use crate::presentation::scene::{PresentationPlan, TabBarSceneId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TabNavigation {
@@ -15,34 +15,16 @@ pub(crate) enum TabNavigation {
     Last,
 }
 
-pub(crate) fn tab_navigation_destination(
-    plan: &PresentationPlan,
-    current: TabSceneId,
-    selected: Option<ItemId>,
-    navigation: TabNavigation,
-) -> Option<TabSceneId> {
-    let bar = plan
-        .tab_bar_records()
-        .iter()
-        .find(|bar| bar.id().root == current.root && bar.id().tabs == current.tabs)?;
-    let members = bar.members();
-    if members.is_empty() {
-        return None;
+impl TabNavigation {
+    /// The caller resolves a nonempty strip and a valid initial index once per batch.
+    pub(crate) fn destination(self, current: usize, count: usize) -> usize {
+        match self {
+            Self::Previous => current.checked_sub(1).unwrap_or(count - 1),
+            Self::Next => (current + 1) % count,
+            Self::First => 0,
+            Self::Last => count - 1,
+        }
     }
-    let current_index = selected
-        .and_then(|selected| {
-            members
-                .iter()
-                .position(|member| member.tab().item == selected)
-        })
-        .or_else(|| members.iter().position(|member| member.tab() == current))?;
-    let destination = match navigation {
-        TabNavigation::Previous => current_index.checked_sub(1).unwrap_or(members.len() - 1),
-        TabNavigation::Next => (current_index + 1) % members.len(),
-        TabNavigation::First => 0,
-        TabNavigation::Last => members.len() - 1,
-    };
-    Some(members[destination].tab())
 }
 
 /// Stable identity of one transient tab-strip state slot.

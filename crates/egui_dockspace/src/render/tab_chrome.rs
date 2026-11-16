@@ -6,7 +6,9 @@ use dockspace::runtime::{
     TabStripControlPaintRecord,
 };
 use egui::accesskit::{Action, HasPopup, Role};
-use egui::{Id, Key, PointerButton, Rect, Sense, Stroke, pos2, vec2};
+use egui::{Id, PointerButton, Rect, Sense, Stroke, pos2, vec2};
+
+mod keyboard;
 
 use super::RenderContext;
 use super::actions::{button_activation_origin, effective_enabled};
@@ -362,7 +364,7 @@ pub(crate) fn paint_menu(
         paint_menu_row(context, menu, row, viewport, paint);
     }
     paint_scrollbar(context, menu, viewport, bounds, paint);
-    capture_menu_keyboard(context, menu, frame_id, &rows);
+    keyboard::capture(context, menu, frame_id, &rows);
 }
 
 fn tab_list_menu_row_id(context: &RenderContext<'_, '_, '_>, row: TabListMenuRowPaintRecord) -> Id {
@@ -678,91 +680,6 @@ fn scrollbar_target_offset(
     let thumb_top = (pointer_y - grab_offset).clamp(track.min.y, track.max.y - thumb_height);
     let fraction = (thumb_top - track.min.y) / travel;
     Some(f64::from(fraction) * maximum_scroll_offset)
-}
-
-fn capture_menu_keyboard(
-    context: &mut RenderContext<'_, '_, '_>,
-    menu: TabListMenuPaintRecord<'_>,
-    id: Id,
-    rows: &[TabListMenuRowPaintRecord],
-) {
-    if !effective_enabled(context.ui, true) {
-        return;
-    }
-    let focused = context.ui.memory(|memory| memory.focused());
-    let focused_index = rows
-        .iter()
-        .position(|row| Some(tab_list_menu_row_id(context, *row)) == focused);
-    if let Some(index) = focused_index {
-        let navigation = context.ui.input_mut(|input| {
-            if input.consume_key(egui::Modifiers::NONE, Key::ArrowUp) {
-                Some((Key::ArrowUp, index.saturating_sub(1)))
-            } else if input.consume_key(egui::Modifiers::NONE, Key::ArrowDown) {
-                Some((Key::ArrowDown, (index + 1).min(rows.len() - 1)))
-            } else if input.consume_key(egui::Modifiers::NONE, Key::Home) {
-                Some((Key::Home, 0))
-            } else if input.consume_key(egui::Modifiers::NONE, Key::End) {
-                Some((Key::End, rows.len() - 1))
-            } else {
-                None
-            }
-        });
-        if let Some((key, destination)) = navigation
-            && let Some(action) = context
-                .plan
-                .prepare_tab_list_menu_focus(menu, rows[destination].item())
-        {
-            let target = tab_list_menu_row_id(context, rows[destination]);
-            context.ui.memory_mut(|memory| {
-                memory.move_focus(egui::FocusDirection::None);
-                memory.request_focus(target);
-            });
-            context.push_local_action(id.with(("keyboard-navigation", key)), action);
-            return;
-        }
-
-        let activate = context.ui.input_mut(|input| {
-            [Key::Enter, Key::Space]
-                .into_iter()
-                .find(|&key| input.consume_key(egui::Modifiers::NONE, key))
-        });
-        if let Some(key) = activate
-            && let Some(action) = context
-                .plan
-                .prepare_tab_list_menu_row_activation(rows[index])
-        {
-            context.push_local_action(id.with(("keyboard-activate", key)), action);
-            return;
-        }
-        if !rows[index].focused()
-            && let Some(action) = context
-                .plan
-                .prepare_tab_list_menu_focus(menu, rows[index].item())
-        {
-            let origin = tab_list_menu_row_id(context, rows[index]).with("framework-focus");
-            context.push_local_action(origin, action);
-        }
-    }
-
-    if context
-        .ui
-        .input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape))
-        && let Some(action) = context.plan.prepare_tab_list_menu_dismiss(menu.backdrop())
-    {
-        context.push_local_action(id.with(("keyboard-dismiss", Key::Escape)), action);
-        let target = tab_list_menu_trigger_id(context, menu.tab_bar_visual_id());
-        if context.ui.ctx().viewport(|viewport| {
-            viewport
-                .this_pass
-                .widgets
-                .get(target)
-                .is_some_and(|widget| {
-                    widget.enabled && widget.visible && widget.sense.is_focusable()
-                })
-        }) {
-            context.ui.memory_mut(|memory| memory.request_focus(target));
-        }
-    }
 }
 
 #[cfg(test)]

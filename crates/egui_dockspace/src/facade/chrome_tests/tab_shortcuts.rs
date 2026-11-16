@@ -2,6 +2,7 @@
 
 use super::*;
 use egui::{KeyboardShortcut, Modifiers};
+use std::sync::{Arc, Mutex};
 
 fn bindings() -> crate::DockInputConfig {
     crate::DockInputConfig {
@@ -254,27 +255,35 @@ fn cycling_from_strip_controls_uses_their_group() {
 #[test]
 fn late_discarded_passes_cycle_once_with_the_same_deferred_intent() {
     for callback in [false, true] {
-        let mut harness = Harness::tabs(1);
-        harness.dockspace.set_input(bindings());
-        if callback {
-            harness.local_style = Some((*harness.context.global_style()).clone());
-        }
-        present(&mut harness, 800.0, Vec::new());
-        harness.focus_tab(800.0, "Document 1");
-        harness
-            .context
-            .options_mut(|options| options.max_passes = 4.try_into().unwrap());
-        harness
-            .context
-            .add_plugin(OverflowNavigationLateDiscard { remaining: 2 });
-        let output = harness.run(800.0, vec![shortcut(bindings().next_tab.unwrap())]);
-        assert_eq!(output.platform_output.num_completed_passes, 3);
-        let output = present(&mut harness, 800.0, Vec::new());
-        assert_selected(&harness, 2);
-        assert_tab_focus(&harness, &output, 2);
-        for _ in 0..3 {
-            harness.run(800.0, Vec::new());
-            assert_selected(&harness, 2);
+        for count in [1, 3] {
+            let mut harness = Harness::tabs(1);
+            harness.dockspace.set_input(bindings());
+            if callback {
+                harness.local_style = Some((*harness.context.global_style()).clone());
+            }
+            present(&mut harness, 800.0, Vec::new());
+            harness.focus_tab(800.0, "Document 1");
+            harness
+                .context
+                .options_mut(|options| options.max_passes = 4.try_into().unwrap());
+            harness
+                .context
+                .add_plugin(OverflowNavigationLateDiscard { remaining: 2 });
+            let events = vec![shortcut(bindings().next_tab.unwrap()); count];
+            let output = harness.run(800.0, events.clone());
+            assert_eq!(output.platform_output.num_completed_passes, 3);
+            let output = present(&mut harness, 800.0, Vec::new());
+            let expected = 1 + count as u64;
+            assert_selected(&harness, expected);
+            assert_tab_focus(&harness, &output, expected);
+            for _ in 0..3 {
+                harness.run(800.0, Vec::new());
+                assert_selected(&harness, expected);
+            }
+            let output = present(&mut harness, 800.0, events);
+            let expected = 1 + (2 * count as u64) % 6;
+            assert_selected(&harness, expected);
+            assert_tab_focus(&harness, &output, expected);
         }
     }
 }
@@ -315,6 +324,209 @@ fn consecutive_and_repeated_key_presses_visit_every_tab() {
         present(&mut harness, 360.0, vec![release]);
         assert_selected(&harness, 6);
     }
+}
+
+#[test]
+fn batched_tab_shortcuts_preserve_every_press_and_event_order() {
+    for callback in [false, true] {
+        for (directions, expected) in [
+            (vec![true, true], 3),
+            (vec![true, false], 1),
+            (vec![false, true], 1),
+            (vec![true; 8], 3),
+        ] {
+            let mut harness = Harness::tabs(1);
+            harness.dockspace.set_input(bindings());
+            if callback {
+                harness.local_style = Some((*harness.context.global_style()).clone());
+            }
+            present(&mut harness, 360.0, Vec::new());
+            harness.focus_tab(360.0, "Document 1");
+            let events = directions
+                .into_iter()
+                .flat_map(|forward| {
+                    let binding = if forward {
+                        bindings().next_tab.unwrap()
+                    } else {
+                        bindings().previous_tab.unwrap()
+                    };
+                    let press = shortcut(binding);
+                    let mut release = press.clone();
+                    if let Event::Key { pressed, .. } = &mut release {
+                        *pressed = false;
+                    }
+                    [press, release]
+                })
+                .collect();
+            let output = present(&mut harness, 360.0, events);
+            assert_selected(&harness, expected);
+            assert_tab_focus(&harness, &output, expected);
+        }
+    }
+}
+
+#[test]
+fn batched_header_keys_follow_order_and_activate_the_final_tab() {
+    for callback in [false, true] {
+        for (keys, expected, activate) in [
+            (vec![Key::ArrowRight, Key::ArrowRight], 3, false),
+            (
+                vec![Key::End, Key::ArrowLeft, Key::Home, Key::ArrowRight],
+                2,
+                false,
+            ),
+            (vec![Key::ArrowRight, Key::ArrowLeft], 1, false),
+            (vec![Key::End, Key::Enter], 6, true),
+        ] {
+            let mut harness = Harness::tabs(1);
+            if callback {
+                harness.local_style = Some((*harness.context.global_style()).clone());
+            }
+            present(&mut harness, 360.0, Vec::new());
+            harness.focus_tab(360.0, "Document 1");
+            let events = keys
+                .into_iter()
+                .flat_map(|key| {
+                    let press = super::key(key);
+                    let mut release = press.clone();
+                    if let Event::Key { pressed, .. } = &mut release {
+                        *pressed = false;
+                    }
+                    [press, release]
+                })
+                .collect();
+            let output = present(&mut harness, 360.0, events);
+            assert_selected(&harness, expected);
+            if activate {
+                assert_eq!(
+                    harness.context.memory(egui::Memory::focused),
+                    harness.panes.focus_target(ItemId::new(expected)),
+                );
+            } else {
+                assert_tab_focus(&harness, &output, expected);
+            }
+        }
+    }
+}
+
+struct HeaderActivationProbe {
+    discarded_passes: usize,
+    remaining: Arc<Mutex<Vec<Event>>>,
+}
+
+impl egui::plugin::Plugin for HeaderActivationProbe {
+    fn debug_name(&self) -> &'static str {
+        "header-activation-input-tail"
+    }
+
+    fn output_hook(&mut self, context: &Context, output: &mut FullOutput) {
+        if output.platform_output.num_completed_passes == 1 {
+            *self.remaining.lock().unwrap() = context.input(|input| input.events.clone());
+        }
+        if self.discarded_passes > 0 {
+            self.discarded_passes -= 1;
+            output
+                .platform_output
+                .request_discard_reasons
+                .push(egui::RepaintCause::new_reason(
+                    "retry after a header hands focus to content",
+                ));
+        }
+    }
+}
+
+#[test]
+fn header_activation_ends_ownership_before_trailing_navigation() {
+    for callback in [false, true] {
+        for discards in [0, 2] {
+            for (keys, expected, tail) in [
+                (vec![Key::Enter, Key::ArrowRight], 1, vec![Key::ArrowRight]),
+                (
+                    vec![Key::End, Key::Enter, Key::ArrowLeft],
+                    6,
+                    vec![Key::ArrowLeft],
+                ),
+                (
+                    vec![Key::ArrowRight, Key::Space, Key::ArrowRight, Key::Home],
+                    2,
+                    vec![Key::ArrowRight, Key::Home],
+                ),
+            ] {
+                let setup = || {
+                    let mut harness = Harness::tabs(1);
+                    if callback {
+                        harness.local_style = Some((*harness.context.global_style()).clone());
+                    }
+                    present(&mut harness, 360.0, Vec::new());
+                    harness.focus_tab(360.0, "Document 1");
+                    harness
+                };
+                let mut separate = setup();
+                for &key in &keys {
+                    present(&mut separate, 360.0, vec![super::key(key)]);
+                }
+                assert_selected(&separate, expected);
+                assert_eq!(
+                    separate.context.memory(egui::Memory::focused),
+                    separate.panes.focus_target(ItemId::new(expected)),
+                    "separate input frames enter the content before its navigation keys"
+                );
+
+                let mut batched = setup();
+                let remaining = Arc::new(Mutex::new(Vec::new()));
+                batched.context.options_mut(|options| {
+                    options.max_passes = (discards + 1).try_into().unwrap();
+                });
+                batched.context.add_plugin(HeaderActivationProbe {
+                    discarded_passes: discards,
+                    remaining: remaining.clone(),
+                });
+                let output = batched.run(360.0, keys.iter().copied().map(super::key).collect());
+                assert_eq!(output.platform_output.num_completed_passes, discards + 1);
+                let remaining = remaining.lock().unwrap().clone();
+                let remaining_keys: Vec<_> = remaining
+                    .iter()
+                    .filter_map(|event| match event {
+                        Event::Key {
+                            key, pressed: true, ..
+                        } => Some(*key),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    remaining_keys, tail,
+                    "the header owns only the prefix through activation: {keys:?}, callback={callback}, discards={discards}"
+                );
+                present(&mut batched, 360.0, Vec::new());
+                assert_selected(&batched, expected);
+                assert_eq!(
+                    batched.context.memory(egui::Memory::focused),
+                    batched.panes.focus_target(ItemId::new(expected)),
+                    "one input packet must preserve the selection and content focus of separate frames"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn header_navigation_starts_at_focused_tab_and_configured_cycle_at_selection() {
+    let mut harness = Harness::tabs(1);
+    harness.dockspace.set_input(bindings());
+    present(&mut harness, 1100.0, Vec::new());
+    harness.focus_tab(1100.0, "Document 3");
+    assert_selected(&harness, 1);
+    let output = present(&mut harness, 1100.0, vec![super::key(Key::ArrowRight)]);
+    assert_selected(&harness, 4);
+    assert_tab_focus(&harness, &output, 4);
+    harness.focus_tab(1100.0, "Document 2");
+    let output = present(
+        &mut harness,
+        1100.0,
+        vec![shortcut(bindings().next_tab.unwrap())],
+    );
+    assert_selected(&harness, 5);
+    assert_tab_focus(&harness, &output, 5);
 }
 
 #[test]

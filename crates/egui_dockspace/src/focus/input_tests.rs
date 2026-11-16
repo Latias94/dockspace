@@ -24,6 +24,7 @@ struct EditorPane {
     text: String,
     bounds: Option<Rect>,
     focus_trace: Vec<(u64, Option<Id>)>,
+    focus_gains: usize,
 }
 
 impl PaneView for EditorPane {
@@ -44,6 +45,7 @@ impl PaneView for EditorPane {
             egui::TextEdit::multiline(&mut self.text).id(self.target),
         );
         self.bounds = Some(response.rect);
+        self.focus_gains += usize::from(response.gained_focus());
         PaneResponse::from(&response)
     }
 
@@ -176,6 +178,7 @@ fn presented_editor_in_viewport(
         text: String::new(),
         bounds: None,
         focus_trace: Vec::new(),
+        focus_gains: 0,
     };
     let mut tab = None;
     for pass in 0..4 {
@@ -292,6 +295,70 @@ fn an_unsuperseded_tab_press_hands_focus_to_its_content_once() {
         assert!(!context.memory(|memory| memory.has_focus(pane.target)));
         output.drop_without_applying_deltas();
         receipt.report(SurfacePresentationResult::Presented);
+    }
+}
+
+#[test]
+fn a_new_pane_focus_request_delivers_the_first_frames_text() {
+    for owned in [true, false] {
+        for new_target in [false, true] {
+            let (context, mut dockspace, mut pane, _) = presented_editor(owned);
+            if new_target {
+                pane.target = pane.target.with("first-registration");
+            }
+            assert_eq!(context.memory(egui::Memory::focused), None);
+            let selected = dockspace.select_item_current(EDITOR).unwrap();
+            assert!(matches!(
+                selected.status(),
+                DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
+                    item: EDITOR,
+                    ..
+                })
+            ));
+            let (mut output, receipt) = run(
+                owned,
+                &context,
+                &mut dockspace,
+                &mut pane,
+                1.0,
+                vec![Event::Text("first focused frame".into())],
+            )
+            .into_parts();
+            output.textures_delta.clear();
+            assert_eq!(
+                pane.text, "first focused frame",
+                "a plain focus request must reach the registered editor before its input callback, owned={owned}, focus_trace={:?}",
+                pane.focus_trace,
+            );
+            assert_eq!(context.memory(egui::Memory::focused), Some(pane.target));
+            output.drop_without_applying_deltas();
+            receipt.report(SurfacePresentationResult::Presented);
+        }
+    }
+}
+
+#[test]
+fn a_new_pane_focus_request_is_observed_as_gained_focus_by_its_callback() {
+    for owned in [true, false] {
+        let (context, mut dockspace, mut pane, _) = presented_editor(owned);
+        assert_eq!(pane.focus_gains, 0);
+        let selected = dockspace.select_item_current(EDITOR).unwrap();
+        assert!(matches!(
+            selected.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: EDITOR, .. })
+        ));
+        for time in [1.0, 1.1, 1.2] {
+            let (mut output, receipt) =
+                run(owned, &context, &mut dockspace, &mut pane, time, Vec::new()).into_parts();
+            output.textures_delta.clear();
+            assert_eq!(
+                pane.focus_gains, 1,
+                "the pane callback must observe the real focus transition exactly once, owned={owned}, time={time}, focus_trace={:?}",
+                pane.focus_trace,
+            );
+            output.drop_without_applying_deltas();
+            receipt.report(SurfacePresentationResult::Presented);
+        }
     }
 }
 

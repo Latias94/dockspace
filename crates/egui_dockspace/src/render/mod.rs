@@ -24,6 +24,7 @@ mod tab_close;
 mod tab_customization;
 mod tab_shortcuts;
 mod tabs;
+mod wheel;
 
 use dockspace::model::ItemId;
 use dockspace::runtime::{
@@ -398,7 +399,13 @@ pub(crate) fn paint_surface(
             && pointer_authority.supports_preview_gestures()
             && enabled
         {
-            crate::focus::apply_pane_focus_request(ui.ctx(), instance_id, request, target);
+            crate::focus::apply_pane_focus_request(
+                ui.ctx(),
+                instance_id,
+                request,
+                target,
+                ui.memory(egui::Memory::focused),
+            );
             pane_focus_target_requested = true;
             pane_focus_target = Some(target);
         }
@@ -557,6 +564,7 @@ pub(crate) fn paint_surface(
                     }
                     SurfacePaintProgramStep::SurfaceEnd { semantic_output } => {
                         tab_shortcuts::capture(&mut context);
+                        wheel::capture(&mut context);
                         #[cfg(feature = "motion")]
                         motion::finish(&mut context);
                         terminal_semantic_output = Some(semantic_output);

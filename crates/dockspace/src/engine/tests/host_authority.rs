@@ -2462,6 +2462,7 @@ fn journal_tab_and_contained_activation_keep_one_outer_engine_clone() {
     let outcome = outer
         .activate_prepared_journal_contained_gesture(
             tab_strip_test_cause(),
+            tab_strip_test_focus_causal(),
             SourcePressIntent::Activate,
             owner,
             Authority::Known(PointerCaptureOwner::ProviderEndpoint),

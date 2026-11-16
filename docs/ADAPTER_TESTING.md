@@ -144,6 +144,42 @@ documents. Unit tests also require incomplete destruction, uncommitted create
 failures and occupied prepaid roster buffers to retain their obligations. A
 handler detach is not a substitute for destruction evidence.
 
+## Interaction entry points
+
+Build an entry-point inventory from the union of this adapter and its reference
+UI. Starting only from the adapter's existing controls cannot reveal a missing
+workflow. Distinguish unsupported capabilities, intentional behavior differences
+and defects before assigning severity.
+
+For each entry, record its object scope, availability, preview, commit and cancel
+behavior. A tab, tab group, complete root and native surface are different scopes.
+Compare alternative entries for the same intent through actual framework input:
+
+| Intent | Entries and cases to compare |
+| --- | --- |
+| Select or focus | Tab body, header keyboard input, accessibility Focus and Click, trailing strip space, floating title |
+| Move content | Item drag, group grip, trailing space, contained title, application command and presentation menu |
+| Close | Tab close, middle click, layout close, OS close and deferred application decisions |
+| Browse tabs | Wheel, overflow controls, tab list, keyboard navigation and application-owned drag payloads |
+| Resize | Splitter, junction, floating edge, keyboard, accessibility and native frame |
+
+Vary single/multiple tabs, nested splits, an empty central slot and an empty main
+surface. For partial transfers, assert the moved payload's geometry and constraints
+as well as ownership; keeping every item does not prove the right object moved.
+For focus, check where the next keyboard input is delivered, not just selection
+or z-order. Accessibility Focus must keep header navigation available; explicit
+activation may request pane-content focus.
+
+Include several key presses in one raw batch, direction reversals, a round trip,
+and navigation followed by activation. Preserve their order and submit one final
+candidate-bound action where intermediate states need not be published. Repeat
+the batch across discarded passes and in a new independent run. A boolean
+`consume_key` result can hide multiple presses even when separate-frame tests pass.
+
+Native OS title movement is a geometry observation, not proof of a docking drag.
+Test client chrome separately and declare when the adapter has no whole-root
+drag entry point. A command-only workaround does not qualify that missing entry.
+
 ## Reusable automatic tests
 
 | Layer | Existing asset | What passing proves |

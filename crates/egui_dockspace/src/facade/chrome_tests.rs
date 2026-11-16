@@ -13,6 +13,8 @@ use crate::{DockStyle, PaneResponse, PaneView};
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 
+mod menu_keyboard;
+mod scroll;
 mod splitters;
 mod tab_shortcuts;
 mod visibility;

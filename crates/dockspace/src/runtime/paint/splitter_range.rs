@@ -77,7 +77,37 @@ impl SurfacePaintPlan<'_> {
         })
     }
 
-    pub(super) fn splitter_adjustment_delta(
+    pub(super) fn splitter_adjustment_sequence_delta(
+        self,
+        target: SplitterResizeTarget,
+        axis: Axis,
+        adjustments: impl IntoIterator<Item = SurfaceSplitterAdjustment>,
+    ) -> Option<f64> {
+        let mut adjustments = adjustments.into_iter();
+        let first = adjustments.next()?;
+        let Some(second) = adjustments.next() else {
+            return self.splitter_adjustment_delta(target, axis, first);
+        };
+        let limits = self
+            .candidate
+            .splitter_resize_delta_interval(self.plan, target, axis)?;
+        let mut delta = 0.0;
+        for adjustment in [first, second].into_iter().chain(adjustments) {
+            delta = match adjustment {
+                SurfaceSplitterAdjustment::Decrement => delta - self.splitter_keyboard_step,
+                SurfaceSplitterAdjustment::Increment => delta + self.splitter_keyboard_step,
+                SurfaceSplitterAdjustment::Minimum => limits.minimum,
+                SurfaceSplitterAdjustment::Maximum => limits.maximum,
+                SurfaceSplitterAdjustment::Equalize => {
+                    self.splitter_equalization_delta(target, axis, limits)?
+                }
+            }
+            .clamp(limits.minimum, limits.maximum);
+        }
+        Some(delta)
+    }
+
+    fn splitter_adjustment_delta(
         self,
         target: SplitterResizeTarget,
         axis: Axis,

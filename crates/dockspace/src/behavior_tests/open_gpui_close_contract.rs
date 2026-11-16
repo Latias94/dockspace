@@ -399,7 +399,10 @@ impl Harness {
         self.submit(EngineInput::SelectLocalSceneTab {
             expected: self.engine.version(),
             scene: fact.scene,
-            selection: dockspace::engine::LocalTabSelection::Activate(tab),
+            selection: dockspace::engine::LocalTabSelection::Activate {
+                source: tab,
+                target: tab,
+            },
         });
         support::publish_surface(
             &mut self.engine,

@@ -26,6 +26,8 @@ mod capacity;
 mod close_commands;
 #[path = "product/contained_redock.rs"]
 mod contained_redock;
+#[path = "product/drag_entry_paths.rs"]
+mod drag_entry_paths;
 #[path = "product/feedback.rs"]
 mod feedback;
 #[path = "product/output_authority.rs"]
@@ -36,6 +38,8 @@ mod overflow_ownership;
 mod presentation_menu;
 #[path = "product/self_docking.rs"]
 mod self_docking;
+#[path = "product/tab_focus.rs"]
+mod tab_focus;
 #[path = "product/visibility.rs"]
 mod visibility;
 

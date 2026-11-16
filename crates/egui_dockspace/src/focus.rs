@@ -60,19 +60,23 @@ fn with_framework_focus<T>(
 
 /// A framework focus side effect is applied once, independently of renderer acknowledgement.
 /// The real focus observation still accompanies each exact output until core settles it.
+/// `focus_before_contents` preserves a later application focus choice made while
+/// registering the target; a pointer click may legitimately clear the old focus.
 pub(crate) fn apply_pane_focus_request(
     context: &Context,
     instance: Id,
     request: DockspacePaneFocusRequest,
     target: Id,
-) {
+    focus_before_contents: Option<Id>,
+) -> bool {
     let focused = context.memory(egui::Memory::focused);
     let apply = with_framework_focus(context, instance, context.viewport_id(), request, |state| {
         !std::mem::replace(&mut state.applied, true)
+            && (focused.is_none() || focused == focus_before_contents || focused == Some(target))
             && state
                 .tab_target
                 .take()
-                .is_none_or(|tab| focused == Some(tab))
+                .is_none_or(|tab| focus_before_contents == Some(tab))
     });
     if apply {
         context.memory_mut(|memory| {
@@ -81,6 +85,18 @@ pub(crate) fn apply_pane_focus_request(
             }
         });
     }
+    apply
+}
+
+/// Pointer chrome may clear a target during its own widget registration.
+/// Ordinary keyboard and IME frames must receive focus before content runs.
+pub(crate) fn input_may_surrender_focus(context: &Context) -> bool {
+    let surrender = context.options(|options| options.input_options.surrender_focus_on);
+    context.input(|input| match surrender {
+        egui::SurrenderFocusOn::Presses => input.pointer.any_pressed(),
+        egui::SurrenderFocusOn::Clicks => input.pointer.any_click(),
+        egui::SurrenderFocusOn::Never => false,
+    })
 }
 
 /// Preserves input order when a tab press publishes a new pane-focus intent.

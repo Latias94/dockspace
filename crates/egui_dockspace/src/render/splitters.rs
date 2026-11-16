@@ -2,11 +2,11 @@
 
 use dockspace::model::DockspaceAxis;
 use dockspace::runtime::{
-    SplitterJunctionPaintRecord, SurfacePaintDisposition, SurfacePaintPlan,
+    PreparedSurfaceAction, SplitterJunctionPaintRecord, SurfacePaintDisposition, SurfacePaintPlan,
     SurfaceSplitterAdjustment,
 };
 use egui::accesskit::{Action, Orientation, Role};
-use egui::{CursorIcon, EventFilter, Key, PointerButton, Sense, UiBuilder};
+use egui::{CursorIcon, Event, EventFilter, Key, PointerButton, Sense, UiBuilder};
 
 use super::RenderContext;
 use super::actions::{effective_enabled, unambiguous_pointer_click};
@@ -92,12 +92,20 @@ pub(crate) fn paint_splitter(
             SurfaceSplitterAdjustment::Equalize,
         )
     });
-    if let Some((origin, adjustment)) =
-        equalization.or_else(|| splitter_adjustment(context.ui, id, horizontal, focused))
-        && let Some(action) = context
+    let adjustment = if let Some((origin, adjustment)) = equalization {
+        context
             .plan
             .prepare_splitter_adjustment(splitter.visual_id(), adjustment)
-    {
+            .map(|action| (origin, action))
+    } else {
+        splitter_adjustment(context.ui, id, horizontal, focused, |adjustments| {
+            context.plan.prepare_splitter_adjustment_sequence(
+                splitter.visual_id(),
+                adjustments.iter().copied(),
+            )
+        })
+    };
+    if let Some((origin, action)) = adjustment {
         context.push_local_action(origin, action);
     }
     if drag_enabled && response.hovered() {
@@ -194,15 +202,18 @@ pub(crate) fn paint_junction(
                 );
             });
         }
-        if let Some((origin, adjustment)) = splitter_adjustment(
+        if let Some((origin, action)) = splitter_adjustment(
             context.ui,
             axis_response.id,
             horizontal,
             axis_response.has_focus(),
-        ) && let Some(action) = context.plan.prepare_splitter_junction_adjustment(
-            junction.visual_id(),
-            axis,
-            adjustment,
+            |adjustments| {
+                context.plan.prepare_splitter_junction_adjustment_sequence(
+                    junction.visual_id(),
+                    axis,
+                    adjustments.iter().copied(),
+                )
+            },
         ) {
             context.push_local_action(origin, action);
         }
@@ -295,51 +306,33 @@ fn splitter_adjustment(
     id: egui::Id,
     horizontal: bool,
     focused: bool,
-) -> Option<(egui::Id, SurfaceSplitterAdjustment)> {
+    prepare: impl FnOnce(&[SurfaceSplitterAdjustment]) -> Option<PreparedSurfaceAction>,
+) -> Option<(egui::Id, PreparedSurfaceAction)> {
     if !effective_enabled(ui, true) {
         return None;
     }
     if focused {
-        let keyboard = ui.input_mut(|input| {
-            let decrement = if horizontal {
-                Key::ArrowLeft
-            } else {
-                Key::ArrowUp
-            };
-            let increment = if horizontal {
-                Key::ArrowRight
-            } else {
-                Key::ArrowDown
-            };
-            if input.consume_key(egui::Modifiers::NONE, decrement) {
-                Some((
-                    id.with(("keyboard-adjust", decrement)),
-                    SurfaceSplitterAdjustment::Decrement,
-                ))
-            } else if input.consume_key(egui::Modifiers::NONE, increment) {
-                Some((
-                    id.with(("keyboard-adjust", increment)),
-                    SurfaceSplitterAdjustment::Increment,
-                ))
-            } else if input.consume_key(egui::Modifiers::NONE, Key::Home) {
-                Some((
-                    id.with(("keyboard-adjust", Key::Home)),
-                    SurfaceSplitterAdjustment::Minimum,
-                ))
-            } else if input.consume_key(egui::Modifiers::NONE, Key::End) {
-                Some((
-                    id.with(("keyboard-adjust", Key::End)),
-                    SurfaceSplitterAdjustment::Maximum,
-                ))
-            } else {
-                None
-            }
+        let keyboard: Vec<_> = ui.input(|input| {
+            input
+                .events
+                .iter()
+                .filter_map(|event| keyboard_adjustment(event, horizontal))
+                .collect()
         });
-        if keyboard.is_some() {
-            return keyboard;
+        if !keyboard.is_empty() {
+            let action = prepare(&keyboard)?;
+            ui.input_mut(|input| {
+                input
+                    .events
+                    .retain(|event| keyboard_adjustment(event, horizontal).is_none());
+            });
+            // A newly focused control may not have installed its arrow filter
+            // before begin_pass scheduled spatial traversal for this batch.
+            ui.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
+            return Some((id.with("keyboard-adjust"), action));
         }
     }
-    ui.input(|input| {
+    let (origin, adjustment) = ui.input(|input| {
         if input.has_accesskit_action_request(id, Action::Decrement) {
             Some((
                 id.with("accesskit-decrement"),
@@ -353,7 +346,32 @@ fn splitter_adjustment(
         } else {
             None
         }
-    })
+    })?;
+    Some((origin, prepare(&[adjustment])?))
+}
+
+fn keyboard_adjustment(event: &Event, horizontal: bool) -> Option<SurfaceSplitterAdjustment> {
+    let Event::Key {
+        key,
+        pressed: true,
+        modifiers,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    if !modifiers.matches_logically(egui::Modifiers::NONE) {
+        return None;
+    }
+    match key {
+        Key::ArrowLeft if horizontal => Some(SurfaceSplitterAdjustment::Decrement),
+        Key::ArrowUp if !horizontal => Some(SurfaceSplitterAdjustment::Decrement),
+        Key::ArrowRight if horizontal => Some(SurfaceSplitterAdjustment::Increment),
+        Key::ArrowDown if !horizontal => Some(SurfaceSplitterAdjustment::Increment),
+        Key::Home => Some(SurfaceSplitterAdjustment::Minimum),
+        Key::End => Some(SurfaceSplitterAdjustment::Maximum),
+        _ => None,
+    }
 }
 
 fn configure_accessibility(

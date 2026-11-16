@@ -606,73 +606,79 @@ fn direct_selection_reveals_the_new_priority_item_after_explicit_strip_scroll() 
 
 #[test]
 fn deferred_tab_navigation_rejects_reordered_members_before_revealing_a_frozen_target() {
-    let mut fixture = tab_strip_reducer_fixture_with_selection(DockPolicy::default(), 0);
-    let host = fixture.engine.create_presentation_host().unwrap();
-    publish_tab_strip_reducer_projection(&mut fixture, host, true);
-    let witness = fixture
-        .engine
-        .scene()
-        .surface(fixture.surface)
-        .unwrap()
-        .ready()
-        .unwrap()
-        .candidate()
-        .frozen_witness();
-    let expected = fixture.engine.version();
-    let source = *witness.plan().tab_records().first().unwrap().id();
-    let target = TabSceneId {
-        item: fixture.items[3],
-        ..source
-    };
-    let action = LocalSurfaceAction::SelectTab {
-        scene: witness.stamp(),
-        selection: LocalTabSelection::Navigate { source, target },
-    };
-    let item = fixture
-        .engine
-        .workspace()
-        .capture_item_source(target.root, target.tabs, target.item)
-        .unwrap();
-    submit_test_input(
-        &mut fixture.engine,
-        host,
-        EngineInput::WorkspaceCommand {
-            expected,
-            command: WorkspaceCommand::Reorder {
-                source: item,
-                insertion_index: 0,
+    for activate in [false, true] {
+        let mut fixture = tab_strip_reducer_fixture_with_selection(DockPolicy::default(), 0);
+        let host = fixture.engine.create_presentation_host().unwrap();
+        publish_tab_strip_reducer_projection(&mut fixture, host, true);
+        let witness = fixture
+            .engine
+            .scene()
+            .surface(fixture.surface)
+            .unwrap()
+            .ready()
+            .unwrap()
+            .candidate()
+            .frozen_witness();
+        let expected = fixture.engine.version();
+        let source = *witness.plan().tab_records().first().unwrap().id();
+        let target = TabSceneId {
+            item: fixture.items[3],
+            ..source
+        };
+        let action = LocalSurfaceAction::SelectTab {
+            scene: witness.stamp(),
+            selection: if activate {
+                LocalTabSelection::Activate { source, target }
+            } else {
+                LocalTabSelection::Navigate { source, target }
             },
-        },
-    )
-    .unwrap();
-    let before = fixture
-        .engine
-        .presentation_authority
-        .tab_strip_states
-        .state(TabStripStateKey::new(fixture.surface, fixture.bar))
-        .cloned();
-    let result = submit_test_input(
-        &mut fixture.engine,
-        host,
-        EngineInput::ApplyDeferredSurfaceAction {
-            expected,
-            witness,
-            action,
-        },
-    )
-    .unwrap();
-    assert!(matches!(
-        result.reduced_inputs()[0].outcome(),
-        InputOutcome::StaleRejected { .. }
-    ));
-    assert_eq!(
-        fixture
+        };
+        let item = fixture
+            .engine
+            .workspace()
+            .capture_item_source(target.root, target.tabs, target.item)
+            .unwrap();
+        submit_test_input(
+            &mut fixture.engine,
+            host,
+            EngineInput::WorkspaceCommand {
+                expected,
+                command: WorkspaceCommand::Reorder {
+                    source: item,
+                    insertion_index: 0,
+                },
+            },
+        )
+        .unwrap();
+        let before = fixture
             .engine
             .presentation_authority
             .tab_strip_states
-            .state(TabStripStateKey::new(fixture.surface, fixture.bar)),
-        before.as_ref()
-    );
+            .state(TabStripStateKey::new(fixture.surface, fixture.bar))
+            .cloned();
+        let result = submit_test_input(
+            &mut fixture.engine,
+            host,
+            EngineInput::ApplyDeferredSurfaceAction {
+                expected,
+                witness,
+                action,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            result.reduced_inputs()[0].outcome(),
+            InputOutcome::StaleRejected { .. }
+        ));
+        assert_eq!(
+            fixture
+                .engine
+                .presentation_authority
+                .tab_strip_states
+                .state(TabStripStateKey::new(fixture.surface, fixture.bar)),
+            before.as_ref()
+        );
+    }
 }
 
 #[test]

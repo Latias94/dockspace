@@ -10,7 +10,7 @@ use crate::presentation::tab_strip::TabStripStateKey;
 
 use super::super::{
     PreparedSurfaceAction, SurfaceContainedResizeAdjustment, SurfaceSplitterAdjustment,
-    SurfaceTabListNavigation, SurfaceTabNavigation,
+    SurfaceTabInput, SurfaceTabListNavigation, SurfaceTabNavigation,
 };
 use super::{
     DockspaceVisualId, SurfacePaintPlan, TabBarPaintRecord, TabListMenuBackdropPaintRecord,
@@ -324,22 +324,19 @@ impl SurfacePaintPlan<'_> {
         item: ItemId,
         navigation: SurfaceTabNavigation,
     ) -> Option<PreparedSurfaceAction> {
-        let current = self
-            .plan
-            .tab_records()
-            .iter()
-            .find(|record| record.id().item == item)?;
+        let tab = self.tab_record(item)?;
+        let start = self.plan.selected_in_tabs(tab.id().tabs).unwrap_or(item);
+        self.prepare_tab_input_sequence(item, start, [SurfaceTabInput::Navigate(navigation)])
+    }
+
+    /// Selects this exact tab while preserving framework focus in its header.
+    ///
+    /// Use this for an accessibility focus request. Unlike activation, focusing
+    /// a tab supersedes older content-focus requests without entering its pane.
+    #[must_use]
+    pub fn prepare_tab_focus(self, item: ItemId) -> Option<PreparedSurfaceAction> {
+        let current = self.tab_record(item)?;
         self.tab_is_operable(current).then_some(())?;
-        let selected = self.plan.selected_in_tabs(current.id().tabs);
-        let destination = crate::presentation::tab_strip::tab_navigation_destination(
-            self.plan,
-            *current.id(),
-            selected,
-            navigation.into_core(),
-        )?;
-        if destination == *current.id() {
-            return None;
-        }
         Some(PreparedSurfaceAction::select_tab(
             self.authority_domain,
             self.version,
@@ -347,8 +344,83 @@ impl SurfacePaintPlan<'_> {
             self.frozen_action_witness()?,
             crate::engine::LocalTabSelection::Navigate {
                 source: *current.id(),
-                target: destination,
+                target: *current.id(),
             },
+        ))
+    }
+
+    /// Folds ordered tab inputs into one action against this exact candidate.
+    ///
+    /// `item` authorizes the visible receiver; `start` identifies the initial
+    /// member in the same strip, which may be clipped. Hosts can use the focused
+    /// tab for header keys and the selected tab for document-cycling shortcuts.
+    /// Each later input uses the preceding destination.
+    /// The last input decides whether header focus is preserved or pane content
+    /// is activated. No intermediate selection is published.
+    ///
+    /// A round trip is handled even when it returns to the initial tab. An empty
+    /// sequence or ineffectual navigation returns `None`. Hidden members
+    /// remain valid destinations while `item` must be an operable receiver.
+    #[must_use]
+    pub fn prepare_tab_input_sequence(
+        self,
+        item: ItemId,
+        start: ItemId,
+        inputs: impl IntoIterator<Item = SurfaceTabInput>,
+    ) -> Option<PreparedSurfaceAction> {
+        let current = self
+            .plan
+            .tab_records()
+            .iter()
+            .find(|record| record.id().item == item)?;
+        self.tab_is_operable(current).then_some(())?;
+        let bar =
+            self.plan.tab_bar_records().iter().find(|bar| {
+                bar.id().root == current.id().root && bar.id().tabs == current.id().tabs
+            })?;
+        let members = bar.members();
+        let mut inputs = inputs.into_iter().peekable();
+        inputs.peek()?;
+        let mut cursor = members
+            .iter()
+            .position(|member| member.tab().item == start)?;
+        let mut handled = false;
+        let mut activate = false;
+        for input in inputs {
+            match input {
+                SurfaceTabInput::Navigate(navigation) => {
+                    let next = navigation.into_core().destination(cursor, members.len());
+                    handled |= next != cursor;
+                    cursor = next;
+                    activate = false;
+                }
+                SurfaceTabInput::Activate => {
+                    handled = true;
+                    activate = true;
+                }
+            }
+        }
+        let target = members[cursor].tab();
+        // Focus can be on a visible tab while the selected tab is scrolled out.
+        // Home/End must still reveal and focus that selection without changing it.
+        (handled || target != *current.id()).then_some(())?;
+        let selection = if activate {
+            crate::engine::LocalTabSelection::Activate {
+                source: *current.id(),
+                target,
+            }
+        } else {
+            crate::engine::LocalTabSelection::Navigate {
+                source: *current.id(),
+                target,
+            }
+        };
+        Some(PreparedSurfaceAction::select_tab(
+            self.authority_domain,
+            self.version,
+            self.scene,
+            self.frozen_action_witness()?,
+            selection,
         ))
     }
 
@@ -359,6 +431,20 @@ impl SurfacePaintPlan<'_> {
         splitter: DockspaceVisualId,
         adjustment: SurfaceSplitterAdjustment,
     ) -> Option<PreparedSurfaceAction> {
+        self.prepare_splitter_adjustment_sequence(splitter, [adjustment])
+    }
+
+    /// Folds ordered adjustments into one scene-bound splitter action.
+    ///
+    /// Each step clamps to the same touching-layout solver limits as a direct
+    /// resize. An endpoint followed by an outward and inward step therefore
+    /// finishes one step inside that endpoint. Empty sequences return `None`.
+    #[must_use]
+    pub fn prepare_splitter_adjustment_sequence(
+        self,
+        splitter: DockspaceVisualId,
+        adjustments: impl IntoIterator<Item = SurfaceSplitterAdjustment>,
+    ) -> Option<PreparedSurfaceAction> {
         let VisualIdentity::Splitter(id) = splitter.0 else {
             return None;
         };
@@ -366,10 +452,10 @@ impl SurfacePaintPlan<'_> {
             .plan
             .splitter_record(id)
             .filter(|record| record.operable() && self.plan.partition_available(id.root))?;
-        let delta = self.splitter_adjustment_delta(
+        let delta = self.splitter_adjustment_sequence_delta(
             crate::presentation::scene::SplitterResizeTarget::Handle(id),
             record.axis(),
-            adjustment,
+            adjustments,
         )?;
         Some(PreparedSurfaceAction::adjust_splitter(
             self.authority_domain,
@@ -393,6 +479,21 @@ impl SurfacePaintPlan<'_> {
         axis: crate::model::DockspaceAxis,
         adjustment: SurfaceSplitterAdjustment,
     ) -> Option<PreparedSurfaceAction> {
+        self.prepare_splitter_junction_adjustment_sequence(junction, axis, [adjustment])
+    }
+
+    /// Folds ordered adjustments for one junction axis into one action.
+    ///
+    /// Every step uses the common reachable displacement of all incident pairs
+    /// on this axis. The other axis remains unchanged. Equalizing still requires
+    /// a common constrained destination; empty sequences return `None`.
+    #[must_use]
+    pub fn prepare_splitter_junction_adjustment_sequence(
+        self,
+        junction: DockspaceVisualId,
+        axis: crate::model::DockspaceAxis,
+        adjustments: impl IntoIterator<Item = SurfaceSplitterAdjustment>,
+    ) -> Option<PreparedSurfaceAction> {
         let VisualIdentity::SplitterJunction(id) = junction.0 else {
             return None;
         };
@@ -401,10 +502,10 @@ impl SurfacePaintPlan<'_> {
             .find(|record| record.visual_id() == junction)?;
         self.splitter_junction_axis_operable(record, axis)
             .then_some(())?;
-        let delta = self.splitter_adjustment_delta(
+        let delta = self.splitter_adjustment_sequence_delta(
             crate::presentation::scene::SplitterResizeTarget::Junction(id),
             axis.into(),
-            adjustment,
+            adjustments,
         )?;
         Some(PreparedSurfaceAction::adjust_splitter_junction(
             self.authority_domain,

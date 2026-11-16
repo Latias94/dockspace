@@ -89,7 +89,7 @@ pub use interaction::{
 use local_action::PreparedSurfaceActionAuthorityMismatch;
 pub use local_action::{
     DeferredSurfaceAction, PreparedSurfaceAction, SurfaceContainedResizeAdjustment,
-    SurfaceSplitterAdjustment, SurfaceTabListNavigation, SurfaceTabNavigation,
+    SurfaceSplitterAdjustment, SurfaceTabInput, SurfaceTabListNavigation, SurfaceTabNavigation,
 };
 pub use measurement::{
     MeasurementValueError, SurfaceMeasurementAnswer, SurfaceMeasurementRequest, TabListMenuMetrics,

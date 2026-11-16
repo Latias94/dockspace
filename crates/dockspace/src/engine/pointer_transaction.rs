@@ -3,6 +3,8 @@
 use super::contained_geometry::{contained_manipulation_point, contained_move_geometry};
 use super::*;
 use crate::input::intent::PointerId;
+use crate::presentation::compiler::{contained_minimum_size, pane_outer_minimum};
+use crate::presentation::manifest::PaneMinimumKey;
 
 mod click;
 
@@ -727,6 +729,7 @@ impl DockEngine {
                 };
                 self.activate_prepared_journal_contained_gesture(
                     cause,
+                    focus_causal,
                     intent,
                     owner,
                     capture_authority,
@@ -753,6 +756,7 @@ impl DockEngine {
                 };
                 self.activate_prepared_journal_contained_gesture(
                     cause,
+                    focus_causal,
                     intent,
                     owner,
                     capture_authority,
@@ -3040,30 +3044,54 @@ impl DockEngine {
             }
             _ => return Err(InteractionRejection::TabGestureSourceUnavailable { source }),
         };
-        let source_geometry = contained.as_ref().map_or_else(
-            || {
-                plan.pane_records()
+        let unavailable = || InteractionRejection::TabGestureSourceUnavailable { source };
+        let source_geometry = match source {
+            TabGestureSource::ContainedTitle { .. } => {
+                let contained = contained.as_ref().ok_or_else(unavailable)?;
+                JournalDragSourceGeometry {
+                    source_rect: contained.source_rect,
+                    minimum_size: contained.minimum_size,
+                }
+            }
+            TabGestureSource::Item(_) | TabGestureSource::Group(_) => {
+                let pane = plan
+                    .pane_records()
                     .iter()
                     .find(|pane| {
                         pane.id() == (crate::presentation::scene::PaneSceneId { root, tabs })
                     })
-                    .map(|pane| JournalDragSourceGeometry {
-                        source_rect: pane.bounds(),
-                        minimum_size: self
-                            .presentation_authority
-                            .presentation_config
-                            .minimum_floating_size(),
-                    })
-            },
-            |contained| {
-                Some(JournalDragSourceGeometry {
-                    source_rect: contained.source_rect,
-                    minimum_size: contained.minimum_size,
-                })
-            },
-        );
-        let Some(source_geometry) = source_geometry else {
-            return Err(InteractionRejection::TabGestureSourceUnavailable { source });
+                    .ok_or_else(unavailable)?;
+                let facts = plan.layout_facts().ok_or_else(unavailable)?;
+                let root_facts = facts.root(root).ok_or_else(unavailable)?;
+                let pane_minimum = if let TabGestureSource::Item(item) = source {
+                    let measured = root_facts
+                        .pane_minimum(PaneMinimumKey::new(root, tabs, Some(item.item)))
+                        .ok_or_else(unavailable)?;
+                    let visibility = self
+                        .presentation_requirements()
+                        .surface(surface)
+                        .and_then(|requirements| {
+                            requirements
+                                .tab_bar(crate::presentation::scene::TabBarSceneId { root, tabs })
+                        })
+                        .map(|bar| bar.policy().resolved(1, false).visibility())
+                        .ok_or_else(unavailable)?;
+                    pane_outer_minimum(measured, facts.config(), visibility)
+                        .map_err(|_| unavailable())?
+                } else {
+                    root_facts
+                        .projection()
+                        .nodes
+                        .get(&tabs)
+                        .map(|result| result.constraints.min())
+                        .ok_or_else(unavailable)?
+                };
+                JournalDragSourceGeometry {
+                    source_rect: pane.bounds(),
+                    minimum_size: contained_minimum_size(facts.config(), pane_minimum)
+                        .map_err(|_| unavailable())?,
+                }
+            }
         };
         Ok(PreparedTabGesture {
             source,
@@ -3269,38 +3297,16 @@ impl DockEngine {
                 }));
             }
         }
-        if intent == SourcePressIntent::Activate
-            && let TabGestureSource::Item(source) = prepared.source
-        {
-            if let Some(binding) = self
-                .viewport
-                .viewport(prepared.surface)
-                .filter(|record| record.can_accept_activation())
-                .map(crate::platform::registry::ViewportRecord::binding)
-            {
-                let _ = self.start_viewport_activation(
-                    ViewportActivationRequest::pointer_tab_gesture(
-                        binding,
-                        PanelFocus::Item(source.item),
-                    ),
+        if intent == SourcePressIntent::Activate {
+            if let Some(item) = self.pointer_payload_focus_item(&source_payload) {
+                self.request_pointer_pane_focus(
+                    prepared.surface,
+                    item,
                     focus_causal,
                     &mut candidate_events,
                 )?;
-            } else {
-                let native_guard = self.viewport_focus_binding(prepared.surface);
-                self.viewport_focus
-                    .request_local_pane_focus(
-                        prepared.surface,
-                        source.item,
-                        native_guard,
-                        focus_causal,
-                    )
-                    .map_err(|source| EngineError::CausedViewportFocus {
-                        cause: focus_causal.cause(),
-                        source,
-                    })?;
             }
-            if !can_arm {
+            if !can_arm && let TabGestureSource::Item(source) = prepared.source {
                 events.extend(candidate_events);
                 return Ok(InteractionOutcome::ProductActionApplied(
                     crate::model::DockspaceActionOutcome::Selected {
@@ -3409,6 +3415,36 @@ impl DockEngine {
         }
         events.extend(candidate_events);
         Ok(InteractionOutcome::DragArmed { session, replaced })
+    }
+
+    pub(super) fn request_pointer_pane_focus(
+        &mut self,
+        surface: SurfaceId,
+        item: ItemId,
+        causal: FocusCausalStamp,
+        events: &mut Vec<WorkspaceEvent>,
+    ) -> Result<(), EngineError> {
+        if let Some(binding) = self
+            .viewport
+            .viewport(surface)
+            .filter(|record| record.can_accept_activation())
+            .map(crate::platform::registry::ViewportRecord::binding)
+        {
+            self.start_viewport_activation(
+                ViewportActivationRequest::pointer_tab_gesture(binding, PanelFocus::Item(item)),
+                causal,
+                events,
+            )?;
+        } else {
+            let native_guard = self.viewport_focus_binding(surface);
+            self.viewport_focus
+                .request_local_pane_focus(surface, item, native_guard, causal)
+                .map_err(|source| EngineError::CausedViewportFocus {
+                    cause: causal.cause(),
+                    source,
+                })?;
+        }
+        Ok(())
     }
 
     pub(super) fn reduce_host_pointer_protocol(

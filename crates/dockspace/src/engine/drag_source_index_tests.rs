@@ -226,6 +226,37 @@ fn singleton_central_root_coverage_matches_its_presentation_in_indexed_and_live_
 }
 
 #[test]
+fn nested_central_contents_remain_detachable_in_indexed_and_live_paths() {
+    let root = RootId::new(1);
+    let surface = SurfaceId::new(1);
+    let first = ItemId::new(1);
+    let mut builder = Workspace::builder();
+    let central = builder.insert_node(Node::tabs([first, ItemId::new(2)]));
+    let sibling = builder.insert_node(Node::tabs([ItemId::new(3)]));
+    let split =
+        builder.insert_node(Node::equal_split(Axis::Horizontal, [central, sibling]).unwrap());
+    builder.set_root(root, RootRecord::new(split).with_central(central));
+    builder.set_surface(surface, SurfacePresentation::with_main(root));
+    let engine = DockEngine::new(builder.build().unwrap(), DockPolicy::default()).unwrap();
+    let central_source = engine.workspace.capture_node_source(root, central).unwrap();
+    let item_source = engine
+        .workspace
+        .capture_item_source(root, central, first)
+        .unwrap();
+    for (payload, detachable) in [
+        (MovePayload::Item(item_source), true),
+        (MovePayload::Tabs(central_source.clone()), true),
+        (MovePayload::Subtree(central_source), false),
+    ] {
+        let indexed = prepare(&engine, &payload).unwrap();
+        assert_eq!(Ok(indexed.clone()), prepare_live(&engine, &payload));
+        assert_eq!(indexed.0, surface);
+        assert_eq!(indexed.1, None);
+        assert_eq!(indexed.2, detachable, "{payload:?}");
+    }
+}
+
+#[test]
 fn indexed_drag_source_preparation_reuses_current_root_fingerprints() {
     let fixture = fixture();
     let engine = &fixture.engine;

@@ -404,7 +404,9 @@ impl DockEngine {
         PARTIAL_DETACHABILITY_EVALUATIONS.with(|evaluations| {
             evaluations.set(evaluations.get().saturating_add(1));
         });
-        let (MovePayload::Tabs(source) | MovePayload::Subtree(source)) = payload else {
+        // Tabs move their contents while retaining the central slot. A subtree
+        // move would remove that slot and must remain anchored to its root.
+        let MovePayload::Subtree(source) = payload else {
             return true;
         };
         let Some(root) = self.workspace.root(source.root()) else {
@@ -412,6 +414,46 @@ impl DockEngine {
         };
         root.central
             .is_none_or(|central| !self.workspace.subtree_contains(source.node(), central))
+    }
+
+    pub(in crate::engine) fn pointer_payload_focus_item(
+        &self,
+        payload: &MovePayload,
+    ) -> Option<ItemId> {
+        let source = match payload {
+            MovePayload::Item(source) => return Some(source.item()),
+            MovePayload::Tabs(source) => {
+                return self.workspace.visible_tab_selection(source.node());
+            }
+            MovePayload::Subtree(source) => source,
+        };
+        let surface = self.payload_surface(payload)?;
+        let is_visible_source = |item: &ItemId| {
+            !self.workspace.item_is_hidden(*item)
+                && self
+                    .workspace
+                    .locate_item_by_id(*item)
+                    .is_some_and(|(root, tabs, _)| {
+                        root == source.root()
+                            && self.workspace.subtree_contains(source.node(), tabs)
+                            && self.workspace.visible_tab_selection(tabs) == Some(*item)
+                    })
+        };
+        self.viewport_focus
+            .pending_pane_intent()
+            .filter(|intent| intent.surface() == surface)
+            .and_then(crate::platform::focus::PaneFocusIntent::item)
+            .filter(is_visible_source)
+            .or_else(|| match self.viewport_focus.panel_focus(surface) {
+                PanelFocusRecord::Item(item) if is_visible_source(&item) => Some(item),
+                _ => None,
+            })
+            .or_else(|| {
+                self.workspace
+                    .collect_items_in_subtree(source.node())
+                    .into_iter()
+                    .find(is_visible_source)
+            })
     }
 
     pub(in crate::engine) fn core_contained_rehome_is_valid(

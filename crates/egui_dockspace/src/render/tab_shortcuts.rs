@@ -1,27 +1,28 @@
-//! Optional tab cycling follows current widget focus and the ordinary navigation action.
+//! Ordered tab keyboard input follows current widget focus and one core action.
 
 use dockspace::runtime::{
     DockspaceVisualId, SurfacePaintProgramOperation as Operation, SurfacePaintProgramStep as Step,
-    SurfaceTabNavigation,
+    SurfaceTabInput, SurfaceTabNavigation,
 };
-use egui::{Event, KeyboardShortcut};
+use egui::{Event, Key, KeyboardShortcut};
 
 use crate::PaneFocusState;
 
 use super::{RenderContext, actions::effective_enabled, geometry::egui_rect};
 
 pub(super) fn prepare(context: &RenderContext<'_, '_, '_>) {
-    if can_cycle(context)
-        && let Some((_, event, navigation)) = matching_event(context)
+    if (context.input.next_tab.is_some() || context.input.previous_tab.is_some())
+        && can_cycle(context)
+        && let Some(input) = matching_events(context, false).first()
         && matches!(
-            event,
+            input.event,
             Event::Key {
                 key: egui::Key::Tab,
                 ..
             }
         )
         && let Some(group) = focused_group(context, FocusPass::Previous)
-        && prepare_navigation(context, group, navigation).is_some()
+        && prepare_navigation(context, group, std::slice::from_ref(input)).is_some()
     {
         // egui treats Ctrl+Shift+Tab as reverse traversal. Cancel that before
         // focus registration can queue a delayed destination. Content still
@@ -33,28 +34,44 @@ pub(super) fn prepare(context: &RenderContext<'_, '_, '_>) {
 }
 
 pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
+    let mut events = matching_events(context, true);
+    if events.is_empty() {
+        return;
+    }
     if !can_cycle(context) {
         return;
     }
-    let Some((event_index, event, navigation)) = matching_event(context) else {
-        return;
-    };
     let Some(group) = focused_group(context, FocusPass::Current) else {
         return;
     };
-    let Some(action) = prepare_navigation(context, group, navigation) else {
+    if group.tab.is_none() {
+        events = matching_events(context, false);
+    }
+    if let Some(index) = events
+        .iter()
+        .position(|event| matches!(event.input, SurfaceTabInput::Activate))
+    {
+        // Activation hands later keys to pane content rather than retaining
+        // header ownership for the rest of this original input packet.
+        events.truncate(index + 1);
+    }
+    let Some(action) = prepare_navigation(context, group, &events) else {
         return;
     };
     let Some(target) = action.tab_focus_visual() else {
         return;
     };
     if !context.ui.input_mut(|input| {
-        if input.events.get(event_index) == Some(&event) {
-            input.events.remove(event_index);
-            true
-        } else {
-            false
+        if events
+            .iter()
+            .any(|event| input.events.get(event.index) != Some(&event.event))
+        {
+            return false;
         }
+        for event in events.iter().rev() {
+            input.events.remove(event.index);
+        }
+        true
     }) {
         return;
     }
@@ -68,16 +85,15 @@ pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
     });
     let origin = context.ui.make_persistent_id((
         context.instance_id,
-        "configured-tab-navigation",
+        "tab-keyboard-input",
         context.plan.surface(),
-        navigation,
+        group.visual,
     ));
     context.push_local_action(origin, action);
 }
 
 fn can_cycle(context: &RenderContext<'_, '_, '_>) -> bool {
-    (context.input.next_tab.is_some() || context.input.previous_tab.is_some())
-        && effective_enabled(context.ui, true)
+    effective_enabled(context.ui, true)
         && context.ui.input(|input| input.focused)
         && !context.plan.has_manipulation_preview()
         && context.plan.prepare_gesture_cancel().is_none()
@@ -87,33 +103,60 @@ fn can_cycle(context: &RenderContext<'_, '_, '_>) -> bool {
         && !context.ui.ctx().any_popup_open()
 }
 
-fn matching_event(
-    context: &RenderContext<'_, '_, '_>,
-) -> Option<(usize, Event, SurfaceTabNavigation)> {
+struct TabKeyInput {
+    index: usize,
+    event: Event,
+    input: SurfaceTabInput,
+    selected_start: bool,
+}
+
+fn matching_events(context: &RenderContext<'_, '_, '_>, header: bool) -> Vec<TabKeyInput> {
     context.ui.input(|input| {
-        input.events.iter().enumerate().find_map(|(index, event)| {
-            let Event::Key {
-                key,
-                modifiers,
-                pressed: true,
-                ..
-            } = event
-            else {
-                return None;
-            };
-            let matches = |shortcut: Option<KeyboardShortcut>| {
-                shortcut.is_some_and(|shortcut| {
-                    *key == shortcut.logical_key && modifiers.matches_exact(shortcut.modifiers)
+        input
+            .events
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| {
+                let Event::Key {
+                    key,
+                    modifiers,
+                    pressed: true,
+                    ..
+                } = event
+                else {
+                    return None;
+                };
+                let matches = |shortcut: Option<KeyboardShortcut>| {
+                    shortcut.is_some_and(|shortcut| {
+                        *key == shortcut.logical_key && modifiers.matches_exact(shortcut.modifiers)
+                    })
+                };
+                let selected_start =
+                    matches(context.input.previous_tab) || matches(context.input.next_tab);
+                let input = if matches(context.input.previous_tab) {
+                    SurfaceTabInput::Navigate(SurfaceTabNavigation::Previous)
+                } else if matches(context.input.next_tab) {
+                    SurfaceTabInput::Navigate(SurfaceTabNavigation::Next)
+                } else if header && modifiers.matches_logically(egui::Modifiers::NONE) {
+                    match key {
+                        Key::ArrowLeft => SurfaceTabInput::Navigate(SurfaceTabNavigation::Previous),
+                        Key::ArrowRight => SurfaceTabInput::Navigate(SurfaceTabNavigation::Next),
+                        Key::Home => SurfaceTabInput::Navigate(SurfaceTabNavigation::First),
+                        Key::End => SurfaceTabInput::Navigate(SurfaceTabNavigation::Last),
+                        Key::Enter | Key::Space => SurfaceTabInput::Activate,
+                        _ => return None,
+                    }
+                } else {
+                    return None;
+                };
+                Some(TabKeyInput {
+                    index,
+                    event: event.clone(),
+                    input,
+                    selected_start,
                 })
-            };
-            if matches(context.input.previous_tab) {
-                Some((index, event.clone(), SurfaceTabNavigation::Previous))
-            } else if matches(context.input.next_tab) {
-                Some((index, event.clone(), SurfaceTabNavigation::Next))
-            } else {
-                None
-            }
-        })
+            })
+            .collect()
     })
 }
 
@@ -123,10 +166,13 @@ enum FocusPass {
     Current,
 }
 
-fn focused_group(
-    context: &RenderContext<'_, '_, '_>,
-    pass: FocusPass,
-) -> Option<DockspaceVisualId> {
+#[derive(Clone, Copy)]
+struct FocusedGroup {
+    visual: DockspaceVisualId,
+    tab: Option<dockspace::model::ItemId>,
+}
+
+fn focused_group(context: &RenderContext<'_, '_, '_>, pass: FocusPass) -> Option<FocusedGroup> {
     let focused = context.ui.memory(egui::Memory::focused)?;
     let widget = context.ui.ctx().viewport(|viewport| {
         let state = match pass {
@@ -144,6 +190,7 @@ fn focused_group(
     })?;
 
     let mut group = None;
+    let mut focused_tab = None;
     let mut blocked = false;
     let result = context.plan.visit_surface_program(|step| {
         match step {
@@ -189,6 +236,15 @@ fn focused_group(
                                     tab.item(),
                                 )) =>
                     {
+                        if focused
+                            == super::tabs::tab_id_for_visual(
+                                context.ui,
+                                context.instance_id,
+                                tab.visual_id(),
+                            )
+                        {
+                            focused_tab = Some(tab.item());
+                        }
                         Some(tab.tab_bar_visual_id())
                     }
                     Operation::TabStripControl(control)
@@ -211,35 +267,52 @@ fn focused_group(
     if result.is_err() || blocked || context.ui.memory(egui::Memory::focused) != Some(focused) {
         return None;
     }
-    group
+    group.map(|visual| FocusedGroup {
+        visual,
+        tab: focused_tab,
+    })
 }
 
 fn prepare_navigation(
     context: &RenderContext<'_, '_, '_>,
-    group: DockspaceVisualId,
-    navigation: SurfaceTabNavigation,
+    group: FocusedGroup,
+    inputs: &[TabKeyInput],
 ) -> Option<dockspace::runtime::PreparedSurfaceAction> {
-    let mut action = None;
-    // Core navigates from the selected item; the source only locates its strip.
-    // Keep that source deterministic across passes, including when navigation
-    // rejects a source which is already the destination.
+    let first = inputs.first()?;
+    let mut source = group.tab;
+    let mut selected = None;
     context
         .plan
         .visit_surface_program(|step| {
-            if action.is_none()
-                && let Step::Operation {
-                    operation: Operation::Tab(tab),
-                    paint,
-                    ..
-                } = step
+            if let Step::Operation {
+                operation, paint, ..
+            } = step
                 && !paint.is_source_gap()
-                && tab.tab_bar_visual_id() == group
-                && tab.operable()
             {
-                action = context.plan.prepare_tab_navigation(tab.item(), navigation);
+                match operation {
+                    Operation::Pane(pane) if pane.tab_bar_visual_id() == group.visual => {
+                        selected = pane.selected();
+                    }
+                    Operation::Tab(tab)
+                        if source.is_none()
+                            && tab.tab_bar_visual_id() == group.visual
+                            && tab.operable() =>
+                    {
+                        source = Some(tab.item());
+                    }
+                    _ => {}
+                }
             }
             Ok::<(), ()>(())
         })
         .ok()?;
-    action
+    let source = source?;
+    let start = if first.selected_start {
+        selected?
+    } else {
+        group.tab?
+    };
+    context
+        .plan
+        .prepare_tab_input_sequence(source, start, inputs.iter().map(|input| input.input))
 }

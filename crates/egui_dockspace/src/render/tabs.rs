@@ -1,13 +1,13 @@
 //! Pane and tab rendering over opaque product paint records.
 
 use dockspace::runtime::{
-    DockspaceVisualId, PanePaintRecord, SurfacePaintDisposition, SurfaceTabNavigation,
-    TabGroupDragRegionKind, TabPaintRecord,
+    DockspaceVisualId, PanePaintRecord, SurfacePaintDisposition, TabGroupDragRegionKind,
+    TabPaintRecord,
 };
 use egui::accesskit::{Action, Role};
 use egui::{
-    Align, CursorIcon, EventFilter, Id, Key, Layout, PointerButton, Sense, StrokeKind, Ui,
-    UiBuilder, pos2,
+    Align, CursorIcon, EventFilter, Id, Layout, PointerButton, Sense, StrokeKind, Ui, UiBuilder,
+    pos2,
 };
 
 use super::actions::effective_enabled;
@@ -94,30 +94,40 @@ pub(crate) fn paint_pane(
                 ui.label(format!("Missing pane {}", item.get()));
             });
         } else {
-            if let Some(request) = context
+            let focus_request = context
                 .pane_focus_request
                 .filter(|request| request.item() == Some(item))
-                && context.pointer_authority.supports_preview_gestures()
-                && effective_enabled(child_ui, true)
-                && !*context.pane_focus_target_requested
-                && let Some(target) = context.panes.focus_target(item)
-            {
-                crate::focus::apply_pane_focus_request(
-                    context.ui.ctx(),
-                    context.instance_id,
-                    request,
-                    target,
-                );
-                *context.pane_focus_target_requested = true;
-                *context.pane_focus_target = Some(target);
-            }
+                .filter(|_| {
+                    context.pointer_authority.supports_preview_gestures()
+                        && effective_enabled(child_ui, true)
+                        && !*context.pane_focus_target_requested
+                });
+            let focus_before_contents =
+                focus_request.and_then(|_| child_ui.memory(egui::Memory::focused));
+            let focus_target = focus_request.and_then(|_| context.panes.focus_target(item));
+            let preapplied = match (focus_request, focus_target) {
+                (Some(request), Some(target))
+                    if !crate::focus::input_may_surrender_focus(context.ui.ctx()) =>
+                {
+                    // The application names its target before registering it.
+                    // Deliver ordinary input now, then verify the registration.
+                    crate::focus::apply_pane_focus_request(
+                        context.ui.ctx(),
+                        context.instance_id,
+                        request,
+                        target,
+                        focus_before_contents,
+                    )
+                }
+                _ => false,
+            };
             let pane_response = context.panes.ui(item, child_ui);
-            if let Some(target) = context.panes.focus_target(item)
-                && child_ui.ctx().viewport(|viewport| {
+            let registered_target = context.panes.focus_target(item).filter(|target| {
+                child_ui.ctx().viewport(|viewport| {
                     viewport
                         .this_pass
                         .widgets
-                        .get(target)
+                        .get(*target)
                         .is_some_and(|widget| {
                             widget.enabled
                                 && widget.visible
@@ -128,8 +138,36 @@ pub(crate) fn paint_pane(
                                 && pane_rect.contains_rect(widget.rect)
                         })
                 })
+            });
+            if preapplied
+                && focus_target != registered_target
+                && let Some(target) = focus_target
+                && context.ui.memory(|memory| memory.has_focus(target))
             {
+                context.ui.memory_mut(|memory| {
+                    memory.surrender_focus(target);
+                    if let Some(previous) =
+                        focus_before_contents.filter(|previous| *previous != target)
+                    {
+                        memory.request_focus(previous);
+                    }
+                });
+            }
+            if let Some(target) = registered_target {
                 context.pane_focus_bindings.push((item, target));
+                if let Some(request) = focus_request {
+                    // Register content first: egui surrenders a target's focus
+                    // when a title/tab-group click lands outside that widget.
+                    crate::focus::apply_pane_focus_request(
+                        context.ui.ctx(),
+                        context.instance_id,
+                        request,
+                        target,
+                        focus_before_contents,
+                    );
+                    *context.pane_focus_target_requested = true;
+                    *context.pane_focus_target = Some(target);
+                }
             }
             if let Some(receiver) = pane_receiver
                 && pane_rect.is_finite()
@@ -470,36 +508,32 @@ fn capture_tab_actions(
     focused: bool,
 ) {
     let id = response.id;
-    let keyboard_activation = focused
-        .then(|| {
-            context.ui.input(|input| {
-                [Key::Enter, Key::Space]
-                    .into_iter()
-                    .find(|&key| input.key_pressed(key))
-            })
-        })
-        .flatten();
-    let accesskit_activation = context.ui.input(|input| {
-        if input.has_accesskit_action_request(id, Action::Click) {
-            Some(id.with("accesskit-click"))
-        } else if input.has_accesskit_action_request(id, Action::Focus) {
-            Some(id.with("accesskit-focus"))
-        } else {
-            None
-        }
-    });
+    let accesskit_activation = context
+        .ui
+        .input(|input| input.has_accesskit_action_request(id, Action::Click));
+    let accesskit_focus = context
+        .ui
+        .input(|input| input.has_accesskit_action_request(id, Action::Focus));
     let pointer_activation = context.pointer_authority.accepts_local_pointer_actions()
         && response.clicked_by(PointerButton::Primary);
-    let origin = keyboard_activation
-        .map(|key| id.with(("keyboard-activate", key)))
-        .or(accesskit_activation)
-        .or_else(|| pointer_activation.then(|| id.with("pointer-click")));
-    if let Some(origin) = origin {
+    if accesskit_activation || pointer_activation {
         response.request_focus();
-        if (!tab.selected() || keyboard_activation.is_some() || accesskit_activation.is_some())
+        if (!tab.selected() || accesskit_activation)
             && let Some(action) = context.plan.prepare_tab_select(tab.item())
         {
-            context.push_local_action(origin, action);
+            context.push_local_action(
+                id.with(if accesskit_activation {
+                    "accesskit-click"
+                } else {
+                    "pointer-click"
+                }),
+                action,
+            );
+        }
+    } else if accesskit_focus {
+        response.request_focus();
+        if let Some(action) = context.plan.prepare_tab_focus(tab.item()) {
+            context.push_local_action(id.with("accesskit-focus"), action);
         }
     }
     if focused {
@@ -512,36 +546,6 @@ fn capture_tab_actions(
                 },
             );
         });
-        let navigation = context.ui.input_mut(|input| {
-            if input.consume_key(egui::Modifiers::NONE, Key::ArrowLeft) {
-                Some((Key::ArrowLeft, SurfaceTabNavigation::Previous))
-            } else if input.consume_key(egui::Modifiers::NONE, Key::ArrowRight) {
-                Some((Key::ArrowRight, SurfaceTabNavigation::Next))
-            } else if input.consume_key(egui::Modifiers::NONE, Key::Home) {
-                Some((Key::Home, SurfaceTabNavigation::First))
-            } else if input.consume_key(egui::Modifiers::NONE, Key::End) {
-                Some((Key::End, SurfaceTabNavigation::Last))
-            } else {
-                None
-            }
-        });
-        if let Some((key, navigation)) = navigation
-            && let Some(action) = context.plan.prepare_tab_navigation(tab.item(), navigation)
-        {
-            context
-                .ui
-                .memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
-            if let Some(target_visual) = action.tab_focus_visual() {
-                context.ui.memory_mut(|memory| {
-                    memory.request_focus(tab_id_for_visual(
-                        context.ui,
-                        context.instance_id,
-                        target_visual,
-                    ));
-                });
-            }
-            context.push_local_action(id.with(("keyboard-navigation", key)), action);
-        }
     }
 }
 

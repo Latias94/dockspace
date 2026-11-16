@@ -40,6 +40,18 @@ impl SurfaceTabNavigation {
     }
 }
 
+/// One ordered keyboard input within an exact tab strip.
+///
+/// Hosts can fold a coalesced input batch into one prepared action without
+/// publishing intermediate selections or preparing actions against stale state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SurfaceTabInput {
+    /// Move the selection while keeping framework focus on the tab header.
+    Navigate(SurfaceTabNavigation),
+    /// Enter the content of the tab reached by preceding inputs.
+    Activate,
+}
+
 /// Product-facing navigation within one exact open tab-list menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SurfaceTabListNavigation {

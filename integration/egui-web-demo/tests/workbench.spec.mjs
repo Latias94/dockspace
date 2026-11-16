@@ -141,6 +141,53 @@ test('real input merges tabs, retires a floating group, resizes, edits and scrol
   expect(errors).toEqual([]);
 });
 
+test('wheel browses an overflowing tab group without selecting another pane', async ({ page }) => {
+  await open(page);
+  await mergeLeft(page, 'Preview', [3, 2]);
+  await mergeLeft(page, 'Inspector', [3, 2, 4]);
+  await page.setViewportSize({ width: 800, height: 800 });
+  await expect.poll(async () => (await state(page)).controls.some(node =>
+    node.label === 'List tabs' && node.rect[0] < 250)).toBe(true);
+  const overVisibleTab = async () => {
+    const tab = (await state(page)).tabs
+      .filter(tab => ['Outline', 'Preview', 'Inspector'].includes(tab.label))
+      .sort((a, b) => (b.rect[2] - b.rect[0]) - (a.rect[2] - a.rect[0]))[0];
+    expect(tab).toBeTruthy();
+    const pointer = await point(page, tab.rect);
+    await page.mouse.move(pointer.x, pointer.y);
+    await presentedPointer(page, pointer, false);
+  };
+  await overVisibleTab();
+  const before = await state(page);
+  const positions = snapshot => snapshot.tabs
+    .filter(tab => ['Outline', 'Preview', 'Inspector'].includes(tab.label))
+    .map(tab => [tab.label, tab.rect[0], tab.rect[2]]);
+  const original = positions(before);
+  // Browse toward the beginning, then the end. Selection can initially be at
+  // either endpoint after the structural transition finishes.
+  await page.mouse.wheel(-240, 0);
+  await expect.poll(async () => JSON.stringify(positions(await state(page))))
+    .not.toBe(JSON.stringify(original));
+  await expect.poll(async () => {
+    const tabs = positions(await state(page)).map(tab => tab[0]);
+    return tabs.includes('Outline') && !tabs.includes('Inspector');
+  }).toBe(true);
+  expect(pane(await state(page), 3).selected).toBe(pane(before, 3).selected);
+  // The visible tab under the pointer can change while scrolling and reflowing.
+  // Resolve its current hit bounds before reversing the wheel direction.
+  await overVisibleTab();
+  const beginning = positions(await state(page));
+  await page.mouse.wheel(240, 0);
+  await expect.poll(async () => JSON.stringify(positions(await state(page))))
+    .not.toBe(JSON.stringify(beginning));
+  await expect.poll(async () => {
+    const tabs = positions(await state(page)).map(tab => tab[0]);
+    return tabs.includes('Inspector') && !tabs.includes('Outline');
+  }).toBe(true);
+  expect(pane(await state(page), 3).selected).toBe(pane(before, 3).selected);
+  expect((await state(page)).activeGesture).toBe(false);
+});
+
 test('blur cancels a held drag, and fresh input can float and dock again', async ({ page }) => {
   await open(page);
   const destination = await point(page, [100, 300, 200, 400]);

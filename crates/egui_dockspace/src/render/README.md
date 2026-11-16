@@ -233,6 +233,23 @@ and deferred submission and supersedes older content-focus requests using the
 existing focus coordinator. Enter, Space and explicit tab activation retain their
 ordinary pane-content focus behavior.
 
+Ordinary content-focus requests run before the pane callback so its first text
+or IME input and `gained_focus()` observation see the transition. The current
+callback must still register a valid target inside that pane before the adapter
+publishes its binding; an unregistered provisional target yields back to the
+previous focus. When this frame's pointer input can trigger egui's configured
+outside-click focus surrender, delivery follows widget registration instead.
+That prevents a title or group click from clearing its own request. A different
+focus chosen by the callback remains authoritative, and presentation retries do
+not reapply the side effect.
+
+`tab_shortcuts` captures the remaining header keys and configured cycling keys
+after pane widgets have processed input. It preserves event order and folds the
+batch through `SurfacePaintPlan::prepare_tab_input_sequence`, publishing one
+selection with the final focus purpose. The action keeps its visible receiver
+separate from a possibly clipped destination. Accessibility Focus uses
+`prepare_tab_focus`; it must not enter content as Click does.
+
 Escape dismisses an open tab-list menu and returns keyboard focus to its owning
 tab-list button when that button remains enabled and visible. Repeated encoding
 passes in the same run preserve that handoff, so Enter can reopen the menu after
