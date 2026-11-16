@@ -5,6 +5,12 @@ testing and architecture investigation before further refactoring. The
 [two original messages](docking-testing-and-imgui-source.md) are archived verbatim;
 their claims are research input, not an adopted specification.
 
+The follow-up [architecture review](docking-architecture-review.md) compares
+these concerns with the current implementation. The [test design
+proposal](docking-testing-design-options.md) records a measured short-property
+oracle gap and a bounded implementation sequence. Both remain recommendations;
+they do not change the public contracts.
+
 ## Testing decisions
 
 Keep exploration, reduction, regression and platform qualification distinct.
@@ -75,10 +81,18 @@ and candidate directions; they do not establish a finalized Docking v3 design.
   backend still lists resistance to move/resize as a testing gap; it is not a
   complete window-manager oracle.
 
-The supplied observations about [#9123](https://github.com/ocornut/imgui/issues/9123),
-[#2849](https://github.com/ocornut/imgui/issues/2849), the current upstream CI
-matrix, and the latest release status require separate verification before they
-justify implementation changes or public claims.
+- [Issue #9123](https://github.com/ocornut/imgui/issues/9123) contains Omar's
+  2026-01-08 explanation that a lone visible window can retain its docking
+  membership while ideally appearing as a standalone window. He identifies
+  existing implementation complexity; this does not prescribe another topology.
+- [Issue #2849](https://github.com/ocornut/imgui/issues/2849) discusses incompatible
+  per-window constraints, selection-dependent node resizing, and constraining
+  content inside an unchanged docking slot as an alternative. These are product
+  choices; a pane maximum must not silently acquire one of these meanings.
+
+The current upstream CI matrix and latest release status were not requalified
+for the follow-up architecture review. Do not infer them from the supplied
+investigation or the pinned local references.
 
 ## Comparison with Dockspace
 
