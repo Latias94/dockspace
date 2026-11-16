@@ -548,9 +548,14 @@ fn run_owned_update(style_change: bool) {
         DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([FIRST, SECOND])),
     )])
     .unwrap();
-    let session =
-        DockspaceSession::from_layout(layout.clone(), dockspace::policy::DockPolicy::default())
-            .unwrap();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        layout.clone(),
+        dockspace::policy::DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let reports = Arc::new(AtomicUsize::new(0));
     let mut state = NativeRuntimeState::new(
@@ -570,8 +575,14 @@ fn run_owned_update(style_change: bool) {
         let clock = Arc::new(AtomicU64::new(0));
         let observed = Arc::clone(&clock);
         state.coordinator = crate::coordinator::NativeCoordinator::new_with_clock(
-            DockspaceSession::from_layout(layout, dockspace::policy::DockPolicy::default())
-                .unwrap(),
+            DockspaceSession::from_layout_with_presentation_config(
+                layout,
+                dockspace::policy::DockPolicy::default(),
+                egui_dockspace::DockStyle::default()
+                    .presentation_config()
+                    .unwrap(),
+            )
+            .unwrap(),
             dockspace::runtime::NativeMonotonicClock::new(move || {
                 Duration::from_millis(observed.load(Ordering::SeqCst))
             }),

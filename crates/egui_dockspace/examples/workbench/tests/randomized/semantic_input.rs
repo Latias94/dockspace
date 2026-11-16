@@ -277,3 +277,87 @@ fn outward_resize_at_a_clamped_minimum_preserves_latent_shares() {
     replay.settle();
     before.assert_equivalent_geometry(&LayoutState::capture(&replay));
 }
+
+#[test]
+fn junction_axis_identity_survives_tab_overflow_and_opposite_adjustments() {
+    use egui_dockspace::{
+        DockspaceAxis, DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout,
+        ItemId,
+    };
+
+    let columns = DockspaceNode::split(
+        DockspaceAxis::Horizontal,
+        [
+            (
+                DockspaceNode::tabs_with_selection([ItemId::new(6), PREVIEW], Some(PREVIEW))
+                    .unwrap(),
+                0.6374902267396404,
+            ),
+            (
+                DockspaceNode::tabs_with_selection(
+                    [PROFILER, ItemId::new(8), INSPECTOR, EDITOR],
+                    Some(EDITOR),
+                )
+                .unwrap(),
+                0.18125488663017983,
+            ),
+            (DockspaceNode::tabs([OUTLINE]), 0.18125488663017983),
+        ],
+    )
+    .unwrap();
+    let rows = DockspaceNode::split(
+        DockspaceAxis::Vertical,
+        [
+            (DockspaceNode::tabs([CONSOLE]), 0.6786381842456609),
+            (columns, 0.32136181575433914),
+        ],
+    )
+    .unwrap();
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(MAIN_ROOT, rows),
+    )])
+    .unwrap();
+    let mut batched = Replay::from_layout(0x5eed, layout);
+    batched.settle();
+    let (target, _) = batched
+        .controls(Role::Splitter, "Resize pane grid horizontally")
+        .into_iter()
+        .max_by(|(_, first), (_, second)| first.center().x.total_cmp(&second.center().x))
+        .expect("the row and three columns must expose their right junction");
+    let mut separate = batched.at_current_layout();
+    let initial = LayoutState::capture(&batched);
+    batched.assert_same_materialized_panes(&separate);
+    for replay in [&mut batched, &mut separate] {
+        replay.frame(vec![accesskit(target, Action::Focus)]);
+        assert_eq!(replay.context.memory(egui::Memory::focused), Some(target));
+    }
+    // The first step crosses a tab overflow threshold. A sibling chrome change
+    // must not replace the junction axis's input or accessibility identity.
+    let events = [
+        key(egui::Key::ArrowLeft),
+        accesskit(target, Action::Increment),
+    ];
+    for event in events.iter().cloned() {
+        separate.frame(vec![event]);
+        assert!(
+            separate.context.input(|input| input.events.is_empty()),
+            "the focused junction must consume each adjustment after its sibling chrome changes"
+        );
+        separate.frame(Vec::new());
+        assert!(
+            separate
+                .controls(Role::Splitter, "Resize pane grid horizontally")
+                .iter()
+                .any(|(widget, _)| *widget == target),
+            "tab overflow changes must preserve the junction axis identity"
+        );
+        assert_eq!(separate.context.memory(egui::Memory::focused), Some(target));
+    }
+    batched.frame(events.into_iter().collect());
+    batched.settle();
+    separate.settle();
+    batched.assert_same_materialized_panes(&separate);
+    initial.assert_equivalent_geometry(&LayoutState::capture(&batched));
+    initial.assert_equivalent_geometry(&LayoutState::capture(&separate));
+}

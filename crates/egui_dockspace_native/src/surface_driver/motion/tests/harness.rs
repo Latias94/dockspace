@@ -77,7 +77,14 @@ impl Harness {
             DockspaceRootLayout::new(ROOT, content),
         )])
         .unwrap();
-        let session = DockspaceSession::from_layout(layout.clone(), DockPolicy::default()).unwrap();
+        let session = DockspaceSession::from_layout_with_presentation_config(
+            layout.clone(),
+            DockPolicy::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap();
         let mut state = NativeRuntimeState::new(
             egui::Id::unique("native-motion-renderer"),
             session,
@@ -92,7 +99,14 @@ impl Harness {
         let clock = NativeMonotonicClock::new(move || {
             Duration::from_millis(observed.load(Ordering::SeqCst))
         });
-        let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+        let mut session = DockspaceSession::from_layout_with_presentation_config(
+            layout,
+            DockPolicy::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap();
         session
             .configure_output_capacity(NonZeroUsize::new(1).unwrap())
             .unwrap();

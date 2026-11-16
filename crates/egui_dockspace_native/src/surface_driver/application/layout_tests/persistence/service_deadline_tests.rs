@@ -62,7 +62,15 @@ fn profile_session(candidate: DockspaceLayout) -> DockspaceSession {
     }
     let mut policy = DockPolicy::default();
     policy.set_allow_native_surfaces(true);
-    DockspaceSession::from_persistent_layout(candidate, policy, bootstrap).unwrap()
+    DockspaceSession::from_persistent_layout_with_presentation_config(
+        candidate,
+        policy,
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+        bootstrap,
+    )
+    .unwrap()
 }
 
 fn saved_three_domain_document() -> Vec<u8> {

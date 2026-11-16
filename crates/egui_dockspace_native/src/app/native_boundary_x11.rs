@@ -569,7 +569,14 @@ fn fixture() -> NativeDockspaceApp<Panes> {
     assert!(storage.initial_reserved_bytes() <= LIMIT);
     NativeDockspaceApp::new_with_storage_limit(
         Id::unique("native-boundary-x11"),
-        DockspaceSession::from_layout(layout, policy).unwrap(),
+        DockspaceSession::from_layout_with_presentation_config(
+            layout,
+            policy,
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap(),
         ROOT,
         Panes,
         DockStyle::default(),

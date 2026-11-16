@@ -409,14 +409,21 @@ mod x11 {
             DockspaceRootLayout::new(ROOT, DockspaceNode::central_tabs([FIRST, SECOND])),
         )])
         .expect("valid two-tab layout");
-        let session = DockspaceSession::from_layout(layout, DockPolicy::default())
-            .expect("valid native session");
+        let style = DockStyle::default();
+        let session = DockspaceSession::from_layout_with_presentation_config(
+            layout,
+            DockPolicy::default(),
+            style
+                .presentation_config()
+                .expect("default chrome is valid"),
+        )
+        .expect("valid native session");
         let dockspace = NativeDockspaceApp::new(
             egui::Id::unique("contained-redock-x11"),
             session,
             SURFACE,
             Panes::default(),
-            DockStyle::default(),
+            style,
         )
         .expect("native dockspace initializes");
         let options = eframe::NativeOptions {

@@ -628,7 +628,10 @@ mod style_tests {
 
     #[test]
     fn complete_style_comparison_preserves_core_only_settings_and_visual_overrides() {
-        let accepted = DockPresentationConfig::builder()
+        let accepted = DockStyle::default()
+            .presentation_config()
+            .unwrap()
+            .to_builder()
             .pointer_drag_start_distance(12.25)
             .magnetic_center_fraction(0.6)
             .target_release_hysteresis(8.0)

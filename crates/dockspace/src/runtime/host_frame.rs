@@ -1032,6 +1032,21 @@ impl<'session> DockspaceHostFrame<'session> {
         self.request_close_current(ContentCloseTarget::Root(root))
     }
 
+    /// Opens or reuses one atomic close plan for an exact captured tabs group.
+    ///
+    /// The original session and version remain authoritative even if this frame
+    /// has already changed the group's former anchor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a foreign capture or structurally rejected ingress.
+    pub fn request_close_tabs_current(
+        &mut self,
+        group: crate::model::PreparedTabsGroup,
+    ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
+        self.submit_prepared_close_request(self.session.prepare_close_tabs(group))
+    }
+
     fn request_close_current(
         &mut self,
         target: ContentCloseTarget,

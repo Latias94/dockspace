@@ -299,7 +299,12 @@ fn oversized_reservations_are_clipped_to_the_empty_bar() {
         .unwrap()
         .unwrap();
     let bar = &plan.tab_bar_records()[0];
-    assert_eq!(bar.leading_reserved_bounds(), Some(bar.bounds()));
+    let leading = bar.leading_reserved_bounds().unwrap();
+    let menu = plan.presentation_menu_anchor_records()[0]
+        .ready_bounds()
+        .unwrap();
+    assert_eq!(leading.x(), bar.bounds().x());
+    assert_eq!(leading.max().x(), menu.x());
     assert_eq!(bar.trailing_reserved_bounds(), None);
     assert_eq!(bar.viewport().width(), 0.0);
 }

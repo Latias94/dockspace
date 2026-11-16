@@ -47,8 +47,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let mut policy = DockPolicy::default();
     policy.set_allow_native_surfaces(true);
-    let session = DockspaceSession::from_layout(smoke_layout(), policy)?;
-    let dockspace = new_dockspace(scenario, storage_profile, session)?;
+    let style = DockStyle::default();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        smoke_layout(),
+        policy,
+        style.presentation_config()?,
+    )?;
+    let dockspace = new_dockspace(scenario, storage_profile, session, style)?;
     let native_host = dockspace.native_host_handler();
     let outcome = Arc::new(Mutex::new(None));
     let reported_outcome = Arc::clone(&outcome);
@@ -222,10 +227,10 @@ fn new_dockspace(
     scenario: SmokeScenario,
     storage_profile: SmokeStorageProfile,
     session: DockspaceSession,
+    style: DockStyle,
 ) -> Result<NativeDockspaceApp<SmokePanes>, egui_dockspace_native::NativeRuntimeError> {
     let instance = egui::Id::unique("egui-native-smoke");
     let panes = SmokePanes::new();
-    let style = DockStyle::default();
     if storage_profile == SmokeStorageProfile::Bounded {
         return NativeDockspaceApp::new_with_storage_limit(
             instance,

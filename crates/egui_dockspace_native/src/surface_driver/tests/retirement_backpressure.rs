@@ -57,8 +57,14 @@ fn state() -> NativeRuntimeState<TestPanes> {
             1 << 20,
         ));
     let storage = NativeStorageLimit::new(input, 16 << 20, 2, 1).unwrap();
-    let session =
-        DockspaceSession::from_layout(layout(), dockspace::policy::DockPolicy::default()).unwrap();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        layout(),
+        dockspace::policy::DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap();
     let mut coordinator = NativeCoordinator::new_with_combined_storage_limit_and_clock(
         session,
         NativePointerRoster::Exact(Vec::new()),

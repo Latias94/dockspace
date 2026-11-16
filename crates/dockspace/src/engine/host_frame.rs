@@ -518,6 +518,13 @@ impl<'frame> HostFrameView<'frame> {
         self.engine.presentation_config()
     }
 
+    pub(crate) fn capture_tabs_group(
+        &self,
+        anchor: crate::model::DockAnchor,
+    ) -> Result<crate::model::PreparedTabsGroup, crate::model::DockspaceActionRejection> {
+        self.engine.capture_tabs_group(anchor)
+    }
+
     pub(crate) fn prepare_product_action_if_available(
         &self,
         action: crate::model::ProductAction,
@@ -535,6 +542,20 @@ impl<'frame> HostFrameView<'frame> {
                 self.engine.policy_snapshot(),
             )
             .is_ok()
+    }
+
+    pub(crate) fn tabs_close_is_available(&self, group: &crate::model::PreparedTabsGroup) -> bool {
+        self.engine.capture_product_tabs(group).is_ok()
+            && self
+                .engine
+                .capture_content_close(
+                    crate::graph::command::ContentCloseTarget::Tabs {
+                        root: group.source.root(),
+                        anchor: group.anchor,
+                    },
+                    self.engine.policy_snapshot(),
+                )
+                .is_ok()
     }
 
     pub(crate) fn item_close_is_available(&self, item: ItemId) -> bool {

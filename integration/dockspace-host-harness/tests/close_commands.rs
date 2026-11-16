@@ -81,6 +81,13 @@ fn defer_close(
 ) -> (CloseRequestId, DeferredCloseToken) {
     let prepared = match target {
         ClosePlanTarget::Item { item } => session.prepare_close_item(item),
+        ClosePlanTarget::Tabs { root, anchor } => {
+            assert_eq!(session.view().item(anchor).unwrap().root(), root);
+            let group = session
+                .capture_tabs_group(DockAnchor::Item(anchor))
+                .unwrap();
+            session.prepare_close_tabs(group)
+        }
         ClosePlanTarget::Root { root } => session.prepare_close_root(root),
         ClosePlanTarget::Surface { .. } => panic!("content-close fixture"),
     };

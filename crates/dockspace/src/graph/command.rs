@@ -19,6 +19,8 @@ pub enum ContentCloseTarget {
     Item(ItemId),
     /// Close every item in one complete root.
     Root(RootId),
+    /// Close one captured tabs leaf, addressed by a stable member.
+    Tabs { root: RootId, anchor: ItemId },
 }
 
 /// Durable result of an approved content-close transaction.
@@ -28,6 +30,8 @@ pub enum CloseCommitOutcome {
     ItemClosed { item: ItemId, root: RootId },
     /// One complete root and all of its items were removed atomically.
     RootClosed { root: RootId, items: Vec<ItemId> },
+    /// One complete tabs group was removed in one transaction.
+    TabsClosed { root: RootId, items: Vec<ItemId> },
     /// One complete surface roster and all of its items were removed atomically.
     SurfaceClosed {
         surface: SurfaceId,

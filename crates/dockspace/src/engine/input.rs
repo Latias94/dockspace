@@ -360,6 +360,10 @@ pub(crate) enum LocalSurfaceAction {
         scene: SurfaceSceneStamp,
         root: crate::ids::RootId,
     },
+    CloseTabs {
+        scene: SurfaceSceneStamp,
+        group: crate::model::PreparedTabsGroup,
+    },
     PresentationCommand {
         scene: SurfaceSceneStamp,
         action: crate::model::ProductAction,
@@ -397,6 +401,7 @@ impl LocalSurfaceAction {
             (Self::SelectTab { selection: a, .. }, Self::SelectTab { selection: b, .. }) => a == b,
             (Self::Close { target: a, .. }, Self::Close { target: b, .. }) => a == b,
             (Self::CloseRoot { root: a, .. }, Self::CloseRoot { root: b, .. }) => a == b,
+            (Self::CloseTabs { group: a, .. }, Self::CloseTabs { group: b, .. }) => a == b,
             (
                 Self::PresentationCommand { action: a, .. },
                 Self::PresentationCommand { action: b, .. },
@@ -463,6 +468,7 @@ impl LocalSurfaceAction {
             Self::SelectTab { scene, .. }
             | Self::Close { scene, .. }
             | Self::CloseRoot { scene, .. }
+            | Self::CloseTabs { scene, .. }
             | Self::PresentationCommand { scene, .. }
             | Self::TabChrome { scene, .. }
             | Self::AdjustSplitter { scene, .. }
@@ -477,6 +483,7 @@ impl LocalSurfaceAction {
             Self::SelectTab { .. } => "select-tab",
             Self::Close { .. } => "close",
             Self::CloseRoot { .. } => "close-root",
+            Self::CloseTabs { .. } => "close-tabs",
             Self::PresentationCommand { .. } => "presentation-command",
             Self::TabChrome { .. } => "tab-chrome",
             Self::AdjustSplitter { .. } => "adjust-splitter",

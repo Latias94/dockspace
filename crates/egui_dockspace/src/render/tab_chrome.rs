@@ -146,14 +146,7 @@ fn paint_control(
             );
         }
         TabStripControlKind::TabListMenu => {
-            let center = bounds.center();
-            let spacing = bounds.width().min(bounds.height()) * 0.16;
-            for x in [-1.0, 0.0, 1.0] {
-                context
-                    .ui
-                    .painter()
-                    .circle_filled(center + vec2(x * spacing, 0.0), 1.4, color);
-            }
+            super::chrome_icons::tab_list(context.ui, bounds, color);
         }
         TabStripControlKind::RevealTabBar => {
             let inset = bounds.width().min(bounds.height()) * 0.15;

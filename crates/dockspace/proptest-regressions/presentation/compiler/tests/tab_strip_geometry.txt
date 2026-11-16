@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc b7cef2111c75d61b96b0798a18e5497bd0c0daec055036520208bc42dd5b749d # shrinks to x = 93.05508329803472, y = 0.0, width = 99.95439312176806, placements = [0, 0, 0], spacing = 0.0
+cc 9190fdb99d347541c231607952cac3d04162a7ab9804e6274ad5ef4cf7ba4ae2 # shrinks to x = 15.233942594906907, y = 38.33906067472379, width = 110.52884599923644, placements = [0, 0, 2], spacing = 0.0

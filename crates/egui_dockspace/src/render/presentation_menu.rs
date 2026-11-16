@@ -1,13 +1,14 @@
-//! Root presentation commands rendered with egui's native menu primitives.
+//! Scoped group and root commands rendered with egui menu primitives.
 
 use dockspace::model::DockspaceActionRejection;
 use dockspace::runtime::{
     ContainedPaintRecord, DockspacePresentationCommandKind,
     DockspacePresentationCommandUnavailable, DockspacePresentationMenuAnchorKind,
-    DockspaceRuntimeError, PresentationMenuAnchorPaintRecord, SurfacePaintDisposition,
+    DockspaceRuntimeError, DockspaceTabsGroupCommandKind, PresentationCommandPaintRecord,
+    PresentationMenuAnchorPaintRecord, SurfacePaintDisposition, TabBarPaintRecord,
 };
 use egui::accesskit::{Action, HasPopup, Role};
-use egui::{Button, PointerButton, Popup, Sense, UiBuilder, vec2};
+use egui::{Button, PointerButton, Popup, Sense, StrokeKind, UiBuilder};
 
 use crate::touch_menu::take_touch_context_menu;
 
@@ -17,6 +18,7 @@ use super::geometry::{accesskit_bounds, egui_rect};
 
 mod keyboard;
 mod popup;
+pub(super) use popup::invalidate_stale;
 pub(crate) use popup::prepare_layer;
 
 const COMMANDS: [DockspacePresentationCommandKind; 8] = [
@@ -30,64 +32,129 @@ const COMMANDS: [DockspacePresentationCommandKind; 8] = [
     DockspacePresentationCommandKind::DockCenter,
 ];
 
+#[derive(Clone, Copy)]
+enum Scope<'plan> {
+    Root(PresentationMenuAnchorPaintRecord<'plan>),
+    Tabs(TabBarPaintRecord<'plan>),
+}
+
+impl Scope<'_> {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Root(_) => "Layout actions",
+            Self::Tabs(_) => "Tab group actions",
+        }
+    }
+
+    const fn description(self) -> &'static str {
+        match self {
+            Self::Root(_) => "Actions for the entire layout, including all split groups",
+            Self::Tabs(_) => "Actions for this tab group; other split groups stay in place",
+        }
+    }
+}
+
 pub(super) fn paint(
     context: &mut RenderContext<'_, '_, '_>,
     anchor: PresentationMenuAnchorPaintRecord<'_>,
     contained: Option<ContainedPaintRecord<'_>>,
-    paint: SurfacePaintDisposition,
+    disposition: SurfacePaintDisposition,
 ) -> Result<(), DockspaceRuntimeError> {
-    let touch_requested = take_touch_context_menu(
-        context.ui,
-        context.instance_id,
-        context.plan.surface(),
-        anchor.root(),
-    )
-    .is_some();
-    let Some(bounds) = egui_rect(anchor.bounds()) else {
+    paint_scoped(context, Scope::Root(anchor), contained, disposition)
+}
+
+pub(super) fn paint_tabs(
+    context: &mut RenderContext<'_, '_, '_>,
+    bar: TabBarPaintRecord<'_>,
+    disposition: SurfacePaintDisposition,
+) -> Result<(), DockspaceRuntimeError> {
+    paint_scoped(context, Scope::Tabs(bar), None, disposition)
+}
+
+fn paint_scoped(
+    context: &mut RenderContext<'_, '_, '_>,
+    scope: Scope<'_>,
+    contained: Option<ContainedPaintRecord<'_>>,
+    disposition: SurfacePaintDisposition,
+) -> Result<(), DockspaceRuntimeError> {
+    let (bounds, visual, operable, touch_requested) = match scope {
+        Scope::Root(anchor) => (
+            Some(anchor.bounds()),
+            anchor.visual_id(),
+            anchor.operable(),
+            take_touch_context_menu(
+                context.ui,
+                context.instance_id,
+                context.plan.surface(),
+                anchor.root(),
+            )
+            .is_some(),
+        ),
+        Scope::Tabs(bar) => (
+            bar.group_menu_bounds(),
+            bar.visual_id(),
+            context.plan.tabs_group_menu_operable(bar),
+            false,
+        ),
+    };
+    let Some(bounds) = bounds.and_then(egui_rect) else {
         return Ok(());
     };
-    let id = context.ui.make_persistent_id((
-        context.instance_id,
-        "presentation-menu-anchor",
-        anchor.visual_id(),
-    ));
+    let id = context
+        .ui
+        .make_persistent_id((context.instance_id, scope.label(), visual));
     let popup_id = id.with("popup");
-    let operable = anchor.operable();
+    let ui_enabled = effective_enabled(context.ui, operable);
     let response = context
         .ui
         .interact(
             bounds,
             id,
-            if operable {
+            if ui_enabled {
                 Sense::click()
             } else {
                 Sense::hover()
             },
         )
-        .on_hover_text("Actions for the entire layout, including all split groups");
-    let ui_enabled = effective_enabled(context.ui, operable);
+        .on_hover_text(scope.description());
     if ui_enabled && touch_requested {
         Popup::open_id(context.ui.ctx(), popup_id);
     }
+    if !ui_enabled && Popup::is_id_open(context.ui.ctx(), popup_id) {
+        Popup::close_id(context.ui.ctx(), popup_id);
+    }
     let menu_open = Popup::is_id_open(context.ui.ctx(), popup_id);
-    let menu_open = if ui_enabled {
-        menu_open
-    } else {
-        if menu_open {
-            Popup::close_id(context.ui.ctx(), popup_id);
+    if !disposition.is_source_gap() {
+        match scope {
+            Scope::Root(anchor) => paint_anchor_icon(context, anchor, contained, bounds, &response),
+            Scope::Tabs(_) => {
+                if RenderContext::response_emphasized(&response) {
+                    context.ui.painter().rect_filled(
+                        bounds,
+                        2.0,
+                        context.interaction_fill(&response),
+                    );
+                }
+                let color = context
+                    .interaction_stroke(&response, context.style.visuals.tab_text_color)
+                    .color;
+                super::chrome_icons::group_actions(context.ui, bounds, color);
+            }
         }
-        false
-    };
-
-    let paint_omitted = paint.is_source_gap();
-    if !paint_omitted {
-        paint_anchor_icon(context, anchor, contained, bounds, &response);
+        if ui_enabled && response.has_focus() {
+            context.ui.painter_at(bounds).rect_stroke(
+                bounds,
+                2.0,
+                context.visuals.tab_focus_stroke,
+                StrokeKind::Inside,
+            );
+        }
     }
     context.ui.ctx().accesskit_node_builder(id, |node| {
         node.set_role(Role::Button);
         node.set_bounds(accesskit_bounds(bounds));
-        node.set_label("Layout actions");
-        node.set_description("Applies to the entire layout, including all split groups");
+        node.set_label(scope.label());
+        node.set_description(scope.description());
         node.set_has_popup(HasPopup::Menu);
         node.set_expanded(menu_open);
         if ui_enabled {
@@ -97,23 +164,21 @@ pub(super) fn paint(
             node.clear_actions();
         }
     });
-
     if !menu_open && (!ui_enabled || !response.clicked()) {
         return Ok(());
     }
 
-    let commands = COMMANDS
-        .into_iter()
-        .map(|kind| context.plan.presentation_command(anchor.root(), kind))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
-    let mut entries = Vec::with_capacity(COMMANDS.len() + 1);
+    let commands = commands(context, scope)?;
+    let mut entries = Vec::with_capacity(commands.len() + 1);
+    let mut close = match scope {
+        Scope::Root(anchor) => context.plan.prepare_root_close(anchor.root()),
+        Scope::Tabs(bar) => context.plan.prepare_tabs_close(bar),
+    };
     let popup = popup::show(
         context.ui,
         context.instance_id,
         context.plan.surface(),
+        context.plan.workspace_stamp(),
         popup_id,
         &response,
         touch_requested,
@@ -121,12 +186,14 @@ pub(super) fn paint(
         |ui| {
             ui.ctx().accesskit_node_builder(ui.unique_id(), |node| {
                 node.set_role(Role::Menu);
-                node.set_label("Layout actions");
+                node.set_label(scope.label());
             });
-            ui.weak("Entire layout");
+            ui.weak(match scope {
+                Scope::Root(_) => "Entire layout",
+                Scope::Tabs(_) => "Tab group",
+            });
             ui.separator();
-            for command in commands {
-                let label = command_label(command.kind());
+            for (label, command) in commands {
                 let enabled = ui_enabled && command.is_ready();
                 let response = ui
                     .scope_builder(
@@ -158,26 +225,24 @@ pub(super) fn paint(
                 }
             }
             ui.separator();
+            let close_label = match scope {
+                Scope::Root(_) => "Close Layout",
+                Scope::Tabs(_) => "Close Tab Group",
+            };
             let response = ui
-                .scope_builder(
-                    UiBuilder::new().scope_id(popup_id.with("close-layout")),
-                    |ui| {
-                        ui.add_enabled(
-                            ui_enabled && context.plan.prepare_root_close(anchor.root()).is_some(),
-                            Button::new("Close Layout"),
-                        )
-                    },
-                )
+                .scope_builder(UiBuilder::new().scope_id(popup_id.with("close")), |ui| {
+                    ui.add_enabled(ui_enabled && close.is_some(), Button::new(close_label))
+                })
                 .inner;
             ui.ctx().accesskit_node_builder(response.id, |node| {
                 node.set_role(Role::MenuItem);
-                node.set_label("Close Layout");
+                node.set_label(close_label);
+                node.clear_actions();
                 if response.enabled() {
                     node.add_action(Action::Click);
                     node.add_action(Action::Focus);
                 } else {
                     node.set_disabled();
-                    node.clear_actions();
                 }
             });
             if response.enabled() {
@@ -186,7 +251,6 @@ pub(super) fn paint(
             entries.iter().map(|(response, _)| response.id).collect()
         },
     );
-
     let keyboard_activation = match popup.and_then(|popup| popup.inner) {
         Some(keyboard::Outcome::Activate(target)) => Some(target),
         Some(keyboard::Outcome::Dismiss) => return Ok(()),
@@ -211,7 +275,7 @@ pub(super) fn paint(
         }?;
         let action = match command {
             Some(command) => context.plan.prepare_presentation_command(command),
-            None => context.plan.prepare_root_close(anchor.root()),
+            None => close.take(),
         }?;
         Some((origin, action))
     });
@@ -220,6 +284,42 @@ pub(super) fn paint(
         context.push_local_action(origin, action);
     }
     Ok(())
+}
+
+fn commands(
+    context: &RenderContext<'_, '_, '_>,
+    scope: Scope<'_>,
+) -> Result<Vec<(&'static str, PresentationCommandPaintRecord)>, DockspaceRuntimeError> {
+    let mut entries = Vec::new();
+    match scope {
+        Scope::Root(anchor) => {
+            for kind in COMMANDS {
+                if let Some(command) = context.plan.presentation_command(anchor.root(), kind)? {
+                    entries.push((command_label(kind), command));
+                }
+            }
+        }
+        Scope::Tabs(bar) => {
+            for (kind, label) in [
+                (DockspaceTabsGroupCommandKind::Float, "Float Tab Group"),
+                (
+                    DockspaceTabsGroupCommandKind::MoveToNewWindow,
+                    "Move Tab Group to New Window",
+                ),
+            ] {
+                if let Some(command) = context.plan.tabs_group_command(bar, kind)? {
+                    entries.push((label, command));
+                }
+            }
+        }
+    }
+    entries.retain(|(_, command)| {
+        command.unavailable_reason()
+            != Some(DockspacePresentationCommandUnavailable::Action(
+                DockspaceActionRejection::NativeUnavailable,
+            ))
+    });
+    Ok(entries)
 }
 
 fn paint_anchor_icon(
@@ -257,21 +357,13 @@ fn paint_anchor_icon(
             .rect_filled(bounds, 2.0, emphasized_fill);
     }
     let color = context.interaction_stroke(response, idle_color).color;
-    let center = bounds.center();
-    let spacing = bounds.height().min(bounds.width()) * 0.16;
-    let radius = (bounds.height().min(bounds.width()) * 0.055).clamp(1.0, 1.8);
-    for y in [-1.0, 0.0, 1.0] {
-        context
-            .ui
-            .painter()
-            .circle_filled(center + vec2(0.0, y * spacing), radius, color);
-    }
+    super::chrome_icons::layout_actions(context.ui, bounds, color);
 }
 
 const fn command_label(kind: DockspacePresentationCommandKind) -> &'static str {
     match kind {
         DockspacePresentationCommandKind::Float => "Float Layout",
-        DockspacePresentationCommandKind::MoveToNewWindow => "Move to New Window",
+        DockspacePresentationCommandKind::MoveToNewWindow => "Move Layout to New Window",
         DockspacePresentationCommandKind::DockBack => "Dock Back",
         DockspacePresentationCommandKind::DockLeft => "Dock Left",
         DockspacePresentationCommandKind::DockRight => "Dock Right",

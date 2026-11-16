@@ -121,6 +121,11 @@ impl Dockspace {
         self.session.prepare_close_root(root)
     }
 
+    /// Prepares an atomic close without refreshing the captured group's session or version.
+    pub fn prepare_close_tabs(&self, group: PreparedTabsGroup) -> PreparedCloseRequest {
+        self.session.prepare_close_tabs(group)
+    }
+
     /// Submits one core-issued product action against its source revision.
     ///
     /// A successful publication can still return a rejected or stale action.
@@ -352,6 +357,18 @@ impl Dockspace {
                 operation: "close request",
             })
             .map_err(Into::into)
+    }
+
+    /// Opens or reuses one atomic close plan for an exact captured tabs group.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a foreign capture or when the request cannot be published.
+    pub fn request_close_tabs_current(
+        &mut self,
+        group: PreparedTabsGroup,
+    ) -> Result<DockspaceCloseRequestResult, DockspaceError> {
+        self.submit_prepared_close_request(self.prepare_close_tabs(group))
     }
 
     /// Opens or reuses one close plan for an item at the current revision.

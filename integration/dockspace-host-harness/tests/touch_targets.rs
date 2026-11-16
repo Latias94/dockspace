@@ -997,7 +997,9 @@ fn expanded_targets_protect_title_close_menu_and_disabled_tab_controls() {
             RootId::new(2),
             DockspaceNode::tabs((20..25).map(ItemId::new)),
         ),
-        rect(240.0, 160.0, 360.0, 280.0),
+        // Reserve the additional group menu without moving a tab-close center
+        // underneath the trailing overlay scroll control.
+        rect(240.0, 160.0, 386.0, 280.0),
     ));
     let (session, geometry) = fixture(layout, true);
     for kind in [
@@ -1016,23 +1018,25 @@ fn expanded_targets_protect_title_close_menu_and_disabled_tab_controls() {
         );
     }
     for (kind, point, expected) in geometry.protected {
-        let hit = session
-            .host_pointer_hit_for_device(SURFACE, point, Device::Touch)
-            .expect("protected controls must keep an unambiguous query");
-        let roles = [
-            hit.delivery().map(|receiver| receiver.descriptor().role()),
-            hit.drag_delivery()
-                .map(|receiver| receiver.descriptor().role()),
-        ];
-        assert!(
-            roles.into_iter().flatten().all(|role| !is_resize(role)),
-            "{kind} must not be stolen by expanded resize geometry at {point:?}"
-        );
-        if let Some(expected) = expected {
+        for device in [Device::Mouse, Device::Touch] {
+            let hit = session
+                .host_pointer_hit_for_device(SURFACE, point, device)
+                .expect("protected controls must keep an unambiguous query");
+            let roles = [
+                hit.delivery().map(|receiver| receiver.descriptor().role()),
+                hit.drag_delivery()
+                    .map(|receiver| receiver.descriptor().role()),
+            ];
             assert!(
-                roles.contains(&Some(expected)),
-                "{kind} must preserve its original receiver role: {roles:?}"
+                roles.into_iter().flatten().all(|role| !is_resize(role)),
+                "{kind} must not be stolen by {device:?} resize geometry at {point:?}"
             );
+            if let Some(expected) = expected {
+                assert!(
+                    roles.contains(&Some(expected)),
+                    "{device:?} {kind} must preserve its original receiver role: {roles:?}"
+                );
+            }
         }
     }
 }

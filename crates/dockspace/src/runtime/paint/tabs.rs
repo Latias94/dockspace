@@ -307,6 +307,12 @@ impl<'plan> TabBarPaintRecord<'plan> {
         self.record.group_grip_bounds()
     }
 
+    /// Returns the exact group-action anchor reserved outside tab and drag regions.
+    #[must_use]
+    pub const fn group_menu_bounds(self) -> Option<LogicalRect> {
+        self.record.group_menu_bounds()
+    }
+
     /// Returns the core-clipped leading application chrome allocation.
     #[must_use]
     pub const fn leading_reserved_bounds(self) -> Option<LogicalRect> {

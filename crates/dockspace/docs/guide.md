@@ -110,6 +110,14 @@ workspace authority; preparing or submitting later does not refresh a stale
 group or look its old anchor up again. `DockspaceHostFrame` supplies the
 corresponding `dock_tabs_current` and `float_tabs_current` conveniences.
 
+A renderer's group menu uses `SurfacePaintPlan::tabs_group_command` and
+`prepare_tabs_close` with the exact `TabBarPaintRecord` supplied by its surface
+program. Root menus retain `presentation_command` and `prepare_root_close`.
+Both scopes submit through `submit_surface_action`; no adapter command dispatcher
+or second layout authority is needed. Use `plan.workspace_stamp()` to dismiss
+cached action popups after a layout edit or session reconstruction. The stamp
+identifies a session and revision; it does not authorize an action.
+
 1. Begin a host frame, submit ordered input and application commands, then
    prepare each surface that will be encoded with `prepare_surface_with` in
    logical coordinates. The helper begins the encoding pass, admits output,
@@ -1124,16 +1132,17 @@ cleanup, input-restore and retirement work owned by the host.
 
 ## Application Close Decisions
 
-A tab close requests that item; a contained-window close or `Close Layout`
-requests the complete root. A close request never docks the root back or deletes
+A tab close requests that item; `Close Tab Group` requests one captured tabs
+leaf; a contained-window close or `Close Layout` requests the complete root.
+A close request never docks the root back or deletes
 content before application approval. The independent public consumer in
 `integration/dockspace-host-harness/tests/close_commands.rs` shows the complete
 Allow, Veto and deferred-continuation loop without a renderer or pointer host.
 
 Inspect `HostFrameReport::inputs()` for `HostInputOutcome::CloseRequested`.
 Each plan contains stable item identities and their exact decision tokens.
-`DockspaceSession::pending_content_close_plans()` also discovers current item
-and root requests after their original report has been consumed, including
+`DockspaceSession::pending_content_close_plans()` also discovers current item,
+group and root requests after their original report has been consumed, including
 requests from tab or contained chrome and deferred continuations. It projects
 the existing core plans, excludes native surface-close plans and omits stale or
 terminal requests. Keep each report's exact action result separately when
@@ -1157,6 +1166,15 @@ continuation for `continue_deferred_close`. Core keeps the entire group unchange
 until every required item allows the request. A veto retains the group; repeated
 initial or continuation tokens return typed inert results. Keep application pane
 data separately when closed items may be restored or reopened later.
+
+To request group closure programmatically, pass a `PreparedTabsGroup` to
+`session.prepare_close_tabs` or `frame.request_close_tabs_current`. Submission
+preserves the capture's original session and version. Once admitted, approval
+depends on that group's membership, owner, close permissions and workspace
+lifetime; unrelated changes or reordering within the group do not revoke it.
+`ClosePlanTarget::Tabs` identifies the group using its root and captured member
+anchor. `DockspaceCloseOutcome::TabsClosed` reports the original decision roster
+after one atomic commit, while retaining sibling groups.
 
 Dock Back is an independent prepared root command,
 `DockspaceSession::prepare_dock_root_back`. It preserves application content and

@@ -1129,7 +1129,7 @@ fn main_presentation_menu_anchor_falls_back_to_left_to_right_dfs_order() {
 }
 
 #[test]
-fn main_presentation_menu_anchor_falls_back_when_the_central_bar_cannot_host_it() {
+fn main_presentation_menu_falls_back_when_selection_consumes_the_central_bar() {
     let surface = SurfaceId::new(819);
     let root = RootId::new(820);
     let mut builder = Workspace::builder();
@@ -1157,10 +1157,16 @@ fn main_presentation_menu_anchor_falls_back_when_the_central_bar_cannot_host_it(
         PresentationMenuAnchorHost::TabBar(TabBarSceneId { root, tabs: wide })
     );
     assert!(anchor.is_ready());
+    let central = plan
+        .tab_bar_records()
+        .iter()
+        .find(|bar| bar.id().tabs == narrow_central)
+        .unwrap();
+    assert!(central.viewport().width() >= DockPresentationConfig::default().tab_min_width());
 }
 
 #[test]
-fn narrow_main_tab_bar_preserves_an_interactive_tab_before_the_presentation_menu() {
+fn narrow_main_tab_bar_preserves_selection_before_optional_group_chrome() {
     let surface = SurfaceId::new(815);
     let root = RootId::new(816);
     let mut builder = Workspace::builder();
@@ -1180,35 +1186,41 @@ fn narrow_main_tab_bar_preserves_an_interactive_tab_before_the_presentation_menu
     };
     assert!(
         !anchor.is_ready(),
-        "compact chrome must mark the optional menu unavailable before consuming the last usable tab"
+        "selection retains priority over optional layout chrome"
     );
     assert!(
         plan.tab_records().iter().any(|tab| {
-            let drag = tab.drag_hit().rect();
-            drag.width() > 0.0 && drag.height() > 0.0 && tab.close_bounds().is_some()
+            tab.id().item == ItemId::new(817)
+                && tab.drag_hit().rect().width() > 0.0
+                && tab.drag_hit().rect().height() > 0.0
         }),
-        "at least one tab must retain positive drag and close interaction geometry"
+        "the selected tab retains an operable body before optional group chrome"
+    );
+    assert!(
+        plan.tab_strip_control_records().iter().any(|control| {
+            matches!(control.id(), TabStripControlId::TabListMenu(_)) && !control.enabled()
+        }),
+        "without popup measurements the reserved list target remains disabled"
     );
     let bar = plan
         .tab_bar_records()
         .iter()
         .find(|bar| *bar.id() == TabBarSceneId { root, tabs })
         .expect("the compact tab bar should still be compiled");
+    assert!(bar.group_grip_bounds().is_none());
+    assert!(bar.group_menu_bounds().is_none());
+    assert!(bar.viewport().width() >= DockPresentationConfig::default().tab_min_width());
     assert!(
-        bar.group_grip_bounds().is_some(),
-        "optional menu chrome must compact before the primary group-drag affordance"
-    );
-    assert!(
-        plan.surface_program()
+        !plan.surface_program()
             .blocks()
             .iter()
-            .all(|block| !matches!(
+            .any(|block| matches!(
                 block,
                 crate::presentation::scene::SurfaceProgramBlock::RootOperation(
                     crate::presentation::scene::SurfaceProgramRootOperation::PresentationMenuAnchor(value)
                 ) if *value == root
             )),
-        "a compacted menu record must not leave an unresolvable paint operation"
+        "an unavailable anchor has no paint operation or invisible action"
     );
 }
 
@@ -1723,8 +1735,9 @@ fn fixed_width_overflow_fixture(
         .tab_max_width(400.0)
         .build()
         .expect("fixed tab widths should be valid");
-    // The measurement helper reserves one bar-height extent for each menu.
-    let chrome_width = config.tab_group_grip_extent() + 2.0 * config.tab_bar_height();
+    // The group and root anchors leave their one-point vertical inset;
+    // the measured tab-list control reserves one full bar-height extent.
+    let chrome_width = config.tab_group_grip_extent() + 3.0 * config.tab_bar_height() - 4.0;
     let bounds = LogicalRect::new(
         20.0,
         30.0,
@@ -1774,7 +1787,7 @@ fn fractional_origin_selection_reveal_matches_validated_full_compilation() {
             .tab_max_width(tab_width)
             .build()
             .unwrap();
-        let chrome = config.tab_group_grip_extent() + 2.0 * config.tab_bar_height();
+        let chrome = config.tab_group_grip_extent() + 3.0 * config.tab_bar_height() - 4.0;
         let bounds = LogicalRect::new(origin, 30.0, chrome + 2.0 * tab_width, 180.0).unwrap();
         let compile = |workspace: &Workspace| {
             let plan =
@@ -2673,7 +2686,11 @@ fn menu_only_control_compiles_as_an_exact_scene_subset() {
         .ready_bounds()
         .expect("menu-only layout should retain usable presentation chrome");
     assert_eq!(bar.viewport().max().x(), control.bounds().x());
-    assert_eq!(control.bounds().max().x(), anchor_bounds.x());
+    let group = bar
+        .group_menu_bounds()
+        .expect("group actions retain an independent anchor");
+    assert_eq!(control.bounds().max().x(), group.x());
+    assert_eq!(group.max().x(), anchor_bounds.x());
     assert_eq!(anchor_bounds.max().x(), bar.bounds().max().x());
 }
 

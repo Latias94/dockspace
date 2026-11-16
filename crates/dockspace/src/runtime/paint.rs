@@ -50,6 +50,7 @@ mod preview_tabs;
 mod splitter_range;
 mod tab_chrome;
 mod tabs;
+mod tabs_group_commands;
 pub use actions::ContainedResizeDirection;
 pub use drag_decoration::{DockspaceDragDecoration, DockspaceDragSourceKind};
 pub use drop_feedback::{
@@ -70,6 +71,7 @@ pub use tabs::{
     PanePaintRecord, TabBarPaintRecord, TabGroupDragRegionPaintRecord, TabPaintRecord,
     TabStripMemberPaintRecord, TabStripMemberVisibility,
 };
+pub use tabs_group_commands::DockspaceTabsGroupCommandKind;
 
 /// Opaque identity for one exact semantic output supplied to a renderer.
 ///
@@ -110,6 +112,17 @@ pub struct DockspaceContentId {
     domain: crate::ids::EngineAuthorityDomainId,
     epoch: crate::ids::WorkspaceEpoch,
     item: ItemId,
+}
+
+/// Exact workspace revision within one independently constructed session.
+///
+/// Renderers can dismiss cached menus when this changes, including after a
+/// session is rebuilt with the same item numbers and numeric workspace version.
+/// This identity grants no input, action or presentation authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DockspaceWorkspaceStamp {
+    domain: crate::ids::EngineAuthorityDomainId,
+    version: crate::model::WorkspaceVersion,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -941,7 +954,7 @@ pub enum DockspacePresentationCommandUnavailable {
     Action(DockspaceActionRejection),
 }
 
-/// One opaque root command frozen from an exact current paint candidate.
+/// One opaque root or captured-group command frozen from an exact paint candidate.
 #[derive(Clone, PartialEq)]
 pub struct PresentationCommandPaintRecord {
     authority_domain: crate::ids::EngineAuthorityDomainId,
@@ -995,7 +1008,7 @@ impl PresentationCommandPaintRecord {
         }
     }
 
-    /// Returns the stable root addressed by this command.
+    /// Returns the root containing this command's source payload.
     #[must_use]
     pub const fn root(&self) -> RootId {
         self.root
@@ -1568,6 +1581,15 @@ impl DockspaceHostFrame<'_> {
 }
 
 impl<'frame> SurfacePaintPlan<'frame> {
+    /// Returns the session-bound workspace revision used for this paint candidate.
+    #[must_use]
+    pub const fn workspace_stamp(self) -> DockspaceWorkspaceStamp {
+        DockspaceWorkspaceStamp {
+            domain: self.authority_domain,
+            version: self.version,
+        }
+    }
+
     /// Returns a stable content namespace for this session and workspace epoch.
     ///
     /// Unlike slot identity, this remains unchanged when an item docks into a

@@ -122,8 +122,14 @@ fn session() -> DockspaceSession {
         DockspaceRootLayout::new(ROOT, DockspaceNode::central_tabs([FIRST, SECOND])),
     )])
     .expect("native interaction layout validates");
-    DockspaceSession::from_layout(layout, DockPolicy::default())
-        .expect("native interaction session initializes")
+    DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .expect("native interaction session initializes")
 }
 
 fn empty_session() -> DockspaceSession {
@@ -132,8 +138,14 @@ fn empty_session() -> DockspaceSession {
         DockspaceRootLayout::new(ROOT, DockspaceNode::central_tabs([])),
     )])
     .expect("empty native interaction layout validates");
-    DockspaceSession::from_layout(layout, DockPolicy::default())
-        .expect("empty native interaction session initializes")
+    DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .expect("empty native interaction session initializes")
 }
 
 fn overflow_session() -> DockspaceSession {
@@ -142,8 +154,14 @@ fn overflow_session() -> DockspaceSession {
         DockspaceRootLayout::new(ROOT, DockspaceNode::central_tabs((1..=24).map(ItemId::new))),
     )])
     .expect("overflow native interaction layout validates");
-    DockspaceSession::from_layout(layout, DockPolicy::default())
-        .expect("overflow native interaction session initializes")
+    DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .expect("overflow native interaction session initializes")
 }
 
 fn install_ready_candidate(session: &mut DockspaceSession) {

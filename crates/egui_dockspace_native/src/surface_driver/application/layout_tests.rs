@@ -82,8 +82,14 @@ fn state_from_session(session: DockspaceSession) -> NativeRuntimeState<Panes> {
 
 fn test_state() -> NativeRuntimeState<Panes> {
     state_from_session(
-        DockspaceSession::from_layout(layout(ROOT, &[FIRST, SECOND], FIRST), DockPolicy::default())
-            .unwrap(),
+        DockspaceSession::from_layout_with_presentation_config(
+            layout(ROOT, &[FIRST, SECOND], FIRST),
+            DockPolicy::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap(),
     )
 }
 
@@ -387,7 +393,15 @@ mod persistence {
         let mut bootstrap = DockspaceDocumentBootstrap::new(DOCUMENT);
         assert_eq!(bootstrap.ensure_item("pane:first").unwrap(), FIRST);
         assert_eq!(bootstrap.ensure_item("pane:second").unwrap(), SECOND);
-        DockspaceSession::from_persistent_layout(candidate, policy, bootstrap).unwrap()
+        DockspaceSession::from_persistent_layout_with_presentation_config(
+            candidate,
+            policy,
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+            bootstrap,
+        )
+        .unwrap()
     }
 
     fn persistent_state() -> NativeRuntimeState<Panes> {

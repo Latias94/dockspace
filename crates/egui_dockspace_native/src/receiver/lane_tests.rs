@@ -48,7 +48,14 @@ impl SplitterFixture {
             DockspaceRootLayout::new(RootId::new(1), node),
         )])
         .unwrap();
-        let mut session = DockspaceSession::from_layout(layout, Default::default()).unwrap();
+        let mut session = DockspaceSession::from_layout_with_presentation_config(
+            layout,
+            Default::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap();
         session
             .enable_managed_native_host(NativePointerRoster::Exact(Vec::new()))
             .unwrap();

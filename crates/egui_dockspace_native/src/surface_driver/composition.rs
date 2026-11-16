@@ -314,7 +314,14 @@ mod tests {
             ),
         )])
         .unwrap();
-        let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+        let mut session = DockspaceSession::from_layout_with_presentation_config(
+            layout,
+            DockPolicy::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap();
         let context = egui::Context::default();
         context.enable_accesskit();
         let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(700.0, 500.0));
@@ -581,7 +588,14 @@ mod tests {
             )
         }))
         .unwrap();
-        let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+        let mut session = DockspaceSession::from_layout_with_presentation_config(
+            layout,
+            DockPolicy::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap();
         let context = egui::Context::default();
         context.enable_accesskit();
         let style = DockStyle::default();

@@ -141,13 +141,19 @@ fn main() -> eframe::Result {
         DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([FIRST, SECOND])),
     )])
     .unwrap();
-    let session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+    let style = DockStyle::default();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        style.presentation_config().unwrap(),
+    )
+    .unwrap();
     let dockspace = NativeDockspaceApp::new(
         egui::Id::unique("presentation-continuity"),
         session,
         SURFACE,
         Panes::default(),
-        DockStyle::default(),
+        style,
     )
     .unwrap();
     let options = eframe::NativeOptions {

@@ -66,6 +66,40 @@ impl DockEngine {
                     },
                 })
             }
+            ContentCloseTarget::Tabs { root, anchor } => {
+                let Some((actual_root, tabs, _)) = self.workspace.locate_item_by_id(anchor) else {
+                    return Err(ContentCloseRequestRejection::ItemUnavailable { item: anchor });
+                };
+                if actual_root != root {
+                    return Err(ContentCloseRequestRejection::RootUnavailable { root });
+                }
+                let owner = self
+                    .workspace
+                    .presentation_for_root(root)
+                    .ok_or(ContentCloseRequestRejection::RootUnavailable { root })?;
+                let Some(Node::Tabs { items, .. }) = self.workspace.node(tabs) else {
+                    return Err(ContentCloseRequestRejection::ItemUnavailable { item: anchor });
+                };
+                let mut requirements = Vec::with_capacity(items.len());
+                for item in items.iter().copied() {
+                    let capability = policy.pane_close_capability(item);
+                    if !capability.allows_close() {
+                        return Err(ContentCloseRequestRejection::ItemCloseDisabled { item });
+                    }
+                    requirements.push(CloseItemRequirement::new(item, capability));
+                }
+                Ok(FrozenCloseClick {
+                    target: ClosePlanTarget::Tabs { root, anchor },
+                    requirements: requirements.clone(),
+                    prepared: ContentCloseScope::Tabs {
+                        root,
+                        tabs,
+                        owner,
+                        items: items.iter().copied().collect(),
+                        requirements,
+                    },
+                })
+            }
         }
     }
 
@@ -961,7 +995,9 @@ impl DockEngine {
         }?;
         let is_closed = |item| match prepared {
             ContentCloseScope::Item { item: closed, .. } => *closed == item,
-            ContentCloseScope::Root { items, .. } => items.contains(&item),
+            ContentCloseScope::Root { items, .. } | ContentCloseScope::Tabs { items, .. } => {
+                items.contains(&item)
+            }
         };
         if !is_closed(focused) {
             return None;
@@ -979,7 +1015,7 @@ impl DockEngine {
                     .find(|item| !candidate.item_is_hidden(**item))
                     .copied()
             }
-            ContentCloseScope::Root { .. } => match observed {
+            ContentCloseScope::Root { .. } | ContentCloseScope::Tabs { .. } => match observed {
                 PanelFocusRecord::Item(item)
                     if !is_closed(item)
                         && !candidate.item_is_hidden(item)

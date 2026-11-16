@@ -14,6 +14,7 @@ use crate::{DockStyle, PaneResponse, PaneView};
 const SURFACE: SurfaceId = SurfaceId::new(1);
 
 mod contained_keyboard;
+mod group_menu;
 mod menu_keyboard;
 mod presentation_keyboard;
 mod scroll;
@@ -500,7 +501,7 @@ fn compact_density_keeps_short_tabs_operable_without_shrinking_fonts() {
             .context
             .run_ui(RawInput::default(), |ui| {
                 styles = Some((
-                    DockStyle::from_egui(ui),
+                    DockStyle::from_egui_with_density(ui, DockDensity::Comfortable),
                     DockStyle::from_egui_with_density(ui, DockDensity::Compact),
                 ));
             })
@@ -510,7 +511,7 @@ fn compact_density_keeps_short_tabs_operable_without_shrinking_fonts() {
         assert!(compact.tab_min_width <= comfortable.tab_min_width);
         assert!(compact.tab_horizontal_padding < comfortable.tab_horizontal_padding);
         assert!(compact.tab_group_grip_extent < compact.tab_bar_height);
-        assert_eq!(compact.tab_close_size, comfortable.tab_close_size);
+        assert!(compact.tab_close_size < comfortable.tab_close_size);
         assert_eq!(
             compact.touch_resize_hit_extent,
             comfortable.touch_resize_hit_extent

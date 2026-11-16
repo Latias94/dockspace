@@ -77,6 +77,10 @@ fn main() -> eframe::Result {
     } else {
         example_layout()
     };
+    let style = DockStyle::default();
+    let presentation = style
+        .presentation_config()
+        .expect("the default chrome is valid");
     #[cfg(feature = "serde")]
     let session = {
         let mut bootstrap = DockspaceDocumentBootstrap::new(DOCUMENT_ID);
@@ -87,18 +91,27 @@ fn main() -> eframe::Result {
                 item,
             );
         }
-        DockspaceSession::from_persistent_layout(default_layout.clone(), policy, bootstrap)
-            .expect("the static native document is valid")
+        DockspaceSession::from_persistent_layout_with_presentation_config(
+            default_layout.clone(),
+            policy,
+            presentation,
+            bootstrap,
+        )
+        .expect("the static native document is valid")
     };
     #[cfg(not(feature = "serde"))]
-    let session = DockspaceSession::from_layout(default_layout.clone(), policy)
-        .expect("the static native example layout is valid");
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        default_layout.clone(),
+        policy,
+        presentation,
+    )
+    .expect("the static native example layout is valid");
     let mut dockspace = NativeDockspaceApp::new(
         egui::Id::unique("native-dockspace-example"),
         session,
         SURFACE,
         panes,
-        DockStyle::default(),
+        style,
     )
     .expect("the native coordinator initializes");
     if let Some(log) = &operation_log {
@@ -125,7 +138,7 @@ fn main() -> eframe::Result {
         preset_name: "Working".to_owned(),
         action: initial_action,
         font_size: 13.0,
-        density: DockDensity::Comfortable,
+        density: DockDensity::default(),
         status: None,
         smoke: smoke.then(smoke::EditorSmoke::new),
         docking_smoke: docking_smoke.then(docking_smoke::DockingSmoke::new),

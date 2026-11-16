@@ -138,8 +138,15 @@ fn notification_context_captures_committed_persistence_without_an_application_cy
         ),
     )])
     .unwrap();
-    let session =
-        DockspaceSession::from_persistent_layout(layout, Default::default(), bootstrap).unwrap();
+    let session = DockspaceSession::from_persistent_layout_with_presentation_config(
+        layout,
+        Default::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+        bootstrap,
+    )
+    .unwrap();
     let (sender, receiver) = mpsc::channel();
     let app = super::NativeDockspaceApp::new(
         eframe::egui::Id::unique("notification-persistence"),

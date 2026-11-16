@@ -997,6 +997,7 @@ fn visual_override_wins_without_detaching_unspecified_theme_tokens() {
     visuals.extreme_bg_color = bar;
     context.set_visuals(visuals);
     let mut style = DockStyle::default();
+    style.tab_preset = egui_dockspace::TabStylePreset::Dockspace;
     style.visuals.workspace_fill = Some(workspace_override);
     let mut dockspace = Dockspace::builder("product-theme-override", layout())
         .style(style)

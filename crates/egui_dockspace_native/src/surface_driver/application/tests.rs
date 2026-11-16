@@ -29,6 +29,7 @@ use super::NativeRuntimeState;
 mod deferred_move;
 mod policy;
 mod root_float;
+mod tabs_group;
 mod visibility;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -77,7 +78,14 @@ fn state_with_layout_and_policy(
     layout: DockspaceLayout,
     policy: DockPolicy,
 ) -> NativeRuntimeState<Panes> {
-    let session = DockspaceSession::from_layout(layout, policy).unwrap();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        policy,
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap();
     let mut state = NativeRuntimeState::new(
         egui::Id::unique("native-layout-commands"),
         session,
@@ -1652,7 +1660,7 @@ fn style_requests_share_the_command_slot_and_publish_only_after_commit() {
             .session()
             .presentation_config()
             .tab_bar_height(),
-        28.0
+        f64::from(original.tab_bar_height)
     );
     assert!(matches!(
         state.request_style(original.clone()),

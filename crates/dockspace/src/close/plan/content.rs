@@ -32,12 +32,19 @@ pub(crate) enum ContentCloseScope {
         items: BTreeSet<ItemId>,
         requirements: Vec<CloseItemRequirement>,
     },
+    Tabs {
+        root: RootId,
+        tabs: NodeId,
+        owner: RootPresentationOwner,
+        items: BTreeSet<ItemId>,
+        requirements: Vec<CloseItemRequirement>,
+    },
 }
 
 impl ContentCloseScope {
     pub(crate) const fn root(&self) -> RootId {
         match self {
-            Self::Item { root, .. } | Self::Root { root, .. } => *root,
+            Self::Item { root, .. } | Self::Root { root, .. } | Self::Tabs { root, .. } => *root,
         }
     }
 
@@ -70,6 +77,21 @@ impl ContentCloseScope {
                         actual.len() == items.len()
                             && actual.iter().all(|item| items.contains(item))
                     })
+                    && requirements
+                        .iter()
+                        .all(|requirement| requirement_matches(*requirement, policy))
+            }
+            Self::Tabs {
+                root,
+                tabs,
+                owner,
+                items,
+                requirements,
+            } => {
+                workspace.presentation_for_root(*root) == Some(*owner)
+                    && workspace.node_root(*tabs) == Some(*root)
+                    && matches!(workspace.node(*tabs), Some(crate::graph::Node::Tabs { items: actual, .. })
+                        if actual.len() == items.len() && actual.iter().all(|item| items.contains(item)))
                     && requirements
                         .iter()
                         .all(|requirement| requirement_matches(*requirement, policy))
@@ -131,6 +153,22 @@ pub(crate) fn prepare_scoped_content_close(
                 requirements: requirements.clone(),
             }
         }
+        ContentCloseScope::Tabs {
+            root,
+            tabs,
+            requirements,
+            ..
+        } => PreparedContentClose::Tabs {
+            source: workspace
+                .capture_node_source(*root, *tabs)
+                .map_err(command_error)?,
+            items: requirements
+                .iter()
+                .map(|requirement| requirement.item())
+                .collect(),
+            expected_items,
+            requirements: requirements.clone(),
+        },
     };
     let mut commit = prepare_content_close(workspace, policy, &prepared)?;
     if let ContentCloseScope::Root {

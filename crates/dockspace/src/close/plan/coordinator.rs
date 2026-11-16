@@ -35,6 +35,8 @@ pub(crate) enum CloseCoordinatorError {
     DisabledItem { item: ItemId },
     #[error("item close target {target} requires exactly that item, got {actual:?}")]
     ItemTargetMismatch { target: ItemId, actual: Vec<ItemId> },
+    #[error("tabs close target anchored at {anchor} requires that member in its decision roster")]
+    TabsAnchorMissing { anchor: ItemId },
     #[error("root close target {root} requires a non-empty item decision roster")]
     EmptyRootHasNoItemDecisions { root: RootId },
     #[error("surface close-content target {surface} requires a non-empty item decision roster")]
@@ -1610,6 +1612,9 @@ impl<P> CloseCoordinator<P> {
             ClosePlanTarget::Root { root } if requirements.is_empty() => {
                 return Err(CloseCoordinatorError::EmptyRootHasNoItemDecisions { root });
             }
+            ClosePlanTarget::Tabs { anchor, .. } if !seen.contains(&anchor) => {
+                return Err(CloseCoordinatorError::TabsAnchorMissing { anchor });
+            }
             ClosePlanTarget::Surface {
                 surface,
                 disposition: SurfaceCloseDisposition::RehomeAll { .. },
@@ -1627,7 +1632,9 @@ impl<P> CloseCoordinator<P> {
                     CloseCoordinatorError::SurfaceCloseContentHasNoItemDecisions { surface },
                 );
             }
-            ClosePlanTarget::Root { .. } | ClosePlanTarget::Surface { .. } => {}
+            ClosePlanTarget::Root { .. }
+            | ClosePlanTarget::Tabs { .. }
+            | ClosePlanTarget::Surface { .. } => {}
         }
         Ok(())
     }

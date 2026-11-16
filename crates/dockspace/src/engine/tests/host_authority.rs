@@ -1559,7 +1559,7 @@ fn real_host_frame_tab_press_and_release_have_bounded_clone_work() {
         crate::interaction::targeting::resolver::structural_work::EngineCloneVolume {
             scene_surfaces: 1,
             scene_retained_plans: 1,
-            scene_paint_hit_regions: 14,
+            scene_paint_hit_regions: 13,
             presentation_hosts: 1,
             presentation_streams: 1,
             presentation_pending_outputs: 0,

@@ -104,7 +104,14 @@ impl Fixture {
         context.enable_accesskit();
         context.options_mut(|options| options.max_passes = NonZeroUsize::new(1).unwrap());
         let mut fixture = Self {
-            session: DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap(),
+            session: DockspaceSession::from_layout_with_presentation_config(
+                layout,
+                DockPolicy::default(),
+                egui_dockspace::DockStyle::default()
+                    .presentation_config()
+                    .unwrap(),
+            )
+            .unwrap(),
             context,
             surface,
             style: DockStyle::default(),

@@ -113,218 +113,8 @@ pub(super) fn select_presentation_menu_tab_bar(
     )
 }
 
-fn tab_presentation_menu_anchor(
-    bar: LogicalRect,
-    has_group_grip: bool,
-    requested_group_extent: f64,
-    leading_reserved: f64,
-    trailing_reserved: f64,
-    minimum_tab_extent: f64,
-    minimum_anchor_extent: f64,
-) -> Result<Option<LogicalRect>, GeometryError> {
-    if bar.height() < minimum_anchor_extent {
-        return Ok(None);
-    }
-    let content_left = (bar.x() + leading_reserved).min(bar.max().x());
-    let content_right = (bar.max().x() - trailing_reserved).max(content_left);
-    let available = (content_right - content_left).max(0.0);
-    let group_extent = if has_group_grip {
-        requested_group_extent.min(available)
-    } else {
-        0.0
-    };
-    let tab_extent = if has_group_grip {
-        minimum_tab_extent
-    } else {
-        0.0
-    };
-    let maximum_width = (available - group_extent - tab_extent).max(0.0);
-    let width = bar.height().min(maximum_width);
-    (width >= minimum_anchor_extent && minimum_anchor_extent > 0.0)
-        .then(|| {
-            LogicalRect::from_min_max(
-                LogicalPoint::new((content_right - width).max(content_left), bar.y())?,
-                LogicalPoint::new(content_right, bar.max().y())?,
-            )
-        })
-        .transpose()
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(in crate::presentation::compiler) struct TabStripOptionalChromeLayout {
-    pub(in crate::presentation::compiler) group_extent: f64,
-    leading_reserved_bounds: Option<LogicalRect>,
-    trailing_reserved_bounds: Option<LogicalRect>,
-    pub(in crate::presentation::compiler) presentation_menu_bounds: Option<LogicalRect>,
-    pub(in crate::presentation::compiler) viewport: LogicalRect,
-    pub(in crate::presentation::compiler) controls: Option<TabStripControlLayout>,
-}
-
-fn tab_strip_optional_chrome_candidate(
-    bar: LogicalRect,
-    item_count: usize,
-    strip: crate::presentation::manifest::TabStripMetrics,
-    config: &DockPresentationConfig,
-    group_extent: f64,
-    include_presentation_menu: bool,
-    include_overflow_controls: bool,
-) -> Result<Option<TabStripOptionalChromeLayout>, SceneCompilationError> {
-    let minimum_tab_extent = if item_count > 0 {
-        config.tab_min_width()
-    } else {
-        0.0
-    };
-    let reservable = (bar.width() - group_extent - minimum_tab_extent).max(0.0);
-    let leading_reserved = strip.leading_reserved().min(reservable);
-    let trailing_reserved = strip
-        .trailing_reserved()
-        .min((reservable - leading_reserved).max(0.0));
-    let presentation_menu_bounds = if include_presentation_menu {
-        tab_presentation_menu_anchor(
-            bar,
-            item_count > 0,
-            group_extent,
-            leading_reserved,
-            trailing_reserved,
-            config.tab_min_width(),
-            config.tab_close_extent(),
-        )?
-    } else {
-        None
-    };
-    if include_presentation_menu && presentation_menu_bounds.is_none() {
-        return Ok(None);
-    }
-
-    let content_x = (bar.x() + group_extent + leading_reserved).min(bar.max().x());
-    let content_right = presentation_menu_bounds
-        .map_or(bar.max().x() - trailing_reserved, LogicalRect::x)
-        .max(content_x);
-    let content = LogicalRect::from_min_max(
-        LogicalPoint::new(content_x, bar.y())?,
-        LogicalPoint::new(content_right, bar.max().y())?,
-    )?;
-    let base_viewport_width = content.width();
-    let item_count_u32 =
-        u32::try_from(item_count).map_err(|_| SceneCompilationError::GeometryCountOverflow)?;
-    let minimum_total = checked_sum(
-        [
-            config.tab_min_width() * f64::from(item_count_u32),
-            strip.after_tabs_width(),
-        ],
-        "minimum tab flow width",
-    )?;
-    let overflowing = item_count > 0 && minimum_total > base_viewport_width;
-    let controls = if overflowing && include_overflow_controls {
-        match strip.controls().filter(|metrics| !metrics.is_empty()) {
-            Some(metrics) => tab_strip_control_layout(content, metrics)?,
-            None => None,
-        }
-    } else {
-        None
-    };
-    if overflowing
-        && include_overflow_controls
-        && strip.controls().is_some_and(|metrics| !metrics.is_empty())
-        && controls.is_none()
-    {
-        return Ok(None);
-    }
-    let viewport = controls.as_ref().map_or(content, |layout| layout.viewport);
-    if item_count > 0 && viewport.width() < config.tab_min_width() {
-        return Ok(None);
-    }
-    Ok(Some(TabStripOptionalChromeLayout {
-        group_extent,
-        leading_reserved_bounds: (leading_reserved > 0.0)
-            .then(|| {
-                LogicalRect::new(
-                    bar.x() + group_extent,
-                    bar.y(),
-                    leading_reserved,
-                    bar.height(),
-                )
-            })
-            .transpose()?,
-        trailing_reserved_bounds: (trailing_reserved > 0.0)
-            .then(|| {
-                LogicalRect::new(
-                    bar.max().x() - trailing_reserved,
-                    bar.y(),
-                    trailing_reserved,
-                    bar.height(),
-                )
-            })
-            .transpose()?,
-        presentation_menu_bounds,
-        viewport,
-        controls,
-    }))
-}
-
-pub(in crate::presentation::compiler) fn tab_strip_optional_chrome_layout(
-    bar: LogicalRect,
-    item_count: usize,
-    strip: crate::presentation::manifest::TabStripMetrics,
-    config: &DockPresentationConfig,
-    include_presentation_menu: bool,
-) -> Result<TabStripOptionalChromeLayout, SceneCompilationError> {
-    let group_extent = if item_count == 0 {
-        0.0
-    } else {
-        config.tab_group_grip_extent().min(bar.height())
-    };
-    let (candidates, candidate_count) = if include_presentation_menu {
-        (
-            [
-                (group_extent, true, true),
-                (group_extent, false, true),
-                (group_extent, false, false),
-                (0.0, true, true),
-                (0.0, false, true),
-                (0.0, true, false),
-                (0.0, false, false),
-            ],
-            7,
-        )
-    } else {
-        (
-            [
-                (group_extent, false, true),
-                (group_extent, false, false),
-                (0.0, false, true),
-                (0.0, false, false),
-                (0.0, false, false),
-                (0.0, false, false),
-                (0.0, false, false),
-            ],
-            4,
-        )
-    };
-    for (group_extent, menu, include_overflow_controls) in
-        candidates.into_iter().take(candidate_count)
-    {
-        if let Some(layout) = tab_strip_optional_chrome_candidate(
-            bar,
-            item_count,
-            strip,
-            config,
-            group_extent,
-            menu,
-            include_overflow_controls,
-        )? {
-            return Ok(layout);
-        }
-    }
-    Ok(TabStripOptionalChromeLayout {
-        group_extent: 0.0,
-        leading_reserved_bounds: None,
-        trailing_reserved_bounds: None,
-        presentation_menu_bounds: None,
-        viewport: LogicalRect::new(bar.x(), bar.y(), 0.0, bar.height())?,
-        controls: None,
-    })
-}
+mod chrome;
+pub(in crate::presentation::compiler) use chrome::tab_strip_optional_chrome_layout;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn compile_tabs_leaf(
@@ -687,7 +477,8 @@ fn compile_tab_strip(
             chrome.leading_reserved_bounds,
             chrome.trailing_reserved_bounds,
             after_tabs_bounds,
-        ),
+        )
+        .with_group_menu_bounds(chrome.group_menu_bounds),
     );
     if presentation_menu_anchor {
         let host = PresentationMenuAnchorHost::TabBar(bar_id);
@@ -847,7 +638,7 @@ pub(in crate::presentation::compiler) fn tab_strip_control_layout(
     };
     let reserved_leading = group_extent(TabStripControlPlacement::ReservedLeading);
     let reserved_trailing = group_extent(TabStripControlPlacement::ReservedTrailing);
-    if reserved_leading + reserved_trailing >= content.width() {
+    if reserved_leading + reserved_trailing > content.width() {
         return Ok(None);
     }
     let viewport_x = (content.x() + reserved_leading).min(content.max().x());

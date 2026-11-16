@@ -41,7 +41,32 @@ fn fractional_overflow_control_shares_the_presentation_menu_edge() {
         .ready_bounds()
         .unwrap();
     assert_eq!(bar.viewport().max().x(), control.bounds().x());
-    assert_eq!(control.bounds().max().x(), anchor.x());
+    let group = bar.group_menu_bounds().unwrap();
+    assert_eq!(control.bounds().max().x(), group.x());
+    assert_eq!(group.max().x(), anchor.x());
+}
+
+#[test]
+fn fractional_menu_anchor_stays_inside_its_tab_bar() {
+    let bounds = LogicalRect::new(
+        15.233_942_594_906_907,
+        38.339_060_674_723_79,
+        110.528_845_999_236_44,
+        180.0,
+    )
+    .unwrap();
+    let controls = TabStripControlMetrics::new(0.0)
+        .unwrap()
+        .with_scroll_backward(TabStripControlMetric::new(18.0, placement(0)).unwrap())
+        .with_scroll_forward(TabStripControlMetric::new(18.0, placement(0)).unwrap())
+        .with_tab_list_menu(TabStripControlMetric::new(20.0, placement(2)).unwrap());
+    let plan = overflowing_plan(bounds, controls);
+    let anchor = plan.presentation_menu_anchor_records()[0]
+        .ready_bounds()
+        .unwrap();
+    let bar = &plan.tab_bar_records()[0];
+    assert!(rect_contains(bar.bounds(), anchor));
+    assert_eq!(anchor.max().x(), bar.bounds().max().x());
 }
 
 #[test]

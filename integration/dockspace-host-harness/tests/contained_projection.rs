@@ -1075,8 +1075,10 @@ fn changed_external_measurements_revoke_active_resize_and_its_old_output_proof()
             .unwrap()
             .1
             .center();
-        let moved = offset(press, -40.0, -24.0);
-        let projected = rect(200.0, 140.0, 360.0, 276.0);
+        // Keep the single-tab leaves clear of narrow-bar compression so this
+        // scenario isolates revocation by external facts and stale output proofs.
+        let moved = offset(press, 40.0, 24.0);
+        let projected = rect(200.0, 140.0, 440.0, 324.0);
         for (event, point) in [
             (Event::ButtonPressed(Button::Primary), press),
             (Event::Moved, moved),

@@ -71,13 +71,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let outcome: SmokeResult = Arc::default();
     let mut policy = DockPolicy::default();
     policy.set_allow_native_surfaces(true);
-    let session = DockspaceSession::from_layout(initial_layout(), policy)?;
+    let style = DockStyle::default();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        initial_layout(),
+        policy,
+        style.presentation_config()?,
+    )?;
     let dockspace = NativeDockspaceApp::new(
         egui::Id::unique("solar-system"),
         session,
         ROOT_SURFACE,
         Panes::default(),
-        DockStyle::default(),
+        style,
     )?;
     let native_host = dockspace.native_host_handler();
     let app = SolarApp {
@@ -409,7 +414,14 @@ mod tests {
     fn app() -> SolarApp {
         let mut policy = DockPolicy::default();
         policy.set_allow_native_surfaces(true);
-        let session = DockspaceSession::from_layout(initial_layout(), policy).unwrap();
+        let session = DockspaceSession::from_layout_with_presentation_config(
+            initial_layout(),
+            policy,
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap();
         SolarApp {
             dockspace: NativeDockspaceApp::new(
                 egui::Id::unique("solar-launch-tests"),

@@ -68,6 +68,13 @@ impl DockEngine {
             LocalSurfaceAction::CloseRoot { root, .. } => {
                 self.close_root_from_candidate(input, witness, *root, policy)
             }
+            LocalSurfaceAction::CloseTabs { group, .. } => {
+                let target = ContentCloseTarget::Tabs {
+                    root: group.source.root(),
+                    anchor: group.anchor,
+                };
+                self.request_deferred_content_close(input, target, policy)
+            }
             LocalSurfaceAction::PresentationCommand { action, .. } => self
                 .reduce_presentation_command_from_candidate(
                     input,
@@ -245,6 +252,17 @@ impl DockEngine {
                 .region_for_kind(kind)
                 .is_some_and(|region| self.presented_receiver_is_current(plan, region.id()))
         };
+        let tabs_group_menu_is_current = |group: &crate::model::PreparedTabsGroup| {
+            group.expected == self.version
+                && self.capture_product_tabs(group).is_ok()
+                && plan.tab_bar_records().iter().any(|bar| {
+                    bar.id().root == group.source.root()
+                        && bar.id().tabs == group.source.node()
+                        && bar
+                            .group_menu_bounds()
+                            .is_some_and(|bounds| plan.region_is_operable(bounds, bar.layer()))
+                })
+        };
         let current = match action {
             LocalSurfaceAction::SelectTab { selection, .. } => {
                 item_receiver_is_current(PresentationHitRegionKind::TabBody(selection.receiver()))
@@ -294,9 +312,19 @@ impl DockEngine {
                     && self.deferred_resize_geometry_is_current(witness, action)
             }
             LocalSurfaceAction::CloseRoot { root, .. } => root_is_current(*root),
+            LocalSurfaceAction::CloseTabs { group, .. } => tabs_group_menu_is_current(group),
             LocalSurfaceAction::PresentationCommand { action, .. } => {
                 product_action::product_presentation_transition_root(action)
                     .is_some_and(root_is_current)
+                    && match action {
+                        ProductAction::FloatTabs { group, .. }
+                        | ProductAction::DockTabs { group, .. }
+                        | ProductAction::TearOffNative {
+                            source: crate::model::NativeTearOffSource::Tabs(group),
+                            ..
+                        } => tabs_group_menu_is_current(group),
+                        _ => true,
+                    }
                     && self.deferred_presentation_destination_is_current(plan, action)
             }
             LocalSurfaceAction::TabChrome { action, .. } => {

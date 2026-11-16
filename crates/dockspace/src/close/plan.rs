@@ -360,6 +360,9 @@ pub enum ClosePlanTarget {
     Item { item: ItemId },
     /// Close all content in one stable root.
     Root { root: RootId },
+    /// Close the exact tabs group captured with this root and member anchor.
+    /// The anchor identifies the request; it never refreshes its frozen scope.
+    Tabs { root: RootId, anchor: ItemId },
     /// Resolve one complete logical-surface close operation.
     Surface {
         surface: SurfaceId,
@@ -374,6 +377,7 @@ impl ClosePlanTarget {
         match self {
             Self::Item { .. } => ClosePlanTargetKind::Item,
             Self::Root { .. } => ClosePlanTargetKind::Root,
+            Self::Tabs { .. } => ClosePlanTargetKind::Tabs,
             Self::Surface { .. } => ClosePlanTargetKind::Surface,
         }
     }
@@ -384,6 +388,7 @@ impl ClosePlanTarget {
 pub enum ClosePlanTargetKind {
     Item,
     Root,
+    Tabs,
     Surface,
 }
 

@@ -44,7 +44,14 @@ fn current_roster(state: &NativeRuntimeState<Panes>) -> Vec<NativeSurfaceBinding
 
 fn shared_state() -> NativeRuntimeState<Panes> {
     shared_state_from_session(
-        DockspaceSession::from_layout(shared_layout(), DockPolicy::default()).unwrap(),
+        DockspaceSession::from_layout_with_presentation_config(
+            shared_layout(),
+            DockPolicy::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap(),
     )
 }
 
@@ -365,7 +372,14 @@ fn ordinary_root_entry_drops_a_pending_declaration_after_docking_vacates_its_sib
     ])
     .unwrap();
     let mut state = shared_state_from_session(
-        DockspaceSession::from_layout(initial, DockPolicy::default()).unwrap(),
+        DockspaceSession::from_layout_with_presentation_config(
+            initial,
+            DockPolicy::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap(),
     );
     let old = assert_ordinary_root_roster(&mut state, &[SURFACE, OTHER_SURFACE]);
     request_placements(&mut state, &old);
@@ -391,8 +405,14 @@ fn ordinary_root_entry_drops_a_pending_declaration_after_docking_vacates_its_sib
 #[test]
 fn equivalent_explicit_root_declaration_survives_native_resize_on_the_ordinary_entry() {
     let mut state = state_from_session(
-        DockspaceSession::from_layout(layout(ROOT, &[FIRST], FIRST), DockPolicy::default())
-            .unwrap(),
+        DockspaceSession::from_layout_with_presentation_config(
+            layout(ROOT, &[FIRST], FIRST),
+            DockPolicy::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap(),
     );
     let registration = commit_prefix(&mut state);
     let root = registration.native_bindings()[0];
@@ -739,7 +759,15 @@ mod document {
         ] {
             assert_eq!(bootstrap.ensure_item(key).unwrap(), item);
         }
-        DockspaceSession::from_persistent_layout(layout, DockPolicy::default(), bootstrap).unwrap()
+        DockspaceSession::from_persistent_layout_with_presentation_config(
+            layout,
+            DockPolicy::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+            bootstrap,
+        )
+        .unwrap()
     }
 
     fn recognize(document: DockspaceDocumentId, key: &str) -> bool {

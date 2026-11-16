@@ -101,7 +101,14 @@ fn real_eframe_retained_output_keeps_editor_focus_without_pane_callbacks() {
     let skipped = Arc::new(AtomicUsize::new(0));
     let app = NativeDockspaceApp::new_with_close_policy(
         egui::Id::unique("real-retained-focus"),
-        DockspaceSession::from_layout(layout, Default::default()).unwrap(),
+        DockspaceSession::from_layout_with_presentation_config(
+            layout,
+            Default::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap(),
         SURFACE,
         Editor {
             target,

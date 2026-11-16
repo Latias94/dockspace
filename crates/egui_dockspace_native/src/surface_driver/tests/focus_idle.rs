@@ -58,7 +58,14 @@ fn exercise_focus_observations(tokens: &[NativeOutputToken]) {
         DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([item])),
     )])
     .unwrap();
-    let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+    let mut session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap();
     let mut frame = session.begin_host_frame().unwrap();
     frame.select_item_current(item).unwrap();
     frame.commit().unwrap();

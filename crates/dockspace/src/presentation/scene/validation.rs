@@ -1459,7 +1459,39 @@ fn validate_tab_records(
                 leading_matches && trailing_matches
             }
         };
-        if !group_grip_matches || !group_interaction_matches {
+        let group_menu_matches = bar.group_menu_bounds().is_none_or(|bounds| {
+            !items.is_empty()
+                && rect_has_area(bounds)
+                && rect_contains(bar.bounds(), bounds)
+                && !rects_overlap_with_area(bounds, bar.viewport())
+                && [
+                    bar.group_grip_bounds(),
+                    bar.leading_reserved_bounds(),
+                    bar.trailing_reserved_bounds(),
+                ]
+                .into_iter()
+                .flatten()
+                .all(|other| !rects_overlap_with_area(bounds, other))
+                && bar.group_drag().is_none_or(|group| {
+                    group
+                        .regions()
+                        .all(|region| !rects_overlap_with_area(bounds, region.bounds()))
+                })
+                && ready
+                    .facts
+                    .tab_strip_control_records
+                    .iter()
+                    .filter(|control| control.id().bar() == bar_id)
+                    .all(|control| !rects_overlap_with_area(bounds, control.bounds()))
+                && ready
+                    .facts
+                    .presentation_menu_anchor_records
+                    .iter()
+                    .filter(|anchor| anchor.root() == bar_id.root)
+                    .filter_map(|anchor| anchor.ready_bounds())
+                    .all(|other| !rects_overlap_with_area(bounds, other))
+        });
+        if !group_grip_matches || !group_interaction_matches || !group_menu_matches {
             return Err(SceneBuildError::InvalidTabBarRecord {
                 surface: ready.surface,
                 id: bar_id,

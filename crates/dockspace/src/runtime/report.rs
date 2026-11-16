@@ -538,6 +538,12 @@ fn map_close_application(
                 items: items.clone(),
             })
         }
+        Ok(CloseCommitOutcome::TabsClosed { root, items }) => {
+            Ok(DockspaceCloseOutcome::TabsClosed {
+                root: *root,
+                items: items.clone(),
+            })
+        }
         Ok(CloseCommitOutcome::SurfaceClosed { surface, items }) => {
             Ok(DockspaceCloseOutcome::SurfaceClosed {
                 surface: *surface,

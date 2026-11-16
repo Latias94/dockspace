@@ -4,7 +4,7 @@ use egui::{Color32, CornerRadius, Stroke, Visuals};
 
 use super::{DockStyle, TabCloseVisibility, TabGroupGripVisibility};
 
-/// Theme-relative tab appearance for different workspace densities.
+/// Theme-relative tab appearance with compact reference geometry.
 ///
 /// These recipes keep dockspace's interaction and focus semantics. They do not
 /// replace the egui theme or reproduce another library's complete styling API.
@@ -14,16 +14,16 @@ use super::{DockStyle, TabCloseVisibility, TabGroupGripVisibility};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TabStylePreset {
     /// Flat tabs with egui interaction colors and no default outlines.
-    #[default]
     Dockspace,
     /// Inset rounded tabs with a quiet fill and a fine selected outline.
+    #[default]
     Rounded,
     /// Square tabs whose selected outline opens into the pane below.
     EguiTiles,
 }
 
 impl DockStyle {
-    /// Applies a tab recipe's appearance and fixed geometry.
+    /// Applies a tab recipe's appearance and compact reference geometry.
     ///
     /// Only tab metrics, background insets, corners and close/grip visibility change.
     /// Explicit [`super::DockVisualOverrides`] and non-tab settings are retained.
@@ -46,32 +46,12 @@ impl DockStyle {
         } else {
             egui::Vec2::ZERO
         };
-        match preset {
-            TabStylePreset::Dockspace => {
-                self.tab_bar_height = defaults.tab_bar_height;
-                self.tab_group_grip_extent = defaults.tab_group_grip_extent;
-                self.tab_horizontal_padding = defaults.tab_horizontal_padding;
-                self.tab_min_width = defaults.tab_min_width;
-                self.tab_close_size = defaults.tab_close_size;
-                self.tab_close_icon_size = defaults.tab_close_icon_size;
-            }
-            TabStylePreset::Rounded | TabStylePreset::EguiTiles => {
-                self.tab_bar_height = 24.0;
-                self.tab_group_grip_extent = 18.0;
-                self.tab_horizontal_padding = if preset == TabStylePreset::Rounded {
-                    10.0
-                } else {
-                    8.0
-                };
-                self.tab_min_width = if preset == TabStylePreset::Rounded {
-                    56.0
-                } else {
-                    48.0
-                };
-                self.tab_close_size = 14.0;
-                self.tab_close_icon_size = 8.0;
-            }
-        }
+        self.tab_bar_height = defaults.tab_bar_height;
+        self.tab_group_grip_extent = defaults.tab_group_grip_extent;
+        self.tab_horizontal_padding = defaults.tab_horizontal_padding;
+        self.tab_min_width = defaults.tab_min_width;
+        self.tab_close_size = defaults.tab_close_size;
+        self.tab_close_icon_size = defaults.tab_close_icon_size;
         self.tab_max_width = self.tab_max_width.max(self.tab_min_width);
     }
 }
@@ -107,13 +87,13 @@ impl TabStylePreset {
                     .lerp_to_gamma(accent, 0.08);
                 palette.active_stroke = Stroke::new(
                     1.0,
-                    accent.lerp_to_gamma(visuals.selection.stroke.color, 0.35),
+                    accent.lerp_to_gamma(visuals.selection.stroke.color, 0.55),
                 );
                 palette.active_text_color = visuals.strong_text_color();
             }
             Self::EguiTiles => {
                 palette.hover_fill = Color32::TRANSPARENT;
-                palette.active_stroke = Stroke::new(1.0, visuals.widgets.active.bg_fill);
+                palette.active_stroke = visuals.selection.stroke;
                 palette.bar_stroke =
                     Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color);
                 palette.text_color = visuals.widgets.noninteractive.fg_stroke.color;
@@ -172,6 +152,7 @@ mod tests {
     #[test]
     fn palette_only_selection_retains_font_derived_geometry() {
         let mut style = DockStyle {
+            tab_preset: TabStylePreset::Dockspace,
             tab_bar_height: 42.0,
             tab_horizontal_padding: 12.0,
             ..Default::default()

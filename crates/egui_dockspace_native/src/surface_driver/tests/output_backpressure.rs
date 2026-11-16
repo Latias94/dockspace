@@ -459,7 +459,7 @@ fn assert_retained_text_delivery_after_backpressure(resize_before_key: bool, sha
             RootId, SurfaceId,
         };
 
-        dockspace::runtime::DockspaceSession::from_layout(
+        dockspace::runtime::DockspaceSession::from_layout_with_presentation_config(
             DockspaceLayout::new([1, 2].map(|id| {
                 DockspaceSurfaceLayout::new(
                     SurfaceId::new(id),
@@ -471,6 +471,9 @@ fn assert_retained_text_delivery_after_backpressure(resize_before_key: bool, sha
             }))
             .unwrap(),
             dockspace::policy::DockPolicy::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
         )
         .unwrap()
     } else {
@@ -670,7 +673,7 @@ fn real_eframe_output_capacity_preserves_text_when_the_root_roster_expands_after
     };
 
     assert!(std::env::var_os("DISPLAY").is_some());
-    let mut session = dockspace::runtime::DockspaceSession::from_layout(
+    let mut session = dockspace::runtime::DockspaceSession::from_layout_with_presentation_config(
         DockspaceLayout::new([1, 2].map(|id| {
             DockspaceSurfaceLayout::new(
                 SurfaceId::new(id),
@@ -682,6 +685,9 @@ fn real_eframe_output_capacity_preserves_text_when_the_root_roster_expands_after
         }))
         .unwrap(),
         dockspace::policy::DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
     )
     .unwrap();
     session
@@ -865,7 +871,7 @@ fn real_eframe_output_capacity_preserves_text_when_shared_root_switches_to_the_o
     };
 
     assert!(std::env::var_os("DISPLAY").is_some());
-    let mut session = dockspace::runtime::DockspaceSession::from_layout(
+    let mut session = dockspace::runtime::DockspaceSession::from_layout_with_presentation_config(
         DockspaceLayout::new([1, 2].map(|id| {
             DockspaceSurfaceLayout::new(
                 SurfaceId::new(id),
@@ -877,6 +883,9 @@ fn real_eframe_output_capacity_preserves_text_when_shared_root_switches_to_the_o
         }))
         .unwrap(),
         dockspace::policy::DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
     )
     .unwrap();
     session
@@ -1106,7 +1115,7 @@ fn real_eframe_rebound_shared_root_keeps_idle_sibling_input_on_the_ordinary_entr
     };
 
     assert!(std::env::var_os("DISPLAY").is_some());
-    let mut session = dockspace::runtime::DockspaceSession::from_layout(
+    let mut session = dockspace::runtime::DockspaceSession::from_layout_with_presentation_config(
         DockspaceLayout::new([1, 2].map(|id| {
             DockspaceSurfaceLayout::new(
                 SurfaceId::new(id),
@@ -1118,6 +1127,9 @@ fn real_eframe_rebound_shared_root_keeps_idle_sibling_input_on_the_ordinary_entr
         }))
         .unwrap(),
         dockspace::policy::DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
     )
     .unwrap();
     session

@@ -59,12 +59,17 @@ fn policy() -> DockPolicy {
 }
 
 fn app(layout: DockspaceLayout, panes: Panes) -> Result<App, Box<dyn Error>> {
+    let style = DockStyle::default();
     Ok(NativeDockspaceApp::new(
         egui::Id::unique("native-recovery"),
-        DockspaceSession::from_layout(layout, policy())?,
+        DockspaceSession::from_layout_with_presentation_config(
+            layout,
+            policy(),
+            style.presentation_config()?,
+        )?,
         ROOT,
         panes,
-        DockStyle::default(),
+        style,
     )?)
 }
 
@@ -147,7 +152,12 @@ fn exercise() -> Result<(), Box<dyn Error>> {
     // This application's explicit recovery policy brings orphaned logical
     // surfaces into the Root. Native hosting is re-established by new commands;
     // a logical checkpoint does not carry old OS-window ownership.
-    let mut session = DockspaceSession::from_layout(checkpoint, policy())?;
+    let style = DockStyle::default();
+    let mut session = DockspaceSession::from_layout_with_presentation_config(
+        checkpoint,
+        policy(),
+        style.presentation_config()?,
+    )?;
     let mut frame = session.begin_host_frame()?;
     for item in ITEMS {
         if frame.view().item(item).unwrap().surface() != ROOT {
@@ -161,7 +171,7 @@ fn exercise() -> Result<(), Box<dyn Error>> {
         session,
         ROOT,
         panes.clone(),
-        DockStyle::default(),
+        style,
     )?;
     let recovered = Arc::new(Mutex::new(recovered));
     run(Arc::clone(&recovered), false, Some(stale))?;

@@ -45,13 +45,7 @@ pub(super) fn new_context() -> Context {
 }
 
 pub(super) fn dock_style() -> DockStyle {
-    let mut style = DockStyle {
-        floating_title_height: 24.0,
-        splitter_thickness: 2.0,
-        ..Default::default()
-    };
-    style.apply_tab_preset(TabStylePreset::Rounded);
-    style
+    DockStyle::default()
 }
 
 fn toolbar(
@@ -75,6 +69,7 @@ fn toolbar(
                 ui.label("Hold Shift while dragging to float a tab without docking.");
                 ui.label("Drag a tab to move one pane; drag a bar's dotted grip to move its tab group.");
                 ui.label("The dotted window-title grip moves the entire floating window, including its splits.");
+                ui.label("A group’s three-dot menu floats or closes that group; the window menu acts on the entire layout.");
                 ui.label("Close panes freely; Restore layout keeps your edits.");
             });
             sizing::controls(ui, sizing_demo);

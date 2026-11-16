@@ -596,6 +596,16 @@ impl<P: PaneView> NativeRuntimeState<P> {
             ClosePlanTarget::Item { item } => {
                 root.contains_only_item(item) && self.host_root_may_retire(root)
             }
+            ClosePlanTarget::Tabs {
+                root: target,
+                anchor,
+            } => {
+                root.id() == target
+                    && self.host_root_may_retire(root)
+                    && session
+                        .capture_tabs_group(dockspace::model::DockAnchor::Item(anchor))
+                        .is_ok_and(|group| root.contains_only_tabs_group(&group))
+            }
             ClosePlanTarget::Surface { .. } => false,
         }
     }

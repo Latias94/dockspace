@@ -221,7 +221,7 @@ impl CommandSmoke {
             let height = if (1..=3).contains(&self.style_step) {
                 44.0
             } else {
-                28.0
+                DockStyle::default().tab_bar_height
             };
             if top.is_none_or(|top| (top - height).abs() > 0.1) {
                 return Err(format!(

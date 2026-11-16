@@ -22,7 +22,14 @@ fn command_journey_read_only_content_ignores_unrelated_desktop_typing() {
 }
 
 fn app(layout: DockspaceLayout, host: SurfaceId) -> NativeExampleApp {
-    let session = DockspaceSession::from_layout(layout.clone(), DockPolicy::default()).unwrap();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        layout.clone(),
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap();
     app_with_session(layout, host, session)
 }
 
@@ -59,7 +66,14 @@ fn app_with_session(
 #[test]
 fn default_layout_waits_for_one_time_inspector_placement_before_editing() {
     let layout = example_layout();
-    let session = DockspaceSession::from_layout(layout.clone(), DockPolicy::default()).unwrap();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        layout.clone(),
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap();
     let version = session.version();
     let mut app = app_with_session(layout, SURFACE, session);
     let before = app
@@ -142,7 +156,14 @@ fn initial_inspector_placement_waits_for_its_own_presentation_once() {
 #[test]
 fn scripted_layout_reset_keeps_its_existing_presentation_barrier() {
     let layout = example_layout();
-    let session = DockspaceSession::from_layout(layout.clone(), DockPolicy::default()).unwrap();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        layout.clone(),
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap();
     let version = session.version();
     let mut app = app_with_session(layout, SURFACE, session);
     app.action = ExampleActionState::AwaitingSmokeOutcome("Smoke: Default layout");
@@ -273,7 +294,14 @@ fn failed_native_creation_releases_the_example_presentation_wait() {
     let layout = example_layout();
     let mut policy = DockPolicy::default();
     policy.set_allow_native_surfaces(true);
-    let session = DockspaceSession::from_layout(layout.clone(), policy).unwrap();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        layout.clone(),
+        policy,
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap();
     let mut example = app(layout, SURFACE);
     example.dockspace = NativeDockspaceApp::new_with_storage_limit(
         egui::Id::unique("example-failed-native-create"),
@@ -486,7 +514,14 @@ fn close_app(deferred: bool) -> NativeExampleApp {
     let layout = example_layout();
     let mut policy = DockPolicy::default();
     policy.set_close_capability(CloseCapability::DeferredAllowed);
-    let mut session = DockspaceSession::from_layout(layout.clone(), policy).unwrap();
+    let mut session = DockspaceSession::from_layout_with_presentation_config(
+        layout.clone(),
+        policy,
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap();
     let mut frame = session.begin_host_frame().unwrap();
     frame.request_close_root_current(INSPECTOR_ROOT).unwrap();
     frame
@@ -700,7 +735,14 @@ fn inventory_keeps_selection_and_content_available_only_when_controls_allow_it()
         let layout = example_layout();
         let mut policy = DockPolicy::default();
         policy.set_arrangement_locked(locked);
-        let session = DockspaceSession::from_layout(layout.clone(), policy).unwrap();
+        let session = DockspaceSession::from_layout_with_presentation_config(
+            layout.clone(),
+            policy,
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap();
         let mut app = app_with_session(layout, SURFACE, session);
         if pending {
             let request = app

@@ -59,7 +59,14 @@ fn layout_checkpoints_remain_read_only_while_busy_and_after_fatal_shutdown() {
         .is_err()
     );
 
-    let session = DockspaceSession::from_layout(checkpoint, Default::default()).unwrap();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        checkpoint,
+        Default::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap();
     assert!(!session.has_active_gesture());
     assert!(!session.has_pending_native_input());
     assert!(!session.has_pending_presentation());

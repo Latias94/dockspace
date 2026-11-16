@@ -1429,8 +1429,15 @@ fn document_restore_rebinds_the_same_physical_root_from_the_complete_report() {
             bootstrap.ensure_item("pane:second").unwrap(),
             ItemId::new(2)
         );
-        DockspaceSession::from_persistent_layout(layout(), DockPolicy::default(), bootstrap)
-            .unwrap()
+        DockspaceSession::from_persistent_layout_with_presentation_config(
+            layout(),
+            DockPolicy::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+            bootstrap,
+        )
+        .unwrap()
     };
     let mut native =
         NativeCoordinator::new(persistent(), NativePointerRoster::Exact(Vec::new())).unwrap();

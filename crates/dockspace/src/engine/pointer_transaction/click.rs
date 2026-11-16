@@ -165,6 +165,7 @@ impl DockEngine {
         let current_target = match close.target {
             ClosePlanTarget::Item { item } => ContentCloseTarget::Item(item),
             ClosePlanTarget::Root { root } => ContentCloseTarget::Root(root),
+            ClosePlanTarget::Tabs { root, anchor } => ContentCloseTarget::Tabs { root, anchor },
             ClosePlanTarget::Surface { .. } => {
                 return Err(EngineError::ReductionCauseInvariant {
                     detail: "journal content click froze a surface close target",

@@ -190,6 +190,22 @@ impl PreparedSurfaceAction {
         }
     }
 
+    pub(super) fn close_tabs(
+        authority_domain: EngineAuthorityDomainId,
+        expected: WorkspaceVersion,
+        scene: SurfaceSceneStamp,
+        witness: Arc<crate::presentation::scene::SurfacePlanScene>,
+        group: crate::model::PreparedTabsGroup,
+    ) -> Self {
+        Self {
+            authority_domain,
+            expected,
+            surface: scene.surface(),
+            witness,
+            action: SurfaceAction::CloseTabs { scene, group },
+        }
+    }
+
     pub(super) fn adjust_splitter(
         authority_domain: EngineAuthorityDomainId,
         expected: WorkspaceVersion,
@@ -327,6 +343,7 @@ impl PreparedSurfaceAction {
             SurfaceAction::SelectTab { selection, .. } => Some(selection.target().item),
             SurfaceAction::Close { .. }
             | SurfaceAction::CloseRoot { .. }
+            | SurfaceAction::CloseTabs { .. }
             | SurfaceAction::PresentationCommand { .. }
             | SurfaceAction::TabChrome { .. }
             | SurfaceAction::AdjustSplitter { .. }
@@ -372,6 +389,11 @@ impl PreparedSurfaceAction {
                 expected: self.expected,
                 scene,
                 root,
+            },
+            action @ SurfaceAction::CloseTabs { .. } => EngineInput::ApplyDeferredSurfaceAction {
+                expected: self.expected,
+                witness: self.witness,
+                action,
             },
             SurfaceAction::PresentationCommand { scene, action } => {
                 EngineInput::ApplyLocalPresentationCommand {

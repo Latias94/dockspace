@@ -11,7 +11,9 @@ use super::keyboard;
 
 #[derive(Clone, Copy)]
 struct MenuRun {
+    instance: Id,
     popup: Id,
+    workspace: dockspace::runtime::DockspaceWorkspaceStamp,
     toggled_in: Option<(ViewportId, u64)>,
     visible_pass: u64,
     press_started_while_open: bool,
@@ -38,10 +40,25 @@ pub(crate) fn prepare_layer(ui: &Ui, instance: Id, surface: dockspace::model::Su
         .set_transform_layer(layer(instance, surface), transform);
 }
 
+pub(crate) fn invalidate_stale(
+    ui: &Ui,
+    instance: Id,
+    workspace: dockspace::runtime::DockspaceWorkspaceStamp,
+) {
+    if let Some(run) = ui.ctx().data(|data| data.get_temp::<MenuRun>(run_id()))
+        && run.instance == instance
+        && run.workspace != workspace
+    {
+        Popup::close_id(ui.ctx(), run.popup);
+        ui.ctx().data_mut(|data| data.remove::<MenuRun>(run_id()));
+    }
+}
+
 pub(super) fn show(
     source: &Ui,
     instance: Id,
     surface: dockspace::model::SurfaceId,
+    workspace: dockspace::runtime::DockspaceWorkspaceStamp,
     popup: Id,
     anchor: &Response,
     touch_requested: bool,
@@ -58,11 +75,18 @@ pub(super) fn show(
         .data(|data| data.get_temp::<MenuRun>(run_id()))
         .filter(|run| run.popup == popup)
         .unwrap_or(MenuRun {
+            instance,
             popup,
+            workspace,
             toggled_in: None,
             visible_pass: 0,
             press_started_while_open: false,
         });
+    if run.workspace != workspace {
+        Popup::close_id(context, popup);
+        context.data_mut(|data| data.remove::<MenuRun>(run_id()));
+        return None;
+    }
     if !touch_requested && anchor.clicked() && run.toggled_in != Some(frame) {
         Popup::toggle_id(context, popup);
         run.toggled_in = Some(frame);

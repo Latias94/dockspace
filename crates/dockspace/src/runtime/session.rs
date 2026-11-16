@@ -442,6 +442,21 @@ impl DockspaceSession {
         )
     }
 
+    /// Prepares an atomic close for an exact captured group without refreshing its authority.
+    ///
+    /// Layout changes after capture make submission stale. Accepted close plans
+    /// retain target-local membership and owner proofs while decisions are pending.
+    pub fn prepare_close_tabs(&self, group: PreparedTabsGroup) -> PreparedCloseRequest {
+        PreparedCloseRequest::new(
+            group.authority_domain,
+            group.expected,
+            ContentCloseTarget::Tabs {
+                root: group.source.root(),
+                anchor: group.anchor,
+            },
+        )
+    }
+
     /// Begins one owned, rollbackable update without borrowing the session.
     ///
     /// Resume it through [`Self::resume_update`] to use the host-frame API.

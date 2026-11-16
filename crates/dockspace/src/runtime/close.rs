@@ -26,6 +26,7 @@ pub(crate) const fn product_close_target(target: ContentCloseTarget) -> ClosePla
     match target {
         ContentCloseTarget::Item(item) => ClosePlanTarget::Item { item },
         ContentCloseTarget::Root(root) => ClosePlanTarget::Root { root },
+        ContentCloseTarget::Tabs { root, anchor } => ClosePlanTarget::Tabs { root, anchor },
     }
 }
 
@@ -53,7 +54,7 @@ pub enum DockspaceCloseRequestRejection {
     /// Current policy explicitly disables close for one item.
     #[error("item {item} prevents closing the requested target")]
     ItemCloseDisabled {
-        /// Stable item or root requested by the caller.
+        /// Stable content target requested by the caller.
         target: ClosePlanTarget,
         /// Non-closeable item.
         item: ItemId,
@@ -100,7 +101,7 @@ impl DockspaceCloseRequestRejection {
         }
     }
 
-    /// Returns the stable item or root rejected by the request.
+    /// Returns the stable content target rejected by the request.
     #[must_use]
     pub const fn target(self) -> ClosePlanTarget {
         match self {
@@ -135,7 +136,7 @@ impl PreparedCloseRequest {
         }
     }
 
-    /// Returns the stable item or root requested by this action.
+    /// Returns the stable content target requested by this action.
     #[must_use]
     pub const fn target(&self) -> ClosePlanTarget {
         product_close_target(self.target)
@@ -219,7 +220,9 @@ impl DockspaceClosePhase {
             CoreClosePlanPhase::Applied => Self::Applied,
             CoreClosePlanPhase::Vetoed => match target {
                 ClosePlanTarget::Surface { .. } => Self::Settling,
-                ClosePlanTarget::Item { .. } | ClosePlanTarget::Root { .. } => Self::NotApplied,
+                ClosePlanTarget::Item { .. }
+                | ClosePlanTarget::Root { .. }
+                | ClosePlanTarget::Tabs { .. } => Self::NotApplied,
             },
             CoreClosePlanPhase::Stale
             | CoreClosePlanPhase::Cancelled
@@ -354,7 +357,9 @@ impl DockspaceSession {
             .filter(|plan| {
                 matches!(
                     plan.target(),
-                    ClosePlanTarget::Item { .. } | ClosePlanTarget::Root { .. }
+                    ClosePlanTarget::Item { .. }
+                        | ClosePlanTarget::Root { .. }
+                        | ClosePlanTarget::Tabs { .. }
                 ) && DockspaceClosePhase::from_core(plan).requires_decision()
             })
             .map(DockspaceClosePlan::from_core)

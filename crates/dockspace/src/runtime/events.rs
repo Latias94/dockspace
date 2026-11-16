@@ -189,6 +189,10 @@ fn product_kind(
                 root: *root,
                 items: items.clone(),
             },
+            CloseCommitOutcome::TabsClosed { root, items } => DockspaceCloseOutcome::TabsClosed {
+                root: *root,
+                items: items.clone(),
+            },
             CloseCommitOutcome::SurfaceClosed { surface, items } => {
                 DockspaceCloseOutcome::SurfaceClosed {
                     surface: *surface,

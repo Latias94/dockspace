@@ -441,7 +441,7 @@ fn narrow_three_tab_strip_publishes_only_operable_tabs_and_stable_gap_indices() 
     let workspace = builder.build().expect("selected workspace is valid");
 
     let (automatic_engine, _automatic_host, automatic) =
-        compile(workspace, rect(180.0, 180.0), 180.0);
+        compile(workspace, rect(206.0, 180.0), 180.0);
     assert_eq!(visible_items(&automatic, tabs), vec![second, selected]);
     assert_eq!(tab_gap_indices(&automatic, tabs), vec![1, 2, 3]);
 

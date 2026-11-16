@@ -255,6 +255,53 @@ test('a menu-floated layout moves over blank canvas and docks through an explici
   expect(errors).toEqual([]);
 });
 
+test('group actions float and close exactly their tabs while sibling groups remain', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await open(page);
+  const original = await state(page);
+  const editorGroupControl = snapshot => {
+    const tab = snapshot.tabs.find(tab => tab.label === 'Editor');
+    if (!tab) return undefined;
+    const middle = (tab.rect[1] + tab.rect[3]) / 2;
+    return snapshot.controls.filter(node => node.label === 'Tab group actions'
+      && node.rect[0] >= tab.rect[2]
+      && node.rect[1] <= middle && node.rect[3] > middle)
+      .sort((a, b) => a.rect[0] - b.rect[0])[0];
+  };
+  const openEditorGroup = async () => {
+    await expect.poll(async () => Boolean(editorGroupControl(await state(page)))).toBe(true);
+    const control = editorGroupControl(await state(page));
+    const position = await point(page, control.rect);
+    await page.mouse.click(position.x, position.y);
+    await expect.poll(async () => (await state(page)).controls.some(node =>
+      node.label === 'Float Tab Group')).toBe(true);
+  };
+  await openEditorGroup();
+  expect((await state(page)).controls.some(node =>
+    node.label === 'Move Tab Group to New Window')).toBe(false);
+  await clickControl(page, 'Float Tab Group');
+  await expect.poll(async () => pane(await state(page), 1).root).not.toBe(1);
+  let snapshot = await state(page);
+  expect(pane(snapshot, 1).group).toEqual([1, 2]);
+  expect(pane(snapshot, 2).root).toBe(pane(snapshot, 1).root);
+  for (const item of [3, 4, 5, 6, 7, 8]) {
+    expect(pane(snapshot, item).root).toBe(pane(original, item).root);
+    expect(pane(snapshot, item).group).toEqual(pane(original, item).group);
+  }
+  await openEditorGroup();
+  await clickControl(page, 'Close Tab Group');
+  await expect.poll(async () => (await state(page)).panes.length).toBe(6);
+  snapshot = await state(page);
+  expect(pane(snapshot, 1)).toBeUndefined();
+  expect(pane(snapshot, 2)).toBeUndefined();
+  for (const item of [3, 4, 5, 6, 7, 8]) {
+    expect(pane(snapshot, item).root).toBe(pane(original, item).root);
+  }
+  expect(snapshot.activeGesture).toBe(false);
+  expect(errors).toEqual([]);
+});
+
 test('motion produces intermediate pane geometry, accepts tuning and settles to idle', async ({ page }) => {
   await open(page);
   await page.evaluate(() => {

@@ -288,7 +288,14 @@ fn measured_fixture(
         ),
     )])
     .unwrap();
-    let session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap();
     let now = Arc::new(AtomicU64::new(0));
     let clock = Arc::clone(&now);
     let mut native = NativeCoordinator::new_with_storage_allowance(

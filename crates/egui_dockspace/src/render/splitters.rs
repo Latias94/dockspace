@@ -283,7 +283,9 @@ fn junction_axis_response(
     let layout_rect = inset_ui_rect(hit)?;
     let mut axis_ui = ui.new_child(
         UiBuilder::new()
-            .id_salt((junction_id, "axis", axis))
+            // Tab overflow can change the parent's auto-ID counter between
+            // steps. Axis focus and accessibility must keep the junction ID.
+            .scope_id(junction_id.with(("axis", axis)))
             .max_rect(layout_rect)
             .sense(if enabled {
                 Sense::focusable_noninteractive()

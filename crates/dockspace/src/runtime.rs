@@ -133,12 +133,12 @@ pub use paint::{
     DockspaceGuideScope, DockspacePaintLayer, DockspacePresentationCommandKind,
     DockspacePresentationCommandUnavailable, DockspacePresentationMenuAnchorKind,
     DockspacePreviewTabBarPaintRecord, DockspacePreviewTabPaintRecord, DockspacePreviewVisual,
-    DockspaceReceiverDescriptor, DockspaceReceiverRole, DockspaceSemanticOutput, DockspaceVisualId,
-    DockspaceVisualKind, DropAffordanceClusterPaintRecord, DropAffordancePaintRecord,
-    DropAffordanceTargetPaintRecord, DropGuidePaintRecord, DropGuideTargetPaintRecord,
-    DropTargetPaintRecord, PanePaintRecord, PresentationCommandPaintRecord,
-    PresentationMenuAnchorPaintRecord, SplitterJunctionPaintRecord, SplitterPaintRecord,
-    SurfaceMeasurementRefresh, SurfacePaintDisposition, SurfacePaintPlan,
+    DockspaceReceiverDescriptor, DockspaceReceiverRole, DockspaceSemanticOutput,
+    DockspaceTabsGroupCommandKind, DockspaceVisualId, DockspaceVisualKind, DockspaceWorkspaceStamp,
+    DropAffordanceClusterPaintRecord, DropAffordancePaintRecord, DropAffordanceTargetPaintRecord,
+    DropGuidePaintRecord, DropGuideTargetPaintRecord, DropTargetPaintRecord, PanePaintRecord,
+    PresentationCommandPaintRecord, PresentationMenuAnchorPaintRecord, SplitterJunctionPaintRecord,
+    SplitterPaintRecord, SurfaceMeasurementRefresh, SurfacePaintDisposition, SurfacePaintPlan,
     SurfacePaintProgramOperation, SurfacePaintProgramRoot, SurfacePaintProgramRootKind,
     SurfacePaintProgramStep, SurfacePaintProgramVisitError, SurfaceProgramExecutionReceipt,
     SurfaceSplitterRange, SurfaceWork, SurfaceWorkDeferred, TabBarPaintRecord,
@@ -215,6 +215,13 @@ pub enum DockspaceCloseOutcome {
         /// Closed root.
         root: crate::ids::RootId,
         /// Items removed with the root.
+        items: Vec<crate::ids::ItemId>,
+    },
+    /// One exact tabs group was removed atomically while sibling groups were retained.
+    TabsClosed {
+        /// Root which owned the group before close.
+        root: crate::ids::RootId,
+        /// Removed items in the close plan's original order.
         items: Vec<crate::ids::ItemId>,
     },
     /// One complete surface roster and all of its items were removed atomically.

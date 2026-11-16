@@ -57,7 +57,14 @@ fn editor_fixture(desktop: bool) -> (NativeCoordinator, NativeSurfaceBinding, Ar
     let now = Arc::new(AtomicU64::new(40));
     let clock = Arc::clone(&now);
     let mut native = NativeCoordinator::new_with_storage_allowance(
-        DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap(),
+        DockspaceSession::from_layout_with_presentation_config(
+            layout,
+            DockPolicy::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap(),
         NativePointerRoster::Exact(Vec::new()),
         None,
         None,

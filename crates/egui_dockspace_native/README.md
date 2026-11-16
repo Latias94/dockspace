@@ -26,8 +26,9 @@ cargo run --manifest-path integration/egui-fork-workspace/Cargo.toml -p egui_doc
 
 Click **Open Inspector Window ↗** in the toolbar to move the floating Inspector
 group into a child OS window, then **Dock Inspector Back** to return it. A tab
-bar's three-dot menu also offers **Move to New Window** and **Dock Back** for
-other eligible groups. Closing a child window recovers its panes by default.
+bar's window-outline menu also offers **Move Layout to New Window** and **Dock Back**
+for the entire root. Its separate three-dot menu acts on one tab group. Closing
+a child window recovers its panes by default.
 Use **Pane inventory → Hide / Show** to temporarily remove panes while keeping
 their layout slots. **Close** removes a slot; pane data remains in the inventory.
 Add `--features serde` for application-owned named layout presets. These presets
@@ -82,6 +83,25 @@ the desktop compositor, independently of pane rendering.
 Construct `NativeDockspaceApp` with a `DockspaceSession`, Root surface, pane
 provider and matching `DockStyle`. Install its native host handler in the fork's
 eframe options. The [basic example](examples/basic.rs) shows the complete setup.
+
+Build the session from the same style's `presentation_config()`. Core's
+renderer-neutral defaults are independent of egui's Compact metrics, and the
+native constructor rejects disagreement instead of changing either side:
+
+```rust,ignore
+let style = egui_dockspace::DockStyle::default();
+let session = DockspaceSession::from_layout_with_presentation_config(
+    layout,
+    policy,
+    style.presentation_config()?,
+)?;
+let app = NativeDockspaceApp::new(instance_id, session, root_surface, panes, style)?;
+```
+
+For persistence, use `from_persistent_layout_with_presentation_config` or
+`from_document_json_with_presentation_config` with that same configuration.
+Live geometry edits go through `request_style`, so core measurements and egui
+painting change together; visual-only overrides do not require new geometry.
 
 Pane providers implement `PaneView + Send + 'static` because deferred viewport
 callbacks retain them. `Box<dyn PaneView + Send>` is supported. Registry/view

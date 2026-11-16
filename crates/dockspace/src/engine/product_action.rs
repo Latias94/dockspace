@@ -205,7 +205,9 @@ impl DockEngine {
         }
 
         match action {
-            ProductAction::DockRoot { .. } => self.reduce_product_action(
+            ProductAction::DockRoot { .. }
+            | ProductAction::DockTabs { .. }
+            | ProductAction::FloatTabs { .. } => self.reduce_product_action(
                 input,
                 cause,
                 focus_causal,
@@ -394,10 +396,13 @@ impl DockEngine {
         anchor: DockAnchor,
     ) -> Result<PreparedTabsGroup, DockspaceActionRejection> {
         let (root, tabs) = self.capture_product_anchor(anchor)?;
-        if !matches!(self.workspace.node(tabs), Some(Node::Tabs { items, .. }) if !items.is_empty())
-        {
+        let Some(Node::Tabs { items, .. }) = self.workspace.node(tabs) else {
             return Err(DockspaceActionRejection::Conflict);
-        }
+        };
+        let anchor = items
+            .first()
+            .copied()
+            .ok_or(DockspaceActionRejection::Conflict)?;
         let source = self
             .workspace
             .capture_node_source(root, tabs)
@@ -406,6 +411,7 @@ impl DockEngine {
             authority_domain: self.authority_domain,
             expected: self.version,
             source,
+            anchor,
         })
     }
 

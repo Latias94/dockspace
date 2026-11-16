@@ -189,10 +189,10 @@ fn with_alpha(color: Color32, alpha: u8) -> Color32 {
 /// and the separate touch resize target remain under their existing settings.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DockDensity {
-    /// Reduced vertical padding, shorter group grips and narrower short tabs.
-    Compact,
-    /// Follow egui button spacing and interaction height.
+    /// Compact reference height with padding that grows with the current font.
     #[default]
+    Compact,
+    /// Additional padding, larger controls and at least egui's interaction height.
     Comfortable,
 }
 
@@ -310,7 +310,7 @@ pub struct DockStyle {
 }
 
 impl DockStyle {
-    /// Derives initial chrome geometry from the current egui fonts and spacing.
+    /// Derives compact chrome geometry from the current egui fonts and spacing.
     ///
     /// Call this inside a UI pass after configuring fonts. The returned metrics
     /// are ordinary fixed docking geometry, not a live theme subscription.
@@ -319,7 +319,7 @@ impl DockStyle {
     /// [`Self::presentation_config`]. Whole-UI zoom needs no geometry update.
     #[must_use]
     pub fn from_egui(ui: &egui::Ui) -> Self {
-        Self::from_egui_with_density(ui, DockDensity::Comfortable)
+        Self::from_egui_with_density(ui, DockDensity::Compact)
     }
 
     /// Derives docking geometry with an explicit compact or comfortable density.
@@ -335,31 +335,33 @@ impl DockStyle {
         let font = egui::FontSelection::Default
             .resolve_with_fallback(ui.style(), egui::TextStyle::Button.into());
         let font_height = ui.fonts_mut(|fonts| fonts.row_height(&font));
-        let spacing = ui.spacing();
-        let height = (font_height + spacing.button_padding.y * 2.0).max(spacing.interact_size.y);
         let compact = density == DockDensity::Compact;
         let height = if compact {
-            (font_height + 4.0).min(height)
+            (font_height + 8.0).max(24.0)
         } else {
-            height
+            (font_height + 12.0)
+                .max(28.0)
+                .max(ui.spacing().interact_size.y)
         };
-        let padding = if compact {
-            spacing.button_padding.x.min(6.0)
+        let padding = if compact { 8.0 } else { 10.0 };
+        let close_size = if compact {
+            (font_height + 2.0).max(18.0)
         } else {
-            spacing.button_padding.x
-        };
+            (font_height + 4.0).max(22.0)
+        }
+        .min(height - 4.0);
         let mut result = Self {
             tab_bar_height: height,
-            floating_title_height: height,
-            tab_group_grip_extent: if compact { font_height } else { height },
-            tab_close_size: font_height,
-            tab_close_icon_size: font_height * 0.5,
+            floating_title_height: height + 4.0,
+            tab_group_grip_extent: height - 2.0,
+            tab_close_size: close_size,
+            tab_close_icon_size: if compact { 8.0 } else { 10.0 },
             tab_horizontal_padding: padding,
             floating_border_width: ui.visuals().window_stroke.width,
             ..Self::default()
         };
-        let minimum = if compact { 48.0 } else { result.tab_min_width };
-        result.tab_min_width = minimum.max(font_height * 2.0 + padding * 2.0);
+        let minimum: f32 = if compact { 56.0 } else { 64.0 };
+        result.tab_min_width = minimum.max(close_size + padding * 2.0 + font_height);
         result.tab_max_width = result.tab_max_width.max(result.tab_min_width);
         result.floating_resize_extent = result
             .floating_resize_extent
@@ -398,7 +400,12 @@ impl DockStyle {
             title_text_color: self
                 .visuals
                 .floating_title_text_color
-                .unwrap_or(style.visuals.widgets.noninteractive.fg_stroke.color),
+                .or(style.visuals.override_text_color)
+                .unwrap_or(if active {
+                    style.visuals.widgets.open.fg_stroke.color
+                } else {
+                    style.visuals.widgets.noninteractive.fg_stroke.color
+                }),
             title_margin,
         }
     }
@@ -535,29 +542,29 @@ impl Default for DockStyle {
             touch_long_press_delay: geometry.touch_long_press_delay(),
             touch_press_slop_distance: geometry.touch_press_slop_distance() as f32,
             touch_resize_hit_extent: geometry.touch_resize_hit_extent() as f32,
-            tab_bar_height: geometry.tab_bar_height() as f32,
-            tab_corner_radius: CornerRadius::ZERO,
-            tab_background_inset: Vec2::ZERO,
+            tab_bar_height: 24.0,
+            tab_corner_radius: CornerRadius::same(6),
+            tab_background_inset: Vec2::splat(2.0),
             tab_connect_to_pane: false,
             tab_strip_edge_scroll_band: geometry.tab_strip_edge_scroll_band() as f32,
             tab_strip_edge_scroll_interval: geometry.tab_strip_edge_scroll_interval(),
-            tab_group_grip_extent: geometry.tab_group_grip_extent() as f32,
+            tab_group_grip_extent: 22.0,
             tab_group_grip_visibility: TabGroupGripVisibility::Always,
-            tab_horizontal_padding: geometry.tab_horizontal_padding() as f32,
-            tab_min_width: geometry.tab_min_width() as f32,
+            tab_horizontal_padding: 8.0,
+            tab_min_width: 56.0,
             tab_max_width: geometry.tab_max_width() as f32,
-            tab_close_size: geometry.tab_close_extent() as f32,
+            tab_close_size: 18.0,
             tab_close_icon_size: 8.0,
             tab_close_visibility: TabCloseVisibility::default(),
-            splitter_thickness: geometry.splitter_thickness() as f32,
-            splitter_hit_extent: geometry.splitter_hit_extent() as f32,
+            splitter_thickness: 1.0,
+            splitter_hit_extent: 10.0,
             splitter_keyboard_step: geometry.splitter_keyboard_step() as f32,
             drop_guide_extent: geometry.guide_extent() as f32,
             drop_guide_gap: geometry.guide_gap() as f32,
             drop_guide_hit_padding: geometry.guide_hit_padding() as f32,
             drop_guide_outer_inset: geometry.guide_outer_inset() as f32,
             dock_fraction: geometry.dock_fraction() as f32,
-            floating_title_height: geometry.floating_title_height() as f32,
+            floating_title_height: 28.0,
             floating_border_width: geometry.floating_border_width() as f32,
             floating_resize_extent: geometry.floating_resize_extent() as f32,
             minimum_pane_size: Vec2::new(
@@ -640,7 +647,17 @@ mod tests {
         let style = DockStyle::default();
         assert_eq!(style.validate(), Ok(()));
         let config = style.presentation_config().unwrap();
-        assert_eq!(config, DockPresentationConfig::default());
+        assert_eq!(style.tab_preset, TabStylePreset::Rounded);
+        assert_eq!(DockDensity::default(), DockDensity::Compact);
+        assert_eq!(config.tab_bar_height(), 24.0);
+        assert_eq!(config.floating_title_height(), 28.0);
+        assert_eq!(config.tab_close_extent(), 18.0);
+        assert_eq!(config.tab_group_grip_extent(), 22.0);
+        assert_eq!(config.tab_min_width(), 56.0);
+        assert_eq!(config.splitter_thickness(), 1.0);
+        assert_eq!(config.splitter_hit_extent(), 10.0);
+        assert_eq!(style.tab_background_inset, Vec2::splat(2.0));
+        assert_eq!(style.tab_corner_radius, CornerRadius::same(6));
         assert_eq!(style.touch_resize_hit_extent.to_bits(), 44.0_f32.to_bits());
         assert_eq!(
             style.tab_strip_edge_scroll_band.to_bits(),
@@ -650,6 +667,142 @@ mod tests {
             style.tab_strip_edge_scroll_interval,
             Some(std::time::Duration::from_millis(50))
         );
+    }
+
+    #[test]
+    fn font_derived_densities_keep_text_and_targets_inside_the_same_geometry() {
+        for font_size in [13.0, 24.0, 48.0] {
+            for pixels_per_point in [1.0, 1.25, 1.5, 2.0] {
+                let context = egui::Context::default();
+                context.set_pixels_per_point(pixels_per_point);
+                context.global_style_mut(|style| {
+                    style.override_font_id = Some(egui::FontId::proportional(font_size));
+                    style.spacing.interact_size.y = 40.0;
+                });
+                let mut observed = None;
+                context
+                    .run_ui(egui::RawInput::default(), |ui| {
+                        let compact = DockStyle::from_egui(ui);
+                        assert_eq!(
+                            compact,
+                            DockStyle::from_egui_with_density(ui, DockDensity::Compact)
+                        );
+                        let comfortable =
+                            DockStyle::from_egui_with_density(ui, DockDensity::Comfortable);
+                        let font = egui::FontSelection::Default
+                            .resolve_with_fallback(ui.style(), egui::TextStyle::Button.into());
+                        let row_height = ui.fonts_mut(|fonts| fonts.row_height(&font));
+                        observed = Some((compact, comfortable, row_height));
+                        assert_eq!(
+                            ui.style().override_font_id.as_ref().unwrap().size,
+                            font_size
+                        );
+                    })
+                    .drop_without_applying_deltas();
+                let (compact, comfortable, row_height) = observed.unwrap();
+                assert!(compact.tab_bar_height < comfortable.tab_bar_height);
+                assert!(compact.tab_min_width <= comfortable.tab_min_width);
+                assert!(compact.tab_close_size < comfortable.tab_close_size);
+                assert!(comfortable.tab_bar_height >= 40.0);
+                for style in [compact, comfortable] {
+                    assert_eq!(style.validate(), Ok(()));
+                    assert!(style.tab_bar_height >= row_height + 8.0);
+                    assert!(style.tab_close_size <= style.tab_bar_height - 4.0);
+                    assert!(style.tab_close_icon_size < style.tab_close_size);
+                    assert!(style.tab_group_grip_extent < style.tab_bar_height);
+                    assert!(
+                        style.tab_min_width
+                            >= style.tab_close_size
+                                + style.tab_horizontal_padding * 2.0
+                                + row_height
+                    );
+                    assert!(style.floating_title_height > style.tab_bar_height);
+                }
+            }
+        }
+    }
+
+    fn contrast_ratio(foreground: Color32, background: Color32) -> f64 {
+        fn luminance(color: Color32) -> f64 {
+            let linear = |channel: u8| {
+                let value = f64::from(channel) / 255.0;
+                if value <= 0.04045 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
+        }
+        let foreground = luminance(background.blend(foreground));
+        let background = luminance(background);
+        (foreground.max(background) + 0.05) / (foreground.min(background) + 0.05)
+    }
+
+    #[test]
+    fn default_themes_keep_chrome_text_and_required_cues_legible() {
+        for visuals in [Visuals::light(), Visuals::dark()] {
+            for preset in [
+                TabStylePreset::Dockspace,
+                TabStylePreset::Rounded,
+                TabStylePreset::EguiTiles,
+            ] {
+                let style = DockStyle {
+                    tab_preset: preset,
+                    ..Default::default()
+                };
+                let resolved = style.resolved_visuals(&visuals);
+                let selected = resolved.tab_bar_fill.blend(resolved.tab_active_fill);
+                let idle = resolved.tab_bar_fill.blend(resolved.tab_fill);
+                let hovered = resolved.tab_bar_fill.blend(resolved.tab_hover_fill);
+                for (text, background) in [
+                    (resolved.tab_text_color, idle),
+                    (resolved.tab_text_color, hovered),
+                    (resolved.tab_active_text_color, selected),
+                    (
+                        resolved.tab_active_text_color,
+                        selected.blend(resolved.drop_fill),
+                    ),
+                ] {
+                    assert!(
+                        contrast_ratio(text, background) >= 4.5,
+                        "{preset:?} text {text:?} on {background:?}"
+                    );
+                }
+                for (cue, background) in [
+                    (resolved.pane_focus_stroke.color, selected),
+                    (resolved.tab_focus_stroke.color, selected),
+                    (
+                        resolved.drop_border_color,
+                        selected.blend(resolved.drop_fill),
+                    ),
+                    (resolved.drop_guide_border_color, resolved.drop_guide_fill),
+                    (
+                        resolved.drop_guide_active_border_color,
+                        resolved.drop_guide_active_fill,
+                    ),
+                ] {
+                    assert!(
+                        contrast_ratio(cue, background) >= 3.0,
+                        "{preset:?} cue {cue:?} on {background:?}"
+                    );
+                }
+                if resolved.tab_active_stroke.width > 0.0 {
+                    assert!(
+                        contrast_ratio(resolved.tab_active_stroke.color, selected) >= 3.0,
+                        "{preset:?} selected outline"
+                    );
+                }
+                let theme = EguiStyle {
+                    visuals: visuals.clone(),
+                    ..Default::default()
+                };
+                for active in [false, true] {
+                    let title = style.resolved_contained_window(&theme, active);
+                    assert!(contrast_ratio(title.title_text_color, title.title_fill) >= 4.5);
+                }
+            }
+        }
     }
 
     #[test]
@@ -673,6 +826,7 @@ mod tests {
 
     #[test]
     fn tab_outlines_are_visual_only_and_reject_invalid_widths() {
+        let baseline = DockStyle::default().presentation_config().unwrap();
         let mut style = DockStyle {
             tab_corner_radius: CornerRadius::same(7),
             tab_background_inset: egui::vec2(2.0, 3.0),
@@ -683,10 +837,7 @@ mod tests {
         style.visuals.tab_selected_overline = Some(Stroke::new(2.0, Color32::GREEN));
         style.visuals.tab_bar_stroke = Some(Stroke::new(1.0, Color32::GRAY));
         assert_eq!(style.validate(), Ok(()));
-        assert_eq!(
-            style.presentation_config().unwrap(),
-            DockPresentationConfig::default()
-        );
+        assert_eq!(style.presentation_config().unwrap(), baseline);
         for width in [-1.0, f32::NAN, f32::INFINITY] {
             for axis in 0..2 {
                 let mut candidate = style.clone();
@@ -842,7 +993,12 @@ mod tests {
         let resolved = DockStyle::default().resolved_visuals(&egui_visuals);
 
         assert_eq!(resolved.workspace_fill, egui_visuals.panel_fill);
-        assert_eq!(resolved.tab_active_fill, egui_visuals.panel_fill);
+        assert_eq!(
+            resolved.tab_active_fill,
+            egui_visuals
+                .panel_fill
+                .lerp_to_gamma(egui_visuals.selection.bg_fill, 0.2)
+        );
         assert_eq!(resolved.tab_fill, Color32::TRANSPARENT);
         assert_eq!(resolved.tab_bar_fill, egui_visuals.extreme_bg_color);
         assert_eq!(resolved.popup_fill, egui_visuals.window_fill());
@@ -940,13 +1096,14 @@ mod tests {
     fn visual_override_changes_only_its_named_token() {
         let egui_visuals = Visuals::dark();
         let mut style = DockStyle::default();
+        let baseline = style.resolved_visuals(&egui_visuals);
         let override_fill = Color32::from_rgb(91, 73, 42);
         style.visuals.workspace_fill = Some(override_fill);
         let resolved = style.resolved_visuals(&egui_visuals);
 
         assert_eq!(resolved.workspace_fill, override_fill);
-        assert_eq!(resolved.tab_active_fill, egui_visuals.panel_fill);
-        assert_eq!(resolved.tab_bar_fill, egui_visuals.extreme_bg_color);
+        assert_eq!(resolved.tab_active_fill, baseline.tab_active_fill);
+        assert_eq!(resolved.tab_bar_fill, baseline.tab_bar_fill);
     }
 
     #[test]

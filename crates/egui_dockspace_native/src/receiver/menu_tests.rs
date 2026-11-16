@@ -7,14 +7,14 @@ use dockspace::model::{
     DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, RootId,
 };
 use dockspace::runtime::{
-    DockPresentationConfig, DockspaceReceiverRole, DockspaceSession, HostInputOutcome,
-    HostWindowToken, NativeCloseState, NativeDesktopPointerLocation, NativeDesktopPosition,
-    NativePointerButton, NativePointerEvent, NativePointerHover, NativePointerId,
-    NativePointerInput, NativePointerOwner, NativePointerRoster, NativeScrollDelta,
-    NativeScrollDeviceId, NativeScrollEvent, NativeScrollModifiers, NativeScrollMomentum,
-    NativeScrollPhase, NativeWindowFacts, NativeWindowInputState, NativeWindowPresentationState,
-    NativeWorkAreaRoster, SurfacePaintProgramOperation, SurfacePaintProgramStep,
-    SurfacePresentationResult, SurfaceUnavailableReason, TabStripControlKind,
+    DockspaceReceiverRole, DockspaceSession, HostInputOutcome, HostWindowToken, NativeCloseState,
+    NativeDesktopPointerLocation, NativeDesktopPosition, NativePointerButton, NativePointerEvent,
+    NativePointerHover, NativePointerId, NativePointerInput, NativePointerOwner,
+    NativePointerRoster, NativeScrollDelta, NativeScrollDeviceId, NativeScrollEvent,
+    NativeScrollModifiers, NativeScrollMomentum, NativeScrollPhase, NativeWindowFacts,
+    NativeWindowInputState, NativeWindowPresentationState, NativeWorkAreaRoster,
+    SurfacePaintProgramOperation, SurfacePaintProgramStep, SurfacePresentationResult,
+    SurfaceUnavailableReason, TabStripControlKind,
 };
 use egui::{Id, Pos2, RawInput, Rect, Vec2};
 use egui_dockspace::{DockStyle, native_support};
@@ -619,7 +619,10 @@ fn managed_session_with_item_count(
         ),
     )])
     .unwrap();
-    let presentation = DockPresentationConfig::builder()
+    let presentation = DockStyle::default()
+        .presentation_config()
+        .unwrap()
+        .to_builder()
         .tab_min_width(400.0)
         .tab_max_width(400.0)
         .build()

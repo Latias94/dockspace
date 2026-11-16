@@ -284,7 +284,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let layout = DockspaceLayout::new([surface])?;
     let mut policy = DockPolicy::default();
     policy.set_allow_native_surfaces(true);
-    let session = DockspaceSession::from_layout(layout, policy)?;
+    let style = DockStyle::default();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        policy,
+        style.presentation_config()?,
+    )?;
     let selected = storage_limit(scenario)?;
     eprintln!(
         "output-pressure: {scenario:?}; selected={BYTE_LIMIT}, initial_reserved={}",
@@ -296,7 +301,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         session,
         ROOT_SURFACE,
         Panes(Arc::clone(&shared)),
-        DockStyle::default(),
+        style,
         NativeWindowClosePolicy::default(),
         selected,
     )?));

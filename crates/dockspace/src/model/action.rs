@@ -151,6 +151,7 @@ pub struct PreparedTabsGroup {
     pub(crate) authority_domain: EngineAuthorityDomainId,
     pub(crate) expected: WorkspaceVersion,
     pub(crate) source: crate::graph::command::NodeSource,
+    pub(crate) anchor: ItemId,
 }
 
 impl PreparedTabsGroup {

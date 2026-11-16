@@ -330,7 +330,14 @@ fn assert_completed_child_receiver_pipeline(token: Option<NativeOutputToken>) {
         ),
     )])
     .unwrap();
-    let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+    let mut session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap();
     session
         .enable_managed_native_host(NativePointerRoster::Exact(Vec::new()))
         .unwrap();
@@ -645,8 +652,14 @@ fn presentation_menu_hit_blocks_native_docking_receivers() {
         ),
     )])
     .expect("presentation-menu receiver layout validates");
-    let mut session = DockspaceSession::from_layout(layout, DockPolicy::default())
-        .expect("presentation-menu receiver session initializes");
+    let mut session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .expect("presentation-menu receiver session initializes");
     let metrics = UniformSurfaceMetrics::new(
         LogicalRect::new(0.0, 0.0, 640.0, 480.0).expect("surface bounds validate"),
         LogicalSize::new(32.0, 24.0).expect("surface minimum validates"),
@@ -768,8 +781,14 @@ fn front_contained_chrome_blocks_a_background_tab_strip_control() {
         contained_rect,
     ))])
     .expect("overlapping receiver layout validates");
-    let mut session = DockspaceSession::from_layout(layout, DockPolicy::default())
-        .expect("overlapping receiver session initializes");
+    let mut session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .expect("overlapping receiver session initializes");
     let context = egui::Context::default();
     let instance_id = Id::unique("native-overlapping-tab-control");
     let mut panes = TestPanes;
@@ -895,7 +914,7 @@ fn front_contained_chrome_blocks_a_background_tab_strip_control() {
 
 #[test]
 fn overflow_controls_block_disabled_click_and_drag_without_selecting_underlying_tabs() {
-    use dockspace::runtime::{DockPresentationConfig, TabStripControlKind};
+    use dockspace::runtime::TabStripControlKind;
 
     let first = ItemId::new(1);
     let second = ItemId::new(2);
@@ -904,7 +923,10 @@ fn overflow_controls_block_disabled_click_and_drag_without_selecting_underlying_
         DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([first, second])),
     )])
     .expect("overflow control layout validates");
-    let config = DockPresentationConfig::builder()
+    let config = DockStyle::default()
+        .presentation_config()
+        .unwrap()
+        .to_builder()
         .tab_min_width(400.0)
         .tab_max_width(400.0)
         .build()
@@ -1162,8 +1184,17 @@ fn overflow_controls_block_disabled_click_and_drag_without_selecting_underlying_
             )
             .expect("control center validates")
         } else {
-            assert_eq!((hit_bounds.x(), hit_bounds.max().x()), (28.0, 56.0));
-            LogicalPoint::new(35.0, 14.0).expect("disabled overlay regression point validates")
+            let grip = session.presentation_config().tab_group_grip_extent();
+            let height = session.presentation_config().tab_bar_height();
+            assert_eq!(
+                (hit_bounds.x(), hit_bounds.max().x()),
+                (grip, grip + height)
+            );
+            LogicalPoint::new(
+                hit_bounds.x() + hit_bounds.width() * 0.25,
+                hit_bounds.y() + hit_bounds.height() * 0.5,
+            )
+            .expect("disabled overlay regression point validates")
         };
         assert!(hit_bounds.contains(point));
         let (underlying_item, underlying_id, _) = tab_bounds
@@ -1750,8 +1781,14 @@ fn assert_native_hover_receiver_contract(
         ),
     )])
     .expect("hover receiver layout validates");
-    let mut session = DockspaceSession::from_layout(layout, DockPolicy::default())
-        .expect("hover receiver session initializes");
+    let mut session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .expect("hover receiver session initializes");
     session
         .enable_managed_native_host(NativePointerRoster::Exact(Vec::new()))
         .expect("managed native host enrolls");
@@ -2232,8 +2269,14 @@ fn presented_scroll_candidate_answers_the_native_delivery_query() {
         ),
     )])
     .expect("scroll receiver layout validates");
-    let mut session = DockspaceSession::from_layout(layout, DockPolicy::default())
-        .expect("scroll receiver session initializes");
+    let mut session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .expect("scroll receiver session initializes");
     session
         .enable_managed_native_host(NativePointerRoster::Exact(Vec::new()))
         .expect("managed native host enrolls");

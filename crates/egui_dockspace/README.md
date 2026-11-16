@@ -22,7 +22,9 @@ documents. Hold **Shift** while dragging a tab to float it inside the window.
 A tab bar's six-dot grip moves its tab group; the same grip in a floating title
 bar moves or docks the whole floating window, including its splits.
 
-The workbench starts with Rounded tabs. Use **Tab style** and **Custom tabs** to
+The default style uses compact Rounded tabs. Each group's three-dot menu acts
+on that group; the window-outline menu acts on the complete layout, including
+its splits. Use **Tab style** and **Custom tabs** to
 compare chrome, and the motion toolbar to try timing, curves and reduced motion.
 Enable **Sizing → Pane sizing demo** to try a capped Inspector, a fixed-height
 Console, and double-clicking the Outline divider to restore its preferred width. The
@@ -160,15 +162,15 @@ transitions, system preferences and custom preview painters.
 
 ## Styling
 
-`DockStyle` follows the current egui theme. Use `DockStyle::from_egui(ui)` for
-font-derived metrics or `from_egui_with_density(ui, DockDensity::Compact)` for
-denser chrome. Choose a tab recipe, then adjust its fields:
+`DockStyle` follows the current egui theme, with compact Rounded tabs by default.
+Use `DockStyle::from_egui(ui)` to derive compact metrics from your fonts, or
+`from_egui_with_density(ui, DockDensity::Comfortable)` for larger targets and
+padding. Adjust the default recipe through ordinary style fields:
 
 ```rust
-use egui_dockspace::{DockStyle, TabStylePreset};
+use egui_dockspace::DockStyle;
 
 let mut style = DockStyle::default();
-style.apply_tab_preset(TabStylePreset::Rounded);
 style.tab_bar_height = 26.0;
 style.tab_horizontal_padding = 12.0;
 style.tab_background_inset = egui::vec2(3.0, 2.0);

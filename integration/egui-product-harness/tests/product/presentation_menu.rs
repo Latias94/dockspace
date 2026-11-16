@@ -15,7 +15,7 @@ fn menu_floated_root_stays_floating_when_released_away_from_docking_guides() {
         let (menu, menu_node) = accesskit_node(&stable.output, Role::Button, "Layout actions");
         assert_eq!(
             menu_node.description(),
-            Some("Applies to the entire layout, including all split groups")
+            Some("Actions for the entire layout, including all split groups")
         );
         let _ = run_frame(
             &context,
@@ -151,14 +151,24 @@ fn presentation_menu_floats_and_docks_back_with_truthful_native_availability() {
     let opened = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert!(opened.close_requests.is_empty());
     let (float, float_node) = accesskit_node(&opened.output, Role::MenuItem, "Float Layout");
-    let (_, native_node) = accesskit_node(&opened.output, Role::MenuItem, "Move to New Window");
+    assert!(
+        !opened
+            .output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, node)| node.role() == Role::MenuItem
+                && node.label() == Some("Move Layout to New Window"))
+    );
     let (_, dock_back_node) = accesskit_node(&opened.output, Role::MenuItem, "Dock Back");
     assert!(
         !float_node.is_disabled(),
         "{float_node:#?}; description={:?}",
         float_node.description()
     );
-    assert!(native_node.is_disabled());
     assert!(dock_back_node.is_disabled());
     assert_eq!(
         surface_ids(&dockspace),
@@ -209,13 +219,21 @@ fn presentation_menu_floats_and_docks_back_with_truthful_native_availability() {
     let opened = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert!(opened.close_requests.is_empty());
     let (_, float_node) = accesskit_node(&opened.output, Role::MenuItem, "Float Layout");
-    let (_, native_node) = accesskit_node(&opened.output, Role::MenuItem, "Move to New Window");
+    assert!(
+        !opened
+            .output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, node)| node.role() == Role::MenuItem
+                && node.label() == Some("Move Layout to New Window")),
+        "contained ownership cannot add a native command to this host"
+    );
     let (dock_back, dock_back_node) = accesskit_node(&opened.output, Role::MenuItem, "Dock Back");
     assert!(float_node.is_disabled());
-    assert!(
-        native_node.is_disabled(),
-        "contained ownership does not promote the product into a native host"
-    );
     assert!(!dock_back_node.is_disabled());
 
     let docked = run_frame(

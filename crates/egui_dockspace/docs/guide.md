@@ -522,10 +522,11 @@ settles that request as unavailable rather than guessing from the root viewport.
 
 ## Closing Content And Dock Back
 
-The three-dot **Layout actions** menu belongs to one complete root layout,
+The window-outline **Layout actions** menu belongs to one complete root layout,
 including its split groups. The main layout exposes it on one tab bar; contained
 floating layouts expose it in their title bar. **Float Layout** detaches that
-whole layout. To float just one tab or tab group, use its drag gesture instead.
+whole layout. To float just one tab, use its drag gesture; to float one group,
+use its three-dot menu or group drag gesture.
 After floating the main layout, dragging over blank canvas keeps it floating;
 the visible center docking guide returns it to the empty main area.
 
@@ -543,12 +544,29 @@ Use the distinct `Dock Back` menu item or `dock_root_back_current` to return
 floating content to its docking destination while keeping it open. Closing and
 Dock Back share stable item/root identities, but execute different commands.
 
+Each visible group's vertical three-dot **Tab group actions** menu floats or
+closes only that group, leaving other split groups in place. It offers native
+tear-off when the host supports it. The separate **List tabs** control lists
+the group's members; it does not move or close the group. Layout changes or
+session reconstruction dismiss an open action popup rather than retargeting
+its old commands.
+
 For a complete tabs leaf, `capture_tabs_group(DockAnchor::Item(item))` returns a
 `PreparedTabsGroup`. Pass it by value to `dock_tabs_current` or
 `float_tabs_current`; the group moves in one transaction with its order and
 selected item preserved. A captured group belongs to its original session and
 workspace version. Recapture after layout changes rather than replaying an old
 anchor against a different group.
+
+Use `prepare_close_tabs(group)` or `request_close_tabs_current(group)` to request
+atomic closure of a captured group through the same close-decision workflow.
+Every required approval must allow closure; a veto preserves all members.
+Deferred approval survives unrelated group changes and local tab reorder, but
+not changed membership, a different root/presentation owner, changed effective
+close permissions or workspace replacement. `ClosePlanTarget::Tabs` identifies
+the request using its root and captured member anchor; that anchor never
+refreshes the frozen membership. `DockspaceCloseOutcome::TabsClosed` reports
+the original decision roster after the single topology commit.
 
 ## Committed lifecycle events
 
@@ -710,8 +728,8 @@ still require application-owned state transfer.
 
 ## Styling
 
-The [chrome design](chrome-design.md) defines the target component and interaction
-rules, including work still to implement. This section documents current APIs.
+The [chrome design](chrome-design.md) defines component and interaction rules.
+This section documents the style and customization APIs.
 
 The application owns the surrounding egui `Panel`, `Frame`, and margins.
 Dockspace consumes the available rectangle of the `Ui` it is given and does not
@@ -737,8 +755,8 @@ fn build_dockspace(layout: DockspaceLayout) -> Result<Dockspace, DockspaceError>
 
 Geometry remains explicit. To match a customized font or control density, call
 `DockStyle::from_egui(ui)` during a UI pass, then pass the result to the builder
-or `Dockspace::set_style`. This reads the actual font height, button padding,
-interaction height, and window border width. Call it again after an application
+or `Dockspace::set_style`. This reads the actual font height and window border
+width; Comfortable density also respects the interaction height. Call it again after an application
 font/density change; whole-UI zoom already scales logical points and needs no
 extra geometry multiplication. Reapply any application geometry/color overrides
 to the derived style before submitting it. The `basic` example demonstrates
@@ -756,14 +774,14 @@ style.visuals.tab_active_fill = Some(egui::Color32::from_rgb(40, 100, 120));
 dockspace.set_style(style)?;
 ```
 
-`Compact` reduces tab padding, the minimum width of short titles and the group
-grip width. Text stays at the current egui font size; pane content, UI zoom and
-touch resize targets are unchanged. `Comfortable` follows egui's normal button
-spacing and interaction height, as does `DockStyle::from_egui`. After a font
-change, derive the style again with the selected density and reapply application
+`Compact` is the default density. Text stays at the current egui font size;
+pane content, UI zoom and touch resize targets are unchanged. `Comfortable`
+adds padding and respects egui's interaction height. `DockStyle::from_egui`
+derives Compact metrics. After a font change, derive the style again with the
+selected density and reapply application
 overrides. All returned fields remain editable for application-specific sizing.
 The `basic` example has density and font controls. The workbench starts with the
-Rounded recipe: 24-point tabs, ten-point horizontal padding and a 56-point minimum
+Rounded recipe: 24-point tabs, eight-point horizontal padding and a 56-point minimum
 width. Its backgrounds have six-point corner radii, two-point insets and
 theme-relative fills, with a thin border on the selected tab. Enable **Custom tabs**
 to add icons, an accent outline and fixed controls.
@@ -820,7 +838,8 @@ remain shared. Change a live style with `set_style` between settled UI runs,
 after reporting the previous output's presentation result.
 
 Rounded applies six-point corner radii, two-point background insets, 24-point tab
-bars, ten-point horizontal padding and a 56-point minimum tab width. It has no
+bars, eight-point horizontal padding and a 56-point minimum tab width. Its close
+targets are 18 points and the leading grip is 22 points. It has no
 default overline. The default painter retains the selected tab's active fill
 during hover, focus and press; `visuals.tab_active_fill` overrides that fill.
 

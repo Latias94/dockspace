@@ -37,7 +37,14 @@ fn session() -> DockspaceSession {
         ),
     )])
     .unwrap();
-    DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap()
+    DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap()
 }
 
 #[test]

@@ -198,7 +198,10 @@ fn fixture_with_controls(
     .unwrap();
     session.enable_host_pointer().unwrap();
     let mut frame = session.begin_host_frame().unwrap();
-    for (surface, width) in [(SOURCE, 800.0), (TARGET, 240.0)] {
+    // Keep the 180-point overlay group and an uncovered content edge beside
+    // both root and group menus; the overlay must still cross the midpoint.
+    let target_width = if placement.is_some() { 300.0 } else { 240.0 };
+    for (surface, width) in [(SOURCE, 800.0), (TARGET, target_width)] {
         if surface == TARGET
             && let Some(placement) = placement
         {

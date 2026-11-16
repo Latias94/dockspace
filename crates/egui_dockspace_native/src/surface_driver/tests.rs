@@ -11,9 +11,7 @@ use dockspace::model::{
     DockAnchor, DockPlacement, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
     DockspaceSurfaceLayout, ItemId, RootId,
 };
-use dockspace::runtime::{
-    DockPresentationConfig, SurfacePresentationResult, SurfaceUnavailableReason,
-};
+use dockspace::runtime::{SurfacePresentationResult, SurfaceUnavailableReason};
 use eframe::egui::{Ui, WidgetText};
 
 use super::*;
@@ -41,9 +39,12 @@ fn test_session() -> dockspace::runtime::DockspaceSession {
         ),
     )])
     .expect("the native runtime test layout validates");
-    let session = dockspace::runtime::DockspaceSession::from_layout(
+    let session = dockspace::runtime::DockspaceSession::from_layout_with_presentation_config(
         layout,
         dockspace::policy::DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
     )
     .expect("the native runtime test session initializes");
     session
@@ -64,7 +65,10 @@ fn test_state() -> NativeRuntimeState<TestPanes> {
 #[test]
 fn native_construction_preserves_matching_style_and_core_only_settings() {
     let delay = std::time::Duration::from_millis(600);
-    let config = DockPresentationConfig::builder()
+    let config = DockStyle::default()
+        .presentation_config()
+        .unwrap()
+        .to_builder()
         .tab_bar_height(36.0)
         .touch_long_press_delay(delay)
         .tab_strip_scroll_line_extent(22.0)

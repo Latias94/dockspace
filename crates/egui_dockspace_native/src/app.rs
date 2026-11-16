@@ -1096,8 +1096,14 @@ mod tests {
             ),
         )])
         .unwrap();
-        let session =
-            dockspace::runtime::DockspaceSession::from_layout(layout, Default::default()).unwrap();
+        let session = dockspace::runtime::DockspaceSession::from_layout_with_presentation_config(
+            layout,
+            Default::default(),
+            egui_dockspace::DockStyle::default()
+                .presentation_config()
+                .unwrap(),
+        )
+        .unwrap();
         super::NativeDockspaceApp::new(
             egui::Id::unique("initial-native-options"),
             session,

@@ -518,7 +518,11 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut policy = DockPolicy::default();
     policy.set_allow_native_surfaces(true);
-    let session = DockspaceSession::from_layout(layout(), policy)?;
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        layout(),
+        policy,
+        style.presentation_config()?,
+    )?;
     let dockspace = NativeDockspaceApp::new(
         egui::Id::unique("shared-window-consumer"),
         session,

@@ -35,7 +35,14 @@ fn app_with_panes<P: PaneView + Send + 'static>(panes: P) -> NativeDockspaceApp<
         DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([FIRST, SECOND])),
     )])
     .unwrap();
-    let session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .unwrap(),
+    )
+    .unwrap();
     NativeDockspaceApp::new(
         egui::Id::unique("public-native-command-consumer"),
         session,

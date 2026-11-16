@@ -315,6 +315,7 @@ pub struct TabBarRecord {
     hidden_items: Vec<ItemId>,
     members: Vec<TabStripMemberRecord>,
     group_grip_bounds: Option<LogicalRect>,
+    group_menu_bounds: Option<LogicalRect>,
     leading_reserved_bounds: Option<LogicalRect>,
     trailing_reserved_bounds: Option<LogicalRect>,
     after_tabs_bounds: Option<LogicalRect>,
@@ -369,6 +370,7 @@ impl TabBarRecord {
             hidden_items,
             members,
             group_grip_bounds,
+            group_menu_bounds: None,
             leading_reserved_bounds: None,
             trailing_reserved_bounds: None,
             after_tabs_bounds: None,
@@ -425,6 +427,17 @@ impl TabBarRecord {
     #[must_use]
     pub const fn group_grip_bounds(&self) -> Option<LogicalRect> {
         self.group_grip_bounds
+    }
+
+    pub(crate) fn with_group_menu_bounds(mut self, bounds: Option<LogicalRect>) -> Self {
+        self.group_menu_bounds = bounds;
+        self
+    }
+
+    /// Returns the exact reserved group-action anchor, absent when compacted.
+    #[must_use]
+    pub const fn group_menu_bounds(&self) -> Option<LogicalRect> {
+        self.group_menu_bounds
     }
 
     pub(crate) fn with_application_bounds(

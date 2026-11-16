@@ -20,6 +20,12 @@ pub(crate) enum PreparedContentClose {
         expected_items: BTreeMap<ItemId, usize>,
         requirements: Vec<CloseItemRequirement>,
     },
+    Tabs {
+        source: NodeSource,
+        items: Vec<ItemId>,
+        expected_items: BTreeMap<ItemId, usize>,
+        requirements: Vec<CloseItemRequirement>,
+    },
 }
 
 /// Core-private frozen payload for closing one complete surface's content.
@@ -258,7 +264,8 @@ pub(crate) fn prepare_content_close(
 ) -> Result<PreparedContentCloseCommit, TransactionError> {
     let expected_items = match prepared {
         PreparedContentClose::Item { expected_items, .. }
-        | PreparedContentClose::Root { expected_items, .. } => expected_items,
+        | PreparedContentClose::Root { expected_items, .. }
+        | PreparedContentClose::Tabs { expected_items, .. } => expected_items,
     };
     let actual_items = workspace.item_multiset();
     if &actual_items != expected_items {
@@ -307,6 +314,37 @@ pub(crate) fn prepare_content_close(
                 .map_err(close_command_error)?;
             CloseCommitOutcome::ItemClosed { item, root }
         }
+        PreparedContentClose::Tabs {
+            source,
+            items,
+            requirements,
+            ..
+        } => {
+            for requirement in requirements {
+                validate_close_requirement(policy, *requirement)?;
+            }
+            validate_node_source(&candidate, source).map_err(close_command_error)?;
+            let root = source.root();
+            let actual = match candidate.node(source.node()) {
+                Some(Node::Tabs { items, .. }) => items,
+                _ => return Err(close_invariant("validate frozen close-tabs node")),
+            };
+            if actual.len() != items.len() || !actual.iter().all(|item| items.contains(item)) {
+                return Err(close_invariant("validate frozen close-tabs membership"));
+            }
+            for item in items {
+                remove_item(&mut candidate, source.node(), *item).map_err(close_command_error)?;
+                Arc::make_mut(&mut candidate.storage.hidden_items).remove(item);
+            }
+            cleanup_empty_source_root(&mut candidate, root).map_err(close_command_error)?;
+            candidate
+                .complete_root_change(root)
+                .map_err(close_command_error)?;
+            CloseCommitOutcome::TabsClosed {
+                root,
+                items: items.clone(),
+            }
+        }
         PreparedContentClose::Root {
             source,
             items,
@@ -346,7 +384,8 @@ pub(crate) fn prepare_content_close(
         CloseCommitOutcome::ItemClosed { item, .. } => {
             expected_after.remove(item);
         }
-        CloseCommitOutcome::RootClosed { items, .. } => {
+        CloseCommitOutcome::RootClosed { items, .. }
+        | CloseCommitOutcome::TabsClosed { items, .. } => {
             for item in items {
                 if expected_after.remove(item).is_none() {
                     return Err(TransactionError::Command {
