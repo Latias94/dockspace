@@ -43,16 +43,13 @@ pub(super) fn new_context() -> Context {
 }
 
 pub(super) fn dock_style() -> DockStyle {
-    DockStyle {
-        tab_bar_height: 24.0,
-        tab_group_grip_extent: 18.0,
-        tab_min_width: 64.0,
-        tab_horizontal_padding: 6.0,
-        tab_close_size: 14.0,
+    let mut style = DockStyle {
         floating_title_height: 24.0,
         splitter_thickness: 2.0,
         ..Default::default()
-    }
+    };
+    style.apply_tab_preset(TabStylePreset::Rounded);
+    style
 }
 
 fn toolbar(
@@ -82,7 +79,7 @@ fn toolbar(
                 .selected_text(preset_name(*tab_preset))
                 .width(90.0)
                 .show_ui(ui, |ui| {
-                    for preset in [TabStylePreset::Dockspace, TabStylePreset::ImGui, TabStylePreset::EguiTiles] {
+                    for preset in [TabStylePreset::Dockspace, TabStylePreset::Rounded, TabStylePreset::EguiTiles] {
                         ui.selectable_value(tab_preset, preset, preset_name(preset));
                     }
                 })
@@ -108,7 +105,7 @@ fn toolbar(
 fn preset_name(preset: TabStylePreset) -> &'static str {
     match preset {
         TabStylePreset::Dockspace => "Dockspace",
-        TabStylePreset::ImGui => "ImGui",
+        TabStylePreset::Rounded => "Rounded",
         TabStylePreset::EguiTiles => "egui_tiles",
     }
 }
@@ -264,7 +261,7 @@ impl DemoPanes {
     pub(super) fn new() -> Self {
         Self {
             custom_tabs: false,
-            tab_preset: TabStylePreset::default(),
+            tab_preset: TabStylePreset::Rounded,
             tab_accent: 0,
             panes: [
                 (EDITOR, "Editor", "// src/main.rs\n\nfn main() {\n    let mut scene = Scene::new();\n    scene.add(\"Player\");\n    scene.run();\n}\n"),

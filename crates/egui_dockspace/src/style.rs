@@ -25,7 +25,7 @@ pub struct DockVisualOverrides {
     pub tab_bar_fill: Option<Color32>,
     /// Fill of an inactive tab.
     pub tab_fill: Option<Color32>,
-    /// Fill of a hovered tab; the preset determines selected-tab precedence.
+    /// Fill of a hovered inactive tab; selection retains its own fill.
     pub tab_hover_fill: Option<Color32>,
     /// Fill of the selected tab.
     pub tab_active_fill: Option<Color32>,
@@ -33,8 +33,8 @@ pub struct DockVisualOverrides {
     pub tab_stroke: Option<Stroke>,
     /// Outline of the selected tab; the default comes from the tab preset.
     pub tab_active_stroke: Option<Stroke>,
-    /// Top accent on the selected tab, independent of content or keyboard focus.
-    /// Use `Stroke::NONE` to hide a preset's accent.
+    /// Optional top accent on the selected tab, independent of focus.
+    /// Defaults to none; follows the tab's upper corners when enabled.
     pub tab_selected_overline: Option<Stroke>,
     /// Line separating the tab bar from the pane; `Stroke::NONE` hides it.
     pub tab_bar_stroke: Option<Stroke>,
@@ -124,7 +124,7 @@ impl DockVisualOverrides {
         } else {
             (Rgba::from(visuals.panel_fill) * Rgba::from_gray(0.8)).into()
         };
-        let tabs = preset.palette(visuals, tab_bar_fill);
+        let tabs = preset.palette(visuals, self.tab_bar_fill.unwrap_or(tab_bar_fill));
         let selection = visuals.selection.bg_fill;
         ResolvedDockVisuals {
             workspace_fill: self.workspace_fill.unwrap_or(visuals.panel_fill),
@@ -134,7 +134,7 @@ impl DockVisualOverrides {
             tab_active_fill: self.tab_active_fill.unwrap_or(tabs.active_fill),
             tab_stroke: self.tab_stroke.unwrap_or(Stroke::NONE),
             tab_active_stroke: self.tab_active_stroke.unwrap_or(tabs.active_stroke),
-            tab_selected_overline: self.tab_selected_overline.unwrap_or(tabs.selected_overline),
+            tab_selected_overline: self.tab_selected_overline.unwrap_or(Stroke::NONE),
             tab_bar_stroke: self.tab_bar_stroke.unwrap_or(tabs.bar_stroke),
             tab_text_color: self
                 .tab_text_color
@@ -246,6 +246,12 @@ pub struct DockStyle {
     pub tab_bar_height: f32,
     /// Radius of tab backgrounds and outlines; independent of core hit geometry.
     pub tab_corner_radius: CornerRadius,
+    /// Horizontal and vertical background insets in egui points, on each side.
+    ///
+    /// Must be finite and non-negative. Insets apply to backgrounds and focus
+    /// outlines, including preview tabs; titles, close buttons and hit targets
+    /// retain their allocation. Narrow tabs clamp insets to half their size.
+    pub tab_background_inset: Vec2,
     /// Open the selected tab's bottom outline into the pane below it.
     /// This is visual only and does not alter its allocation or hit geometry.
     pub tab_connect_to_pane: bool,
@@ -509,6 +515,8 @@ impl DockStyle {
             }
         }
         require_positive("tab_close_icon_size", self.tab_close_icon_size)?;
+        require_non_negative("tab_background_inset.x", self.tab_background_inset.x)?;
+        require_non_negative("tab_background_inset.y", self.tab_background_inset.y)?;
         require_non_negative("ghost_offset.x", self.ghost_offset.x)?;
         require_non_negative("ghost_offset.y", self.ghost_offset.y)?;
         if self.tab_group_grip_visibility == TabGroupGripVisibility::Hidden {
@@ -529,6 +537,7 @@ impl Default for DockStyle {
             touch_resize_hit_extent: geometry.touch_resize_hit_extent() as f32,
             tab_bar_height: geometry.tab_bar_height() as f32,
             tab_corner_radius: CornerRadius::ZERO,
+            tab_background_inset: Vec2::ZERO,
             tab_connect_to_pane: false,
             tab_strip_edge_scroll_band: geometry.tab_strip_edge_scroll_band() as f32,
             tab_strip_edge_scroll_interval: geometry.tab_strip_edge_scroll_interval(),
@@ -666,6 +675,7 @@ mod tests {
     fn tab_outlines_are_visual_only_and_reject_invalid_widths() {
         let mut style = DockStyle {
             tab_corner_radius: CornerRadius::same(7),
+            tab_background_inset: egui::vec2(2.0, 3.0),
             ..Default::default()
         };
         style.visuals.tab_stroke = Some(Stroke::new(1.0, Color32::RED));
@@ -678,6 +688,11 @@ mod tests {
             DockPresentationConfig::default()
         );
         for width in [-1.0, f32::NAN, f32::INFINITY] {
+            for axis in 0..2 {
+                let mut candidate = style.clone();
+                candidate.tab_background_inset[axis] = width;
+                assert!(candidate.validate().is_err());
+            }
             for decoration in 0..4 {
                 let mut candidate = style.clone();
                 let stroke = match decoration {

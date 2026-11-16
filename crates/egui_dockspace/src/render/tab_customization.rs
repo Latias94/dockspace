@@ -20,29 +20,23 @@ pub(super) fn paint_tab(
 ) -> TabVisuals {
     let selected = record.selected();
     let preset = context.style.tab_preset;
-    let emphasized = if preset == TabStylePreset::ImGui {
-        // Keyboard focus has its own outline and must not retain the hover fill.
-        response.sense.interactive()
-            && (response.is_pointer_button_down_on()
-                || response.hovered()
-                || response.highlighted())
-    } else {
-        RenderContext::response_emphasized(response)
-    };
+    // Keyboard focus has its own outline and does not impersonate pointer hover.
+    let emphasized = response.sense.interactive()
+        && (response.is_pointer_button_down_on() || response.hovered() || response.highlighted());
     let text_override = if selected {
         context.style.visuals.tab_active_text_color
     } else {
         context.style.visuals.tab_text_color
     };
     let visuals = TabVisuals {
-        fill: if emphasized && (!selected || preset == TabStylePreset::ImGui) {
+        fill: if selected {
+            context.visuals.tab_active_fill
+        } else if emphasized {
             if preset == TabStylePreset::Dockspace {
                 context.interaction_fill(response)
             } else {
                 context.visuals.tab_hover_fill
             }
-        } else if selected {
-            context.visuals.tab_active_fill
         } else {
             context.visuals.tab_fill
         },
@@ -58,6 +52,7 @@ pub(super) fn paint_tab(
         },
         connect_to_pane: selected && context.style.tab_connect_to_pane,
         corner_radius: context.style.tab_corner_radius,
+        background_inset: context.style.tab_background_inset,
         text_color: if selected {
             context.visuals.tab_active_text_color
         } else if emphasized && preset == TabStylePreset::Dockspace {

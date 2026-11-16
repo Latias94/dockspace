@@ -4,17 +4,20 @@ use egui::{Color32, CornerRadius, Stroke, Visuals};
 
 use super::{DockStyle, TabCloseVisibility, TabGroupGripVisibility};
 
-/// Theme-relative tab appearance inspired by common docking interfaces.
+/// Theme-relative tab appearance for different workspace densities.
 ///
 /// These recipes keep dockspace's interaction and focus semantics. They do not
 /// replace the egui theme or reproduce another library's complete styling API.
+/// Use [`DockStyle::apply_tab_preset`] to apply the complete recipe, including
+/// rounding and tab height. Assigning [`DockStyle::tab_preset`] changes the
+/// palette while retaining the current geometry.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TabStylePreset {
     /// Flat tabs with egui interaction colors and no default outlines.
     #[default]
     Dockspace,
-    /// Rounded upper corners, tinted tabs and a selected-tab overline.
-    ImGui,
+    /// Inset rounded tabs with a quiet fill and a fine selected outline.
+    Rounded,
     /// Square tabs whose selected outline opens into the pane below.
     EguiTiles,
 }
@@ -22,7 +25,7 @@ pub enum TabStylePreset {
 impl DockStyle {
     /// Applies a tab recipe's appearance and fixed geometry.
     ///
-    /// Only tab metrics, tab corner treatment and close/grip visibility change.
+    /// Only tab metrics, background insets, corners and close/grip visibility change.
     /// Explicit [`super::DockVisualOverrides`] and non-tab settings are retained.
     /// Colors continue to follow the current Ui's theme. Metrics are applied
     /// once: subsequent field edits are retained until this is called again.
@@ -33,15 +36,15 @@ impl DockStyle {
         self.tab_close_visibility = TabCloseVisibility::SelectedOrHovered;
         self.tab_group_grip_visibility = TabGroupGripVisibility::Always;
         self.tab_connect_to_pane = preset == TabStylePreset::EguiTiles;
-        self.tab_corner_radius = if preset == TabStylePreset::ImGui {
-            CornerRadius {
-                nw: 5,
-                ne: 5,
-                sw: 0,
-                se: 0,
-            }
+        self.tab_corner_radius = if preset == TabStylePreset::Rounded {
+            CornerRadius::same(6)
         } else {
             CornerRadius::ZERO
+        };
+        self.tab_background_inset = if preset == TabStylePreset::Rounded {
+            egui::vec2(2.0, 2.0)
+        } else {
+            egui::Vec2::ZERO
         };
         match preset {
             TabStylePreset::Dockspace => {
@@ -52,11 +55,19 @@ impl DockStyle {
                 self.tab_close_size = defaults.tab_close_size;
                 self.tab_close_icon_size = defaults.tab_close_icon_size;
             }
-            TabStylePreset::ImGui | TabStylePreset::EguiTiles => {
+            TabStylePreset::Rounded | TabStylePreset::EguiTiles => {
                 self.tab_bar_height = 24.0;
                 self.tab_group_grip_extent = 18.0;
-                self.tab_horizontal_padding = 8.0;
-                self.tab_min_width = 48.0;
+                self.tab_horizontal_padding = if preset == TabStylePreset::Rounded {
+                    10.0
+                } else {
+                    8.0
+                };
+                self.tab_min_width = if preset == TabStylePreset::Rounded {
+                    56.0
+                } else {
+                    48.0
+                };
                 self.tab_close_size = 14.0;
                 self.tab_close_icon_size = 8.0;
             }
@@ -70,7 +81,6 @@ pub(super) struct TabPalette {
     pub hover_fill: Color32,
     pub active_fill: Color32,
     pub active_stroke: Stroke,
-    pub selected_overline: Stroke,
     pub bar_stroke: Stroke,
     pub text_color: Color32,
     pub active_text_color: Color32,
@@ -83,21 +93,23 @@ impl TabStylePreset {
             hover_fill: visuals.widgets.hovered.weak_bg_fill,
             active_fill: visuals.panel_fill,
             active_stroke: Stroke::NONE,
-            selected_overline: Stroke::NONE,
             bar_stroke: Stroke::NONE,
             text_color: visuals.widgets.inactive.fg_stroke.color,
             active_text_color: visuals.widgets.active.fg_stroke.color,
         };
         match self {
             Self::Dockspace => {}
-            Self::ImGui => {
+            Self::Rounded => {
                 let accent = visuals.selection.bg_fill;
-                palette.fill = bar_fill.lerp_to_gamma(accent, 0.15);
-                palette.active_fill = visuals.panel_fill.lerp_to_gamma(accent, 0.3);
-                palette.hover_fill = visuals.panel_fill.lerp_to_gamma(accent, 0.5);
-                palette.selected_overline = Stroke::new(1.0, visuals.selection.stroke.color);
-                palette.bar_stroke =
-                    Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color);
+                palette.active_fill = visuals.panel_fill.lerp_to_gamma(accent, 0.2);
+                palette.hover_fill = bar_fill
+                    .lerp_to_gamma(visuals.panel_fill, 0.6)
+                    .lerp_to_gamma(accent, 0.08);
+                palette.active_stroke = Stroke::new(
+                    1.0,
+                    accent.lerp_to_gamma(visuals.selection.stroke.color, 0.35),
+                );
+                palette.active_text_color = visuals.strong_text_color();
             }
             Self::EguiTiles => {
                 palette.hover_fill = Color32::TRANSPARENT;
@@ -134,7 +146,7 @@ mod tests {
         let overrides = style.visuals.clone();
         let original = style.clone();
         for preset in [
-            TabStylePreset::ImGui,
+            TabStylePreset::Rounded,
             TabStylePreset::EguiTiles,
             TabStylePreset::Dockspace,
         ] {
@@ -165,7 +177,7 @@ mod tests {
             ..Default::default()
         };
         let geometry = style.presentation_config().unwrap();
-        style.tab_preset = TabStylePreset::ImGui;
+        style.tab_preset = TabStylePreset::Rounded;
         assert_eq!(style.presentation_config().unwrap(), geometry);
         let light = style.resolved_visuals(&Visuals::light());
         let dark = style.resolved_visuals(&Visuals::dark());

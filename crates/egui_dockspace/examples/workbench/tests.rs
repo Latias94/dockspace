@@ -6,6 +6,8 @@ use egui_dockspace::{DockspaceActionOutcome, DockspaceActionStatus};
 
 #[path = "tests/randomized.rs"]
 mod randomized;
+#[path = "tests/tab_presets.rs"]
+mod tab_presets;
 
 fn workbench_frame(
     context: &egui::Context,

@@ -697,10 +697,11 @@ touch resize targets are unchanged. `Comfortable` follows egui's normal button
 spacing and interaction height, as does `DockStyle::from_egui`. After a font
 change, derive the style again with the selected density and reapply application
 overrides. All returned fields remain editable for application-specific sizing.
-The `basic` example has density and font controls. The workbench uses explicit
-24-point tabs, six-point padding and a smaller group grip. Its selected tab and
-pane share egui's panel fill, and inactive tabs blend into the tab bar. Enable
-**Custom tabs** to add icons, rounded corners, an accent outline and fixed controls.
+The `basic` example has density and font controls. The workbench starts with the
+Rounded recipe: 24-point tabs, ten-point horizontal padding and a 56-point minimum
+width. Its backgrounds have six-point corner radii, two-point insets and
+theme-relative fills, with a thin border on the selected tab. Enable **Custom tabs**
+to add icons, an accent outline and fixed controls.
 
 Pane minima describe useful viewports. If the available space is smaller than
 those minima, `DockStyle::pane_overflow_policy` defaults to
@@ -731,17 +732,18 @@ Choose a theme-relative recipe with `DockStyle::apply_tab_preset`:
 | Preset | Tab treatment |
 | --- | --- |
 | `TabStylePreset::Dockspace` | Flat tabs with egui hover colors |
-| `TabStylePreset::ImGui` | Rounded upper corners, tinted backgrounds and a selected-tab overline |
+| `TabStylePreset::Rounded` | Inset backgrounds with four rounded corners, subtle theme-relative fills and a thin selected border |
 | `TabStylePreset::EguiTiles` | Square tabs, a thin separator and a selected outline open to the pane |
 
 ```rust
 use egui_dockspace::{DockStyle, TabStylePreset};
 
 let mut style = DockStyle::default();
-style.apply_tab_preset(TabStylePreset::ImGui);
+style.apply_tab_preset(TabStylePreset::Rounded);
 style.tab_bar_height = 26.0;
-style.tab_horizontal_padding = 10.0;
-style.visuals.tab_selected_overline = Some(egui::Stroke::NONE);
+style.tab_horizontal_padding = 12.0;
+style.tab_corner_radius = egui::CornerRadius::same(8);
+style.tab_background_inset = egui::vec2(3.0, 2.0);
 ```
 
 `apply_tab_preset` sets tab geometry once and retains explicit color/stroke
@@ -751,6 +753,18 @@ from the current Ui theme each pass, followed by `DockVisualOverrides` and then
 per-tab callbacks. The recipes affect appearance; docking and focus behavior
 remain shared. Change a live style with `set_style` between settled UI runs,
 after reporting the previous output's presentation result.
+
+Rounded applies six-point corner radii, two-point background insets, 24-point tab
+bars, ten-point horizontal padding and a 56-point minimum tab width. It has no
+default overline. The default painter retains the selected tab's active fill
+during hover, focus and press; `visuals.tab_active_fill` overrides that fill.
+
+`tab_background_inset` is an `egui::Vec2` giving the horizontal and vertical inset
+on each side of the background and outlines, including keyboard focus and preview tabs.
+Titles, close buttons, tab allocation and pointer hit regions keep their original
+geometry. Values must be finite and non-negative; narrow tabs clamp insets to half
+their size. Edit this field after `apply_tab_preset`, as shown above, to retain
+application-specific spacing.
 
 Choose **Tab style** in the desktop or browser workbench to compare the presets
 in both themes. Enable **Custom tabs** to layer application callbacks on top.

@@ -5,9 +5,9 @@ use egui::accesskit::Role;
 use egui::{Color32, Context, Event, FullOutput, Pos2, RawInput, Rect, Ui, vec2};
 use egui_dockspace::{
     DockStyle, Dockspace, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
-    DockspaceSurfaceLayout, DragPreview, ItemId, PaneResponse, PaneView, RootId, SurfaceId,
-    SurfacePresentationResult, Tab, TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose,
-    TabCloseVisibility, TabStylePreset, TabVisuals,
+    DockspaceSurfaceLayout, DragPreview, DropPreviewTab, ItemId, PaneResponse, PaneView, RootId,
+    SurfaceId, SurfacePresentationResult, Tab, TabBar, TabBarId, TabBarLayout, TabBarSlot,
+    TabClose, TabCloseVisibility, TabStylePreset, TabVisuals,
 };
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -29,6 +29,7 @@ struct TabSnapshot {
     id: egui::Id,
     bar: TabBarId,
     rect: Rect,
+    background: Rect,
     visible: Rect,
     content: Rect,
     enabled: bool,
@@ -110,6 +111,7 @@ impl PaneView for Panes {
             id: tab.response.id,
             bar: tab.bar,
             rect: tab.rect,
+            background: tab.background_rect(),
             visible: tab.visible_rect,
             content: tab.content_rect,
             enabled: tab.enabled && ui.is_enabled(),
@@ -121,6 +123,7 @@ impl PaneView for Panes {
         custom.visuals.fill = CUSTOM_FILL;
         if self.custom_visuals {
             custom.visuals.corner_radius = egui::CornerRadius::same(9);
+            custom.visuals.background_inset = vec2(6.0, 4.0);
             custom.visuals.focus_stroke = egui::Stroke::new(3.0, Color32::MAGENTA);
             custom.visuals.text_color_override = Some(Color32::WHITE);
             custom.visuals.close_color = Some(Color32::WHITE);
@@ -311,7 +314,7 @@ impl Harness {
 fn tab_presets_follow_theme_hover_and_selection_while_custom_callbacks_still_win() {
     for preset in [
         TabStylePreset::Dockspace,
-        TabStylePreset::ImGui,
+        TabStylePreset::Rounded,
         TabStylePreset::EguiTiles,
     ] {
         let mut harness = Harness::new(DockPolicy::default());
@@ -336,17 +339,16 @@ fn tab_presets_follow_theme_hover_and_selection_while_custom_callbacks_still_win
                 first.visuals.connect_to_pane,
                 preset == TabStylePreset::EguiTiles
             );
-            assert_eq!(
-                first.visuals.overline_stroke.width > 0.0,
-                preset == TabStylePreset::ImGui
-            );
-            if preset == TabStylePreset::ImGui {
-                assert_eq!(
-                    first.visuals.overline_stroke.color,
-                    theme.selection.stroke.color
-                );
+            assert_eq!(first.visuals.overline_stroke, egui::Stroke::NONE);
+            if preset == TabStylePreset::Rounded {
+                assert_eq!(first.visuals.corner_radius, egui::CornerRadius::same(6));
+                assert_eq!(first.visuals.background_inset, vec2(2.0, 2.0));
+                assert_eq!(first.visuals.stroke.width, 1.0);
+                assert_ne!(first.visuals.fill, theme.panel_fill);
+                assert_eq!(first.visuals.text_color, theme.strong_text_color());
             } else {
                 assert_eq!(first.visuals.fill, theme.panel_fill);
+                assert_eq!(first.visuals.background_inset, egui::Vec2::ZERO);
             }
             let idle = harness.tab(SECOND).visuals.fill;
             let target = harness.tab(SECOND).content.left_center() + vec2(2.0, 0.0);
@@ -369,13 +371,256 @@ fn tab_presets_follow_theme_hover_and_selection_while_custom_callbacks_still_win
 }
 
 #[test]
+fn rounded_tab_custom_overline_follows_the_public_tabs_rounded_background() {
+    let mut harness = Harness::new(DockPolicy::default());
+    let overline = egui::Stroke::new(2.0, Color32::from_rgb(231, 15, 172));
+    let radius = egui::CornerRadius {
+        nw: 5,
+        ne: 5,
+        sw: 0,
+        se: 0,
+    };
+    let mut style = harness.dock.style().clone();
+    style.apply_tab_preset(TabStylePreset::Rounded);
+    style.tab_corner_radius = radius;
+    style.tab_background_inset = egui::Vec2::ZERO;
+    style.visuals.tab_selected_overline = Some(overline);
+    harness.dock.set_style(style).unwrap();
+    harness.settle();
+
+    let output = harness.run(vec![Event::PointerGone]);
+    let tab = harness.tab(FIRST);
+    assert_eq!(tab.visuals.corner_radius, radius);
+    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::Shape::Rect(background)
+            if background.fill == CUSTOM_FILL
+                && background.rect == tab.rect
+                && background.corner_radius == radius
+    )));
+    let (clip, path) = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Path(path) if path.stroke == overline.into() => {
+                Some((shape.clip_rect, path))
+            }
+            _ => None,
+        })
+        .expect("the selected overline must follow both rounded corners as one open path");
+    assert!(!path.closed);
+    assert_eq!(path.fill, Color32::TRANSPARENT);
+    assert!(tab.visible.contains_rect(clip));
+    let top = tab.rect.top() + overline.width * 0.5;
+    assert!(
+        path.points
+            .iter()
+            .any(|point| (point.y - top).abs() < 0.001)
+    );
+    for side in [path.points.first().unwrap(), path.points.last().unwrap()] {
+        assert!(
+            side.y > top + 1.0,
+            "both ends must turn down the rounded corners instead of stopping on the flat top"
+        );
+    }
+    assert!(
+        path.points.windows(2).all(|pair| pair[0] != pair[1]),
+        "duplicate vertices can produce stroke artifacts"
+    );
+    let (preview, preview_background) = paint_preview_tab_background(
+        tab.rect,
+        tab.visible,
+        clip,
+        radius,
+        egui::Vec2::ZERO,
+        overline,
+    );
+    assert_eq!(preview_background, tab.background);
+    let (preview_clip, preview_path) = painted_overline(&preview, overline);
+    assert_eq!(preview_clip, clip);
+    assert_eq!(
+        preview_path, path,
+        "live and future tabs must share their contour"
+    );
+}
+
+fn paint_preview_tab_background(
+    rect: Rect,
+    visible: Rect,
+    clip: Rect,
+    radius: egui::CornerRadius,
+    background_inset: egui::Vec2,
+    overline: egui::Stroke,
+) -> (FullOutput, Rect) {
+    let mut background = Rect::NOTHING;
+    let mut output = Context::default().run_ui(
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1024.0, 768.0))),
+            ..Default::default()
+        },
+        |ui| {
+            ui.set_clip_rect(clip);
+            let tab = DropPreviewTab {
+                item: FIRST,
+                ordinal: 0,
+                selected: true,
+                is_payload: true,
+                rect,
+                visible_rect: Some(visible),
+                title_rect: None,
+                title_clip_rect: None,
+                title: ui.painter().layout_no_wrap(
+                    "Future tab".into(),
+                    egui::FontId::default(),
+                    Color32::WHITE,
+                ),
+                fill: CUSTOM_FILL,
+                stroke: egui::Stroke::NONE,
+                overline_stroke: overline,
+                connect_to_pane: false,
+                corner_radius: radius,
+                background_inset,
+                text_color: Color32::WHITE,
+                text_color_override: None,
+            };
+            background = tab.background_rect();
+            tab.paint_background(ui);
+        },
+    );
+    output.textures_delta.clear();
+    (output, background)
+}
+
+fn painted_overline(output: &FullOutput, stroke: egui::Stroke) -> (Rect, &egui::epaint::PathShape) {
+    output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Path(path) if path.stroke == stroke.into() => {
+                Some((shape.clip_rect, path))
+            }
+            _ => None,
+        })
+        .expect("a rounded overline is one open path")
+}
+
+#[test]
+fn rounded_preview_overline_clamps_large_radii_in_a_narrow_tab() {
+    let rect = Rect::from_min_size(egui::pos2(20.0, 30.0), vec2(6.0, 24.0));
+    let stroke = egui::Stroke::new(2.0, Color32::MAGENTA);
+    let (output, _) = paint_preview_tab_background(
+        rect,
+        rect,
+        rect,
+        egui::CornerRadius {
+            nw: u8::MAX,
+            ne: u8::MAX,
+            sw: 0,
+            se: 0,
+        },
+        egui::Vec2::ZERO,
+        stroke,
+    );
+    let (clip, path) = painted_overline(&output, stroke);
+    assert_eq!(clip, rect);
+    assert!(!path.closed);
+    assert_eq!(path.fill, Color32::TRANSPARENT);
+    assert!(path.points.len() > 2);
+    assert!(
+        path.points
+            .iter()
+            .all(|point| point.is_finite() && rect.shrink(1.0).contains(*point)),
+        "the accent must stay within the tab even when both corners fill its width"
+    );
+    assert!(
+        path.points
+            .windows(2)
+            .all(|pair| pair[0] != pair[1] && pair[0].x <= pair[1].x),
+        "the joined arcs must not double back or repeat their shared vertex"
+    );
+}
+
+#[test]
+fn rounded_preview_overline_retains_asymmetric_and_square_corners() {
+    let rect = Rect::from_min_size(egui::pos2(20.0, 30.0), vec2(90.0, 24.0));
+    let stroke = egui::Stroke::new(2.0, Color32::MAGENTA);
+    for (nw, ne) in [(0, 9), (u8::MAX, 3)] {
+        let (output, _) = paint_preview_tab_background(
+            rect,
+            rect,
+            rect,
+            egui::CornerRadius {
+                nw,
+                ne,
+                sw: 0,
+                se: 0,
+            },
+            egui::Vec2::ZERO,
+            stroke,
+        );
+        let (_, path) = painted_overline(&output, stroke);
+        let first = path.points.first().unwrap();
+        let last = path.points.last().unwrap();
+        assert!((first.x - (rect.left() + 1.0)).abs() < 0.001);
+        assert!((last.x - (rect.right() - 1.0)).abs() < 0.001);
+        if nw == 0 {
+            assert!((first.y - (rect.top() + 1.0)).abs() < 0.001);
+            assert!(
+                last.y > first.y + 3.0,
+                "only the rounded side turns downward"
+            );
+        } else {
+            assert!(first.y > last.y + 3.0);
+            assert!(
+                first.y <= rect.center().y,
+                "oversized custom rounding must also respect the tab height"
+            );
+        }
+    }
+}
+
+#[test]
+fn rounded_preview_overline_preserves_the_contour_behind_both_clips() {
+    let rect = Rect::from_min_size(egui::pos2(20.0, 30.0), vec2(90.0, 24.0));
+    let visible = Rect::from_min_max(egui::pos2(40.0, 30.0), rect.right_bottom());
+    let clip = Rect::from_min_max(Pos2::ZERO, egui::pos2(80.0, 100.0));
+    let stroke = egui::Stroke::new(2.0, Color32::MAGENTA);
+    let (output, _) = paint_preview_tab_background(
+        rect,
+        visible,
+        clip,
+        egui::CornerRadius {
+            nw: 5,
+            ne: 5,
+            sw: 0,
+            se: 0,
+        },
+        egui::Vec2::ZERO,
+        stroke,
+    );
+    let (actual_clip, path) = painted_overline(&output, stroke);
+    assert_eq!(actual_clip, visible.intersect(clip));
+    assert!(path.points.first().unwrap().x < actual_clip.left());
+    assert!(path.points.last().unwrap().x > actual_clip.right());
+    assert!(
+        path.points.windows(2).any(|pair| {
+            pair[0].x < actual_clip.left()
+                && pair[1].x > actual_clip.right()
+                && pair
+                    .iter()
+                    .all(|point| (point.y - (rect.top() + 1.0)).abs() < 0.001)
+        }),
+        "scrolling clips the full contour instead of rounding the visible fragment"
+    );
+}
+
+#[test]
 fn tab_presets_keep_selection_precedence_for_keyboard_focus_and_pointer_feedback() {
     const ACTIVE: Color32 = Color32::from_rgb(13, 73, 131);
     const HOVERED: Color32 = Color32::from_rgb(211, 167, 23);
     let focus_stroke = egui::Stroke::new(3.0, Color32::MAGENTA);
     for preset in [
         TabStylePreset::Dockspace,
-        TabStylePreset::ImGui,
+        TabStylePreset::Rounded,
         TabStylePreset::EguiTiles,
     ] {
         for theme in [egui::Visuals::light(), egui::Visuals::dark()] {
@@ -404,15 +649,10 @@ fn tab_presets_keep_selection_precedence_for_keyboard_focus_and_pointer_feedback
             )));
 
             let point = tab.content.left_center() + vec2(2.0, 0.0);
-            let pointer_fill = if preset == TabStylePreset::ImGui {
-                HOVERED
-            } else {
-                ACTIVE
-            };
             harness
                 .run(vec![Event::PointerMoved(point)])
                 .drop_without_applying_deltas();
-            assert_eq!(harness.tab(FIRST).visuals.fill, pointer_fill);
+            assert_eq!(harness.tab(FIRST).visuals.fill, ACTIVE);
             for pressed in [true, false] {
                 harness
                     .run(vec![Event::PointerButton {
@@ -422,7 +662,7 @@ fn tab_presets_keep_selection_precedence_for_keyboard_focus_and_pointer_feedback
                         modifiers: egui::Modifiers::NONE,
                     }])
                     .drop_without_applying_deltas();
-                assert_eq!(harness.tab(FIRST).visuals.fill, pointer_fill);
+                assert_eq!(harness.tab(FIRST).visuals.fill, ACTIVE);
             }
             harness
                 .run(vec![Event::PointerGone])
@@ -439,10 +679,10 @@ fn tab_presets_keep_selection_precedence_for_keyboard_focus_and_pointer_feedback
 }
 
 #[test]
-fn imgui_keyboard_navigation_does_not_hover_an_unselected_tab() {
+fn rounded_keyboard_navigation_does_not_hover_an_unselected_tab() {
     let mut harness = Harness::new(DockPolicy::default());
     let mut style = harness.dock.style().clone();
-    style.apply_tab_preset(TabStylePreset::ImGui);
+    style.apply_tab_preset(TabStylePreset::Rounded);
     style.visuals.tab_fill = Some(Color32::BLUE);
     style.visuals.tab_hover_fill = Some(Color32::YELLOW);
     harness.dock.set_style(style).unwrap();
@@ -461,10 +701,93 @@ fn imgui_keyboard_navigation_does_not_hover_an_unselected_tab() {
 }
 
 #[test]
+fn rounded_tab_background_insets_match_live_preview_and_keyboard_focus() {
+    let mut harness = Harness::new(DockPolicy::default());
+    let focus_stroke = egui::Stroke::new(1.0, Color32::MAGENTA);
+    let mut style = harness.dock.style().clone();
+    style.apply_tab_preset(TabStylePreset::Rounded);
+    style.visuals.tab_focus_stroke = Some(focus_stroke);
+    harness.dock.set_style(style).unwrap();
+    harness.settle();
+    harness.accesskit_action("First", egui::accesskit::Action::Focus);
+    let output = harness.run(Vec::new());
+    let tab = harness.tab(FIRST);
+    assert_eq!(tab.visuals.background_inset, vec2(2.0, 2.0));
+    assert_eq!(tab.background, tab.rect.shrink2(vec2(2.0, 2.0)));
+    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::Shape::Rect(background)
+            if background.fill == CUSTOM_FILL
+                && background.rect == tab.background
+                && background.corner_radius == egui::CornerRadius::same(6)
+    )));
+    assert!(
+        output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Rect(focus)
+                if focus.stroke == focus_stroke
+                    && tab.background.contains_rect(focus.rect)
+                    && focus.corner_radius == egui::CornerRadius::same(6)
+        )),
+        "keyboard focus must follow the inset background instead of the full hit allocation"
+    );
+    let (preview, background) = paint_preview_tab_background(
+        tab.rect,
+        tab.visible,
+        tab.visible,
+        tab.visuals.corner_radius,
+        tab.visuals.background_inset,
+        egui::Stroke::NONE,
+    );
+    assert_eq!(background, tab.background);
+    assert!(preview.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::Shape::Rect(painted)
+            if painted.fill == CUSTOM_FILL
+                && painted.rect == background
+                && painted.corner_radius == egui::CornerRadius::same(6)
+    )));
+
+    let narrow = Rect::from_min_size(egui::pos2(20.0, 30.0), vec2(6.0, 24.0));
+    let (_, collapsed) = paint_preview_tab_background(
+        narrow,
+        narrow,
+        narrow,
+        tab.visuals.corner_radius,
+        vec2(1000.0, 1000.0),
+        egui::Stroke::NONE,
+    );
+    assert_eq!(
+        collapsed,
+        Rect::from_center_size(narrow.center(), egui::Vec2::ZERO)
+    );
+}
+
+#[test]
+fn rounded_tab_background_can_open_into_the_pane_with_vertical_insets() {
+    let mut harness = Harness::new(DockPolicy::default());
+    let mut style = harness.dock.style().clone();
+    style.apply_tab_preset(TabStylePreset::Rounded);
+    style.tab_connect_to_pane = true;
+    harness.dock.set_style(style).unwrap();
+    harness.settle();
+
+    let output = harness.run(vec![Event::PointerGone]);
+    let tab = harness.tab(FIRST);
+    assert!(tab.visuals.connect_to_pane);
+    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::Shape::Rect(background)
+            if background.fill == CUSTOM_FILL
+                && background.rect.min == tab.background.min
+                && background.rect.right() == tab.background.right()
+                && background.rect.bottom() == tab.rect.bottom() + tab.visuals.stroke.width
+                && shape.clip_rect.bottom() <= tab.rect.bottom()
+    )));
+}
+
+#[test]
 fn returned_tab_visuals_coordinate_close_icons_and_rounded_keyboard_focus() {
     let mut harness = Harness::new(DockPolicy::default());
     harness.panes.custom_visuals = true;
     let mut style = harness.dock.style().clone();
+    style.apply_tab_preset(TabStylePreset::Rounded);
     style.tab_close_visibility = TabCloseVisibility::Always;
     style.tab_close_icon_size = 6.0;
     harness.dock.set_style(style).unwrap();
@@ -477,9 +800,16 @@ fn returned_tab_visuals_coordinate_close_icons_and_rounded_keyboard_focus() {
     }
     harness.accesskit_action("First", egui::accesskit::Action::Focus);
     let output = harness.run(Vec::new());
+    let background = harness.tab(FIRST).rect.shrink2(vec2(6.0, 4.0));
+    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::Shape::Rect(rect) if rect.fill == CUSTOM_FILL
+            && rect.rect == background
+            && rect.corner_radius == egui::CornerRadius::same(9)
+    )));
     assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
         egui::Shape::Rect(rect) if rect.stroke == egui::Stroke::new(3.0, Color32::MAGENTA)
             && rect.corner_radius == egui::CornerRadius::same(9)
+            && background.contains_rect(rect.rect)
     )));
     let close = harness
         .panes

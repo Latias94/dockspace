@@ -22,8 +22,8 @@ documents. Hold **Shift** while dragging a tab to float it inside the window.
 A tab bar's six-dot grip moves its tab group; the same grip in a floating title
 bar moves or docks the whole floating window, including its splits.
 
-Use **Tab style** and **Custom tabs** to compare chrome, and the motion toolbar to
-try timing, curves and reduced motion. The
+The workbench starts with Rounded tabs. Use **Tab style** and **Custom tabs** to
+compare chrome, and the motion toolbar to try timing, curves and reduced motion. The
 [workbench pane code](examples/workbench/editor.rs) demonstrates these features;
 start with the [small editor](examples/winit.rs) when integrating your own app.
 
@@ -166,13 +166,16 @@ denser chrome. Choose a tab recipe, then adjust its fields:
 use egui_dockspace::{DockStyle, TabStylePreset};
 
 let mut style = DockStyle::default();
-style.apply_tab_preset(TabStylePreset::ImGui);
+style.apply_tab_preset(TabStylePreset::Rounded);
 style.tab_bar_height = 26.0;
-style.tab_horizontal_padding = 10.0;
+style.tab_horizontal_padding = 12.0;
+style.tab_background_inset = egui::vec2(3.0, 2.0);
 ```
 
-`TabStylePreset::{Dockspace, ImGui, EguiTiles}` provide theme-relative starting
-points. `PaneView` callbacks customize tabs, tab-bar controls, close icons,
+`TabStylePreset::{Dockspace, Rounded, EguiTiles}` provide theme-relative starting
+points. Rounded uses inset backgrounds, rounded corners and a thin selected
+border. Background insets change appearance while retaining title, close-button
+and hit geometry. `PaneView` callbacks customize tabs, tab-bar controls, close icons,
 guides and previews while retaining the adapter's input and accessibility.
 The [styling guide](docs/guide.md#styling) explains presets, overrides and callback
 geometry; [workbench tabs](examples/workbench/tabs.rs) show a working example.

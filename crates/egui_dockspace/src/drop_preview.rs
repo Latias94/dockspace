@@ -5,7 +5,7 @@ use std::sync::Arc;
 pub use dockspace::runtime::{
     DockspaceDropAction, DockspaceDropTargetFeedback, DockspaceDropTargetScope,
 };
-use egui::{Color32, CornerRadius, Galley, Id, Rect, Stroke, StrokeKind, Ui};
+use egui::{Color32, CornerRadius, Galley, Id, Rect, Stroke, StrokeKind, Ui, Vec2};
 
 use crate::ItemId;
 
@@ -45,6 +45,8 @@ pub struct DropPreviewTab {
     pub connect_to_pane: bool,
     /// Rounding of the tab background and outline.
     pub corner_radius: CornerRadius,
+    /// Finite non-negative background insets on each side, matching live tabs.
+    pub background_inset: Vec2,
     /// Fallback color for title spans without an explicit color.
     pub text_color: Color32,
     /// Optional replacement color for every title span, including rich text.
@@ -52,6 +54,11 @@ pub struct DropPreviewTab {
 }
 
 impl DropPreviewTab {
+    /// Returns the inset background bounds before clipping and pane connection.
+    pub fn background_rect(&self) -> Rect {
+        crate::tab::background_rect(self.rect, self.background_inset)
+    }
+
     /// Paints the visible background and title without creating a tab receiver.
     pub fn paint(&self, ui: &Ui) {
         self.paint_background(ui);
@@ -69,6 +76,7 @@ impl DropPreviewTab {
             fill: self.fill,
             stroke: self.stroke,
             corner_radius: self.corner_radius,
+            inset: self.background_inset,
             overline_stroke: self.overline_stroke,
             connect_to_pane: self.connect_to_pane,
         }

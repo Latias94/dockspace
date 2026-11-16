@@ -9,6 +9,7 @@ async function open(page) {
   await page.goto('demo/egui/?test=1');
   await expect(page.locator('#demo-status')).toHaveAttribute('data-state', 'ready');
   await expect.poll(async () => (await state(page)).tabs.length).toBe(8);
+  await expect.poll(async () => (await state(page)).tabPreset).toBe('Rounded');
 }
 
 async function point(page, rect) {
@@ -319,9 +320,10 @@ test('tab presets switch live, follow themes and retain custom tabs and docking'
   page.on('pageerror', error => errors.push(error.message));
   await open(page);
   const original = await state(page);
-  for (const [label, preset] of [['ImGui', 'ImGui'], ['egui_tiles', 'EguiTiles'], ['Dockspace', 'Dockspace']]) {
+  for (const [label, preset] of [['Dockspace', 'Dockspace'], ['egui_tiles', 'EguiTiles'], ['Rounded', 'Rounded']]) {
+    expect((await state(page)).tabPreset).not.toBe(preset);
     const combo = (await state(page)).controls.find(node => node.role === 'ComboBox'
-      && ['Dockspace', 'ImGui', 'egui_tiles'].includes(node.text));
+      && ['Dockspace', 'Rounded', 'egui_tiles'].includes(node.text));
     expect(combo, 'presented tab-style selector').toBeTruthy();
     const position = await point(page, combo.rect);
     await page.mouse.click(position.x, position.y);

@@ -455,6 +455,7 @@ pub(crate) fn paint_tab(
         if focused {
             context.ui.painter_at(visible).rect_stroke(
                 egui_rect(tab.full_bounds())
+                    .map(|rect| crate::tab::background_rect(rect, visuals.background_inset))
                     .unwrap_or(visible)
                     .shrink(visuals.focus_stroke.width),
                 visuals.corner_radius,

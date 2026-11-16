@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use dockspace::runtime::{DockspaceVisualId, TabBarPaintRecord};
-use egui::{Color32, CornerRadius, Galley, Painter, Rect, Response, Stroke, StrokeKind, Ui};
+use egui::{Color32, CornerRadius, Galley, Painter, Rect, Response, Stroke, StrokeKind, Ui, Vec2};
 
 use crate::{ItemId, RootId};
 
@@ -78,12 +78,16 @@ pub struct TabVisuals {
     pub fill: Color32,
     /// Tab outline, painted inside its allocation; `Stroke::NONE` hides it.
     pub stroke: Stroke,
-    /// Top accent, independent of focus; `Stroke::NONE` hides it.
+    /// Top accent following the upper corners, independent of focus.
+    /// `Stroke::NONE` hides it.
     pub overline_stroke: Stroke,
     /// Extend the background through the bottom outline, opening into the pane.
     pub connect_to_pane: bool,
     /// Rounding shared by the tab background and its focus outline.
     pub corner_radius: CornerRadius,
+    /// Finite non-negative background insets on each side, preserving hit geometry.
+    /// Also applies to the keyboard-focus outline.
+    pub background_inset: Vec2,
     /// Fallback used by title spans without an explicit color.
     pub text_color: Color32,
     /// When present, replaces every title span's color.
@@ -133,6 +137,12 @@ pub struct Tab<'a> {
 }
 
 impl Tab<'_> {
+    /// Returns the inset background bounds before clipping and pane connection.
+    /// The complete [`Self::rect`] remains the interactive tab allocation.
+    pub fn background_rect(&self) -> Rect {
+        background_rect(self.rect, self.visuals.background_inset)
+    }
+
     /// Paints the default background and title, returning their final appearance.
     /// Close and focus cues are painted separately from this appearance.
     pub fn paint(&self, ui: &Ui) -> TabVisuals {
@@ -147,6 +157,7 @@ impl Tab<'_> {
             fill: self.visuals.fill,
             stroke: self.visuals.stroke,
             corner_radius: self.visuals.corner_radius,
+            inset: self.visuals.background_inset,
             overline_stroke: self.visuals.overline_stroke,
             connect_to_pane: self.visuals.connect_to_pane,
         }
@@ -177,6 +188,7 @@ pub(crate) struct TabBackground {
     pub(crate) fill: Color32,
     pub(crate) stroke: Stroke,
     pub(crate) corner_radius: CornerRadius,
+    pub(crate) inset: Vec2,
     pub(crate) overline_stroke: Stroke,
     pub(crate) connect_to_pane: bool,
 }
@@ -184,9 +196,14 @@ pub(crate) struct TabBackground {
 impl TabBackground {
     pub(crate) fn paint(&self, painter: &Painter, rect: Rect, clip: Rect) {
         let painter = painter.with_clip_rect(clip);
+        let pane_edge = rect.bottom();
+        let rect = background_rect(rect, self.inset);
+        if !rect.is_positive() {
+            return;
+        }
         let mut background = rect;
         if self.connect_to_pane {
-            background.max.y += self.stroke.width;
+            background.max.y = pane_edge + self.stroke.width;
         }
         painter.rect(
             background,
@@ -196,21 +213,36 @@ impl TabBackground {
             StrokeKind::Inside,
         );
         if self.overline_stroke.width > 0.0 {
-            painter.line_segment(
-                [
-                    egui::pos2(
-                        rect.left() + f32::from(self.corner_radius.nw).min(rect.width() * 0.5),
-                        rect.top() + self.overline_stroke.width * 0.5,
-                    ),
-                    egui::pos2(
-                        rect.right() - f32::from(self.corner_radius.ne).min(rect.width() * 0.5),
-                        rect.top() + self.overline_stroke.width * 0.5,
-                    ),
-                ],
-                self.overline_stroke,
-            );
+            // Keep the stroke inside the same rounded contour as the background.
+            let inset = (self.overline_stroke.width * 0.5).min(rect.size().min_elem() * 0.5);
+            let (top, radius) = egui::epaint::RoundedRect::new(background, self.corner_radius)
+                .shrink(inset)
+                .into_parts();
+            if radius.nw == 0.0 && radius.ne == 0.0 {
+                painter.line_segment([top.left_top(), top.right_top()], self.overline_stroke);
+            } else {
+                let mut points = Vec::new();
+                egui::epaint::tessellator::path::add_circle_quadrant(
+                    &mut points,
+                    top.left_top() + egui::vec2(radius.nw, radius.nw),
+                    radius.nw,
+                    2.0,
+                );
+                egui::epaint::tessellator::path::add_circle_quadrant(
+                    &mut points,
+                    top.right_top() + egui::vec2(-radius.ne, radius.ne),
+                    radius.ne,
+                    3.0,
+                );
+                points.dedup();
+                painter.line(points, self.overline_stroke);
+            }
         }
     }
+}
+
+pub(crate) fn background_rect(rect: Rect, inset: Vec2) -> Rect {
+    rect.shrink2(inset.min(rect.size().max(Vec2::ZERO) * 0.5))
 }
 
 pub(crate) fn paint_bar_separator(painter: &Painter, rect: Rect, stroke: Stroke) {

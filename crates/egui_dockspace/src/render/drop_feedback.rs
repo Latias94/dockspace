@@ -80,6 +80,7 @@ pub(super) fn paint(
                 },
                 connect_to_pane: selected && context.style.tab_connect_to_pane,
                 corner_radius: context.style.tab_corner_radius,
+                background_inset: context.style.tab_background_inset,
                 text_color: if selected {
                     context.visuals.tab_active_text_color
                 } else {
