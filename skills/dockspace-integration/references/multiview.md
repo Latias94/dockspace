@@ -42,7 +42,7 @@ continuations through the same shared implementation. The separate
 the physical placement helpers compensate actual decoration extents. Keep the
 logical placement roster separate from that physical resource registry.
 
-Follow `crates/dockspace_winit/examples/multiview.rs` for a real-window software
+Follow `crates/dockspace_winit/examples/multiview/main.rs` for a real-window software
 host, including failed renderer preparation and compensation, first-live
 presentation, Dock Back, close recovery and shutdown. The example uses
 programmatic commands and X11 on Linux. Native effect settlement, readiness,
@@ -70,6 +70,12 @@ Use these independent public-consumer tests as API recipes:
 - `integration/dockspace-host-harness/tests/direct_prepared_native.rs`: native enrollment, creation and acknowledgements.
 - `integration/dockspace-host-harness/tests/native_local_pointer.rs`: event-time local coordinates and native input.
 - `integration/dockspace-host-harness/tests/native_pointer_handoff.rs`: source capture and cross-window hover handoff.
+
+Keep native frame movement and docking intent separate. An OS title-bar move
+reports placement; it does not start a whole-root docking drag. A client-side
+grip or title must explicitly identify whether it moves one item, a tabs group
+or the entire split root, and route that scope through the corresponding core
+operation. Do not infer a root drag from native window motion.
 
 ## Preserve native identities and lifetimes
 
@@ -120,6 +126,11 @@ layer or bypass output-terminal backpressure to drive animation frames.
 Use `pending_work()` to diagnose blocked progress and `output_backlog()` to
 inspect outstanding output owners. Drain obligations according to the native
 lifecycle rather than closing every window immediately during shutdown.
+
+Match command scope to the control: `FloatItem` transfers one pane, `FloatTabs`
+transfers a captured group's contents, and `FloatRoot` preserves the complete
+split tree. The main layout's central slot can retain its identity after its
+tabs leave; transferring a subtree has different structural constraints.
 
 ## Verify the implemented capabilities
 

@@ -1,6 +1,7 @@
 //! Application-owned pane rendering contract.
 
 use dockspace::model::ItemId;
+use egui::scroll_area::ScrollAreaOutput;
 use egui::{Context, Id, Response, Ui, Vec2, WidgetText};
 
 use crate::tab::{Tab, TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose, TabVisuals};
@@ -35,6 +36,38 @@ impl PaneResponse {
     #[must_use]
     pub fn with_content(self, response: &Response) -> Self {
         self.with_content_ids([response.id])
+    }
+
+    /// Declares a scroll area's own current-pass input registrations.
+    ///
+    /// Call after [`egui::ScrollArea::show`] with the pane's Ui and its output.
+    /// Includes the background drag response and either axis's scrollbar only
+    /// when egui registered them in this pass. The usual
+    /// [`Self::with_content_ids`] eligibility checks still apply.
+    ///
+    /// Declare controls inside the scroll area separately; this method does not
+    /// inspect `output.inner` or register arbitrary descendants.
+    ///
+    /// ```
+    /// # use egui_dockspace::PaneResponse;
+    /// # fn document(ui: &mut egui::Ui) -> PaneResponse {
+    /// let scroll = egui::ScrollArea::both().show(ui, |ui| ui.button("Action"));
+    /// PaneResponse::default()
+    ///     .with_scroll_area(ui, &scroll)
+    ///     .with_content(&scroll.inner)
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_scroll_area<R>(self, ui: &Ui, output: &ScrollAreaOutput<R>) -> Self {
+        let registered = ui.ctx().viewport(|viewport| {
+            [
+                output.id.with("area"),
+                output.id.with(0_usize),
+                output.id.with(1_usize),
+            ]
+            .map(|id| viewport.this_pass.widgets.get(id).map(|_| id))
+        });
+        self.with_content_ids(registered.into_iter().flatten())
     }
 
     /// Declares the exact IDs of additional ordinary content registrations.

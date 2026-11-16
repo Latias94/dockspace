@@ -3,9 +3,9 @@
 use dockspace::{
     geometry::LogicalPoint,
     runtime::{
-        DockspaceHostFrame, HostPointerInput, HostPointerRoute, PointerDeviceKind,
-        PointerEventMetadata, PresentedDockReceiver, PresentedDockspaceSurface,
-        SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts,
+        DockspaceHostFrame, HostPointerHit, HostPointerInput, HostPointerRoute, PointerDeviceKind,
+        PointerEventMetadata, SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId,
+        SurfacePointerReceiverFacts,
     },
 };
 use open_gpui::{Bounds, HitboxId, Modifiers, Pixels, Point, Window};
@@ -18,9 +18,7 @@ pub(super) struct QueuedPointer {
     event: SurfacePointerEvent,
     manipulation: HostPointerRoute,
     hover: HostPointerRoute,
-    surface: Option<PresentedDockspaceSurface>,
-    delivery: Option<PresentedDockReceiver>,
-    drag: Option<PresentedDockReceiver>,
+    hit: Option<HostPointerHit>,
     clear: bool,
     capture: SurfacePointerCapture,
     metadata: PointerEventMetadata,
@@ -28,26 +26,21 @@ pub(super) struct QueuedPointer {
 
 impl QueuedPointer {
     pub(super) fn submit(&self, frame: &mut DockspaceHostFrame<'_>) -> anyhow::Result<()> {
-        let mut facts = SurfacePointerReceiverFacts::unknown();
-        if let Some(surface) = &self.surface {
-            if self.clear {
-                facts = match &self.delivery {
-                    Some(delivery) => facts.with_delivery(delivery),
-                    None => facts.with_empty_delivery_lane(surface),
-                };
-                facts = match &self.drag {
-                    Some(drag) => facts.with_drag_delivery(drag),
-                    None => facts.with_empty_drag_delivery_lane(surface),
-                };
-            } else {
-                facts = facts.with_blocked_delivery(surface);
-            }
-            facts = if self.clear {
-                facts.with_clear_hover_lane(surface)
-            } else {
-                facts.with_blocked_hover(surface)
-            };
-        }
+        let surface = self.hit.map(HostPointerHit::surface);
+        let facts = if self.clear {
+            self.hit.as_ref().map_or_else(
+                SurfacePointerReceiverFacts::unknown,
+                HostPointerHit::unobstructed_receiver_facts,
+            )
+        } else {
+            surface
+                .as_ref()
+                .map_or_else(SurfacePointerReceiverFacts::unknown, |surface| {
+                    SurfacePointerReceiverFacts::unknown()
+                        .with_blocked_delivery(surface)
+                        .with_blocked_hover(surface)
+                })
+        };
         frame.submit_host_pointer_batch([HostPointerInput::new(
             SurfacePointerId::new(1),
             self.event,
@@ -112,11 +105,7 @@ pub(super) fn queue(
         hover: surface.map_or(HostPointerRoute::Unknown, |surface| {
             HostPointerRoute::new(surface, point)
         }),
-        surface,
-        delivery: clear.then(|| hit.and_then(|hit| hit.delivery())).flatten(),
-        drag: clear
-            .then(|| hit.and_then(|hit| hit.drag_delivery()))
-            .flatten(),
+        hit,
         clear,
         capture: if captured {
             SurfacePointerCapture::ProviderEndpoint

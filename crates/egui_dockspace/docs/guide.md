@@ -53,6 +53,19 @@ ordinary controls created during that callback; popups and foreign overlays
 remain docking blockers. Returning `PaneResponse::default()` declares no
 content. Focus targets remain separate application observations.
 
+Use `PaneResponse::with_scroll_area(ui, &output)` for a `ScrollArea`'s own
+background and scrollbars, then add its inner content responses explicitly:
+
+```rust,ignore
+let log = egui::ScrollArea::both().show(ui, |ui| ui.label(&self.log));
+PaneResponse::default()
+    .with_scroll_area(ui, &log)
+    .with_content(&log.inner)
+```
+
+The helper registers controls from the current pass only; it does not enumerate
+descendants, declare overlays, or establish a content focus target.
+
 Pane content stays within its allocated clip. Use an egui `ScrollArea` for long
 forms or logs, wrapping for text, and pan/zoom for canvases as appropriate.
 `PaneView::minimum_size` describes the smallest useful content viewport, not the
@@ -107,7 +120,9 @@ let (output, response) = dockspace.run_single_surface_with_ui(
         });
     },
 )?;
-// Docking occupies the remaining Ui. Apply application commands after success.
+// Docking occupies the remaining Ui. Settle output, then apply collected commands.
+let (full_output, receipt) = output.into_parts();
+receipt.report(renderer.present(full_output));
 if restore {
     dockspace.reset_layout(default_layout())?;
 }
@@ -296,6 +311,12 @@ reveals a clipped destination and retains its tab focus; Enter or Space then
 activates the pane content. The same deferred navigation path handles ordinary
 tab arrow keys and repeated egui passes.
 
+Several navigation presses delivered in one frame retain their input order,
+including a round trip back to the original tab. When a header owns focus,
+navigation followed by Enter or Space activates the resulting tab. Accessibility
+Focus selects the requested tab and keeps focus in its header; accessibility
+Click activates its pane content.
+
 `middle_click_closes_tab` defaults to true and emits an ordinary close request
 without selecting the tab. Close policy and deferred application decisions still
 apply, including when the tab's close icon is hidden or clipped. Custom tab child
@@ -337,7 +358,7 @@ application-provided accessible hint. `drag_preview_ui` decorates the moving
 source ghost separately.
 
 `PaneView::drop_guide_ui` customizes the directional buttons independently.
-`DropGuide` includes the stable egui ID, root, inner/outer scope, direction,
+`DropGuide` includes the stable egui ID, optional root, surface/inner/outer scope, direction,
 eligibility, active state and resolved default appearance. Core still owns
 the hit rectangles and docking decision; replacing the drawing leaves
 accessibility and input registration intact. Use its ID with egui's animation

@@ -182,6 +182,30 @@ impl HostPointerHit {
     pub const fn hover(self) -> Option<PresentedDockReceiver> {
         self.hover
     }
+
+    /// Assembles independent receiver facts for an unobstructed framework point.
+    ///
+    /// The host must establish that no application widget, overlay or foreign
+    /// framework receiver blocks this hit at the event's exact point and output.
+    /// A core hit alone does not establish that clearance. Use explicit blocked
+    /// or unknown facts when the framework cannot prove it.
+    ///
+    /// Missing click and drag winners become independent known-empty lanes.
+    /// Hover remains framework clearance so core can resolve its semantic winner
+    /// after preceding edges, including moving-source suppression. This does not
+    /// infer capture, coordinates or event timing; the host supplies those facts.
+    #[must_use]
+    pub fn unobstructed_receiver_facts(&self) -> SurfacePointerReceiverFacts<'_> {
+        let facts = match self.delivery.as_ref() {
+            Some(receiver) => SurfacePointerReceiverFacts::delivery(receiver),
+            None => SurfacePointerReceiverFacts::unknown().with_empty_delivery_lane(&self.surface),
+        };
+        let facts = match self.drag_delivery.as_ref() {
+            Some(receiver) => facts.with_drag_delivery(receiver),
+            None => facts.with_empty_drag_delivery_lane(&self.surface),
+        };
+        facts.with_clear_hover_lane(&self.surface)
+    }
 }
 
 /// Stable pointer identity owned by one renderer-neutral input provider.
@@ -1946,8 +1970,7 @@ mod tests {
     use crate::policy::DockPolicy;
     use crate::presentation::hit::PresentationHitRegionKind;
 
-    #[test]
-    fn clear_hover_lane_resolves_only_an_exact_current_presentation() {
+    fn presented_tabs_host() -> (DockEngine, TestPresentationHost) {
         let surface = SurfaceId::new(1);
         let root = RootId::new(1);
         let mut builder = Workspace::builder();
@@ -1958,6 +1981,112 @@ mod tests {
         let mut host = TestPresentationHost::new(&mut engine);
         let bounds = LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap();
         publish_surface(&mut engine, &mut host, surface, bounds);
+        (engine, host)
+    }
+
+    #[test]
+    fn unobstructed_receiver_facts_preserve_independent_click_and_drag_lanes() {
+        let (engine, _host) = presented_tabs_host();
+        let surface = SurfaceId::new(1);
+        let projection = engine.interaction_projection(surface).unwrap();
+        for click_only in [false, true] {
+            let region = projection
+                .hit_manifest()
+                .regions()
+                .iter()
+                .find(|region| match region.id().kind() {
+                    PresentationHitRegionKind::TabClose(_) => click_only,
+                    PresentationHitRegionKind::TabGroupDrag {
+                        region: crate::presentation::scene::TabGroupDragRegionKind::LeadingGrip,
+                        ..
+                    } => !click_only,
+                    _ => false,
+                })
+                .expect("the presented group exposes close controls and a leading grip");
+            let bounds = region.hit().rect();
+            let point = LogicalPoint::new(
+                bounds.x() + bounds.width() * 0.5,
+                bounds.y() + bounds.height() * 0.5,
+            )
+            .unwrap();
+            let hit = host_pointer_hit(
+                &engine,
+                &super::super::presentation::RuntimePresentationState::default(),
+                surface,
+                point,
+                PointerDeviceKind::Mouse,
+            )
+            .unwrap();
+            let dock = PointerReceiverDeliveryDisposition::Dock(region.id());
+            let empty = PointerReceiverDeliveryDisposition::EmptyLane;
+            let (click, drag) = if click_only {
+                (dock, empty)
+            } else {
+                (empty, dock)
+            };
+            assert_eq!(hit.delivery().is_some(), click_only);
+            assert_eq!(hit.drag_delivery().is_some(), !click_only);
+
+            let facts = hit.unobstructed_receiver_facts();
+            assert_eq!(
+                delivery_fact(Some(&projection), facts.delivery)
+                    .unwrap()
+                    .click(),
+                click,
+                "click delivery must retain its independent winner or known-empty result",
+            );
+            assert_eq!(
+                delivery_fact(Some(&projection), facts.drag_delivery.unwrap())
+                    .unwrap()
+                    .drag(),
+                drag,
+                "drag delivery must not inherit the click lane's winner or absence",
+            );
+            assert!(matches!(facts.hover, ReceiverFact::ClearHoverLane(surface)
+                if std::ptr::eq(surface, &hit.surface)));
+        }
+    }
+
+    #[test]
+    fn unobstructed_receiver_facts_preserve_exact_empty_lanes() {
+        let (engine, _host) = presented_tabs_host();
+        let surface = SurfaceId::new(1);
+        let projection = engine.interaction_projection(surface).unwrap();
+        let point = LogicalPoint::new(900.0, 700.0).unwrap();
+        let hit = host_pointer_hit(
+            &engine,
+            &super::super::presentation::RuntimePresentationState::default(),
+            surface,
+            point,
+            PointerDeviceKind::Mouse,
+        )
+        .unwrap();
+        assert!(hit.delivery().is_none());
+        assert!(hit.drag_delivery().is_none());
+        assert!(hit.hover().is_none());
+
+        let facts = hit.unobstructed_receiver_facts();
+        for lane in [facts.delivery, facts.drag_delivery.unwrap()] {
+            assert!(matches!(lane, ReceiverFact::EmptyLane(surface)
+                if std::ptr::eq(surface, &hit.surface)));
+            assert_eq!(
+                delivery_fact(Some(&projection), lane).unwrap().click(),
+                PointerReceiverDeliveryDisposition::EmptyLane,
+            );
+        }
+        assert!(
+            matches!(facts.hover, ReceiverFact::ClearHoverLane(surface)
+            if std::ptr::eq(surface, &hit.surface)),
+            "framework clearance must not freeze the current empty semantic hover result",
+        );
+    }
+
+    #[test]
+    fn clear_hover_lane_resolves_only_an_exact_current_presentation() {
+        let surface = SurfaceId::new(1);
+        let root = RootId::new(1);
+        let (mut engine, mut host) = presented_tabs_host();
+        let bounds = LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap();
         let previous = PresentedDockspaceSurface::from_projection(
             engine.interaction_projection(surface).unwrap(),
         );

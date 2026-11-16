@@ -109,23 +109,16 @@ pub(super) fn input(
     let hit = position.and_then(|point| {
         frame.host_pointer_hit_for_device(SURFACE, point, PointerDeviceKind::Mouse)
     });
-    let surface = hit.map(|hit| hit.surface());
-    let delivery = hit.and_then(|hit| hit.delivery());
-    let drag = hit.and_then(|hit| hit.drag_delivery());
-    let mut facts = SurfacePointerReceiverFacts::unknown();
-    let mut route = HostPointerRoute::Unknown;
-    if let (Some(surface), Some(point)) = (surface.as_ref(), position) {
-        facts = delivery.as_ref().map_or_else(
-            || facts.with_empty_delivery_lane(surface),
-            SurfacePointerReceiverFacts::delivery,
-        );
-        facts = drag.as_ref().map_or_else(
-            || facts.with_empty_drag_delivery_lane(surface),
-            |receiver| facts.with_drag_delivery(receiver),
-        );
-        facts = facts.with_clear_hover_lane(surface);
-        route = HostPointerRoute::new(*surface, point);
-    }
+    let facts = hit
+        .as_ref()
+        .map_or_else(SurfacePointerReceiverFacts::unknown, |hit| {
+            hit.unobstructed_receiver_facts()
+        });
+    let route = hit
+        .zip(position)
+        .map_or(HostPointerRoute::Unknown, |(hit, point)| {
+            HostPointerRoute::new(hit.surface(), point)
+        });
     let manipulation = position
         .zip(frame.host_pointer_manipulation_surface(POINTER))
         .map_or(route, |(point, source)| {

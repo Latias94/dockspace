@@ -108,16 +108,7 @@ impl PaneView for ContentPanes {
         for response in &responses {
             content = content.with_content(response);
         }
-        for id in [
-            scroll.id.with("area"),
-            scroll.id.with(0_usize),
-            scroll.id.with(1_usize),
-        ] {
-            if let Some(response) = ui.ctx().read_response(id) {
-                content = content.with_content(&response);
-            }
-        }
-        content
+        content.with_scroll_area(ui, &scroll)
     }
 }
 

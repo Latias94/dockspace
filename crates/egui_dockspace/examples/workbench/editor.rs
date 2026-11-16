@@ -456,12 +456,8 @@ impl PaneView for DemoPanes {
                             });
                         pane.scroll_offset = log.state.clamped_offset().y;
                         pane.scroll_bounds = Some(log.inner_rect);
-                        content = log.inner;
-                        for id in [log.id.with("area"), log.id.with(1_usize)] {
-                            if ui.ctx().viewport(|v| v.this_pass.widgets.get(id).is_some()) {
-                                content = content.with_content_ids([id]);
-                            }
-                        }
+                        let scrolling = PaneResponse::default().with_scroll_area(ui, &log);
+                        content = log.inner.with_content_ids(scrolling.content_widgets());
                     }
                     PROFILER => {
                         for (label, milliseconds) in

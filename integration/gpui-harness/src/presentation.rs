@@ -2,9 +2,7 @@
 
 use std::rc::Rc;
 
-use dockspace::runtime::{
-    DockspaceUpdate, PaintedSurfaceOutput, SurfacePresentationResult, SurfaceUnavailableReason,
-};
+use dockspace::runtime::{DockspaceUpdate, PaintedSurfaceOutput, SurfacePresentationResult};
 use open_gpui::{
     AcceptedFrameFence, App, Window, WindowFrameSubmissionOutcome, WindowFrameSubmissionTicket,
 };
@@ -235,8 +233,7 @@ fn withdraw_pending(host: &mut HostState, window: &mut Window) {
 }
 
 fn settle(host: &mut HostState) -> anyhow::Result<()> {
-    let mut frame = host.session.begin_host_frame()?;
-    frame.complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)?;
+    let frame = host.session.begin_host_frame()?;
     let report = frame.commit()?;
     host.dirty |= !report.repaint_surfaces().is_empty();
     Ok(())

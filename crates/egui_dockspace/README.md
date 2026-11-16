@@ -57,17 +57,31 @@ impl PaneView for Documents {
         Some("Document".into())
     }
 
-    fn ui(&mut self, _item: ItemId, ui: &mut egui::Ui) -> PaneResponse {
-        PaneResponse::from(&ui.text_edit_multiline(&mut self.text))
+    fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> PaneResponse {
+        let editor = ui.add(egui::TextEdit::multiline(&mut self.text).id(editor_id(item)));
+        PaneResponse::from(&editor)
     }
+
+    fn focus_target(&self, item: ItemId) -> Option<egui::Id> {
+        Some(editor_id(item))
+    }
+}
+
+fn editor_id(item: ItemId) -> egui::Id {
+    egui::Id::unique(("documents-editor", item))
 }
 ```
 
-Return the content responses created in that call. Composite panes can use
-`with_content` or `with_content_ids`. Returning `None` from `title` keeps an
+Return the content responses created in that call so ordinary widgets retain
+their input ownership while docking. Composite panes can use `with_content` or
+`with_content_ids`. A stable `focus_target` lets tab activation enter the editor;
+override `focus_state` when several child widgets share the pane's focus scope.
+Returning `None` from `title` keeps an
 unavailable pane's layout slot. `Box<dyn PaneView>` is supported.
 
 Use `ScrollArea`, wrapping or canvas navigation for content larger than its pane.
+`with_scroll_area` registers a scroll area's own controls; add its inner content
+responses separately.
 `minimum_size` describes a useful viewport. When the whole layout cannot fit,
 choose clipping or proportional compression through `DockStyle::pane_overflow_policy`.
 

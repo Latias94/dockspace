@@ -129,9 +129,13 @@ manipulation route, hover route, and independent receiver facts. Bind a
 `HostPointerRoute` to an exact `PresentedDockspaceSurface` and event-time point;
 do not reuse a final-frame position for earlier edges.
 
-When the host proves that no framework widget blocks docking at an edge, use
+When the host proves that no framework widget blocks docking at an edge, a
+queried `HostPointerHit` can build facts with `unobstructed_receiver_facts`.
+It preserves the independent click and drag winners, including known-empty
+lanes. For hosts assembling facts separately, use
 `SurfacePointerReceiverFacts::with_clear_hover_lane` with that exact presented
-surface. Core resolves the semantic hover winner after earlier edges have
+surface. Both paths leave the framework-clearance proof with the host.
+Core resolves the semantic hover winner after earlier edges have
 reduced, so a single batch can suppress its complete moving source without
 guessing a target in advance. `with_hover` and `with_empty_hover_lane` assert an exact
 semantic winner or absence instead; they are not framework-clearance fallbacks.

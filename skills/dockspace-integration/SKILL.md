@@ -7,6 +7,9 @@ description: Integrate or review Dockspace docking and native multiview in Rust 
 
 Connect Dockspace to the application's existing UI and resource owners. Use the
 public contracts and the smallest host that supports the requested interaction.
+An application using an existing adapter starts with that adapter's runner or
+complete-output API. Read the custom-host protocol when implementing a new UI
+adapter, rather than reproducing it inside an ordinary pane provider.
 
 ## Find the matching sources
 
@@ -42,6 +45,9 @@ the requested backend before selecting the multiview path.
 - Use `DockPolicy` for docking and close permissions, presentation configuration
   for geometry and timing, and adapter hooks for appearance. Let core resolve
   docking targets, candidate layouts and semantic outcomes.
+- Keep operation scopes explicit: an item moves one pane, Tabs moves a group's
+  contents, and root/layout commands preserve the complete split tree. Titles,
+  grips and menus should identify the scope they actually manipulate.
 - Treat accepted input, committed actions and actually presented output as
   separate stages. Follow the selected host's receipt and result APIs.
 - Keep UI callbacks synchronous. Run saving and other I/O through

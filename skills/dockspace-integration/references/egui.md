@@ -6,7 +6,10 @@ Read `crates/egui_dockspace/README.md` and the relevant sections of
 ## Own the complete output for drag docking
 
 Use the `wgpu` feature and `egui_dockspace::winit::run_native` for the packaged
-single-window runner. Start with `crates/egui_dockspace/examples/workbench.rs`.
+single-window runner. Start with `crates/egui_dockspace/examples/winit.rs`:
+implement `NativeApp::update` and return the `DockspaceOutput` unchanged. The
+runner renders it and settles its receipt. Use `frame_finished` for collected
+application commands. The workbench is a reference for optional customization.
 The `winit` feature exposes the event/platform-output bridge for an existing
 event loop and renderer; the separate `dockspace_winit` crate is renderer-neutral.
 
@@ -28,9 +31,19 @@ missing presentation boundary.
 
 Implement `PaneView` over the application's pane registry. Return the content
 responses through `PaneResponse::from`, `with_content` or `with_content_ids` so
-the adapter can associate actual content focus. UI callbacks may repeat across
-egui passes; record command intents and perform external effects after the run
-succeeds. See `examples/background_save.rs` for deferred close approval.
+ordinary pane widgets can receive input and allow docking hover without making
+unknown overlays transparent. This registration does not establish content
+focus. Give the primary editor a stable ID and return it from `focus_target`;
+override `focus_state` when a composite pane authoritatively tracks several
+focusable children. UI callbacks may repeat across egui passes; record command
+intents and perform external effects after the run succeeds. See
+`examples/background_save.rs` for deferred close approval.
+
+For a `ScrollArea`, use `PaneResponse::with_scroll_area(ui, &output)` to declare
+its current scroll controls. Add its inner buttons and editors explicitly with
+`with_content`; the helper does not register descendants or infer focus. Use
+scrolling, wrapping or pan/zoom for content larger than its viewport. A pane's
+minimum size describes a useful viewport, not the size of its entire document.
 
 Derive geometry from the current egui style with `DockStyle::from_egui` or
 `from_egui_with_density(..., DockDensity::Compact)`, then apply overrides. Keep
@@ -53,4 +66,7 @@ Run the corresponding example or the consumer application with its actual
 renderer. Check drag docking and tab reordering, clipping of custom controls,
 keyboard/content focus and edited data surviving close/reopen. Test deferred
 save failure and layout restore when those features are included. Callback-only
-rendering tests do not establish complete-output interaction support.
+rendering tests do not establish complete-output interaction support. For custom
+chrome, use the entry-point cases in
+`docs/ADAPTER_TESTING.md#interaction-entry-points`, including batched keyboard
+navigation, activation and wheel browsing of overflowing tabs.

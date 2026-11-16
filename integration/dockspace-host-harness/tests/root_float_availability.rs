@@ -9,8 +9,7 @@ use dockspace::model::{
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
     DockspaceHostFrame, DockspacePresentationCommandKind, DockspacePresentationCommandUnavailable,
-    DockspaceSession, HostFrameReport, HostInputOutcome, SurfaceUnavailableReason,
-    UniformSurfaceMetrics,
+    DockspaceSession, HostFrameReport, HostInputOutcome, UniformSurfaceMetrics,
 };
 
 const A: SurfaceId = SurfaceId::new(1);
@@ -24,10 +23,7 @@ const B_ITEM: ItemId = ItemId::new(2);
 const GROUP_FIRST: ItemId = ItemId::new(3);
 const GROUP_SECOND: ItemId = ItemId::new(4);
 
-fn finish(mut frame: DockspaceHostFrame<'_>) -> HostFrameReport {
-    frame
-        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
-        .unwrap();
+fn finish(frame: DockspaceHostFrame<'_>) -> HostFrameReport {
     frame.commit().unwrap()
 }
 
