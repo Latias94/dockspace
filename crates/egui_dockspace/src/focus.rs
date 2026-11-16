@@ -62,6 +62,7 @@ fn with_framework_focus<T>(
 /// The real focus observation still accompanies each exact output until core settles it.
 /// `focus_before_contents` preserves a later application focus choice made while
 /// registering the target; a pointer click may legitimately clear the old focus.
+/// An accepted accessibility focus in this input batch supersedes an unapplied request.
 pub(crate) fn apply_pane_focus_request(
     context: &Context,
     instance: Id,
@@ -70,8 +71,28 @@ pub(crate) fn apply_pane_focus_request(
     focus_before_contents: Option<Id>,
 ) -> bool {
     let focused = context.memory(egui::Memory::focused);
+    let explicit_focus = focused
+        .filter(|focused| *focused != target)
+        .is_some_and(|focused| {
+            context.input(|input| {
+                input.raw.events.iter().rev().find_map(|event| {
+                    if let egui::Event::AccessKitActionRequest(request) = event
+                        && request.action == egui::accesskit::Action::Focus
+                        && request.target_tree == egui::accesskit::TreeId::ROOT
+                        && request.data.is_none()
+                    {
+                        Some(request.target_node)
+                    } else {
+                        None
+                    }
+                }) == Some(focused.accesskit_id())
+            })
+        });
     let apply = with_framework_focus(context, instance, context.viewport_id(), request, |state| {
         !std::mem::replace(&mut state.applied, true)
+            // egui applies explicit accessibility focus before this callback.
+            // Consume the old side effect without replacing that newer choice.
+            && !explicit_focus
             && (focused.is_none() || focused == focus_before_contents || focused == Some(target))
             && state
                 .tab_target

@@ -1,5 +1,7 @@
 //! Input ordering and IME composition through both public egui entry points.
 
+mod explicit_focus;
+
 use dockspace::model::{
     DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, RootId,
     SurfaceId,
