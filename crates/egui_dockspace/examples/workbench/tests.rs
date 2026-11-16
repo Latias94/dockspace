@@ -15,13 +15,29 @@ fn workbench_frame(
     panes: &mut DemoPanes,
     events: Vec<Event>,
 ) -> egui::FullOutput {
+    workbench_frame_at(
+        context,
+        dock,
+        panes,
+        context.input(|input| input.time) + 1.0 / 60.0,
+        events,
+    )
+}
+
+fn workbench_frame_at(
+    context: &egui::Context,
+    dock: &mut Dockspace,
+    panes: &mut DemoPanes,
+    time: f64,
+    events: Vec<Event>,
+) -> egui::FullOutput {
     let mut restore = false;
     let (output, response) = run_editor(
         dock,
         context,
         RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 820.0))),
-            time: Some(context.input(|input| input.time) + 1.0 / 60.0),
+            time: Some(time),
             events,
             ..Default::default()
         },

@@ -1,12 +1,15 @@
-//! Seeded pointer journeys through the workbench's public host boundary.
+//! Seeded input journeys through the workbench's public host boundary.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use egui::accesskit::Role;
 use egui_dockspace::PaneView;
 
 use super::*;
+
+#[path = "randomized/semantic_input.rs"]
+mod semantic_input;
 
 struct Replay {
     context: egui::Context,
@@ -15,10 +18,12 @@ struct Replay {
     output: egui::FullOutput,
     random: u64,
     step: usize,
-    recent: VecDeque<String>,
+    trace: Vec<String>,
+    frame: usize,
     splits: usize,
     merges: usize,
     floats: usize,
+    adjustment_batches: usize,
 }
 
 impl Replay {
@@ -39,22 +44,33 @@ impl Replay {
             output,
             random: seed,
             step: 0,
-            recent: VecDeque::new(),
+            trace: Vec::new(),
+            frame: 0,
             splits: 0,
             merges: 0,
             floats: 0,
+            adjustment_batches: 0,
         }
     }
 
     fn frame(&mut self, events: Vec<Event>) {
-        self.output = workbench_frame(&self.context, &mut self.dock, &mut self.panes, events);
+        self.frame_at(self.context.input(|input| input.time) + 1.0 / 60.0, events);
+    }
+
+    fn frame_at(&mut self, time: f64, events: Vec<Event>) {
+        // Include the failing packet before calling the real adapter. Keep
+        // idle passes too: they advance motion and presentation settlement.
+        self.trace.push(format!(
+            "step={}, frame={}, time={time:?}, input={events:?}",
+            self.step, self.frame,
+        ));
+        self.frame += 1;
+        self.output =
+            workbench_frame_at(&self.context, &mut self.dock, &mut self.panes, time, events);
     }
 
     fn note(&mut self, operation: String) {
-        if self.recent.len() == 8 {
-            self.recent.pop_front();
-        }
-        self.recent.push_back(format!("{}: {operation}", self.step));
+        self.trace.push(format!("step={}: {operation}", self.step));
     }
 
     fn pick<T: Copy>(&mut self, choices: &[T]) -> Option<T> {
@@ -155,14 +171,24 @@ impl Replay {
                 self.frame(Vec::new());
                 continue;
             };
-            self.frame(vec![Event::PointerMoved(source)]);
-            if self
-                .context
-                .viewport(|viewport| viewport.hits.drag.is_some_and(|hit| hit.id == widget))
-            {
+            // Sample the actual completed hit graph at the output's own time.
+            // Advancing motion here would pair the preceding pass's hits with
+            // a newly animated geometry before the subsequent press.
+            self.frame_at(
+                self.context.input(|input| input.time),
+                vec![Event::PointerMoved(source)],
+            );
+            if self.context.viewport(|viewport| {
+                // A background tab can win Drag while a foreground close
+                // control wins Click. This helper promises an exposed
+                // drag handle, rather than that different valid action.
+                viewport.hits.drag.is_some_and(|hit| hit.id == widget)
+                    && viewport.hits.click.is_some_and(|hit| hit.id == widget)
+            }) {
                 exposed = self.source(item).map(|(_, point)| point);
                 break;
             }
+            self.frame(Vec::new());
         }
         exposed
     }
@@ -693,6 +719,9 @@ impl Replay {
                     }
                 }
             }
+            if step % 3 == 0 {
+                self.adjustment_batch();
+            }
             self.assert_items();
         }
         for action in [0, 1, 2, 3, 4, 5] {
@@ -710,6 +739,10 @@ impl Replay {
         assert!(self.splits > 0, "the replay must commit an actual split");
         assert!(self.merges > 0, "the replay must commit an actual merge");
         assert!(self.floats > 0, "the replay must commit an actual float");
+        assert!(
+            self.adjustment_batches > 0,
+            "the replay must consume an actual mixed adjustment batch"
+        );
     }
 }
 
@@ -793,7 +826,7 @@ fn a_fractional_floating_title_move_keeps_its_canonical_target() {
 }
 
 #[test]
-fn seeded_pointer_journeys_preserve_items_and_recover_after_cancel_and_outside_release() {
+fn seeded_input_journeys_preserve_items_and_recover_after_cancel_and_outside_release() {
     let seeds = std::env::var("DOCKSPACE_TEST_SEED").map_or_else(
         |_| {
             vec![
@@ -827,8 +860,10 @@ fn seeded_pointer_journeys_preserve_items_and_recover_after_cancel_and_outside_r
                 .or_else(|| cause.downcast_ref::<&str>().copied())
                 .unwrap_or("non-string panic");
             panic!(
-                "pointer replay failed: seed={seed:#x}, step={}, recent={:?}: {message}",
-                replay.step, replay.recent
+                "input replay failed: seed={seed:#x}, step={}: {message}\n\
+                 Full ordered trace (idle packets included):\n{}",
+                replay.step,
+                replay.trace.join("\n"),
             );
         }
     }

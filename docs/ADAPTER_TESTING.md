@@ -88,6 +88,15 @@ receiver does not by itself prove an empty core Click lane. Resolve click and
 drag independently and test their translation through the framework's actual
 completed hit graph.
 
+Reverse the overlay order as well: an unknown control in front must block,
+while a control covered by floating chrome must not disable that chrome. Include
+custom foreground Uis without an Area; an Area-only layer query does not establish
+their absence. Keep single-lane overlap cases tied to actual framework hits.
+During pane motion, a front click-only control can overlap a different drag
+receiver. Preserve both real lane observations; the core selects the executable
+control using that exact output's stack. Test both relative orders and the
+resulting close or drag behavior, rather than masking the overlap as a blocker.
+
 Exercise tails after terminal input, not only well-paired gestures: duplicate
 release, cancelled input followed by stale window events, provider reset, and a
 fresh press after recoverable cases. Check that each semantic terminal is emitted
@@ -151,6 +160,11 @@ runtime to drain, then starts a new host using owned logical state and retained
 documents. Unit tests also require incomplete destruction, uncommitted create
 failures and occupied prepaid roster buffers to retain their obligations. A
 handler detach is not a substitute for destruction evidence.
+Combine an authorized child creation with layout reset, fatal cleanup and a late
+Created callback. The predecessor endpoint can become quiescent while the child
+still retains its source emission. Require that reference to survive until exact
+destruction, then verify output capacity returns without fabricating a successor
+presentation or reopening the failed host.
 
 Test permanently rejected ingress separately from recoverable fatal cleanup.
 `native_drag_tear_off.rs` in the public host harness repeats a contradictory raw
@@ -205,6 +219,22 @@ and navigation followed by activation. Preserve their order and submit one final
 candidate-bound action where intermediate states need not be published. Repeat
 the batch across discarded passes and in a new independent run. A boolean
 `consume_key` result can hide multiple presses even when separate-frame tests pass.
+Apply the same comparison to accessibility increments/decrements and mixed
+keyboard/accessibility packets. Test an outward step at a size or scroll limit
+followed by an inward step: summing deltas before clamping loses that order.
+After menu activation or dismissal, preserve the unconsumed packet suffix.
+
+The workbench's seeded journeys interleave mixed resize packets with docking,
+floating, cancellation and layout restoration. They select currently registered
+controls and require actual event consumption. Precise batched-versus-separate
+geometry and menu outcomes remain deterministic regressions; the random journey
+checks how those entries interact with changing layouts and later pointer input.
+Failure diagnostics retain the complete ordered operation and input trace with
+timestamps, including idle packets and the packet that failed. Idle passes
+advance motion and presentation settlement, so removing them can change the
+scenario. Qualify a moving source against the completed widget graph at that
+output's time; advancing the animation during a probe can pair old hits with new
+geometry. Overlap behavior itself remains covered by the named regressions.
 
 Native OS title movement is a geometry observation, not proof of a docking drag.
 Test client chrome separately and declare when the adapter has no whole-root
@@ -269,6 +299,40 @@ Declare unsupported capabilities before scheduling a journey. Passing local
 recording scenarios does not imply native or physical authority. A new adapter
 needs no new core mutation path, shared GUI driver language or alternate state
 machine to reuse these tests.
+
+## Exploration, reduction and completion
+
+Use different tools for different failure seams:
+
+- The core command model retains its 5,000-step journey and operation-coverage
+  checks. Its short proptest sequences use logical item selectors and recreate
+  current sources and targets at each step. Proptest can shrink the sequence and
+  its parameters without preserving stale node IDs or authority. An action whose
+  precondition no longer holds is skipped explicitly; it never changes its target
+  or becomes another action to make a reduced sequence executable.
+- The workbench drives real widgets and reports its full input trace. This is a
+  diagnostic trace, not a version-independent recording format or an automatic
+  UI shrinker. Reduce a discovered failure to a named regression at the narrowest
+  seam that still reproduces it, then retain the exploratory journey.
+- Native schedules preserve each producer's order and the original affine
+  owners. Keep their bounded interleavings rather than deleting raw callbacks
+  with a generic sequence shrinker. Such deletion can violate ingress contracts
+  or remove a required external result instead of exposing a product defect.
+
+At each failure, name the violated invariant and its checkpoint. Candidate
+rollback must preserve committed semantics; a presented output authorizes only
+its exact receivers; completed recoverable cancellation must admit fresh input.
+Animated rectangles may overlap, and an idle pointer can still have a pending
+native transfer. Require completion only after providing the external results
+that the contract actually needs. Permanent ingress rejection follows the
+failed-generation contract rather than a recoverable gesture assertion.
+
+A review batch is complete when its minimal regressions, fixed journey corpus,
+bounded schedules and relevant adapter gates pass. That is a bounded result,
+not proof that all operation sequences or platforms are correct. Keep newly
+discovered roots distinct from additional seeds reproducing an existing root.
+Broaden exploration when a new capability, changed invariant or missing state
+transition justifies it; passing more seeds alone is not a release criterion.
 
 ## Local gates
 
