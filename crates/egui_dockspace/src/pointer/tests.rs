@@ -25,6 +25,8 @@ mod reentry;
 
 mod focus_snapshot;
 
+mod occlusion;
+
 #[cfg(feature = "motion")]
 mod animated_overlap;
 

@@ -1,7 +1,7 @@
 //! Ordered transport for the official host-local pointer lane.
 
 use std::cell::OnceCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,7 +15,9 @@ use dockspace::runtime::{
     SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts,
     SurfacePresentationArtifact, SurfacePresentationCommit,
 };
-use egui::{Context, Event, Id, LayerId, Modifiers, PointerButton, Pos2, Rect, Ui, WidgetRects};
+use egui::{
+    Context, Event, Id, LayerId, Modifiers, PointerButton, Pos2, Rect, Ui, WidgetRect, WidgetRects,
+};
 
 use crate::focus::DeferredTabFocus;
 use crate::input::DockInputConfig;
@@ -36,7 +38,8 @@ use touch::TouchContacts;
 pub(crate) struct ProductPointerInputSnapshot {
     completed_pass: u64,
     widgets: WidgetRects,
-    interactive: Vec<Rect>,
+    interactive_layers: Vec<(LayerId, Rect, f32)>,
+    interaction_radius: f32,
     transformed_layers: HashSet<LayerId>,
     layer_at: Box<dyn Fn(Pos2) -> Option<LayerId> + Send + Sync>,
     foreign_drag: bool,
@@ -58,9 +61,37 @@ pub(crate) struct ProductPointerPresentation {
 
 impl ProductPointerInputSnapshot {
     pub(crate) fn capture(context: &Context) -> Self {
-        let (transformed_layers, layer_at) = context.memory(|memory| {
+        let widgets = context.viewport(|viewport| viewport.prev_pass.widgets.clone());
+        let interaction_radius = context.global_style().interaction.interact_radius;
+        let (transformed_layers, layer_at, interactive_layers) = context.memory(|memory| {
             let areas = memory.areas().clone();
             let transforms = memory.to_global.clone();
+            let interactive_layers = widgets
+                .layers()
+                .filter(|(layer, _)| memory.allows_interaction(**layer))
+                .flat_map(|(layer, widgets)| {
+                    let transforms = &transforms;
+                    widgets.iter().filter_map(move |widget| {
+                        if !widget.enabled || !widget.sense.interactive() {
+                            return None;
+                        }
+                        let rect = transforms
+                            .get(layer)
+                            .map_or(widget.interact_rect, |transform| {
+                                *transform * widget.interact_rect
+                            });
+                        let radius = interaction_radius
+                            * transforms
+                                .get(layer)
+                                .map_or(1.0, |transform| transform.scaling.abs());
+                        (rect.is_finite() && rect.is_positive()).then_some((
+                            *layer,
+                            rect,
+                            radius * radius,
+                        ))
+                    })
+                })
+                .collect();
             let transformed_layers = transforms
                 .iter()
                 .filter(|(_, transform)| **transform != egui::emath::TSTransform::IDENTITY)
@@ -82,12 +113,13 @@ impl ProductPointerInputSnapshot {
                         Some(layer)
                     }
                 });
-            (transformed_layers, layer_at)
+            (transformed_layers, layer_at, interactive_layers)
         });
         Self {
             completed_pass: context.cumulative_pass_nr(),
-            widgets: context.viewport(|viewport| viewport.prev_pass.widgets.clone()),
-            interactive: context.interactive_rects_last_pass(),
+            widgets,
+            interactive_layers,
+            interaction_radius,
             transformed_layers,
             layer_at,
             foreign_drag: has_foreign_drag(context),
@@ -98,61 +130,91 @@ impl ProductPointerInputSnapshot {
         !self.transformed_layers.contains(&layer)
     }
 
-    /// Subtracts exact owned registrations once for this packet's frozen output.
-    fn unowned_interactive_rects(&self, scene: &PointerScene) -> Vec<Rect> {
+    /// Joins exact registrations without discarding their framework paint order.
+    fn ownership(&self, scene: &PointerScene) -> PacketPointerOwnership {
         #[cfg(test)]
-        ownership_tests::record_join(scene.receivers.len(), self.interactive.len());
+        ownership_tests::record_join(
+            scene.receivers.len(),
+            self.widgets
+                .get_layer(scene.layer)
+                .filter(|widget| widget.enabled && widget.sense.interactive())
+                .count(),
+        );
 
-        let mut credited_widgets = HashSet::new();
-        let mut owned_rectangles = HashMap::<[u32; 4], usize>::new();
-        for binding in scene.receivers.iter().filter(|binding| {
-            binding.interactive
-                && binding.layer_id == scene.layer
-                && self.widgets.get(binding.widget_id).is_some_and(|widget| {
-                    widget.enabled
-                        && widget.sense.interactive()
-                        && widget.layer_id == binding.layer_id
-                        && widget.interact_rect == binding.interact_rect
-                })
-                && credited_widgets.insert(binding.widget_id)
-        }) {
-            if let Some(key) = rectangle_key(binding.interact_rect) {
-                *owned_rectangles.entry(key).or_default() += 1;
-            }
-        }
-        self.interactive
+        let owned = scene
+            .receivers
             .iter()
-            .copied()
-            .filter(|rect| {
-                let count = rectangle_key(*rect).and_then(|key| owned_rectangles.get_mut(&key));
-                if let Some(count) = count
-                    && *count > 0
-                {
-                    *count -= 1;
-                    false
-                } else {
-                    true
-                }
+            .filter(|binding| {
+                binding.interactive
+                    && binding.layer_id == scene.layer
+                    && self.widgets.get(binding.widget_id).is_some_and(|widget| {
+                        widget.enabled
+                            && widget.sense.interactive()
+                            && widget.layer_id == binding.layer_id
+                            && widget.interact_rect == binding.interact_rect
+                    })
             })
-            .collect()
+            .map(|binding| binding.widget_id)
+            .collect::<HashSet<_>>();
+        PacketPointerOwnership {
+            interaction_radius_sq: self.interaction_radius * self.interaction_radius,
+            foreign_layers: self
+                .interactive_layers
+                .iter()
+                .filter(|(layer, _, _)| *layer != scene.layer)
+                .map(|(_, rect, radius_sq)| (*rect, *radius_sq))
+                .collect(),
+            widgets: self
+                .widgets
+                .get_layer(scene.layer)
+                .filter(|widget| widget.enabled && widget.sense.interactive())
+                .map(|widget| (*widget, owned.contains(&widget.id)))
+                .collect(),
+        }
     }
 }
 
-fn rectangle_key(rect: Rect) -> Option<[u32; 4]> {
-    let values = [rect.min.x, rect.min.y, rect.max.x, rect.max.y];
-    // Rect uses float PartialEq: NaNs never match and both signed zeros are equal.
-    // Keep those semantics instead of treating raw float bits as Rect equality.
-    if values.iter().any(|value| value.is_nan()) {
-        return None;
-    }
-    Some(values.map(|value| {
-        let bits = value.to_bits();
-        if bits == (-0.0_f32).to_bits() {
-            0
-        } else {
-            bits
+struct PacketPointerOwnership {
+    interaction_radius_sq: f32,
+    foreign_layers: Vec<(Rect, f32)>,
+    widgets: Vec<(WidgetRect, bool)>,
+}
+
+impl PacketPointerOwnership {
+    fn is_clear_at(&self, position: Pos2) -> bool {
+        // A custom Ui can draw on another layer without registering an Area.
+        // The layer-at-point check alone cannot prove that layer is absent.
+        if self
+            .foreign_layers
+            .iter()
+            .any(|(rect, radius_sq)| rect.distance_sq_to_pos(position) <= *radius_sq)
+        {
+            return false;
         }
-    }))
+        let mut nearby_unknown = false;
+        for (widget, owned) in self.widgets.iter().rev() {
+            if widget.interact_rect.distance_sq_to_pos(position) > self.interaction_radius_sq {
+                continue;
+            }
+            if !owned {
+                if widget.interact_rect.contains(position) {
+                    return false;
+                }
+                nearby_unknown = true;
+                continue;
+            }
+            // A direct owner of both lanes shields the widgets behind it.
+            // Keep single-lane overlaps conservative: egui's nearby-widget
+            // assistance can prefer another drag-only widget underneath one.
+            if widget.interact_rect.contains(position)
+                && widget.sense.senses_click()
+                && widget.sense.senses_drag()
+            {
+                return true;
+            }
+        }
+        !nearby_unknown
+    }
 }
 
 #[derive(Clone)]
@@ -726,7 +788,7 @@ impl ProductPointer {
         }
         // Empty packets and blocked layers need no join. All qualified edges
         // and stationary probes in this packet share the same frozen result.
-        let blockers = OnceCell::new();
+        let ownership = OnceCell::new();
         let mut retain_frame_owner = true;
         let mut edge_at = |sample: PointerSample| {
             if matches!(
@@ -790,10 +852,9 @@ impl ProductPointer {
                     && snapshot.completed_pass == scene.completed_pass
                     && (snapshot.layer_at)(position) == Some(scene.layer)
                     && coordinates_supported
-                    && !blockers
-                        .get_or_init(|| snapshot.unowned_interactive_rects(scene))
-                        .iter()
-                        .any(|rect| rect.contains(position))
+                    && ownership
+                        .get_or_init(|| snapshot.ownership(scene))
+                        .is_clear_at(position)
             });
             Edge {
                 pointer: sample.pointer,

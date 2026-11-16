@@ -78,18 +78,28 @@ feature configuration. Each declaration contains:
 | `receiver` | Opaque descriptor supplied by the current core paint plan |
 
 These facts let the host conservatively distinguish registered docking chrome
-and explicitly declared pane content from unknown application widgets in
-`interactive_rects_last_pass()`. A host must only exclude the corresponding
-occurrence of a known interactive rectangle after checking its exact widget,
-layer, enabled state, and interaction rectangle in `prev_pass.widgets`. Each
-widget ID can remove at most one occurrence. The output's completed pass must
+and explicitly declared pane content from unknown application widgets in the
+frozen `prev_pass.widgets` registry. Each owned registration must match its exact
+widget, layer, enabled state, and interaction rectangle. Equal rectangles do not
+make distinct widget identities interchangeable. The output's completed pass must
 match the previous pass exactly; a newer unpresented pass cannot lend its facts
 to an older accepted output. Non-identity emission or input layer coordinates
 cancel the pointer stream rather than supplying raw manipulation coordinates
 to an existing gesture.
-Overlapping equal rectangles can represent different widgets. A hover-only or
-disabled declaration must not remove an unknown application interactive rectangle,
-even when their bounds are identical.
+At each input point, the official adapter checks interactive widgets from front
+to back. A direct owned widget sensing both click and drag shields unknown
+widgets behind it. Unknown widgets in front still block. Single-lane overlaps
+remain conservative because egui's nearby-widget assistance can select another
+drag-only widget behind the first. Unknown widgets within egui's interaction
+radius therefore block when no owned dual-lane direct hit shields them. The
+adapter does not choose a nearest widget or substitute framework hit geometry
+for the core receiver. The contained frame registers one combined
+click-and-drag blocker beneath its content and chrome. This preserves shielding
+without duplicating egui's full hit-test algorithm. Hover-only and disabled
+declarations cannot shield unknown interactive widgets.
+Interactive widgets on other layers retain their conservative blocking role,
+including custom foreground Uis that do not register an Area. Their interaction
+radius scales with the layer transform, matching egui's local-coordinate search.
 
 ### Child UI layout precision
 
@@ -123,8 +133,9 @@ Scroll receiver registration remains behind `native-render-support`, including
 ordinary content registered during that callback. The adapter reads its IDs
 immediately, while the child UI is still alive. No separate declaration getter
 or per-item ID cache is retained. An empty response declares nothing. An undeclared
-or rejected widget remains an unknown blocker; the adapter never walks the widget
-tree to discover content ownership.
+or rejected widget remains an unknown blocker when not shielded by a foreground
+owned widget; the adapter never walks the widget tree to discover content
+ownership.
 
 For each declared ID, `tabs::paint_pane` reads `this_pass.widgets` and accepts only
 an enabled registration on the child UI's exact layer. This includes explicitly
@@ -136,8 +147,8 @@ Each accepted fact becomes a `ProductReceiverBinding` carrying the exact
 `receiver_for_pane(pane)` descriptor from the current paint plan, not a fabricated
 or surface-wide receiver. Its `interactive` field retains the widget's actual
 interactive sense. A hover-only declaration therefore lets the native adapter
-qualify that exact frontmost identity for hover clearance, but cannot subtract an
-unknown interactive rectangle in the official adapter or change click/drag sensing.
+qualify that exact frontmost identity for hover clearance, but cannot shield an
+unknown interactive widget in the official adapter or change click/drag sensing.
 
 Declaring ordinary content permits docking hover to pass through it and allows
 activation of its containing window, without replacing the widget's ordinary
@@ -153,10 +164,10 @@ separate requirements.
 Composite content needs declarations for its actual registrations, including
 hover-only content, not just a visual container ID. In particular, an ordinary
 scroll region can contain an independent scrolling/drag response, a scrollbar,
-and child widgets; each unknown registration still blocks. The official adapter
-separately checks the top composed layer (including modal exclusion) before
-subtracting known widgets, so declaring content does not authorize a popup or
-foreground layer.
+and child widgets; each unshielded unknown registration still blocks. The official
+adapter separately checks the top composed layer (including modal exclusion)
+before checking widget ownership, so declaring content does not authorize a
+popup or foreground layer.
 `integration/egui-official-harness/tests/hover_blockers.rs` exercises these real
 composed blockers and stale-pass rejection through the public adapter, including
 the case where an earlier clear preview must not survive a blocked release.

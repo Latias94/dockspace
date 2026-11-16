@@ -51,20 +51,17 @@ pub(crate) fn paint_background(
     // create widgets. Register both egui capture lanes before the pane widgets
     // so actual foreground content can supersede the blocker while background
     // widgets remain unreachable through the floating surface.
-    for (lane, sense) in [("click", Sense::CLICK), ("drag", Sense::DRAG)] {
-        let id = context.ui.make_persistent_id((
-            context.instance_id,
-            "contained-window-blocker",
-            contained.visual_id(),
-            lane,
-        ));
-        let _ = context.interact_receiver(
-            outer,
-            id,
-            sense,
-            context.plan.receiver_for_contained_frame(contained),
-        );
-    }
+    let id = context.ui.make_persistent_id((
+        context.instance_id,
+        "contained-window-blocker",
+        contained.visual_id(),
+    ));
+    let _ = context.interact_receiver(
+        outer,
+        id,
+        Sense::click_and_drag(),
+        context.plan.receiver_for_contained_frame(contained),
+    );
 
     if !paint_omitted {
         let label = title_label(context, root);
