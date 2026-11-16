@@ -8,6 +8,8 @@ use dockspace::graph::{Axis, Node, RootRecord, SplitWeight, SurfacePresentation,
 use dockspace::ids::{ItemId, NodeId, RootId, SurfaceId};
 use dockspace::policy::DockPolicySnapshot;
 
+mod shrinkable;
+
 const ROOT: RootId = RootId::new(1);
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const ITEM_COUNT: u64 = 12;
@@ -200,6 +202,14 @@ fn select_command(
     items: &[(NodeId, ItemId)],
 ) -> (WorkspaceCommand, ModelDelta) {
     let (tabs, item) = items[rng.index(items.len())];
+    select_item_command(workspace, tabs, item)
+}
+
+fn select_item_command(
+    workspace: &Workspace,
+    tabs: NodeId,
+    item: ItemId,
+) -> (WorkspaceCommand, ModelDelta) {
     let source = workspace
         .capture_item_source(ROOT, tabs, item)
         .expect("fresh selection source must be valid");
@@ -218,9 +228,27 @@ fn reorder_command(
     let (tabs, item) = items[rng.index(items.len())];
     let current_items = tab_nodes
         .iter()
-        .find_map(|(candidate, items)| (*candidate == tabs).then_some(items.clone()))
+        .find_map(|(candidate, items)| (*candidate == tabs).then_some(items))
         .expect("selected tabs must still exist");
     let insertion_index = rng.index(current_items.len() + 1);
+    reorder_item_command(workspace, tabs, item, insertion_index)
+}
+
+fn reorder_item_command(
+    workspace: &Workspace,
+    tabs: NodeId,
+    item: ItemId,
+    insertion_index: usize,
+) -> (WorkspaceCommand, ModelDelta) {
+    let Node::Tabs {
+        items: current_items,
+        ..
+    } = workspace
+        .node(tabs)
+        .expect("selected tabs must still exist")
+    else {
+        unreachable!("selected node must be tabs");
+    };
     let from = current_items
         .iter()
         .position(|candidate| *candidate == item)
@@ -230,7 +258,7 @@ fn reorder_command(
     } else {
         insertion_index
     };
-    let mut expected_items = current_items;
+    let mut expected_items = current_items.clone();
     if from != to {
         expected_items.remove(from);
         expected_items.insert(to, item);
@@ -265,11 +293,20 @@ fn center_move_command(
         .filter(|(_, items)| !items.is_empty())
         .collect();
     let (target_tabs, _) = nonempty_targets[rng.index(nonempty_targets.len())];
+    center_item_command(workspace, source_tabs, item, *target_tabs)
+}
+
+fn center_item_command(
+    workspace: &Workspace,
+    source_tabs: NodeId,
+    item: ItemId,
+    target_tabs: NodeId,
+) -> (WorkspaceCommand, ModelDelta) {
     let source = workspace
         .capture_item_source(ROOT, source_tabs, item)
         .expect("fresh move source must be valid");
     let target = workspace
-        .capture_tab_target(ROOT, *target_tabs)
+        .capture_tab_target(ROOT, target_tabs)
         .expect("fresh center target must be valid");
     (
         WorkspaceCommand::Move {
@@ -277,7 +314,7 @@ fn center_move_command(
             target: DockTarget::Center(target),
         },
         ModelDelta::CenterMove {
-            target_tabs: *target_tabs,
+            target_tabs,
             target_root: ROOT,
             item,
         },
@@ -301,11 +338,22 @@ fn edge_move_command(
     let edge = edges[rng.index(edges.len())];
     let fraction = DockFraction::new(fractions[rng.index(fractions.len())])
         .expect("model fraction must be valid");
+    edge_item_command(workspace, source_tabs, item, *target_tabs, edge, fraction)
+}
+
+fn edge_item_command(
+    workspace: &Workspace,
+    source_tabs: NodeId,
+    item: ItemId,
+    target_tabs: NodeId,
+    edge: Edge,
+    fraction: DockFraction,
+) -> (WorkspaceCommand, ModelDelta) {
     let source = workspace
         .capture_item_source(ROOT, source_tabs, item)
         .expect("fresh edge source must be valid");
     let target = workspace
-        .capture_inner_edge_target(ROOT, *target_tabs, edge, fraction)
+        .capture_inner_edge_target(ROOT, target_tabs, edge, fraction)
         .expect("fresh edge target must be valid");
     (
         WorkspaceCommand::Move {
@@ -313,7 +361,7 @@ fn edge_move_command(
             target: DockTarget::InnerEdge(target),
         },
         ModelDelta::EdgeMove {
-            target_tabs: *target_tabs,
+            target_tabs,
             target_root: ROOT,
             item,
             edge,
@@ -334,6 +382,14 @@ fn resize_or_toggle_command(
         return open_or_select_command(workspace, open, rng, tab_nodes, items);
     }
     let (split, child_count) = split_nodes[rng.index(split_nodes.len())];
+    resize_split_command(workspace, split, child_count)
+}
+
+fn resize_split_command(
+    workspace: &Workspace,
+    split: NodeId,
+    child_count: usize,
+) -> (WorkspaceCommand, ModelDelta) {
     let source = workspace
         .capture_node_source(ROOT, split)
         .expect("fresh split source must be valid");
@@ -387,18 +443,23 @@ fn open_command(
         .filter(|(_, items)| !items.is_empty())
         .collect();
     let (target_tabs, _) = nonempty_targets[rng.index(nonempty_targets.len())];
+    open_item_command(workspace, item, *target_tabs)
+}
+
+fn open_item_command(
+    workspace: &Workspace,
+    item: ItemId,
+    target_tabs: NodeId,
+) -> (WorkspaceCommand, ModelDelta) {
     let target = workspace
-        .capture_tab_target(ROOT, *target_tabs)
+        .capture_tab_target(ROOT, target_tabs)
         .expect("fresh open target must be valid");
     (
         WorkspaceCommand::Open {
             item,
             target: DockTarget::Center(target),
         },
-        ModelDelta::Open {
-            target_tabs: *target_tabs,
-            item,
-        },
+        ModelDelta::Open { target_tabs, item },
     )
 }
 
