@@ -1663,12 +1663,34 @@ impl DockEngine {
             delivery_action_lane(region.kind()) == Some(PresentationPointerLane::Drag)
         });
         match (click, drag) {
-            (Some((click, _)), Some((drag, _))) => Err(EngineError::PointerInteractionInvariant {
-                cause,
-                detail: format!(
-                    "one press resolved to different executable click {click:?} and drag {drag:?} receivers"
-                ),
-            }),
+            (Some(click), Some(drag)) => {
+                let invariant = |detail| EngineError::PointerInteractionInvariant { cause, detail };
+                if click.1.output_ticket() != drag.1.output_ticket()
+                    || click.1.authority() != drag.1.authority()
+                {
+                    return Err(invariant(
+                        "one press resolved executable lanes against different presentations"
+                            .to_owned(),
+                    ));
+                }
+                let manifest = click.1.hit_manifest();
+                let click_region = manifest.region(click.0).ok_or_else(|| {
+                    invariant(format!("click receiver {:?} is absent from its manifest", click.0))
+                })?;
+                let drag_region = manifest.region(drag.0).ok_or_else(|| {
+                    invariant(format!("drag receiver {:?} is absent from its manifest", drag.0))
+                })?;
+                // Independent lanes can name overlapping travelling panes.
+                // Their shared presentation stack decides which control acts.
+                match click_region.stack().cmp(&drag_region.stack()) {
+                    std::cmp::Ordering::Greater => Ok(Some(click)),
+                    std::cmp::Ordering::Less => Ok(Some(drag)),
+                    std::cmp::Ordering::Equal => Err(invariant(format!(
+                        "one press resolved equally stacked executable click {:?} and drag {:?} receivers",
+                        click.0, drag.0,
+                    ))),
+                }
+            }
             (Some(delivery), None) | (None, Some(delivery)) => Ok(Some(delivery)),
             (None, None) => Self::journal_delivery_region_for_lane(
                 cause,

@@ -25,6 +25,9 @@ mod reentry;
 
 mod focus_snapshot;
 
+#[cfg(feature = "motion")]
+mod animated_overlap;
+
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const FIRST: ItemId = ItemId::new(1);
 const SECOND: ItemId = ItemId::new(2);
