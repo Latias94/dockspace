@@ -346,6 +346,12 @@ impl LocalTabSelection {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SplitterReset {
+    Equalize,
+    Preferred,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum LocalSurfaceAction {
     SelectTab {
@@ -371,6 +377,12 @@ pub(crate) enum LocalSurfaceAction {
     AdjustSplitter {
         scene: SurfaceSceneStamp,
         splitter: SplitterSceneId,
+        adjustment: ResizeAdjustment,
+    },
+    ResetSplitter {
+        scene: SurfaceSceneStamp,
+        splitter: SplitterSceneId,
+        reset: SplitterReset,
         adjustment: ResizeAdjustment,
     },
     AdjustSplitterJunction {
@@ -416,6 +428,18 @@ impl LocalSurfaceAction {
                     ..
                 },
             ) => a == b && ad == bd,
+            (
+                Self::ResetSplitter {
+                    splitter: a,
+                    reset: ar,
+                    ..
+                },
+                Self::ResetSplitter {
+                    splitter: b,
+                    reset: br,
+                    ..
+                },
+            ) => a == b && ar == br,
             (
                 Self::AdjustSplitterJunction {
                     junction: a,
@@ -466,6 +490,7 @@ impl LocalSurfaceAction {
             | Self::PresentationCommand { scene, .. }
             | Self::TabChrome { scene, .. }
             | Self::AdjustSplitter { scene, .. }
+            | Self::ResetSplitter { scene, .. }
             | Self::AdjustSplitterJunction { scene, .. }
             | Self::AdjustContainedResize { scene, .. } => Some(*scene),
             Self::CancelGesture { .. } => None,
@@ -480,6 +505,7 @@ impl LocalSurfaceAction {
             Self::PresentationCommand { .. } => "presentation-command",
             Self::TabChrome { .. } => "tab-chrome",
             Self::AdjustSplitter { .. } => "adjust-splitter",
+            Self::ResetSplitter { .. } => "reset-splitter",
             Self::AdjustSplitterJunction { .. } => "adjust-splitter-junction",
             Self::AdjustContainedResize { .. } => "adjust-contained-resize",
             Self::CancelGesture { .. } => "cancel-gesture",

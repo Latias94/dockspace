@@ -1,6 +1,7 @@
 //! Surface presentation lifecycle, authority, and retained paint state.
 
 use super::*;
+use crate::presentation::manifest::SurfaceMeasurements;
 use crate::presentation::tab_strip::PopupRoutingRevision;
 
 /// Exact authority of one independently replaceable surface presentation.
@@ -664,10 +665,18 @@ impl<'a> SurfacePaintProjection<'a> {
     }
 }
 
-/// A surface scene and the pending native content provenance of that same slot.
+#[derive(Debug, Clone, PartialEq)]
+enum SurfaceMeasurementObservation {
+    Unobserved,
+    Measured(Arc<SurfaceMeasurements>),
+    Unavailable,
+}
+
+/// A surface scene, its latest measurement observation and pending native content provenance.
 #[derive(Debug, Clone, PartialEq)]
 struct SurfaceSceneRecord {
     scene: SurfaceScene,
+    measurement_observation: SurfaceMeasurementObservation,
     native_first_live: Option<crate::engine::NativeFirstLiveProjectionStamp>,
 }
 
@@ -675,6 +684,7 @@ impl SurfaceSceneRecord {
     fn new(scene: SurfaceScene) -> Self {
         Self {
             scene,
+            measurement_observation: SurfaceMeasurementObservation::Unobserved,
             native_first_live: None,
         }
     }
@@ -702,6 +712,22 @@ pub struct SurfaceSceneSet {
 }
 
 impl SurfaceSceneSet {
+    pub(crate) fn measurements_are_current(
+        &self,
+        surface: SurfaceId,
+        measurements: &SurfaceMeasurements,
+    ) -> bool {
+        self.surfaces
+            .get(&surface)
+            .is_some_and(|record| match &record.measurement_observation {
+                SurfaceMeasurementObservation::Unobserved => true,
+                SurfaceMeasurementObservation::Measured(current) => {
+                    current.same_values(measurements)
+                }
+                SurfaceMeasurementObservation::Unavailable => false,
+            })
+    }
+
     /// A repeated pass restores derived scenes, but never reuses an allocated
     /// revision for different geometry within that same update.
     pub(crate) fn preserve_revision_frontier(&mut self, discarded: &Self) {
@@ -1121,7 +1147,7 @@ impl SurfaceSceneSet {
 
         for (surface, requirements) in manifest.surfaces() {
             let ticket = requirements.ticket();
-            let Some(current) = self.surfaces.remove(&surface) else {
+            let Some(mut current) = self.surfaces.remove(&surface) else {
                 let revision = self.next_revision(surface)?;
                 self.surfaces.insert(
                     surface,
@@ -1145,6 +1171,9 @@ impl SurfaceSceneSet {
                     && previous_ticket.policy() == ticket.policy()
                     && previous_ticket.config() == ticket.config()
             });
+            if epoch_replaced {
+                current.measurement_observation = SurfaceMeasurementObservation::Unobserved;
+            }
             let revision = self.next_revision(surface)?;
             let replacement = current.replace_scene(|current_scene| {
                 if epoch_replaced {
@@ -1257,7 +1286,12 @@ impl SurfaceSceneSet {
             let paint_program = link_surface_paint_program(&plan, &hit_manifest).map(Arc::new);
             (hit_manifest, paint_program)
         };
-        let current = current.replace_scene(|current_scene| {
+        let measurement_observation = plan
+            .layout_facts()
+            .map_or(SurfaceMeasurementObservation::Unobserved, |layout| {
+                SurfaceMeasurementObservation::Measured(Arc::clone(layout.measurements()))
+            });
+        let mut current = current.replace_scene(|current_scene| {
             let (retained_fallback, interaction_authority, confirmed_paint_fallback) =
                 match current_scene {
                     SurfaceScene::Ready(ready) => ready.into_retained_authority(),
@@ -1287,6 +1321,7 @@ impl SurfaceSceneSet {
                 interaction_authority,
             }))
         });
+        current.measurement_observation = measurement_observation;
         self.surfaces.insert(surface, current);
         self.revoke_invalid_independent_authorities();
         Ok((stamp, output_ticket))
@@ -1315,7 +1350,7 @@ impl SurfaceSceneSet {
         let current_stamp = current.scene().stamp();
         let revision = self.next_revision(surface)?;
         let stamp = SurfaceSceneStamp::new(current_stamp.requirement(), revision);
-        let current = current.replace_scene(|current_scene| {
+        let mut current = current.replace_scene(|current_scene| {
             let paint_fallback = match current_scene {
                 SurfaceScene::Ready(ready) => ready
                     .into_confirmed_paint_fallback()
@@ -1332,6 +1367,15 @@ impl SurfaceSceneSet {
                 interaction_authority: None,
             }))
         });
+        if matches!(
+            reason,
+            StaleSurfaceSceneReason::MeasurementsUnavailable(_)
+                | StaleSurfaceSceneReason::CoordinateAuthorityChanged
+                | StaleSurfaceSceneReason::CoordinateAuthorityUnavailable
+                | StaleSurfaceSceneReason::PopupGeometryUnavailable(_)
+        ) {
+            current.measurement_observation = SurfaceMeasurementObservation::Unavailable;
+        }
         self.surfaces.insert(surface, current);
         Ok(stamp)
     }
@@ -1393,8 +1437,18 @@ impl SurfaceSceneSet {
         let revision = self.next_revision(surface)?;
         self.invalidate_popup_authority_for_surface(surface);
         let stamp = SurfaceSceneStamp::new(current.scene().stamp().requirement(), revision);
-        let current = current
+        let mut current = current
             .replace_scene(|_| SurfaceScene::Bootstrap(BootstrapSurfaceScene { stamp, reason }));
+        if matches!(
+            reason,
+            BootstrapSurfaceSceneReason::MeasurementsUnavailable(_)
+                | BootstrapSurfaceSceneReason::EmptyBounds
+                | BootstrapSurfaceSceneReason::CoordinateAuthorityChanged
+                | BootstrapSurfaceSceneReason::CoordinateAuthorityUnavailable
+                | BootstrapSurfaceSceneReason::PopupGeometryUnavailable(_)
+        ) {
+            current.measurement_observation = SurfaceMeasurementObservation::Unavailable;
+        }
         self.surfaces.insert(surface, current);
         Ok(stamp)
     }

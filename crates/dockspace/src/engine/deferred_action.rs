@@ -127,6 +127,23 @@ impl DockEngine {
                     version: self.version,
                 })
             }
+            LocalSurfaceAction::ResetSplitter {
+                splitter, reset, ..
+            } => {
+                let outcome = self.reset_splitter_from_candidate(
+                    input,
+                    witness,
+                    *splitter,
+                    *reset,
+                    policy,
+                    events,
+                    interaction_events,
+                )?;
+                Ok(InputOutcome::InteractionProcessed {
+                    outcome,
+                    version: self.version,
+                })
+            }
             LocalSurfaceAction::AdjustContainedResize {
                 floating,
                 direction,
@@ -205,7 +222,11 @@ impl DockEngine {
                     .tab_strip_states
                     .popup_requirement()
             || !self.presented_layering_is_current(plan)
-            || !self.presented_transient_geometry_is_current(plan)
+            || if matches!(action, LocalSurfaceAction::ResetSplitter { .. }) {
+                !self.presented_contained_geometry_is_current(plan)
+            } else {
+                !self.presented_transient_geometry_is_current(plan)
+            }
         {
             return Err(InteractionRejection::TargetAuthorityInvalid);
         }
@@ -306,6 +327,9 @@ impl DockEngine {
                 root_is_current(splitter.root)
                     && self.deferred_resize_geometry_is_current(witness, action)
             }
+            LocalSurfaceAction::ResetSplitter { splitter, .. } => {
+                self.deferred_splitter_reset_is_current(witness, *splitter)
+            }
             LocalSurfaceAction::AdjustSplitterJunction { junction, .. } => {
                 junction
                     .splitters()
@@ -320,6 +344,34 @@ impl DockEngine {
         current
             .then_some(())
             .ok_or(InteractionRejection::TargetAuthorityInvalid)
+    }
+
+    fn deferred_splitter_reset_is_current(
+        &self,
+        witness: &crate::presentation::scene::SurfacePlanScene,
+        splitter: SplitterSceneId,
+    ) -> bool {
+        let plan = witness.plan();
+        if !self.presented_root_topology_is_current(plan, splitter.root)
+            || !plan.partition_available(splitter.root)
+            || !plan.splitter_record(splitter).is_some_and(|record| {
+                record.operable() && plan.region_is_operable(record.hit().rect(), record.layer())
+            })
+            || !plan
+                .pane_records()
+                .iter()
+                .filter(|pane| pane.id().root == splitter.root)
+                .all(|pane| {
+                    self.workspace.visible_tab_selection(pane.id().tabs) == plan.pane_selected(pane)
+                })
+        {
+            return false;
+        }
+        let Some(frozen) = plan.layout_facts() else {
+            return false;
+        };
+        self.scene()
+            .measurements_are_current(witness.stamp().surface(), frozen.measurements())
     }
 
     fn deferred_resize_geometry_is_current(

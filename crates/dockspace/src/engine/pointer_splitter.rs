@@ -618,8 +618,30 @@ impl DockEngine {
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<InteractionOutcome, EngineError> {
-        let surface = painted.stamp().surface();
-        let record = match painted.plan().splitter_record(splitter).cloned() {
+        self.adjust_splitter_from_plan(
+            input,
+            painted.plan(),
+            splitter,
+            adjustment,
+            policy,
+            events,
+            interaction_events,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn adjust_splitter_from_plan(
+        &mut self,
+        input: InputSequence,
+        plan: &PresentationPlan,
+        splitter: SplitterSceneId,
+        adjustment: ResizeAdjustment,
+        policy: &DockPolicySnapshot,
+        events: &mut Vec<WorkspaceEvent>,
+        interaction_events: &mut Vec<InteractionEvent>,
+    ) -> Result<InteractionOutcome, EngineError> {
+        let surface = plan.surface();
+        let record = match plan.splitter_record(splitter).cloned() {
             Some(record) if record.operable() => record,
             None => {
                 return Ok(InteractionOutcome::Rejected(
@@ -644,14 +666,11 @@ impl DockEngine {
             }
         };
         let axis = record.axis();
-        let groups = match self.prepare_checked_resize_axis_groups(
-            painted.plan(),
-            vec![(source, record)],
-            policy,
-        ) {
-            Ok(groups) => groups,
-            Err(rejection) => return Ok(InteractionOutcome::Rejected(rejection)),
-        };
+        let groups =
+            match self.prepare_checked_resize_axis_groups(plan, vec![(source, record)], policy) {
+                Ok(groups) => groups,
+                Err(rejection) => return Ok(InteractionOutcome::Rejected(rejection)),
+            };
         let Some(updates) = resize_axis_group_adjustment_updates(&groups, axis, adjustment) else {
             return Ok(InteractionOutcome::Rejected(
                 InteractionRejection::SplitterResizeGeometryUnavailable,
