@@ -1254,6 +1254,13 @@ pub struct SurfaceMeasurements {
 }
 
 impl SurfaceMeasurements {
+    pub(crate) fn reticket(&self, ticket: SurfaceMeasurementTicket) -> Self {
+        Self {
+            ticket,
+            ..self.clone()
+        }
+    }
+
     /// Compares every answer and key independently of its request ticket.
     ///
     /// Ticket authority is checked by the caller before using these values to

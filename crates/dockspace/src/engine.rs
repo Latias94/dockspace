@@ -45,6 +45,7 @@ mod retention;
 mod scroll_interaction;
 mod semantic_candidate;
 mod splitter_geometry;
+mod splitter_restoration;
 mod surface_contribution;
 pub(crate) mod surface_recovery;
 mod surface_runtime;
@@ -87,6 +88,7 @@ use self::contained_geometry::{
     cardinal_contained_resize_requested_rect, clamp_contained_rect, clamp_moved_contained_rect,
     contained_resize_edges, contained_transform_requested_rect, translated_contained_rect,
 };
+pub(crate) use self::input::SplitterReset;
 use self::input::TabScrollAdjustmentKind;
 #[cfg(feature = "serde")]
 pub use self::input::ValidatedWorkspaceRestore;
