@@ -1,14 +1,16 @@
-//! Lossless-enough conversion at the egui/product geometry boundary.
+//! Corner-preserving conversion at the egui/product geometry boundary.
 
-use dockspace::geometry::LogicalRect;
+use dockspace::geometry::{LogicalPoint, LogicalRect};
 use egui::{Rect, emath::GuiRounding as _, pos2};
 
 pub(crate) fn logical_rect(rect: Rect) -> Result<LogicalRect, ()> {
-    LogicalRect::new(
-        f64::from(rect.min.x),
-        f64::from(rect.min.y),
-        f64::from(rect.width()),
-        f64::from(rect.height()),
+    if !rect.is_finite() || !rect.size().is_finite() {
+        return Err(());
+    }
+    // Preserve shared corners without reconstructing them from a rounded f32 span.
+    LogicalRect::from_min_max(
+        LogicalPoint::new(f64::from(rect.min.x), f64::from(rect.min.y)).map_err(|_| ())?,
+        LogicalPoint::new(f64::from(rect.max.x), f64::from(rect.max.y)).map_err(|_| ())?,
     )
     .map_err(|_| ())
 }
@@ -52,10 +54,61 @@ pub(crate) fn accesskit_bounds(rect: Rect) -> egui::accesskit::Rect {
 
 #[cfg(test)]
 mod tests {
-    use dockspace::geometry::LogicalPoint;
     use egui::vec2;
 
     use super::*;
+
+    #[test]
+    fn logical_rect_preserves_original_corners_and_exact_egui_roundtrips() {
+        for rect in [
+            Rect::from_min_max(pos2(-16_777_216.0, -16_777_216.0), pos2(1.0, 3.0)),
+            Rect::from_min_max(pos2(0.1, -0.3), pos2(0.3, 0.1)),
+            Rect::from_min_max(
+                pos2(f32::MAX * 0.5, -f32::MAX),
+                pos2(f32::MAX, -f32::MAX * 0.5),
+            ),
+            Rect::from_min_max(pos2(0.25, 0.5), pos2(0.25, 1.5)),
+            Rect::ZERO,
+        ] {
+            let converted = logical_rect(rect).unwrap();
+            assert_eq!(
+                converted.min(),
+                LogicalPoint::new(f64::from(rect.min.x), f64::from(rect.min.y)).unwrap(),
+            );
+            assert_eq!(
+                converted.max(),
+                LogicalPoint::new(f64::from(rect.max.x), f64::from(rect.max.y)).unwrap(),
+                "converting the f32 span first must not move the far corner: {rect:?}",
+            );
+            assert_eq!(egui_rect(converted), Some(rect));
+        }
+    }
+
+    #[test]
+    fn logical_rect_preserves_adjacent_shared_edges_on_both_axes() {
+        let first = Rect::from_min_max(pos2(-16_777_216.0, -16_777_216.0), pos2(1.0, 3.0));
+        let right = Rect::from_min_max(pos2(first.max.x, first.min.y), pos2(5.0, first.max.y));
+        let below = Rect::from_min_max(pos2(first.min.x, first.max.y), pos2(first.max.x, 7.0));
+        let [first, right, below] = [first, right, below].map(|rect| logical_rect(rect).unwrap());
+        assert_eq!(first.max().x(), right.min().x());
+        assert_eq!(first.max().y(), below.min().y());
+    }
+
+    #[test]
+    fn logical_rect_rejects_nonfinite_inverted_and_f32_extent_overflow() {
+        for rect in [
+            Rect::NOTHING,
+            Rect::EVERYTHING,
+            Rect::from_min_max(pos2(f32::NAN, 0.0), pos2(1.0, 1.0)),
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, f32::NAN)),
+            Rect::from_min_max(pos2(2.0, 0.0), pos2(1.0, 1.0)),
+            Rect::from_min_max(pos2(0.0, 2.0), pos2(1.0, 1.0)),
+            Rect::from_min_max(pos2(-f32::MAX, 0.0), pos2(f32::MAX, 1.0)),
+            Rect::from_min_max(pos2(0.0, -f32::MAX), pos2(1.0, f32::MAX)),
+        ] {
+            assert_eq!(logical_rect(rect), Err(()), "{rect:?}");
+        }
+    }
 
     #[test]
     fn egui_rect_rejects_f32_endpoint_and_extent_overflow() {

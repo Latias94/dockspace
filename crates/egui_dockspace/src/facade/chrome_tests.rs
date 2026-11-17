@@ -14,6 +14,7 @@ use crate::{DockStyle, PaneResponse, PaneView};
 const SURFACE: SurfaceId = SurfaceId::new(1);
 
 mod composable;
+mod composable_receivers;
 mod contained_keyboard;
 mod group_menu;
 mod menu_keyboard;

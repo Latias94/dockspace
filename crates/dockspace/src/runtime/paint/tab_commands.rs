@@ -55,10 +55,22 @@ impl SurfacePaintPlan<'_> {
                 DockspacePresentationCommandUnavailable::Action(reason),
             )
         };
-        let surface = match self.candidate.native_main_recovery_surface(id.root) {
-            Ok(surface) => surface.unwrap_or(self.surface),
+        let recovery_surface = match self.candidate.native_main_recovery_surface(id.root) {
+            Ok(surface) => surface,
             Err(reason) => return Ok(Some(unavailable(reason))),
         };
+        if kind == Kind::DockBack
+            && recovery_surface.is_none()
+            && !matches!(
+                workspace.presentation_for_root(id.root),
+                Some(crate::graph::workspace::RootPresentationOwner::Contained { .. })
+            )
+        {
+            return Ok(Some(unavailable(
+                DockspaceActionRejection::DockBackUnavailable { root: id.root },
+            )));
+        }
+        let surface = recovery_surface.unwrap_or(self.surface);
         let action = match kind {
             Kind::Float => ProductAction::FloatTab {
                 tab: captured,

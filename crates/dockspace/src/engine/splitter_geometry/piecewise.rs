@@ -90,6 +90,7 @@ struct Sample {
     moved: BTreeSet<(RootId, NodeId)>,
 }
 
+#[derive(Debug)]
 enum SampleError {
     Limit(f64),
     Invalid,
@@ -737,20 +738,30 @@ impl FrozenTracks {
             });
             require_range(target, minimum, maximum, delta)?;
             let mut remaining = target.value - old_total;
-            let mut remaining_slope = target.slope;
-            for index in order {
+            let remaining_slope = target.slope;
+            for (position, &index) in order.iter().enumerate() {
                 let track = self.tracks[index];
-                let bounded = (track.extent + remaining).clamp(
+                let requested = track.extent + remaining;
+                let bounded = requested.clamp(
                     self.minimum(index, prefix[visible.len()], share_floor),
                     track.maximum,
                 );
-                let used = bounded - track.extent;
                 extents[index] = bounded;
-                if used == remaining {
+                // An unclipped request consumes the whole transfer. Subtracting
+                // the old extent can round differently from the request, losing
+                // its derivative or leaking a residue into a farther track.
+                // The final track can touch a hard bound after require_range
+                // admitted its rounded endpoint. Keep the derivative toward
+                // zero there, while retaining the bounded geometry. Earlier
+                // tracks must pass even a tiny real overflow to the next one.
+                if bounded == requested
+                    || (position + 1 == order.len()
+                        && (bounded - requested).abs() <= tolerance(bounded, requested))
+                {
                     track_slopes[index] = remaining_slope;
-                    remaining_slope = 0.0;
+                    break;
                 }
-                remaining -= used;
+                remaining -= bounded - track.extent;
             }
         }
         let mut starts = vec![origin; self.tracks.len() + 1];
@@ -898,3 +909,6 @@ fn rect_start(rect: LogicalRect, axis: Axis) -> f64 {
         Axis::Vertical => rect.y(),
     }
 }
+
+#[cfg(test)]
+mod tests;

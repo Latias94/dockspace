@@ -13,7 +13,7 @@ use crate::geometry::{GeometryError, LogicalRect, PaneSizing};
 use crate::graph::command::{MovePayload, TabTarget};
 use crate::graph::error::CommandError;
 use crate::graph::workspace::RootPresentationOwner;
-use crate::graph::{Node, Workspace};
+use crate::graph::{Node, TabLabel, Workspace};
 use crate::ids::{ItemId, NodeId, RootId, TabKey};
 use crate::policy::{DockPolicySnapshot, TabBarPolicy, TabBarVisibility};
 use crate::presentation::layout::{
@@ -317,7 +317,7 @@ pub(crate) fn project_future_tab_strip(
     let mut close_allowed = Vec::with_capacity(items.len());
     for item in items.iter().copied() {
         let intrinsic = candidate_tab_intrinsic(
-            original,
+            candidate,
             target_plan,
             source_layout_facts,
             target.surface(),
@@ -492,7 +492,7 @@ fn future_presentation_menu_tab_bar(
 }
 
 fn candidate_tab_intrinsic(
-    _original: &Workspace,
+    candidate: &Workspace,
     target_plan: &PresentationPlan,
     source_layout_facts: Option<&PresentationLayoutFacts>,
     candidate_surface: crate::ids::SurfaceId,
@@ -508,13 +508,28 @@ fn candidate_tab_intrinsic(
             tab,
         },
     );
-    if let Some(intrinsic) = layout_facts(target_plan, source_layout_facts)
-        .find_map(|facts| facts.tab_intrinsic(candidate_key))
+    let label = candidate
+        .tab_label(candidate_tabs, tab)
+        .ok_or(FutureLayoutProjectionError::TabIntrinsicUnavailable { key: candidate_key })?;
+    // Canonicalization can retain a layout key while changing its fallback
+    // label, for example when a Split boundary becomes Tabs. Only measurements
+    // whose own frozen descriptor still matches can follow that identity.
+    let compatible_facts = || {
+        layout_facts(target_plan, source_layout_facts).filter(move |facts| match tab.item() {
+            Some(item) => label == TabLabel::Item(item),
+            None => tab.layout().is_some_and(|node| {
+                facts
+                    .roots()
+                    .any(|root| root.node_label(node) == Some(label))
+            }),
+        })
+    };
+    if let Some(intrinsic) = compatible_facts().find_map(|facts| facts.tab_intrinsic(candidate_key))
     {
         return Ok(intrinsic);
     }
 
-    layout_facts(target_plan, source_layout_facts)
+    compatible_facts()
         .find_map(|facts| facts.tab_intrinsic_for_tab(tab))
         .ok_or(FutureLayoutProjectionError::TabIntrinsicUnavailable { key: candidate_key })
 }

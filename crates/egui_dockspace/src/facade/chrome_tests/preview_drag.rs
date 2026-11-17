@@ -3,12 +3,16 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
+use egui::accesskit::Orientation;
+
 use super::*;
 use crate::{
     DockEdge, DockspaceAxis, DockspaceDropAction, DockspaceDropDirection, DockspaceDropEligibility,
     DockspaceDropTargetScope, DockspaceGridShape, DockspaceGuideScope, DockspaceTabView, DropGuide,
     DropPreview, NodeKey, Tab, TabKey, TabVisuals,
 };
+
+mod random_sequences;
 
 const ROOT: RootId = RootId::new(1);
 const A: ItemId = ItemId::new(1);
@@ -23,7 +27,11 @@ const ITEMS: [ItemId; 7] = [A, B, C, D, E, F, G];
 #[derive(Default)]
 struct GridPanes {
     bodies: BTreeMap<ItemId, Rect>,
+    body_layers: BTreeMap<ItemId, egui::LayerId>,
+    editors: BTreeMap<ItemId, (egui::Id, Rect, egui::LayerId)>,
+    body_calls: Vec<ItemId>,
     tabs: BTreeMap<TabKey, Rect>,
+    tab_controls: BTreeMap<TabKey, TabControl>,
     guides: Vec<DropGuide>,
     preview: Option<DropPreview>,
     text: String,
@@ -48,16 +56,35 @@ impl PaneView for GridPanes {
 
     fn ui(&mut self, item: ItemId, ui: &mut Ui) -> PaneResponse {
         self.bodies.insert(item, ui.available_rect_before_wrap());
+        self.body_layers.insert(item, ui.layer_id());
+        self.body_calls.push(item);
         let response = ui.add(
             egui::TextEdit::multiline(&mut self.text)
                 .id(egui::Id::unique(("shared-grid-preview-editor", item)))
                 .desired_width(f32::INFINITY),
+        );
+        self.editors.insert(
+            item,
+            (
+                response.id,
+                response.interact_rect.intersect(ui.clip_rect()),
+                response.layer_id,
+            ),
         );
         PaneResponse::from(&response)
     }
 
     fn tab_ui(&mut self, ui: &mut Ui, tab: &Tab<'_>) -> TabVisuals {
         self.tabs.insert(tab.key, tab.visible_rect);
+        self.tab_controls.insert(
+            tab.key,
+            TabControl {
+                id: tab.response.id,
+                layer: tab.response.layer_id,
+                rect: tab.rect,
+                drag: tab.response.interact_rect.intersect(tab.visible_rect),
+            },
+        );
         tab.paint(ui)
     }
 
@@ -72,6 +99,24 @@ impl PaneView for GridPanes {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct TabControl {
+    id: egui::Id,
+    layer: egui::LayerId,
+    rect: Rect,
+    drag: Rect,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SplitterControl {
+    id: NodeId,
+    rect: Rect,
+    orientation: Orientation,
+    value: f64,
+    minimum: f64,
+    maximum: f64,
+}
+
 struct GridHarness {
     context: Context,
     dockspace: Dockspace,
@@ -82,6 +127,7 @@ struct GridHarness {
     tools: TabKey,
     tools_node: NodeKey,
     tool_children: [NodeKey; 2],
+    splitters: Vec<SplitterControl>,
 }
 
 impl GridHarness {
@@ -145,6 +191,7 @@ impl GridHarness {
             tools,
             tools_node,
             tool_children,
+            splitters: Vec::new(),
         };
         harness.settle();
         harness.assert_active(&[A, B, D, E]);
@@ -152,9 +199,17 @@ impl GridHarness {
     }
 
     fn run(&mut self, events: Vec<Event>) -> FullOutput {
+        self.run_at(f64::from(self.frame + 1) * 0.1, events)
+    }
+
+    fn run_at(&mut self, time: f64, events: Vec<Event>) -> FullOutput {
         self.frame += 1;
         self.panes.bodies.clear();
+        self.panes.body_layers.clear();
+        self.panes.editors.clear();
+        self.panes.body_calls.clear();
         self.panes.tabs.clear();
+        self.panes.tab_controls.clear();
         self.panes.guides.clear();
         self.panes.preview = None;
         let (output, _) = self
@@ -163,7 +218,7 @@ impl GridHarness {
                 &self.context,
                 RawInput {
                     screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1100.0, 760.0))),
-                    time: Some(f64::from(self.frame) * 0.1),
+                    time: Some(time),
                     events,
                     ..Default::default()
                 },
@@ -173,6 +228,30 @@ impl GridHarness {
             .unwrap_or_else(|error| panic!("shared_grid pointer frame {}: {error}", self.frame));
         let (mut output, receipt) = output.into_parts();
         receipt.report(SurfacePresentationResult::Presented);
+        self.splitters = nodes(&output)
+            .iter()
+            .filter(|(_, node)| {
+                node.role() == Role::Splitter
+                    && node.label() == Some("Resize panes")
+                    && !node.is_disabled()
+            })
+            .filter_map(|(id, node)| {
+                let bounds = node.bounds()?;
+                #[allow(clippy::cast_possible_truncation)]
+                let rect = Rect::from_min_max(
+                    egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
+                    egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
+                );
+                Some(SplitterControl {
+                    id: *id,
+                    rect,
+                    orientation: node.orientation()?,
+                    value: node.numeric_value()?,
+                    minimum: node.min_numeric_value()?,
+                    maximum: node.max_numeric_value()?,
+                })
+            })
+            .collect();
         output.textures_delta.clear();
         output
     }
@@ -183,8 +262,15 @@ impl GridHarness {
     }
 
     fn begin_drag(&mut self, key: TabKey) {
-        let source = self.panes.tabs[&key].center();
+        let control = self.panes.tab_controls[&key];
+        let source = control.drag.center();
         self.run(vec![Event::PointerMoved(source)]);
+        assert_eq!(
+            self.context
+                .viewport(|viewport| viewport.hits.drag.map(|hit| hit.id)),
+            Some(control.id),
+            "the tab's actual drag receiver must be exposed: {key:?}"
+        );
         self.run(vec![button(source, true)]);
         self.run(vec![Event::PointerMoved(source + vec2(20.0, 8.0))]);
         assert!(self.dockspace.has_active_gesture(), "dragging {key:?}");
@@ -280,7 +366,7 @@ impl GridHarness {
     }
 
     fn click_tab(&mut self, key: TabKey) {
-        let point = self.panes.tabs[&key].center();
+        let point = self.panes.tab_controls[&key].drag.center();
         self.run(vec![Event::PointerMoved(point)]);
         self.run(vec![button(point, true)]);
         self.run(vec![button(point, false)]);
@@ -464,6 +550,36 @@ fn shared_grid_layout_tab_reorders_at_a_same_parent_gap_without_unpacking_its_pa
     harness.assert_active(&[A, B, D, E]);
     harness.click_tab(harness.tools);
     harness.assert_active(&[A, B, D, F, G]);
+}
+
+#[test]
+fn shared_grid_layout_tab_gap_feedback_excludes_its_own_subtree_at_the_existing_position() {
+    let mut harness = GridHarness::new();
+    harness.begin_drag(harness.tools);
+    let preceding = harness.panes.tab_controls[&E.into()];
+    let point = egui::pos2(preceding.rect.right() - 1.0, preceding.drag.center().y);
+    harness.run(vec![Event::PointerMoved(point)]);
+    harness.run(vec![Event::PointerMoved(point)]);
+    harness.assert_preview(
+        point,
+        DockspaceDropAction::InsertTab {
+            index: 1,
+            previous: Some(E.into()),
+            next: None,
+        },
+        &[E.into(), harness.tools],
+        Some(harness.tools),
+        &[harness.tools],
+    );
+    harness.release(point);
+    harness.assert_grid(harness.cells);
+    harness.assert_tabs(harness.cells[3], &[E.into(), harness.tools], harness.tools);
+    harness.assert_active(&[A, B, D, F, G]);
+    harness.click_tab(E.into());
+    harness.assert_active(&[A, B, D, E]);
+    harness.click_tab(harness.tools);
+    harness.assert_active(&[A, B, D, F, G]);
+    harness.assert_grid(harness.cells);
 }
 
 #[test]

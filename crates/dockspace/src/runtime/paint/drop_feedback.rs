@@ -156,9 +156,10 @@ pub(super) fn resolve(
             let excludes = |item: TabKey| match payload {
                 Some(MovePayload::Item(source)) => item.item() == Some(source.item()),
                 Some(MovePayload::Tabs(source) | MovePayload::Subtree(source)) => {
-                    // Successful tab-gap resolution rejects a target inside a split
-                    // payload. Only a same-leaf group can overlap its destination.
-                    source.root() == root && source.node() == tabs
+                    // A composed payload can also be one direct Layout tab
+                    // in this destination's roster, including an in-place reorder.
+                    source.root() == root
+                        && (source.node() == tabs || item.layout() == Some(source.node()))
                 }
                 None => false,
             };

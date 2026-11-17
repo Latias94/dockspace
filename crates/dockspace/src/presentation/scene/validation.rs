@@ -2160,8 +2160,7 @@ fn validate_grid_splitter(
     let before = tracks.tracks.get(id.index).ok_or_else(invalid)?;
     let after = tracks.tracks.get(id.index + 1).ok_or_else(invalid)?;
     let proof = record.grid().ok_or_else(invalid)?;
-    let clip = root.content_bounds();
-    let clip_rect = |rect: LogicalRect| {
+    let clip_rect = |rect: LogicalRect, clip: LogicalRect| {
         let x = rect.x().max(clip.x()).min(clip.max().x());
         let y = rect.y().max(clip.y()).min(clip.max().y());
         LogicalRect::from_min_max(
@@ -2174,6 +2173,12 @@ fn validate_grid_splitter(
         )
         .map_err(|_| invalid())
     };
+    // Boundary records use their Grid's local frame clipped to the root,
+    // including overflow and rounding at the final track's far edge.
+    let clip = clip_rect(
+        root.projection().nodes.get(&node).ok_or_else(invalid)?.rect,
+        root.content_bounds(),
+    )?;
     let gap = before.following_gap.ok_or_else(invalid)?;
     let extents_match = record
         .child_extents()
@@ -2200,9 +2205,9 @@ fn validate_grid_splitter(
         || !splitter_resize_arrays_are_valid(record, tracks.tracks.len())
         || !extents_match
         || record.weights() != tracks.weights.as_slice()
-        || record.draw_bounds() != clip_rect(gap)?
-        || record.before_bounds() != clip_rect(before.bounds)?
-        || record.after_bounds() != clip_rect(after.bounds)?
+        || record.draw_bounds() != clip_rect(gap, clip)?
+        || record.before_bounds() != clip_rect(before.bounds, clip)?
+        || record.after_bounds() != clip_rect(after.bounds, clip)?
         || record.before_minimum_extent() != before.minimum
         || record.before_maximum_extent() != before.maximum
         || record.after_minimum_extent() != after.minimum

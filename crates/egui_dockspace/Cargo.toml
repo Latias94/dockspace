@@ -51,6 +51,7 @@ web-sys = { version = "0.3", optional = true, features = ["HtmlCanvasElement", "
 dockspace = { workspace = true, default-features = false }
 dockspace_host_conformance = { path = "../dockspace_host_conformance" }
 egui = { workspace = true, features = ["default_fonts"] }
+proptest.workspace = true
 tempfile = "3.23.0"
 
 [[example]]

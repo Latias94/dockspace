@@ -39,6 +39,8 @@ const MOVED: ItemId = ItemId::new(1);
 mod allocation;
 mod candidate_scope;
 mod composable;
+mod geometry_oracle;
+mod label_rebinding;
 mod sizing;
 mod visibility;
 

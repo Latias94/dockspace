@@ -330,6 +330,32 @@ Use different tools for different failure seams:
   permits a skip. Proptest shrinks stable logical item selectors without
   retargeting them. Constructive cases require legal center moves to succeed,
   even when the remaining sequence would be entirely inapplicable.
+- The nested [lifecycle model](../crates/dockspace/src/behavior_tests/composable_model/lifecycle.rs)
+  independently predicts visible selection and focus after hide/show, close,
+  veto, deferred approval and abandoned candidates. Every sequence also exhausts
+  the last nested descendant, then exercises fresh legal input. Its printed
+  action list must be replayed with that fixed setup and ending; the generated
+  prefix alone is not the complete regression.
+- The generated [preview geometry cases](../crates/dockspace/src/presentation/compiler/future_layout/tests/geometry_oracle.rs)
+  vary nested Split/Grid sources, bare or tabbed destinations, inactive content
+  and empty central anchors. Compare previews with a separately committed,
+  freshly measured layout, and retain independent Fixed Grid partition checks.
+  Equal item sets do not imply equal geometric scope: an ancestor can also own
+  an unrelated empty central container.
+- The egui `preview_drag` properties shrink generated real-widget action
+  sequences and print their resolved targets. Establish source availability
+  from the completed view and actual hit graph before pressing. After acquiring
+  the source, inspect visible guide overlays before selecting a gap point;
+  exact guide buttons have priority where they overlap. A rejected eligible
+  action must fail rather than become a skip. Check the committed gap order,
+  center membership or edge direction, exact pane ownership, cancellation
+  rollback and a subsequent real click. These local egui events do not qualify
+  operating-system capture or native window delivery.
+- Numeric regressions preserve shared corners across the `f32` adapter boundary
+  and exercise resize capacity contacts in `f64`. Distinguish a rounding residue
+  from real outward overflow, retain hard size bounds, and check that consecutive
+  resizes still expose an operable range. Solver contact tolerances do not relax
+  receiver or scene provenance checks.
 - The workbench drives real widgets and reports its full input trace. This is a
   diagnostic trace, not a version-independent recording format or an automatic
   UI shrinker. Reduce a discovered failure to a named regression at the narrowest
@@ -371,6 +397,17 @@ cargo nextest run --manifest-path integration/dockspace-host-harness/Cargo.toml 
 cargo nextest run --manifest-path integration/dockspace-host-harness/Cargo.toml --test shared_local_scenario --features serde --locked --test-threads=1
 cargo nextest run --manifest-path integration/egui-product-harness/Cargo.toml --test product --locked --test-threads=1 -E 'test(shared_local_interaction_scenario) | test(shared_l03_complete_magnetic_docking_matrix)'
 python3 scripts/check_core_dependencies.py
+```
+
+For a focused composable-layout exploration, run these separately. Set
+`PROPTEST_RNG_SEED` to reproduce the generator on the same source revision and
+`PROPTEST_CASES` to increase exploration. Keep the printed shrunk actions and
+resolved trace when promoting a failure to a named regression; a seed alone
+does not survive changes to the action grammar.
+
+```console
+cargo nextest run -p dockspace --all-features --locked --test-threads=2 -E 'test(composable_model::lifecycle::) | test(future_layout::tests::geometry_oracle::)'
+cargo nextest run -p egui_dockspace --lib --all-features --locked --test-threads=2 -E 'test(preview_drag::)'
 ```
 
 The dependency check covers core normal/build dependencies across features and
