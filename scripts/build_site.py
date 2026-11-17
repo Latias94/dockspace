@@ -52,6 +52,12 @@ def main() -> None:
         "wasm-bindgen", str(wasm), "--target", "web", "--out-name", "egui_web_demo",
         "--out-dir", str(destination / "demo/egui/pkg"),
     ], cwd=ROOT, check=True)
+    wasm_bytes = (destination / "demo/egui/pkg/egui_web_demo_bg.wasm").stat().st_size
+    demo_page = destination / "demo/egui/index.html"
+    demo_page.write_text(demo_page.read_text(encoding="utf-8").replace(
+        'name="dockspace-wasm-bytes" content=""',
+        f'name="dockspace-wasm-bytes" content="{wasm_bytes}"',
+    ), encoding="utf-8")
     print(f"Site built: {destination}")
     print("Preview: python3 -m http.server 8080 --directory target/site")
 

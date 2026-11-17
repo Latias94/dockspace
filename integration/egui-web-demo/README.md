@@ -14,6 +14,11 @@ falls back to WebGL2. Application panes and toolbar code are shared directly
 with the desktop example. The demo observes live `prefers-reduced-motion`
 changes; manual toolbar choices persist until another system preference change.
 
+Startup shows Wasm download progress, followed by compilation and graphics
+initialization. The byte total comes from the built Wasm, so compressed transfers
+still report accurate progress. Loading stays visible until the first presented
+frame; slow starts and failures offer a retry that reloads a fresh session.
+
 ## Build and preview
 
 From the repository root, with Rust 1.95+, Python 3.11+, and the CLI version
@@ -48,7 +53,8 @@ Tests run one Chromium worker with real mouse and keyboard input, against the
 generated site under a project-path prefix. They cover merges, floating-group
 retirement, splitters, focus cancellation and recovery, retained edits,
 tab-style and theme changes, intermediate and disabled motion, live
-reduced-motion changes, initialization failure and native device scale two.
+reduced-motion changes, streamed download progress, startup stages, retry after
+initialization failure and native device scale two.
 `?test=1` enables read-only geometry and state diagnostics emitted after exact
 renderer presentation; it adds no input or layout mutation endpoint. Ordinary
 demo loads omit those diagnostics.
