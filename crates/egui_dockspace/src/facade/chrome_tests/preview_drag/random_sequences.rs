@@ -665,7 +665,6 @@ impl GridHarness {
             return;
         }
         self.run(vec![Event::PointerMoved(*point)]);
-        self.run(vec![Event::PointerMoved(*point)]);
         let preview = self
             .panes
             .preview
@@ -685,8 +684,14 @@ impl GridHarness {
             preview.tabs.iter().map(|tab| tab.key).collect::<Vec<_>>(),
             expected
         );
-        if self.finish_random_drag(source_point, *point, finish, &before) {
+        if matches!(finish, Finish::Release) {
+            // Exact insertion uses the current strip before an edge-scroll deadline can move it.
+            let time = self.context.input(|input| input.time);
+            self.release_at(time, *point);
+            self.assert_random_invariants();
             self.assert_tabs(destination.owner, &expected, source.key);
+        } else {
+            self.finish_random_drag(source_point, *point, finish, &before);
         }
     }
 
@@ -1112,6 +1117,176 @@ fn nested_shared_grid_tail_gap_after_repeated_inner_moves_uses_the_current_strip
     harness.assert_random_invariants();
 }
 
+fn start_nested_overflow_gap_drag() -> (GridHarness, NodeKey, Pos2) {
+    let mut harness = GridHarness::new();
+    let mut trace = Vec::new();
+    harness.click_tab(harness.tools);
+    let moves = [
+        (false, 39, 20, DockspaceDropDirection::Left, B.into()),
+        (true, 173, 49, DockspaceDropDirection::Left, harness.tools),
+        (true, 19, 229, DockspaceDropDirection::Center, C.into()),
+    ];
+    for (step, (prefer_layout, index, target, direction, expected)) in moves.into_iter().enumerate()
+    {
+        let source = harness
+            .pick_tab(
+                TabSelector {
+                    prefer_layout,
+                    index,
+                },
+                true,
+            )
+            .unwrap();
+        assert_eq!(source.key, expected);
+        harness.random_guide(&source, target, direction, Finish::Release, &mut trace);
+        harness.assert_random_invariants();
+        harness.random_click(
+            TabSelector {
+                prefer_layout: step % 2 == 1,
+                index: 0,
+            },
+            &mut trace,
+        );
+        harness.assert_random_invariants();
+    }
+    let source = harness
+        .pick_tab(
+            TabSelector {
+                prefer_layout: false,
+                index: 203,
+            },
+            true,
+        )
+        .unwrap();
+    assert_eq!(source.key, E.into());
+    let destination = harness.dockspace.view().item(C).unwrap().tabs().unwrap();
+    assert_eq!(destination.tabs(), &[B.into(), C.into()]);
+    assert_eq!(destination.selected(), Some(C.into()));
+    let owner = destination.key();
+    let control = harness.panes.tab_controls[&C.into()];
+    let point = tab_gap_point(control, false).unwrap();
+    assert_eq!(
+        harness.pointer_hits(point),
+        (Some(control.id), Some(control.id)),
+        "the destination tab must be the exposed receiver before the source press",
+    );
+    harness.begin_drag(E.into());
+    assert!(harness.panes.tab_controls[&C.into()].drag.contains(point));
+    assert!(point.x < harness.panes.tab_controls[&C.into()].rect.center().x);
+    assert!(
+        harness
+            .panes
+            .guides
+            .iter()
+            .all(|guide| !guide_hit_bounds(guide, &harness.dockspace.style).contains(point))
+    );
+    (harness, owner, point)
+}
+
+#[test]
+fn shared_grid_gap_before_a_selected_tab_commits_before_the_edge_scroll_deadline() {
+    let (mut harness, owner, point) = start_nested_overflow_gap_drag();
+    harness.run(vec![Event::PointerMoved(point)]);
+    harness.assert_preview(
+        point,
+        DockspaceDropAction::InsertTab {
+            index: 1,
+            previous: Some(B.into()),
+            next: Some(C.into()),
+        },
+        &[B.into(), E.into(), C.into()],
+        Some(E.into()),
+        &[E.into()],
+    );
+    let time = harness.context.input(|input| input.time);
+    let deadline = harness
+        .dockspace
+        .session
+        .pointer_continuation()
+        .expect("the insertion point also starts backward edge scrolling")
+        .deadline()
+        .as_secs_f64();
+    assert!(time < deadline);
+    harness.release_at(time, point);
+    harness.assert_tabs(owner, &[B.into(), E.into(), C.into()], E.into());
+    harness.assert_random_invariants();
+    harness.click_tab(E.into());
+    harness.assert_random_invariants();
+}
+
+#[test]
+fn shared_grid_edge_scroll_revokes_an_old_gap_and_accepts_fresh_presented_geometry() {
+    let (mut harness, owner, point) = start_nested_overflow_gap_drag();
+    let before = harness.layout_signature();
+    let version = harness.dockspace.version();
+    harness.run(vec![Event::PointerMoved(point)]);
+    harness.assert_preview(
+        point,
+        DockspaceDropAction::InsertTab {
+            index: 1,
+            previous: Some(B.into()),
+            next: Some(C.into()),
+        },
+        &[B.into(), E.into(), C.into()],
+        Some(E.into()),
+        &[E.into()],
+    );
+    let deadline = harness
+        .dockspace
+        .session
+        .pointer_continuation()
+        .expect("the exposed C gap also starts backward edge scrolling")
+        .deadline()
+        .as_secs_f64();
+    harness.run_at(deadline + 0.001, Vec::new());
+    assert!(harness.dockspace.has_active_gesture());
+    assert!(harness.panes.preview.is_none());
+    assert!(!harness.panes.tab_controls.contains_key(&C.into()));
+    assert!(harness.panes.tab_controls.contains_key(&B.into()));
+    assert_eq!(harness.layout_signature(), before);
+    assert_eq!(harness.dockspace.version(), version);
+    harness.assert_tabs(owner, &[B.into(), C.into()], C.into());
+
+    // Admit the newly Presented strip at the same time, then use only its exposed gap.
+    let time = harness.context.input(|input| input.time);
+    harness.run_at(time, Vec::new());
+    let current = harness.panes.tab_controls[&B.into()];
+    // The clipped tab's left edge lies inside the adjacent splitter's hit slop.
+    let leading_half = Rect::from_min_max(
+        current.rect.min,
+        egui::pos2(current.rect.center().x, current.rect.bottom()),
+    );
+    let current_gap = leading_half.intersect(current.drag).center();
+    assert!(
+        harness
+            .panes
+            .guides
+            .iter()
+            .all(|guide| !guide_hit_bounds(guide, &harness.dockspace.style).contains(current_gap))
+    );
+    assert_eq!(
+        harness.pointer_hits(current_gap),
+        (Some(current.id), Some(current.id)),
+        "the replacement gap belongs to B in the newly admitted strip",
+    );
+    harness.assert_preview(
+        current_gap,
+        DockspaceDropAction::InsertTab {
+            index: 0,
+            previous: None,
+            next: Some(B.into()),
+        },
+        &[E.into(), B.into(), C.into()],
+        Some(E.into()),
+        &[E.into()],
+    );
+    harness.release_at(time, current_gap);
+    harness.assert_tabs(owner, &[E.into(), B.into(), C.into()], E.into());
+    harness.assert_random_invariants();
+    harness.click_tab(E.into());
+    harness.assert_random_invariants();
+}
+
 #[test]
 fn shared_grid_outer_guide_overrides_an_overlapping_gap_and_escape_preserves_the_layout() {
     let mut harness = GridHarness::new();
@@ -1251,11 +1426,39 @@ proptest! {
 
     #[test]
     fn shared_grid_random_pointer_sequences_preserve_ownership_and_recover(
+        geometry in 0u8..4,
         actions in proptest::collection::vec(random_action(), 1..17),
     ) {
-        let mut trace = Vec::new();
+        let mut trace = vec![format!("initial geometry={geometry}")];
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut harness = GridHarness::new();
+            let physical_size = vec2(1100.0, 760.0);
+            let geometry_name = match geometry {
+                0 => "default",
+                1 => {
+                    harness.native_pixels_per_point = Some(1.25);
+                    harness.screen_rect = Rect::from_min_size(Pos2::ZERO, physical_size / 1.25);
+                    "native DPI 1.25"
+                }
+                2 => {
+                    harness.context.set_zoom_factor(1.5);
+                    harness.screen_rect = Rect::from_min_size(Pos2::ZERO, physical_size / 1.5);
+                    "UI zoom 1.5"
+                }
+                3 => {
+                    harness.screen_rect = Rect::from_min_size(Pos2::ZERO, vec2(880.0, 643.5));
+                    "narrow window with fractional height"
+                }
+                _ => unreachable!("the generated initial geometry is in 0..4"),
+            };
+            harness.settle();
+            trace.push(format!(
+                "geometry {geometry}: {geometry_name}; viewport={:?}, pixels_per_point={}, zoom={}",
+                harness.context.content_rect(),
+                harness.context.pixels_per_point(),
+                harness.context.zoom_factor(),
+            ));
+            harness.assert_random_invariants();
             for (step, action) in actions.iter().copied().enumerate() {
                 trace.push(format!("step {step}: {action:?}"));
                 match action {

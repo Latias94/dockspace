@@ -355,7 +355,17 @@ Use different tools for different failure seams:
   and exercise resize capacity contacts in `f64`. Distinguish a rounding residue
   from real outward overflow, retain hard size bounds, and check that consecutive
   resizes still expose an operable range. Solver contact tolerances do not relax
-  receiver or scene provenance checks.
+  receiver or scene provenance checks. Translate the same layout to large
+  positive and negative origins and compare its resize capacity and pane extents.
+  Zero displacement must preserve the original weights, including in nested
+  capped layouts whose track lengths and absolute rectangle spans round differently.
+- Generated egui journeys start at multiple DPI, zoom and viewport sizes. Named
+  Grid geometry-change cases cancel active docking or resize during a scale or
+  width change, reject the old coordinate's release, then require fresh clicks,
+  resize and docking to work. Restoring the viewport must preserve user track shares.
+- Exact tab insertion releases before the edge-scroll deadline. A separate timed
+  case crosses that deadline, requires the old preview to be revoked, then uses
+  the newly Presented strip and its actual hit winner to choose the next gap.
 - The workbench drives real widgets and reports its full input trace. This is a
   diagnostic trace, not a version-independent recording format or an automatic
   UI shrinker. Reduce a discovered failure to a named regression at the narrowest

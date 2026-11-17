@@ -12,6 +12,7 @@ use crate::{
     DropPreview, NodeKey, Tab, TabKey, TabVisuals,
 };
 
+mod geometry_changes;
 mod random_sequences;
 
 const ROOT: RootId = RootId::new(1);
@@ -128,6 +129,8 @@ struct GridHarness {
     tools_node: NodeKey,
     tool_children: [NodeKey; 2],
     splitters: Vec<SplitterControl>,
+    screen_rect: Rect,
+    native_pixels_per_point: Option<f32>,
 }
 
 impl GridHarness {
@@ -192,6 +195,8 @@ impl GridHarness {
             tools_node,
             tool_children,
             splitters: Vec::new(),
+            screen_rect: Rect::from_min_size(Pos2::ZERO, vec2(1100.0, 760.0)),
+            native_pixels_per_point: None,
         };
         harness.settle();
         harness.assert_active(&[A, B, D, E]);
@@ -212,19 +217,21 @@ impl GridHarness {
         self.panes.tab_controls.clear();
         self.panes.guides.clear();
         self.panes.preview = None;
+        let mut raw = RawInput {
+            screen_rect: Some(self.screen_rect),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        if let Some(scale) = self.native_pixels_per_point {
+            raw.viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .native_pixels_per_point = Some(scale);
+        }
         let (output, _) = self
             .dockspace
-            .run_single_surface(
-                &self.context,
-                RawInput {
-                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1100.0, 760.0))),
-                    time: Some(time),
-                    events,
-                    ..Default::default()
-                },
-                SURFACE,
-                &mut self.panes,
-            )
+            .run_single_surface(&self.context, raw, SURFACE, &mut self.panes)
             .unwrap_or_else(|error| panic!("shared_grid pointer frame {}: {error}", self.frame));
         let (mut output, receipt) = output.into_parts();
         receipt.report(SurfacePresentationResult::Presented);
@@ -359,7 +366,11 @@ impl GridHarness {
     }
 
     fn release(&mut self, point: Pos2) {
-        self.run(vec![button(point, false)]);
+        self.release_at(f64::from(self.frame + 1) * 0.1, point);
+    }
+
+    fn release_at(&mut self, time: f64, point: Pos2) {
+        self.run_at(time, vec![button(point, false)]);
         self.settle();
         assert!(!self.dockspace.has_active_gesture());
         assert!(self.panes.preview.is_none());
