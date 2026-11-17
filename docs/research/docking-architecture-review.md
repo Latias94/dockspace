@@ -221,6 +221,88 @@ capture/delivery authority. Existing X11/macOS qualification covers finite
 scenarios and configurations only. Logical rootless surfaces also do not imply
 that the egui native adapter supports running without its root OS viewport.
 
+## egui_tiles comparison: what an application user notices
+
+Follow-up inspected on 2026-11-17 against egui_tiles
+`a319ff968b35c7bfaafff662669df3f99ba14499`. This is a source-based capability
+comparison, not a usability study or a performance measurement. Applications
+choose which operations to expose, so a core container does not by itself
+guarantee a discoverable UI control.
+
+Both libraries support N-ary horizontal and vertical splits. Ordinary side-by-side
+editor panels do not require a different tree model. Tab colors, corner radii,
+spacing, drag handles and the quality of docking feedback also need to be judged
+as presentation choices, rather than consequences of binary versus N-ary splits.
+
+| User task | egui_tiles experience enabled by its model | Current Dockspace experience | Product tradeoff |
+| --- | --- | --- | --- |
+| Compare many similar charts or camera feeds | A Grid shares row heights and column widths. Dragging a column boundary adjusts that column across rows. Auto layout can change the column count with the available rectangle. | Nested splits can form a grid-shaped arrangement, but there is no Grid declaration with shared tracks or automatic column reflow. Splitter junctions do not supply that missing container. | egui_tiles is a closer fit for dense, adaptive dashboards. Fixed columns avoid the spatial rearrangement that automatic reflow can cause. |
+| Enlarge one pane past its neighbor's minimum | Linear and Grid resize can consume spare shares from successively farther siblings on the shrinking side. | The frozen touching frontier clamps at its first limiting constraint. In a simple `[A, B, C]` row, moving A/B does not then start taking space from C. | Pushing gives a dashboard pane more room in one gesture; stopping preserves unrelated tool positions. This is a resize-policy difference, not a necessary consequence of either tree model. |
+| Switch between two complete analysis arrangements | A tab can contain a split or grid subtree, so switching tabs can replace several coordinated panes at once. The tile API can move that subtree as one object. | A core tab contains an `ItemId`, not a subtree. Moving a whole root to an edge can retain its split arrangement; merging a split root into a tabs leaf is rejected instead of nesting or flattening it. | egui_tiles is more expressive for a tab meaning an entire workspace. Nested tabs also add hierarchy and can make the target level harder to understand. |
+| Build an IDE with individually dockable tools | Tabs and splits provide the usual single-host arrangements. | Tabs and splits provide the same basic arrangement, plus contained floating groups and managed native-window contracts through a suitable host. | Dockspace is the closer fit when users must place an Inspector on another display. Native qualification remains platform-specific; browser support stays local/contained. |
+| Keep an Inspector capped while a document receives extra space | The inspected `Behavior` exposes a general `min_size` floor. It does not declare the same per-selected-pane min/max/fixed/preferred contract. Applications may constrain their content internally. | Measured `PaneSizing` bounds the actual pane frame; explicit preference restoration preserves ordinary user-resized weights between requests. | Dockspace can express more specific tool sizing. Caps may intentionally leave background, and the current linear resize frontier disables unsupported capped contact changes. |
+| Prompt before closing unsaved work | `is_tab_closable` and `on_tab_close` let the application accept or veto closing. A richer asynchronous workflow can be built by the application. | The shared close plan supports veto, deferred decisions and atomic group approval without removing partially approved members. | This matters for editors and resource-owning tools; it adds little visible benefit to disposable monitoring charts. |
+
+For example, an application may offer top-level tabs named **Experiment A** and
+**Experiment B**, each containing a camera, a map and a plot. egui_tiles can
+represent those two arrangements within its tree. In Dockspace an application
+can put its own composite UI inside an item, or coordinate separate sessions,
+but the inner panes then do not automatically participate as native members of
+the same outer docking, focus, persistence and close scope. That workaround is
+not equivalent to first-class subtree tabs.
+
+Grid also changes the interaction model beyond the initial screenshot. Consider
+six cameras in a 3-by-2 arrangement: changing a Grid column width keeps both rows
+aligned, and Auto can choose another column count when the window becomes tall
+and narrow. Independent split rows require additional application coordination
+to enforce those relationships. Conversely, stable tool locations in an editor
+can be easier to follow when resizing preserves the chosen split arrangement.
+Neither behavior is universally preferable.
+
+Resize propagation deserves its own comparison. In a row `[A | B | C]`, the
+egui_tiles Linear implementation can enlarge A by shrinking B and then C when
+B has no more spare share. Dockspace currently stops that same handle at the
+limiting B frontier. A future configurable propagation policy could support
+both intentions without adding Grid or subtree tabs. Such a policy would still
+need consistent pointer, keyboard, accessibility, preferred restoration and
+batch/separate behavior; it should not be introduced as a pointer-only shortcut.
+
+The inspected egui_tiles tree already smooths its drag-preview rectangle. Its
+source does not justify describing it as having no animation. Dockspace's
+layout/preview/focus motion policies should be evaluated with real input and
+reduced-motion settings; the data model alone cannot establish which feels
+smoother or more reliable.
+
+### Direction for Dockspace
+
+Keep the current content identities, atomic publication and native lifetimes.
+The comparison establishes two real container differences: shared-track Grid
+and tabs containing complete layouts, plus a separate resize-propagation policy
+difference. It does not establish that Dockspace's existing tabs/splits model
+is incorrect for an editor workspace.
+
+If adaptive dashboards become an intended product use case, a first-class Grid
+would remove application-maintained track alignment and reflow. Its declaration,
+track resizing, drop insertion and persistence must share one core contract.
+If whole-workspace tabs become a requirement, specify subtree selection, focus,
+close approval and cross-window transfer together before changing `Tabs` to hold
+structural nodes. Adding a node reference alone would leave those behaviors
+undefined. Neither extension is implemented by this follow-up.
+
+For current editor use cases, first finish the capped-frontier interaction and
+platform qualification already identified above. Do not replace the working
+model merely to reproduce a different library's container inventory.
+
+Source checkpoints:
+
+- [Container variants and composition](https://github.com/rerun-io/egui_tiles/blob/a319ff968b35c7bfaafff662669df3f99ba14499/crates/egui_tiles/src/container/mod.rs),
+  [Grid tracks and reflow](https://github.com/rerun-io/egui_tiles/blob/a319ff968b35c7bfaafff662669df3f99ba14499/crates/egui_tiles/src/container/grid.rs),
+  [Linear resize propagation](https://github.com/rerun-io/egui_tiles/blob/a319ff968b35c7bfaafff662669df3f99ba14499/crates/egui_tiles/src/container/linear.rs).
+- [Behavior customization, close and sizing hooks](https://github.com/rerun-io/egui_tiles/blob/a319ff968b35c7bfaafff662669df3f99ba14499/crates/egui_tiles/src/behavior.rs),
+  [tree UI, tile moves and preview smoothing](https://github.com/rerun-io/egui_tiles/blob/a319ff968b35c7bfaafff662669df3f99ba14499/crates/egui_tiles/src/tree.rs).
+- [Dockspace center/edge payload handling](../../crates/dockspace/src/graph/operation/topology.rs),
+  [sizing contract][sizing], and [platform qualification](../PLATFORM_SUPPORT.md).
+
 ## Adopted batch and remaining scope
 
 The short semantic oracle, mandatory UI outcomes, central split and focus-handoff
