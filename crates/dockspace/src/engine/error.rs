@@ -564,6 +564,13 @@ pub enum EngineError {
         /// Atomic transaction failure.
         source: crate::graph::error::TransactionError,
     },
+    /// Read-only native creation preflight violated an internal transaction invariant.
+    #[error("native root creation preflight failed: {source}")]
+    NativeRootCreatePreflight {
+        /// Exact preparation failure, without attributing it to a fabricated input.
+        #[source]
+        source: crate::graph::error::TransactionError,
+    },
     /// A successful one-command transaction omitted its required outcome.
     #[error("workspace command input {input} produced no command outcome")]
     MissingCommandOutcome {

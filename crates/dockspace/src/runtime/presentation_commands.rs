@@ -134,10 +134,12 @@ impl<'session> DockspacePresentationCommands<'session> {
 }
 
 impl DockspaceSession {
-    /// Preflights one item, captured tabs group or root into an explicitly placed native window.
+    /// Preflights an item, captured tab, tabs group or root into an explicitly placed native window.
     ///
-    /// A ready action remains revision-bound. Neither this query nor submitting
-    /// its result transfers content before exact first-live presentation.
+    /// Readiness checks the canonical future layout and its surviving recovery host
+    /// without reserving native resources. A ready action remains revision-bound.
+    /// Neither this query nor submitting its result transfers content before exact
+    /// first-live presentation.
     ///
     /// # Errors
     ///

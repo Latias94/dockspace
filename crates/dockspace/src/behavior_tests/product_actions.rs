@@ -19,6 +19,7 @@ use crate::runtime::{
 };
 
 mod focus;
+mod native_availability;
 mod tabs_group;
 
 const MAIN_SURFACE: SurfaceId = SurfaceId::new(10);

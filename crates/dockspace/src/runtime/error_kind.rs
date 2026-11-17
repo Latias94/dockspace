@@ -434,6 +434,7 @@ pub(super) const fn engine_error_kind(error: &EngineError) -> DockspaceRuntimeEr
         | EngineError::SurfacePresentationObservationBatchInvariant { .. }
         | EngineError::PresentationHostRetirementInvariant { .. }
         | EngineError::Command { .. }
+        | EngineError::NativeRootCreatePreflight { .. }
         | EngineError::MissingCommandOutcome { .. }
         | EngineError::SurfaceSceneRevisionExhausted { .. }
         | EngineError::Interaction { .. }

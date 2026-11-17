@@ -23,6 +23,19 @@ pub(super) enum NativeRootCreateRejection {
 }
 
 impl NativeRootCreateRejection {
+    fn into_product_rejection(
+        self,
+        action: ProductAction,
+    ) -> Result<DockspaceActionRejection, EngineError> {
+        match self {
+            Self::Command(error) => {
+                super::product_action::product_command_rejection(action, &error)
+            }
+            Self::RootPending { .. } => Ok(DockspaceActionRejection::Conflict),
+            Self::RecoveryUnavailable { .. } => Ok(DockspaceActionRejection::NativeUnavailable),
+        }
+    }
+
     pub(super) fn into_interaction_command_error(self) -> CommandError {
         match self {
             Self::Command(error) => error,
@@ -329,29 +342,6 @@ impl DockEngine {
             ) => return Ok(Err(DockspaceActionRejection::IdentityExhausted)),
             Err(error) => return Err(error),
         };
-        let Some(recovery_anchor) = self
-            .surface_recovery_target(source_surface)
-            .map(SurfaceRecoveryTarget::anchor)
-            .or_else(|| self.root_recovery_anchor(source_surface))
-        else {
-            return Ok(Err(DockspaceActionRejection::NativeUnavailable));
-        };
-        // Rehoming the final root prunes its logical surface. A new child
-        // cannot promise recovery into that same surface after it disappears.
-        // Check this before returning a prepared command as available; the
-        // transaction's exact future-host check remains the final safeguard.
-        if complete.is_some()
-            && recovery_anchor.surface() == source_surface
-            && self
-                .workspace
-                .surface(source_surface)
-                .is_some_and(|surface| {
-                    surface.main_root.is_some() && surface.contained.is_empty()
-                        || surface.main_root.is_none() && surface.contained.len() == 1
-                })
-        {
-            return Ok(Err(DockspaceActionRejection::NativeUnavailable));
-        }
         let command = Self::tear_off_command_from_complete_root(
             &payload,
             RootPresentationTarget::NewSurface {
@@ -386,20 +376,20 @@ impl DockEngine {
                 Ok(prepared) => prepared,
                 Err(reason) => return Ok(Err(reason)),
             };
-        if let Err(error) = crate::graph::operation::authorize_workspace_command(
-            &self.workspace,
-            policy,
+        match self.check_native_root_create(
+            prepared.source_presentation.surface(),
             &prepared.command,
-        ) {
-            return Ok(Err(super::product_action::product_command_rejection(
+            &prepared.proposal,
+            policy,
+        )? {
+            Ok(_) => Ok(Ok(())),
+            Err(reason) => Ok(Err(reason.into_product_rejection(
                 ProductAction::TearOffNative {
                     source: source.clone(),
                     placement,
                 },
-                &error,
-            )?));
+            )?)),
         }
-        Ok(Ok(()))
     }
 
     pub(super) fn reduce_product_native_payload_tear_off(
@@ -448,30 +438,13 @@ impl DockEngine {
                 },
                 version: self.version,
             }),
-            Err(NativeRootCreateRejection::RootPending { .. }) => {
-                Ok(InputOutcome::ProductActionRejected {
-                    reason: DockspaceActionRejection::Conflict,
-                    version: self.version,
-                })
-            }
-            Err(NativeRootCreateRejection::RecoveryUnavailable { .. }) => {
-                Ok(InputOutcome::ProductActionRejected {
-                    reason: DockspaceActionRejection::NativeUnavailable,
-                    version: self.version,
-                })
-            }
-            Err(NativeRootCreateRejection::Command(error)) => {
-                Ok(InputOutcome::ProductActionRejected {
-                    reason: super::product_action::product_command_rejection(
-                        ProductAction::TearOffNative {
-                            source: source.clone(),
-                            placement,
-                        },
-                        &error,
-                    )?,
-                    version: self.version,
-                })
-            }
+            Err(reason) => Ok(InputOutcome::ProductActionRejected {
+                reason: reason.into_product_rejection(ProductAction::TearOffNative {
+                    source: source.clone(),
+                    placement,
+                })?,
+                version: self.version,
+            }),
         }
     }
 
@@ -491,56 +464,22 @@ impl DockEngine {
         EngineError,
     > {
         let source_surface = source_presentation.surface();
-        if !self.viewport.native_binding_allocation_available() {
-            // Accepted pointer release must terminate with a semantic rejection;
-            // rolling back its recorder prefix would replay it without progress.
-            return Ok(Err(NativeRootCreateRejection::RecoveryUnavailable {
-                source_surface,
-            }));
-        }
-        if self.root_has_pending_presentation_transition(proposal.root()) {
-            return Ok(Err(NativeRootCreateRejection::RootPending {
-                source_surface,
-            }));
-        }
-
-        let recovery_anchor = self
-            .surface_recovery_target(source_surface)
-            .map(SurfaceRecoveryTarget::anchor)
-            .or_else(|| self.root_recovery_anchor(source_surface));
-        let Some(recovery_anchor) = recovery_anchor else {
-            return Ok(Err(NativeRootCreateRejection::RecoveryUnavailable {
-                source_surface,
-            }));
-        };
-        let recovery_target =
-            SurfaceRecoveryTarget::with_converted_main(recovery_anchor, proposal.converted_main());
-        let future = match self.preflight_native_root_create_command(
-            cause,
-            source_surface,
-            &command,
-            policy,
-        )? {
-            Ok(future) => future,
-            Err(error) => return Ok(Err(NativeRootCreateRejection::Command(error))),
-        };
-        if future.surface(recovery_target.host_surface()).is_none() {
-            return Ok(Err(NativeRootCreateRejection::RecoveryUnavailable {
-                source_surface,
-            }));
-        }
-        let id = self.next_surface_recovery_obligation_id(self.last_input)?;
-        let obligation = match self.authorize_surface_recovery_obligation(
-            self.last_input,
-            id,
-            &future,
-            proposal.surface(),
-            recovery_target,
-            policy,
-        ) {
+        let checked = self
+            .check_native_root_create(source_surface, &command, &proposal, policy)
+            .map_err(|error| match error {
+                EngineError::NativeRootCreatePreflight { source } => {
+                    EngineError::PointerInteractionInvariant {
+                        cause,
+                        detail: source.to_string(),
+                    }
+                }
+                error => error,
+            })?;
+        let obligation = match checked {
             Ok(obligation) => obligation,
-            Err(error) => return Ok(Err(NativeRootCreateRejection::Command(error))),
+            Err(reason) => return Ok(Err(reason)),
         };
+        let id = obligation.id();
         let proposal_surface = proposal.surface();
         let proposal_root = proposal.root();
         let proposal_floating = proposal.converted_main().floating();
@@ -574,13 +513,77 @@ impl DockEngine {
         Ok(Ok(request))
     }
 
+    fn check_native_root_create(
+        &self,
+        source_surface: SurfaceId,
+        command: &WorkspaceCommand,
+        proposal: &crate::platform::frame::NativeCreateProposal,
+        policy: &DockPolicySnapshot,
+    ) -> Result<Result<SurfaceRecoveryObligation, NativeRootCreateRejection>, EngineError> {
+        // Availability and delivery inspect the same canonical future. This
+        // proof stays read-only until a create saga adopts its obligation.
+        if !self.viewport.native_binding_allocation_available() {
+            // Accepted pointer release must terminate with a semantic rejection;
+            // rolling back its recorder prefix would replay it without progress.
+            return Ok(Err(NativeRootCreateRejection::RecoveryUnavailable {
+                source_surface,
+            }));
+        }
+        if self.root_has_pending_presentation_transition(proposal.root()) {
+            return Ok(Err(NativeRootCreateRejection::RootPending {
+                source_surface,
+            }));
+        }
+
+        let recovery_anchor = self
+            .surface_recovery_target(source_surface)
+            .map(SurfaceRecoveryTarget::anchor)
+            .or_else(|| self.root_recovery_anchor(source_surface));
+        let Some(recovery_anchor) = recovery_anchor else {
+            return Ok(Err(NativeRootCreateRejection::RecoveryUnavailable {
+                source_surface,
+            }));
+        };
+        let recovery_target =
+            SurfaceRecoveryTarget::with_converted_main(recovery_anchor, proposal.converted_main());
+        let future =
+            match self.preflight_native_root_create_command(source_surface, command, policy)? {
+                Ok(future) => future,
+                Err(error) => return Ok(Err(NativeRootCreateRejection::Command(error))),
+            };
+        if future.surface(recovery_target.host_surface()).is_none() {
+            return Ok(Err(NativeRootCreateRejection::RecoveryUnavailable {
+                source_surface,
+            }));
+        }
+        let id = self.next_surface_recovery_obligation_id(self.last_input)?;
+        let obligation = match self.authorize_surface_recovery_obligation(
+            self.last_input,
+            id,
+            &future,
+            proposal.surface(),
+            recovery_target,
+            policy,
+        ) {
+            Ok(obligation) => obligation,
+            Err(error) if error.is_expected_rejection() => {
+                return Ok(Err(NativeRootCreateRejection::Command(error)));
+            }
+            Err(source) => {
+                return Err(EngineError::NativeRootCreatePreflight {
+                    source: TransactionError::Command { index: 0, source },
+                });
+            }
+        };
+        Ok(Ok(obligation))
+    }
+
     fn preflight_native_root_create_command(
         &self,
-        cause: ReductionCause,
         source_surface: SurfaceId,
         command: &WorkspaceCommand,
         policy: &DockPolicySnapshot,
-    ) -> Result<Result<Workspace, CommandError>, EngineError> {
+    ) -> Result<Result<crate::graph::operation::WorkspaceSnapshot, CommandError>, EngineError> {
         if let Some(surface) =
             self.first_workspace_publication_mismatch(&self.workspace, None, None)
         {
@@ -598,13 +601,10 @@ impl DockEngine {
                 return Ok(Err(source));
             }
             Err(source) => {
-                return Err(EngineError::PointerInteractionInvariant {
-                    cause,
-                    detail: source.to_string(),
-                });
+                return Err(EngineError::NativeRootCreatePreflight { source });
             }
         };
-        let (future, report) = prepared.into_parts();
+        let (future, report) = prepared.into_snapshot_parts();
         if report.outcomes().len() != 1 {
             return Err(EngineError::ReductionCauseInvariant {
                 detail: "native root create preflight produced a non-unit outcome roster",
@@ -616,11 +616,10 @@ impl DockEngine {
             return Ok(Err(CommandError::SurfaceLifecycleFrozen { surface }));
         }
         match self.stage_workspace_publication(future, policy) {
-            Ok(publication) => Ok(Ok(publication.workspace.into_workspace())),
+            Ok(publication) => Ok(Ok(publication.workspace)),
             Err(source) if source.is_expected_rejection() => Ok(Err(source)),
-            Err(source) => Err(EngineError::PointerInteractionInvariant {
-                cause,
-                detail: source.to_string(),
+            Err(source) => Err(EngineError::NativeRootCreatePreflight {
+                source: TransactionError::Command { index: 0, source },
             }),
         }
     }
