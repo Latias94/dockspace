@@ -1,4 +1,4 @@
-//! Coordinate changes cancel old Grid input without stranding fresh receivers.
+//! Grid gestures retain measurement-only changes and recover after explicit cancellation.
 
 use super::*;
 
@@ -86,13 +86,34 @@ impl GridHarness {
     }
 
     fn assert_equal_grid_partition(&self) {
-        let screen = self.screen_rect;
+        self.assert_grid_partition(self.screen_rect, 0.5, 0.5);
+    }
+
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the expected pane partition is finite and bounded by the test viewport"
+    )]
+    fn assert_grid_partition(&self, screen: Rect, row_share: f64, column_share: f64) {
         let gap = self.dockspace.style().splitter_thickness;
-        let size = (screen.size() - vec2(gap, gap)) * 0.5;
-        let top_left = Rect::from_min_size(screen.min, size);
-        let top_right = Rect::from_min_size(screen.min + vec2(size.x + gap, 0.0), size);
-        let bottom_left = Rect::from_min_size(screen.min + vec2(0.0, size.y + gap), size);
-        let mut bottom_right = Rect::from_min_size(screen.min + size + vec2(gap, gap), size);
+        let content = screen.size() - vec2(gap, gap);
+        let leading = vec2(
+            (f64::from(content.x) * column_share) as f32,
+            (f64::from(content.y) * row_share) as f32,
+        );
+        let mut top_left = Rect::from_min_size(screen.min, leading);
+        if self.dockspace.view().item(A).unwrap().tabs().is_some() {
+            top_left.min.y += self.dockspace.style().tab_bar_height;
+        }
+        let top_right = Rect::from_min_max(
+            screen.min + vec2(leading.x + gap, 0.0),
+            egui::pos2(screen.right(), screen.top() + leading.y),
+        );
+        let bottom_left = Rect::from_min_max(
+            screen.min + vec2(0.0, leading.y + gap),
+            egui::pos2(screen.left() + leading.x, screen.bottom()),
+        );
+        let mut bottom_right =
+            Rect::from_min_max(screen.min + leading + vec2(gap, gap), screen.max);
         assert_rect_close(self.panes.bodies[&A], top_left, &self.context);
         assert_rect_close(self.panes.bodies[&D], bottom_left, &self.context);
         let document = if self.dockspace.view().item(B).unwrap().is_active() {
@@ -171,42 +192,6 @@ impl GridHarness {
             "the old coordinate's release cannot finish a cancelled gesture"
         );
         self.assert_geometry_ownership_and_activity();
-    }
-
-    fn begin_grid_resize(&mut self, orientation: Orientation) -> (SplitterControl, Pos2) {
-        let control = self
-            .splitters
-            .iter()
-            .filter(|control| control.orientation == orientation)
-            .max_by(|left, right| {
-                let span = |control: &SplitterControl| match orientation {
-                    Orientation::Horizontal => control.rect.width(),
-                    Orientation::Vertical => control.rect.height(),
-                };
-                span(left).total_cmp(&span(right))
-            })
-            .copied()
-            .expect("the two-track Grid exposes its operable shared boundary");
-        let point = match orientation {
-            Orientation::Horizontal => egui::pos2(
-                control.rect.left() + control.rect.width() * 0.25,
-                control.rect.center().y,
-            ),
-            Orientation::Vertical => egui::pos2(
-                control.rect.center().x,
-                control.rect.top() + control.rect.height() * 0.25,
-            ),
-        };
-        self.run(vec![Event::PointerMoved(point)]);
-        assert_eq!(
-            self.context
-                .viewport(|viewport| { viewport.hits.drag.map(|hit| hit.id.accesskit_id()) }),
-            Some(control.id),
-            "the shared boundary must win the actual hit graph before pressing"
-        );
-        self.run(vec![button(point, true)]);
-        assert!(self.dockspace.has_active_gesture());
-        (control, point)
     }
 
     fn resize_current_grid(&mut self, orientation: Orientation, delta: f32) {
@@ -390,6 +375,178 @@ fn shared_grid_geometry_changes_cancel_resize_and_preserve_shared_tracks() {
             );
             harness.click_tab(B.into());
             harness.assert_active(&[A, B, D, E]);
+            harness.assert_geometry_ownership_and_activity();
+        }
+    }
+}
+
+#[test]
+fn shared_grid_geometry_changes_during_resize_do_not_require_an_explicit_cancel() {
+    // RawInput changes local measurements without replacing native coordinate
+    // authority. A changed resize projection can require new measurements;
+    // its frozen solver shares overlay the new bounds until release commits them.
+    for change in [
+        GeometryChange::NativeDpi,
+        GeometryChange::UiZoom,
+        GeometryChange::NarrowWindow,
+    ] {
+        for orientation in [Orientation::Horizontal, Orientation::Vertical] {
+            let mut harness = GridHarness::new();
+            let frozen_screen = harness.screen_rect;
+            let gap = harness.dockspace.style().splitter_thickness;
+            let (row_share, column_share) = match orientation {
+                Orientation::Horizontal => {
+                    (0.5 + 24.0 / f64::from(frozen_screen.height() - gap), 0.5)
+                }
+                Orientation::Vertical => (0.5, 0.5 + 24.0 / f64::from(frozen_screen.width() - gap)),
+            };
+            let (_, point) = harness.begin_grid_resize(orientation);
+            let end = point
+                + match orientation {
+                    Orientation::Horizontal => vec2(0.0, 24.0),
+                    Orientation::Vertical => vec2(24.0, 0.0),
+                };
+            harness.run(vec![Event::PointerMoved(end)]);
+            assert!(harness.dockspace.has_active_gesture());
+            harness.assert_grid_partition(frozen_screen, row_share, column_share);
+            let version = harness.dockspace.version();
+            let pixels_per_point = change.apply(&mut harness);
+            let output = harness.run(Vec::new());
+            assert!(
+                (output.pixels_per_point - pixels_per_point).abs() < f32::EPSILON,
+                "{change:?}/{orientation:?}"
+            );
+            assert_eq!(harness.dockspace.version(), version);
+            assert!(
+                harness.dockspace.has_active_gesture(),
+                "measurement-only {change:?}/{orientation:?} must retain the frozen resize",
+            );
+            assert!(
+                harness
+                    .dockspace
+                    .view()
+                    .node(harness.grid)
+                    .unwrap()
+                    .grid()
+                    .unwrap()
+                    .shares()
+                    .is_none(),
+                "the retained preview cannot publish persistent shares"
+            );
+            harness.assert_grid_partition(harness.screen_rect, row_share, column_share);
+            harness.assert_tabs(harness.cells[1], &[B.into(), C.into()], B.into());
+            harness.assert_tabs(harness.cells[3], &[E.into(), harness.tools], E.into());
+            harness.assert_active(&[A, B, D, E]);
+            harness.assert_geometry_ownership_and_activity();
+            harness.run(vec![button(end, false)]);
+            assert!(!harness.dockspace.has_active_gesture());
+            assert!(harness.panes.preview.is_none());
+            assert_ne!(harness.dockspace.version(), version);
+            let shares = harness
+                .dockspace
+                .view()
+                .node(harness.grid)
+                .unwrap()
+                .grid()
+                .unwrap()
+                .shares()
+                .expect("release commits the pointer displacement in the frozen track space");
+            for (actual, expected) in shares.rows().chain(shares.columns()).zip([
+                row_share,
+                1.0 - row_share,
+                column_share,
+                1.0 - column_share,
+            ]) {
+                assert!(
+                    (actual - expected).abs() < 1e-12,
+                    "{change:?}/{orientation:?}: expected frozen share {expected}, got {actual}"
+                );
+            }
+            harness.assert_grid_partition(harness.screen_rect, row_share, column_share);
+            harness.assert_tabs(harness.cells[1], &[B.into(), C.into()], B.into());
+            harness.assert_tabs(harness.cells[3], &[E.into(), harness.tools], E.into());
+            harness.assert_active(&[A, B, D, E]);
+            harness.assert_geometry_ownership_and_activity();
+            harness.settle();
+            harness.assert_grid_partition(harness.screen_rect, row_share, column_share);
+            harness.assert_tabs(harness.cells[1], &[B.into(), C.into()], B.into());
+            harness.assert_tabs(harness.cells[3], &[E.into(), harness.tools], E.into());
+            harness.assert_active(&[A, B, D, E]);
+            harness.click_tab(C.into());
+            harness.click_tab(B.into());
+            harness.resize_current_grid(orientation, -12.0);
+            change.restore(&mut harness);
+            harness.assert_geometry_ownership_and_activity();
+        }
+    }
+}
+
+#[test]
+fn shared_grid_geometry_changes_during_docking_keep_fresh_targets_operable() {
+    // The same host pointer stream continues against its retained logical scene;
+    // a physical-coordinate epoch change belongs to native-host tests.
+    for change in [
+        GeometryChange::NativeDpi,
+        GeometryChange::UiZoom,
+        GeometryChange::NarrowWindow,
+    ] {
+        for layout_tab in [false, true] {
+            let mut harness = GridHarness::new();
+            let frozen_screen = harness.screen_rect;
+            let source = if layout_tab { harness.tools } else { C.into() };
+            harness.begin_drag(source);
+            let frozen_point = harness.hover_guide(A, DockspaceDropDirection::Center);
+            harness.assert_preview(frozen_point, DockspaceDropAction::Merge, &[], None, &[]);
+            let frozen_target = harness.panes.preview.as_ref().unwrap().target_rect;
+            let frozen_preview = harness.panes.preview.as_ref().unwrap().rect;
+            let before = harness.layout_signature();
+            let version = harness.dockspace.version();
+            let pixels_per_point = change.apply(&mut harness);
+            let output = harness.run(Vec::new());
+            assert!(
+                (output.pixels_per_point - pixels_per_point).abs() < f32::EPSILON,
+                "{change:?}, layout_tab={layout_tab}"
+            );
+            assert_eq!(harness.dockspace.version(), version);
+            assert_eq!(harness.layout_signature(), before);
+            assert!(
+                harness.dockspace.has_active_gesture(),
+                "measurement-only {change:?}, layout_tab={layout_tab} must retain the source",
+            );
+            harness.assert_preview(frozen_point, DockspaceDropAction::Merge, &[], None, &[]);
+            assert_eq!(
+                harness.panes.preview.as_ref().unwrap().target_rect,
+                frozen_target
+            );
+            assert_eq!(harness.panes.preview.as_ref().unwrap().rect, frozen_preview);
+            harness.assert_grid_partition(frozen_screen, 0.5, 0.5);
+            harness.assert_geometry_ownership_and_activity();
+            let point = harness.hover_guide(A, DockspaceDropDirection::Center);
+            assert_eq!(
+                point, frozen_point,
+                "the retained drag resolves the same exact logical guide before measurement refresh"
+            );
+            harness.assert_preview(point, DockspaceDropAction::Merge, &[], None, &[]);
+            harness.release(point);
+            harness.assert_tabs(harness.cells[0], &[A.into(), source], source);
+            let expected_documents: Vec<TabKey> = if layout_tab {
+                vec![B.into(), C.into()]
+            } else {
+                vec![B.into()]
+            };
+            let expected_outer: Vec<TabKey> = if layout_tab {
+                vec![E.into()]
+            } else {
+                vec![E.into(), harness.tools]
+            };
+            harness.assert_tabs(harness.cells[1], &expected_documents, B.into());
+            harness.assert_tabs(harness.cells[3], &expected_outer, E.into());
+            assert_ne!(harness.dockspace.version(), version);
+            harness.assert_geometry_ownership_and_activity();
+            harness.click_tab(A.into());
+            harness.assert_equal_grid_partition();
+            change.restore(&mut harness);
+            harness.assert_equal_grid_partition();
             harness.assert_geometry_ownership_and_activity();
         }
     }

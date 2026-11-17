@@ -363,6 +363,16 @@ Use different tools for different failure seams:
   Grid geometry-change cases cancel active docking or resize during a scale or
   width change, reject the old coordinate's release, then require fresh clicks,
   resize and docking to work. Restoring the viewport must preserve user track shares.
+  Geometry changes also run without an explicit cancel. A small independent hidden
+  set checks generated hide/show actions and ownership across later moves; hidden
+  members retain durable gap positions but do not appear in visible preview tabs.
+  An Auto Grid transpose during direct resize must cancel before painting the new
+  map, restore geometry from durable shares and accept a fresh gesture. Include
+  zero displacement, a junction and an abandoned measurement frame; unchanged Auto
+  maps and Fixed grids must remain operable without cancellation.
+- Application-edit cases hide a source or target, move a source, switch a layout
+  branch or reset the workspace during a gesture. Old releases must not publish
+  stale moves or transient shares, and fresh input must remain operable.
 - Exact tab insertion releases before the edge-scroll deadline. A separate timed
   case crosses that deadline, requires the old preview to be revoked, then uses
   the newly Presented strip and its actual hit winner to choose the next gap.
@@ -378,6 +388,12 @@ Use different tools for different failure seams:
   owners. Keep their bounded interleavings rather than deleting raw callbacks
   with a generic sequence shrinker. Such deletion can violate ingress contracts
   or remove a required external result instead of exposing a product defect.
+- Programmatic native rehomes compare the canonical candidate with the source
+  root. A partial nested payload can exhaust its enclosing root without becoming
+  a whole-root payload. Preserve exact payload scope, wait for target presentation
+  before source retirement, and keep same-surface moves immediate. Native tear-off
+  availability and submission must check the same surviving recovery host; hidden
+  siblings and empty central anchors must remain valid controls.
 
 At each failure, name the violated invariant and its checkpoint. Candidate
 rollback must preserve committed semantics; a presented output authorizes only

@@ -1,6 +1,6 @@
 //! Real pointer previews and commits for the shared_grid example's mixed cells.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 
 use egui::accesskit::Orientation;
@@ -12,6 +12,7 @@ use crate::{
     DropPreview, NodeKey, Tab, TabKey, TabVisuals,
 };
 
+mod auto_geometry;
 mod geometry_changes;
 mod random_sequences;
 
@@ -36,6 +37,19 @@ struct GridPanes {
     guides: Vec<DropGuide>,
     preview: Option<DropPreview>,
     text: String,
+}
+
+impl GridPanes {
+    fn clear_frame_observations(&mut self) {
+        self.bodies.clear();
+        self.body_layers.clear();
+        self.editors.clear();
+        self.body_calls.clear();
+        self.tabs.clear();
+        self.tab_controls.clear();
+        self.guides.clear();
+        self.preview = None;
+    }
 }
 
 impl PaneView for GridPanes {
@@ -118,6 +132,33 @@ struct SplitterControl {
     maximum: f64,
 }
 
+fn splitter_controls(output: &FullOutput) -> Vec<SplitterControl> {
+    nodes(output)
+        .iter()
+        .filter(|(_, node)| {
+            node.role() == Role::Splitter
+                && node.label() == Some("Resize panes")
+                && !node.is_disabled()
+        })
+        .filter_map(|(id, node)| {
+            let bounds = node.bounds()?;
+            #[allow(clippy::cast_possible_truncation)]
+            let rect = Rect::from_min_max(
+                egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
+                egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
+            );
+            Some(SplitterControl {
+                id: *id,
+                rect,
+                orientation: node.orientation()?,
+                value: node.numeric_value()?,
+                minimum: node.min_numeric_value()?,
+                maximum: node.max_numeric_value()?,
+            })
+        })
+        .collect()
+}
+
 struct GridHarness {
     context: Context,
     dockspace: Dockspace,
@@ -131,6 +172,7 @@ struct GridHarness {
     splitters: Vec<SplitterControl>,
     screen_rect: Rect,
     native_pixels_per_point: Option<f32>,
+    expected_hidden: BTreeSet<ItemId>,
 }
 
 impl GridHarness {
@@ -197,6 +239,7 @@ impl GridHarness {
             splitters: Vec::new(),
             screen_rect: Rect::from_min_size(Pos2::ZERO, vec2(1100.0, 760.0)),
             native_pixels_per_point: None,
+            expected_hidden: BTreeSet::new(),
         };
         harness.settle();
         harness.assert_active(&[A, B, D, E]);
@@ -209,14 +252,7 @@ impl GridHarness {
 
     fn run_at(&mut self, time: f64, events: Vec<Event>) -> FullOutput {
         self.frame += 1;
-        self.panes.bodies.clear();
-        self.panes.body_layers.clear();
-        self.panes.editors.clear();
-        self.panes.body_calls.clear();
-        self.panes.tabs.clear();
-        self.panes.tab_controls.clear();
-        self.panes.guides.clear();
-        self.panes.preview = None;
+        self.panes.clear_frame_observations();
         let mut raw = RawInput {
             screen_rect: Some(self.screen_rect),
             time: Some(time),
@@ -235,30 +271,19 @@ impl GridHarness {
             .unwrap_or_else(|error| panic!("shared_grid pointer frame {}: {error}", self.frame));
         let (mut output, receipt) = output.into_parts();
         receipt.report(SurfacePresentationResult::Presented);
-        self.splitters = nodes(&output)
-            .iter()
-            .filter(|(_, node)| {
-                node.role() == Role::Splitter
-                    && node.label() == Some("Resize panes")
-                    && !node.is_disabled()
-            })
-            .filter_map(|(id, node)| {
-                let bounds = node.bounds()?;
-                #[allow(clippy::cast_possible_truncation)]
-                let rect = Rect::from_min_max(
-                    egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
-                    egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
-                );
-                Some(SplitterControl {
-                    id: *id,
-                    rect,
-                    orientation: node.orientation()?,
-                    value: node.numeric_value()?,
-                    minimum: node.min_numeric_value()?,
-                    maximum: node.max_numeric_value()?,
-                })
-            })
-            .collect();
+        for item in &self.expected_hidden {
+            assert!(
+                !self.panes.body_calls.contains(item),
+                "hidden item {item:?} received an application UI callback in frame {}",
+                self.frame,
+            );
+            assert!(
+                !self.panes.bodies.contains_key(item),
+                "hidden item {item:?} retained application content in frame {}",
+                self.frame,
+            );
+        }
+        self.splitters = splitter_controls(&output);
         output.textures_delta.clear();
         output
     }
@@ -432,6 +457,42 @@ impl GridHarness {
         assert_eq!(children[1].item(), Some(G));
         assert!(view.item(F).unwrap().tabs().is_none());
         assert!(view.item(G).unwrap().tabs().is_none());
+    }
+
+    fn begin_grid_resize(&mut self, orientation: Orientation) -> (SplitterControl, Pos2) {
+        let control = self
+            .splitters
+            .iter()
+            .filter(|control| control.orientation == orientation)
+            .max_by(|left, right| {
+                let span = |control: &SplitterControl| match orientation {
+                    Orientation::Horizontal => control.rect.width(),
+                    Orientation::Vertical => control.rect.height(),
+                };
+                span(left).total_cmp(&span(right))
+            })
+            .copied()
+            .expect("the two-track Grid exposes its operable shared boundary");
+        let point = match orientation {
+            Orientation::Horizontal => egui::pos2(
+                control.rect.left() + control.rect.width() * 0.25,
+                control.rect.center().y,
+            ),
+            Orientation::Vertical => egui::pos2(
+                control.rect.center().x,
+                control.rect.top() + control.rect.height() * 0.25,
+            ),
+        };
+        self.run(vec![Event::PointerMoved(point)]);
+        assert_eq!(
+            self.context
+                .viewport(|viewport| { viewport.hits.drag.map(|hit| hit.id.accesskit_id()) }),
+            Some(control.id),
+            "the shared boundary must win the actual hit graph before pressing"
+        );
+        self.run(vec![button(point, true)]);
+        assert!(self.dockspace.has_active_gesture());
+        (control, point)
     }
 
     fn assert_tabs(&self, node: NodeKey, tabs: &[TabKey], selected: TabKey) {

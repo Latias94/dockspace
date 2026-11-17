@@ -3,7 +3,9 @@
 use proptest::prelude::*;
 
 use super::*;
-use crate::DockspaceNodeView;
+use crate::{DockspaceActionOutcome, DockspaceActionStatus, DockspaceNodeView};
+
+mod external_edits;
 
 #[derive(Clone, Debug)]
 struct TabSlot {
@@ -130,6 +132,7 @@ enum Finish {
 #[derive(Clone, Copy, Debug)]
 enum Action {
     Click(TabSelector),
+    ToggleVisibility(u8),
     Guide {
         source: TabSelector,
         target: u8,
@@ -195,6 +198,7 @@ fn random_action() -> impl Strategy<Value = Action> {
     ];
     prop_oneof![
         2 => selector().prop_map(Action::Click),
+        2 => any::<u8>().prop_map(Action::ToggleVisibility),
         5 => (selector(), any::<u8>(), direction, finish()).prop_map(
             |(source, target, direction, finish)| Action::Guide {
                 source, target, direction, finish,
@@ -618,21 +622,42 @@ impl GridHarness {
             return;
         };
         let (destination, point, _) = &choices[selected];
-        let index = destination
+        let visible = self
+            .tab_slots()
+            .into_iter()
+            .filter(|slot| {
+                slot.items
+                    .iter()
+                    .any(|item| !self.expected_hidden.contains(item))
+            })
+            .map(|slot| slot.key)
+            .collect::<BTreeSet<_>>();
+        let position = destination
             .roster
             .iter()
             .position(|key| *key == destination.key)
-            .unwrap()
-            + usize::from(after);
+            .unwrap();
+        // A visible gap is before its next visible tab, or after the complete roster.
+        let index = if after {
+            destination
+                .roster
+                .iter()
+                .enumerate()
+                .skip(position + 1)
+                .find_map(|(index, key)| visible.contains(key).then_some(index))
+                .unwrap_or(destination.roster.len())
+        } else {
+            position
+        };
         let previous = destination.roster[..index]
             .iter()
             .rev()
             .copied()
-            .find(|key| *key != source.key);
+            .find(|key| *key != source.key && visible.contains(key));
         let next = destination.roster[index..]
             .iter()
             .copied()
-            .find(|key| *key != source.key);
+            .find(|key| *key != source.key && visible.contains(key));
         let mut expected = destination.roster.clone();
         let offset = usize::from(expected[..index].contains(&source.key));
         expected.retain(|key| *key != source.key);
@@ -683,6 +708,10 @@ impl GridHarness {
         assert_eq!(
             preview.tabs.iter().map(|tab| tab.key).collect::<Vec<_>>(),
             expected
+                .iter()
+                .copied()
+                .filter(|key| visible.contains(key))
+                .collect::<Vec<_>>()
         );
         if matches!(finish, Finish::Release) {
             // Exact insertion uses the current strip before an edge-scroll deadline can move it.
@@ -866,6 +895,30 @@ impl GridHarness {
         );
     }
 
+    fn random_visibility(&mut self, selector: u8, trace: &mut Vec<String>) {
+        // A and D remain visible resident anchors, even when every tabbed branch is hidden.
+        let candidates = [B, C, E, F, G];
+        let item = candidates[usize::from(selector) % candidates.len()];
+        let visible = self.expected_hidden.contains(&item);
+        trace.push(format!("visibility: {item:?} -> {visible}"));
+        let result = self
+            .dockspace
+            .set_item_visibility_current(item, visible)
+            .unwrap();
+        assert!(matches!(
+            result.status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemVisibilityChanged {
+                item: changed_item, visible: changed_visibility, changed: true,
+            }) if *changed_item == item && *changed_visibility == visible
+        ));
+        if visible {
+            self.expected_hidden.remove(&item);
+        } else {
+            self.expected_hidden.insert(item);
+        }
+        self.settle();
+    }
+
     fn assert_random_invariants(&self) {
         let view = self.dockspace.view();
         assert_eq!(view.surfaces().count(), 1);
@@ -888,7 +941,14 @@ impl GridHarness {
             owned, ITEMS,
             "all seven panes must stay owned exactly once across every root"
         );
-        assert_eq!(view.hidden_items().count(), 0);
+        assert_eq!(
+            view.hidden_items().collect::<BTreeSet<_>>(),
+            self.expected_hidden
+        );
+        for item in &self.expected_hidden {
+            assert!(!view.item(*item).unwrap().is_active());
+            assert!(!self.panes.bodies.contains_key(item));
+        }
         let active = ITEMS
             .into_iter()
             .filter(|item| view.item(*item).unwrap().is_active())
@@ -911,7 +971,7 @@ impl GridHarness {
         assert!(!self.context.input(|input| input.pointer.primary_down()));
     }
 
-    fn layout_signature(&self) -> Vec<String> {
+    pub(super) fn layout_signature(&self) -> Vec<String> {
         let surface = self.dockspace.view().surface(SURFACE).unwrap();
         let mut signature = Vec::new();
         if let Some(root) = surface.main_root() {
@@ -1427,9 +1487,10 @@ proptest! {
     #[test]
     fn shared_grid_random_pointer_sequences_preserve_ownership_and_recover(
         geometry in 0u8..4,
+        hidden in 0u8..32,
         actions in proptest::collection::vec(random_action(), 1..17),
     ) {
-        let mut trace = vec![format!("initial geometry={geometry}")];
+        let mut trace = vec![format!("initial geometry={geometry}, hidden={hidden:#07b}")];
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut harness = GridHarness::new();
             let physical_size = vec2(1100.0, 760.0);
@@ -1452,6 +1513,11 @@ proptest! {
                 _ => unreachable!("the generated initial geometry is in 0..4"),
             };
             harness.settle();
+            for selector in 0..5 {
+                if hidden & (1 << selector) != 0 {
+                    harness.random_visibility(selector, &mut trace);
+                }
+            }
             trace.push(format!(
                 "geometry {geometry}: {geometry_name}; viewport={:?}, pixels_per_point={}, zoom={}",
                 harness.context.content_rect(),
@@ -1463,6 +1529,7 @@ proptest! {
                 trace.push(format!("step {step}: {action:?}"));
                 match action {
                     Action::Click(selector) => harness.random_click(selector, &mut trace),
+                    Action::ToggleVisibility(selector) => harness.random_visibility(selector, &mut trace),
                     Action::Guide { source, target, direction, finish } => {
                         if let Some(source) = harness.pick_tab(source, true) {
                             harness.random_guide(&source, target, direction, finish, &mut trace);
