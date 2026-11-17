@@ -92,6 +92,14 @@ changed Auto map invalidates old boundary geometry before a new gesture can use
 it. Preview geometry and the committed result must agree on the same resolved
 map.
 
+Fresh surface measurements may change an Auto Grid's resolved map during a
+pointer resize. A changed map of any directly driven Grid cancels the complete
+gesture, including both junction axes. Preparation recompiles the same measured
+layout without transient shares; successful admission then cancels the exact
+session and sample. Rejected or abandoned contributions cannot cancel a gesture.
+Fixed grids and unchanged Auto maps retain their frozen resize solver across
+measurement changes. Late release cannot commit shares from a cancelled map.
+
 An ancestor resize may reflow Auto descendants while preserving every captured
 driver boundary. A direct Grid driver must retain its frozen dimensions and cell
 map. After both axes are merged, roots containing Auto reuse their immutable

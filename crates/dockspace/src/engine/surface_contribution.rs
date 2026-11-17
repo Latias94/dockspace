@@ -89,8 +89,17 @@ pub struct PreparedSurfaceContribution {
     pub(super) token: SurfaceContributionToken,
     pub(super) policy_revision: PolicyRevision,
     pub(super) state: PreparedSurfaceContributionState,
+    pub(super) invalidated_resize: Option<InvalidatedResize>,
     #[cfg(feature = "motion")]
     pub(super) next_motion: Option<Arc<super::layout_motion::SurfaceMotionState>>,
+}
+
+/// A read-only compilation result for one exact sample, owned by its contribution.
+#[derive(Debug, PartialEq)]
+pub(super) struct InvalidatedResize {
+    pub(super) session: crate::interaction::ResizeSessionId,
+    pub(super) owner: GestureOwner,
+    pub(super) updates: Vec<TrackResize>,
 }
 
 impl PreparedSurfaceContribution {
@@ -338,6 +347,7 @@ impl DockEngine {
         {
             return Ok(PreparedSurfaceContribution {
                 token,
+                invalidated_resize: None,
                 #[cfg(feature = "motion")]
                 next_motion: None,
                 policy_revision,
@@ -375,6 +385,7 @@ impl DockEngine {
             // adopt its solved offsets before the complete frame can publish it.
             return Ok(PreparedSurfaceContribution {
                 token,
+                invalidated_resize: None,
                 #[cfg(feature = "motion")]
                 next_motion: None,
                 policy_revision,
@@ -432,6 +443,7 @@ impl DockEngine {
         {
             return Ok(PreparedSurfaceContribution {
                 token,
+                invalidated_resize: None,
                 #[cfg(feature = "motion")]
                 next_motion: None,
                 policy_revision,
@@ -440,6 +452,25 @@ impl DockEngine {
                 },
             });
         }
+        let compile = |overrides: &[crate::presentation::layout::TrackWeightOverride<'_>]| {
+            compile_surface_plan(
+                &self.workspace,
+                self.version,
+                &self.policy,
+                &self.presentation_authority.presentation_config,
+                &self.presentation_authority.presentation_requirements,
+                &measurements,
+                &self.presentation_authority.tab_strip_states,
+                overrides,
+                contained_projection,
+            )
+            .map_err(SurfaceContributionPrepareError::Compilation)
+            .and_then(|plan| {
+                plan.finalize()
+                    .map_err(SurfaceContributionPrepareError::Validation)
+            })
+        };
+        let mut invalidated_resize = None;
         let compiled = if let Some(stamp) = native_projection {
             let projection = self
                 .native_first_live_projection(stamp.saga)
@@ -456,21 +487,18 @@ impl DockEngine {
                 &self.presentation_authority.tab_strip_states,
             )
         } else {
-            compile_surface_plan(
-                &self.workspace,
-                self.version,
-                &self.policy,
-                &self.presentation_authority.presentation_config,
-                &self.presentation_authority.presentation_requirements,
-                &measurements,
-                &self.presentation_authority.tab_strip_states,
-                &resize_overrides,
-                contained_projection,
-            )
-            .map_err(SurfaceContributionPrepareError::Compilation)
-            .and_then(|plan| {
-                plan.finalize()
-                    .map_err(SurfaceContributionPrepareError::Validation)
+            compile(&resize_overrides).and_then(|plan| {
+                let Some(resize) = self.active_resize_invalidated_by_plan(surface, &plan) else {
+                    return Ok(plan);
+                };
+                invalidated_resize = Some(InvalidatedResize {
+                    session: resize.session,
+                    owner: resize.owner,
+                    updates: resize.updates.clone(),
+                });
+                // A junction is one gesture. Rebuild all geometry and receivers
+                // from durable shares, including its other axis and ancestors.
+                compile(&[])
             })
         };
         let state = match compiled {
@@ -511,8 +539,12 @@ impl DockEngine {
             Err(error) => return Err(error),
         };
 
+        if !matches!(state, PreparedSurfaceContributionState::Ready { .. }) {
+            invalidated_resize = None;
+        }
         Ok(PreparedSurfaceContribution {
             token,
+            invalidated_resize,
             #[cfg(feature = "motion")]
             next_motion: None,
             policy_revision,
@@ -664,11 +696,63 @@ impl DockEngine {
         };
         Ok(PreparedSurfaceContribution {
             token,
+            invalidated_resize: None,
             #[cfg(feature = "motion")]
             next_motion: None,
             policy_revision,
             state: PreparedSurfaceContributionState::Retained { ticket },
         })
+    }
+
+    fn active_resize_invalidated_by_plan(
+        &self,
+        surface: SurfaceId,
+        plan: &PresentationPlan,
+    ) -> Option<&crate::interaction::ActiveResize> {
+        let InteractionStatus::Resizing { session } = self.interaction.status() else {
+            return None;
+        };
+        let resize = self.interaction.active_resize(session).ok()?;
+        (resize.surface == surface
+            && resize.axis_groups.iter().any(|group| {
+                group
+                    .piecewise
+                    .as_ref()
+                    .is_some_and(|axis| !axis.direct_grid_maps_match(plan))
+            }))
+        .then_some(resize)
+    }
+
+    pub(super) fn invalidated_resize_contribution_is_current(
+        &self,
+        contribution: &PreparedSurfaceContribution,
+    ) -> bool {
+        let Some(invalidated) = &contribution.invalidated_resize else {
+            return false;
+        };
+        let PreparedSurfaceContributionState::Ready { plan } = &contribution.state else {
+            return false;
+        };
+        let Ok(resize) = self.interaction.active_resize(invalidated.session) else {
+            return false;
+        };
+        resize.surface == contribution.surface()
+            && resize.owner == invalidated.owner
+            && resize.updates == invalidated.updates
+            && plan.resize_projection().is_empty()
+            && resize
+                .axis_groups
+                .iter()
+                .flat_map(|group| group.sources())
+                .all(|source| {
+                    let root = source.root();
+                    self.presented_root_topology_is_current(plan, root)
+                        && plan.command_basis(root).is_some_and(|basis| {
+                            self.workspace
+                                .root_fingerprint(root)
+                                .is_ok_and(|current| *basis == current)
+                        })
+                })
     }
 
     fn surface_resize_overrides(

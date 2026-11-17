@@ -956,6 +956,9 @@ impl DockEngine {
         surface: SurfaceId,
         contribution: &PreparedSurfaceContribution,
     ) -> bool {
+        if contribution.invalidated_resize.is_some() {
+            return self.invalidated_resize_contribution_is_current(contribution);
+        }
         match &contribution.state {
             PreparedSurfaceContributionState::Ready { plan } => {
                 let before_updates = before
@@ -1376,12 +1379,53 @@ impl DockEngine {
         Ok(())
     }
 
+    pub(super) fn reduce_surface_contribution_with_interaction_events(
+        &mut self,
+        tick: ReducerTickId,
+        mut contribution: PreparedSurfaceContribution,
+        policy_revision: PolicyRevision,
+        interaction_events: &mut Vec<InteractionEvent>,
+    ) -> Result<SurfaceContributionOutcome, EngineError> {
+        let surface = contribution.surface();
+        if contribution.invalidated_resize.is_some()
+            && !self.invalidated_resize_contribution_is_current(&contribution)
+        {
+            return Ok(SurfaceContributionOutcome::Rejected {
+                surface,
+                reason: SurfaceContributionRejection::ResizeProjectionChanged { surface },
+            });
+        }
+        let invalidated = contribution.invalidated_resize.take();
+        let base = contribution.token.base();
+        let outcome = self.reduce_surface_contribution(tick, contribution, policy_revision)?;
+        if matches!(outcome, SurfaceContributionOutcome::Ready { .. })
+            && let Some(invalidated) = invalidated
+        {
+            self.cancel_gesture_owner(
+                ReductionCause::SurfaceContribution {
+                    tick,
+                    surface,
+                    base,
+                },
+                invalidated.owner,
+                InteractionCancelReason::SceneUnavailable,
+                interaction_events,
+            )?;
+        }
+        Ok(outcome)
+    }
+
     pub(super) fn reduce_surface_contribution(
         &mut self,
         tick: ReducerTickId,
         contribution: PreparedSurfaceContribution,
         policy_revision: PolicyRevision,
     ) -> Result<SurfaceContributionOutcome, EngineError> {
+        if contribution.invalidated_resize.is_some() {
+            return Err(EngineError::ReductionCauseInvariant {
+                detail: "resize-invalidating measurements require the interaction event boundary",
+            });
+        }
         let token = contribution.token;
         let surface = token.surface();
         let cause = ReductionCause::SurfaceContribution {

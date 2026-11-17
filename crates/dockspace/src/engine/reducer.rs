@@ -706,10 +706,11 @@ impl DockEngine {
                     reason: SurfaceContributionRejection::ResizeProjectionChanged { surface },
                 }
             } else {
-                candidate.reduce_surface_contribution(
+                candidate.reduce_surface_contribution_with_interaction_events(
                     tick,
                     contribution,
                     candidate.policy.revision(),
+                    &mut interaction_events,
                 )?
             };
             if outcome.changes_surface_authority()

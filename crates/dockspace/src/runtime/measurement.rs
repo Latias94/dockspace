@@ -360,10 +360,14 @@ impl DockspaceHostFrame<'_> {
     /// then measures only an unanswered unmeasured surface or a ready surface whose
     /// [`SurfaceMeasurementRefresh`](super::SurfaceMeasurementRefresh) is
     /// [`Allowed`](super::SurfaceMeasurementRefresh::Allowed).
-    /// A retained gesture or preview keeps its existing geometry, and output
-    /// backpressure returns [`SurfaceWorkDeferred::OutputCapacity`] without invoking
-    /// the resolver. A surface answered earlier in the same pass is also retained;
-    /// its resolver is not called twice.
+    /// A Ready plan with a retained gesture or preview keeps its measured geometry.
+    /// An Unmeasured surface still requests measurements; an active resize projects
+    /// its frozen track shares into the newly offered bounds when its direct Grid
+    /// cell maps remain compatible. A changed direct map cancels the complete resize
+    /// and uses durable shares. Output backpressure
+    /// returns [`SurfaceWorkDeferred::OutputCapacity`] without invoking the resolver.
+    /// A surface answered earlier in the same pass is also retained; its resolver
+    /// is not called twice.
     ///
     /// To emit an output, execute the returned ready plan's complete program and
     /// call [`DockspaceHostFrame::confirm_surface_painted`] before committing.

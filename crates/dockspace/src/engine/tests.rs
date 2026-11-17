@@ -4,6 +4,7 @@ mod backend_ingress_prefix;
 mod configuration_phase;
 mod docking_enabled;
 mod local_selection;
+mod resize_measurement;
 
 use crate::engine::transition::InputOutcome;
 use crate::geometry::{LogicalPoint, LogicalRect, LogicalSize, PhysicalRect, ScaleFactor};

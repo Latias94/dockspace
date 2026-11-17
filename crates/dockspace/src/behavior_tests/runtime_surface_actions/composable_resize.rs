@@ -7,6 +7,8 @@ use crate::geometry::PaneSizing;
 use crate::model::{DockspaceGridShape, DockspaceGridShares};
 use crate::runtime::{DockPresentationConfig, DockspaceHostFrame, ResizePropagation};
 
+mod measurement_changes;
+
 fn config(propagation: ResizePropagation) -> DockPresentationConfig {
     DockPresentationConfig::builder()
         .minimum_pane_size(1.0, 1.0)

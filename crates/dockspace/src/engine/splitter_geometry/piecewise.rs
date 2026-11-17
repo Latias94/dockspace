@@ -475,6 +475,31 @@ impl FrozenPiecewiseAxis {
         })
     }
 
+    pub(in crate::engine) fn direct_grid_maps_match(&self, plan: &PresentationPlan) -> bool {
+        self.roots.iter().all(|root| {
+            root.drivers.keys().all(|owner| {
+                let Some(FrozenNode {
+                    kind: FrozenKind::Tracks(tracks),
+                    ..
+                }) = root.nodes.get(owner)
+                else {
+                    return false;
+                };
+                let Some((basis, _)) = &tracks.grid else {
+                    return true;
+                };
+                plan.layout_facts()
+                    .and_then(|facts| facts.root(root.source.root()))
+                    .and_then(|facts| facts.projection().grids.get(owner))
+                    .is_some_and(|grid| {
+                        grid.shape.rows == basis.rows()
+                            && grid.shape.columns == basis.columns()
+                            && grid.children.as_ref() == basis.children()
+                    })
+            })
+        })
+    }
+
     pub(super) fn reflow_preserves_drivers(
         &self,
         root: RootId,

@@ -156,6 +156,7 @@ impl DockEngine {
         &mut self,
         tick: ReducerTickId,
         freshly_measured: Option<SurfaceId>,
+        interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<bool, EngineError> {
         let surfaces = self
             .scene()
@@ -212,8 +213,12 @@ impl DockEngine {
                     input: Some(self.last_input),
                     detail: source.to_string(),
                 })?;
-            let outcome =
-                self.reduce_surface_contribution(tick, contribution, self.policy.revision())?;
+            let outcome = self.reduce_surface_contribution_with_interaction_events(
+                tick,
+                contribution,
+                self.policy.revision(),
+                interaction_events,
+            )?;
             changed |= outcome.changes_surface_authority();
         }
         Ok(changed)

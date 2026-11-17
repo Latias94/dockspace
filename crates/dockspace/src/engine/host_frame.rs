@@ -1290,9 +1290,11 @@ impl CoreHostFrame {
         if self.presentation_phase_started {
             return Ok(());
         }
-        let refreshed = self
-            .candidate
-            .refresh_presentation_layouts(self.tick, freshly_measured);
+        let refreshed = self.candidate.refresh_presentation_layouts(
+            self.tick,
+            freshly_measured,
+            &mut self.interaction_events,
+        );
         match refreshed {
             Ok(false) => Ok(()),
             Ok(true) => match self.refresh_presentation_snapshot() {
@@ -2795,6 +2797,7 @@ impl CoreHostFrame {
         let request = self.stage_presentation_output(surface, frozen, &obligation)?;
         let contribution = PreparedSurfaceContribution {
             token,
+            invalidated_resize: None,
             #[cfg(feature = "motion")]
             next_motion: None,
             policy_revision: token.ticket().policy(),
@@ -2862,11 +2865,14 @@ impl CoreHostFrame {
         {
             return self.reject(CoreHostFrameError::DuplicateSurfaceContribution { surface });
         }
-        let outcome = match self.candidate.reduce_surface_contribution(
-            self.tick,
-            contribution,
-            self.candidate.policy.revision(),
-        ) {
+        let outcome = match self
+            .candidate
+            .reduce_surface_contribution_with_interaction_events(
+                self.tick,
+                contribution,
+                self.candidate.policy.revision(),
+                &mut self.interaction_events,
+            ) {
             Ok(outcome) => outcome,
             Err(error) => {
                 return self.reject_input_prefix(error);
