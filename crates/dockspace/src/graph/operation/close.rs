@@ -422,22 +422,13 @@ pub(crate) fn prepare_content_close(
             validate_item_source(&candidate, source).map_err(close_command_error)?;
             let root = source.root();
             let item = source.item();
-            let successor = match candidate.node(source.owner_node()) {
-                Some(Node::Tabs {
-                    items, selected, ..
-                }) if *selected == Some(TabKey::for_item(item)) => items
-                    .iter()
-                    .position(|entry| *entry == TabKey::for_item(item))
-                    .and_then(|index| {
-                        items[index + 1..]
-                            .iter()
-                            .chain(items[..index].iter().rev())
-                            .copied()
-                            .find(|tab| candidate.tab_is_visible(*tab))
-                    }),
-                _ => None,
-            };
-            remove_item(&mut candidate, source.owner_node(), item).map_err(close_command_error)?;
+            let successor = selected_tab_close_successor(
+                &candidate,
+                source.owner_node(),
+                TabKey::for_item(item),
+            );
+            remove_item(&mut candidate, source.owner_node(), item, None)
+                .map_err(close_command_error)?;
             Arc::make_mut(&mut candidate.storage.hidden_items).remove(&item);
             if let Some(successor) = successor {
                 candidate
@@ -497,8 +488,14 @@ pub(crate) fn prepare_content_close(
                 validate_close_requirement(policy, *requirement)?;
             }
             let root = source.root();
-            detach_node(&mut candidate, root, node).map_err(close_command_error)?;
+            let successor = selected_tab_close_successor(&candidate, source.tabs(), source.tab());
+            detach_node(&mut candidate, root, node, None).map_err(close_command_error)?;
             remove_subtree_nodes(&mut candidate, node).map_err(close_command_error)?;
+            if let Some(successor) = successor {
+                candidate
+                    .set_visible_tab_selection(source.tabs(), successor)
+                    .map_err(close_command_error)?;
+            }
             cleanup_empty_source_root(&mut candidate, root).map_err(close_command_error)?;
             candidate
                 .complete_root_change(root)
@@ -578,6 +575,29 @@ pub(crate) fn prepare_content_close(
         });
     }
     Ok(PreparedContentCloseCommit { candidate, outcome })
+}
+
+/// Chooses the same visual successor for direct content and complete layout tabs.
+fn selected_tab_close_successor(
+    workspace: &Workspace,
+    tabs: NodeId,
+    closing: TabKey,
+) -> Option<TabKey> {
+    let Node::Tabs {
+        items, selected, ..
+    } = workspace.node(tabs)?
+    else {
+        return None;
+    };
+    if *selected != Some(closing) {
+        return None;
+    }
+    let index = items.iter().position(|tab| *tab == closing)?;
+    items[index + 1..]
+        .iter()
+        .chain(items[..index].iter().rev())
+        .copied()
+        .find(|tab| workspace.tab_is_visible(*tab))
 }
 
 fn close_command_error(error: CommandError) -> TransactionError {

@@ -183,21 +183,7 @@ pub(super) fn select_item(
             delta: ItemDelta::None,
         });
     }
-    let mut choices = Vec::new();
-    if let Some(tabs) = source.tabs() {
-        choices.push((tabs, TabKey::for_item(source.item())));
-    }
-    let mut node = source.owner_node();
-    while let Some(parent) = workspace.parent_link(source.root(), node) {
-        if matches!(workspace.node(parent.parent), Some(Node::Tabs { .. })) {
-            choices.push((parent.parent, TabKey::for_layout(node)));
-        }
-        node = parent.parent;
-    }
-    let mut changed = false;
-    for (tabs, tab) in choices {
-        changed |= workspace.set_visible_tab_selection(tabs, tab)?;
-    }
+    let changed = activate_item_ancestry(workspace, source.root(), source.place(), source.item())?;
     if changed {
         workspace.complete_root_change(source.root())?;
     }
@@ -208,6 +194,32 @@ pub(super) fn select_item(
         },
         delta: ItemDelta::None,
     })
+}
+
+/// Writes only the selections on a validated real item's current placement path.
+/// Callers own source validation and complete the resulting root issuance once.
+fn activate_item_ancestry(
+    workspace: &mut Workspace,
+    root: RootId,
+    place: ItemPlace,
+    item: ItemId,
+) -> Result<bool, CommandError> {
+    let mut choices = Vec::new();
+    if let Some(tabs) = place.tabs() {
+        choices.push((tabs, TabKey::for_item(item)));
+    }
+    let mut node = place.owner_node();
+    while let Some(parent) = workspace.parent_link(root, node) {
+        if matches!(workspace.node(parent.parent), Some(Node::Tabs { .. })) {
+            choices.push((parent.parent, TabKey::for_layout(node)));
+        }
+        node = parent.parent;
+    }
+    let mut changed = false;
+    for (tabs, tab) in choices {
+        changed |= workspace.set_visible_tab_selection(tabs, tab)?;
+    }
+    Ok(changed)
 }
 
 fn set_item_visibility(
@@ -288,6 +300,12 @@ fn open(
         standalone: false,
     };
     let _ = insert_payload(workspace, payload, target)?;
+    let location = workspace
+        .locate_item_by_id(item)
+        .ok_or(CommandError::Invariant {
+            stage: "locate newly opened item for ancestor activation",
+        })?;
+    activate_item_ancestry(workspace, root, location.place, item)?;
     workspace.complete_root_change(root)?;
     workspace.complete_root_structure(root)?;
     Ok(AppliedCommand {
@@ -384,11 +402,14 @@ fn move_payload(
         ));
     }
 
-    let detached = detach_payload(workspace, payload)?;
+    // Source removal may prune a layout child from an ancestor destination.
+    // Only this candidate's insertion gap changes; captured authority was checked above.
+    let mut insertion_target = target.clone();
+    let detached = detach_payload(workspace, payload, Some(&mut insertion_target))?;
     let source_root = detached.source_root();
     let items = detached.items();
     let target_root = target_root(target);
-    let inserted_split = insert_payload(workspace, detached, target)?;
+    let inserted_split = insert_payload(workspace, detached, &insertion_target)?;
     let retired_source_surface = cleanup_empty_source_root(workspace, source_root)?;
     workspace.complete_root_change(source_root)?;
     if target_root != source_root {
@@ -1382,7 +1403,7 @@ fn detach_root_content(
             Ok((node, None, vec![*item], ItemDelta::Open(*item)))
         }
         RootContent::Move(payload) => {
-            let detached = detach_payload(workspace, payload)?;
+            let detached = detach_payload(workspace, payload, None)?;
             let items = detached.items();
             cleanup_empty_source_root(workspace, detached.source_root())?;
             // RootContent::Move always removes actual content from its donor.
@@ -1412,10 +1433,11 @@ fn detach_root_content(
 fn detach_payload(
     workspace: &mut Workspace,
     payload: &MovePayload,
+    destination: Option<&mut DockTarget>,
 ) -> Result<DetachedPayload, CommandError> {
     match payload {
         MovePayload::Item(source) => {
-            remove_item(workspace, source.owner_node(), source.item())?;
+            remove_item(workspace, source.owner_node(), source.item(), destination)?;
             Ok(DetachedPayload::Item {
                 source_root: source.root(),
                 item: source.item(),
@@ -1462,7 +1484,7 @@ fn detach_payload(
                 node = workspace.insert_runtime_node(contents);
                 None
             } else {
-                detach_node(workspace, source_root, node)?
+                detach_node(workspace, source_root, node, destination)?
             };
             Ok(DetachedPayload::Node {
                 source_root,
@@ -1487,6 +1509,7 @@ pub(super) fn detach_node(
     workspace: &mut Workspace,
     root: RootId,
     node: NodeId,
+    destination: Option<&mut DockTarget>,
 ) -> Result<Option<NodeId>, CommandError> {
     let record = *workspace
         .storage
@@ -1513,7 +1536,7 @@ pub(super) fn detach_node(
             root,
             node,
         })?;
-    remove_child(workspace, parent.parent, parent.index)?;
+    remove_child(workspace, parent.parent, parent.index, destination)?;
     Ok(None)
 }
 
@@ -1521,6 +1544,7 @@ fn remove_child(
     workspace: &mut Workspace,
     mut parent: NodeId,
     mut index: usize,
+    mut destination: Option<&mut DockTarget>,
 ) -> Result<(), CommandError> {
     let root = workspace.node_root(parent).ok_or(CommandError::Invariant {
         stage: "locate structural child removal root",
@@ -1543,6 +1567,10 @@ fn remove_child(
         })?;
         let empty = match current {
             Node::Tabs { .. } => {
+                let retain_empty = destination.as_deref().is_some_and(|target| {
+                    matches!(target, DockTarget::Center(target) | DockTarget::TabGap { target, .. }
+                        if target.tabs() == parent)
+                });
                 let child = current
                     .child_nodes()
                     .find(|(slot, _)| *slot == index)
@@ -1551,8 +1579,15 @@ fn remove_child(
                         stage: "remove actual layout-tab roster entry",
                     })?;
                 remove_tab(workspace, parent, TabKey::for_layout(child))?;
+                if let Some(DockTarget::TabGap { target, index: gap }) = destination.as_deref_mut()
+                    && target.tabs() == parent
+                    && index < *gap
+                {
+                    *gap -= 1;
+                }
                 matches!(workspace.node(parent), Some(Node::Tabs { items, .. }) if items.is_empty())
                     && central != Some(parent)
+                    && !retain_empty
             }
             Node::Split { .. } => {
                 let Some(Node::Split {
@@ -2069,6 +2104,7 @@ pub(super) fn remove_item(
     workspace: &mut Workspace,
     owner: NodeId,
     item: ItemId,
+    destination: Option<&mut DockTarget>,
 ) -> Result<(), CommandError> {
     if let Some(Node::Pane { item: actual }) = workspace.node(owner) {
         if *actual != item {
@@ -2077,7 +2113,7 @@ pub(super) fn remove_item(
         let root = workspace.node_root(owner).ok_or(CommandError::Invariant {
             stage: "locate removed pane root",
         })?;
-        detach_node(workspace, root, owner)?;
+        detach_node(workspace, root, owner, destination)?;
         workspace.remove_runtime_node(owner);
         return Ok(());
     }

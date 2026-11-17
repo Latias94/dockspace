@@ -16,6 +16,8 @@ use crate::model::{
 };
 use crate::policy::DockPolicySnapshot;
 
+mod edit_regressions;
+
 const ROOT: RootId = RootId::new(1);
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const A: ItemId = ItemId::new(1);

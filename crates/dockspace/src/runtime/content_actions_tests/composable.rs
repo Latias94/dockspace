@@ -4,6 +4,8 @@ use super::*;
 use crate::model::{DockspaceActionOutcome, DockspaceAxis, PreparedTab, TabLabel};
 use crate::policy::DockItemRule;
 
+mod edit_regressions;
+
 const D: ItemId = ItemId::new(5);
 
 fn composed_session() -> DockspaceSession {
