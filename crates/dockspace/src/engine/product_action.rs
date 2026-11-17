@@ -732,7 +732,7 @@ impl DockEngine {
                 version,
             } => {
                 if changed && let Some((surface, tabs)) = hidden_focus {
-                    if let Some(item) = self.workspace.first_active_item(tabs) {
+                    if let Some(item) = self.visibility_focus_item(tabs) {
                         self.request_product_item_focus(item, focus_causal)?;
                     } else {
                         let guard = self.viewport_focus_binding(surface);
@@ -792,6 +792,20 @@ impl DockEngine {
         (focused == Some(item)).then_some((surface, location.owner_node()))
     }
 
+    fn visibility_focus_item(&self, mut node: NodeId) -> Option<ItemId> {
+        let root = self.workspace.node_root(node)?;
+        loop {
+            if let Some(item) = self
+                .workspace
+                .first_active_item(node)
+                .filter(|item| self.workspace.item_is_active(*item))
+            {
+                return Some(item);
+            }
+            node = self.workspace.parent_link(root, node)?.parent;
+        }
+    }
+
     fn product_root_focus_item(&self, root: RootId) -> Option<ItemId> {
         let surface = self.root_surface(root)?;
         let is_visible_source = |item: &ItemId| {
@@ -844,12 +858,14 @@ impl DockEngine {
         item: ItemId,
         causal: FocusCausalStamp,
     ) -> Result<(), EngineError> {
-        if self.workspace.item_is_hidden(item) {
-            return Ok(());
-        }
         let Some(location) = self.workspace.locate_item_by_id(item) else {
             return Ok(());
         };
+        // Reordering an inactive tab retains the current selection and focus.
+        // A product edit can only request content admitted by the committed path.
+        if !self.workspace.item_location_is_active(item, location) {
+            return Ok(());
+        }
         let Some(surface) = self.root_surface(location.root) else {
             return Ok(());
         };

@@ -16,6 +16,8 @@ use crate::model::{
 };
 use crate::policy::DockPolicySnapshot;
 
+mod lifecycle;
+
 const ITEMS: [ItemId; 7] = [
     ItemId::new(1),
     ItemId::new(2),

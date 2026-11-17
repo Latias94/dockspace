@@ -422,19 +422,17 @@ pub(crate) fn prepare_content_close(
             validate_item_source(&candidate, source).map_err(close_command_error)?;
             let root = source.root();
             let item = source.item();
-            let successor = selected_tab_close_successor(
+            let successors = selected_ancestor_close_successors(
                 &candidate,
+                root,
                 source.owner_node(),
-                TabKey::for_item(item),
+                Some(TabKey::for_item(item)),
             );
             remove_item(&mut candidate, source.owner_node(), item, None)
                 .map_err(close_command_error)?;
             Arc::make_mut(&mut candidate.storage.hidden_items).remove(&item);
-            if let Some(successor) = successor {
-                candidate
-                    .set_visible_tab_selection(source.owner_node(), successor)
-                    .map_err(close_command_error)?;
-            }
+            apply_selected_ancestor_close_successors(&mut candidate, &successors)
+                .map_err(close_command_error)?;
             cleanup_empty_source_root(&mut candidate, root).map_err(close_command_error)?;
             candidate
                 .complete_root_change(root)
@@ -459,10 +457,14 @@ pub(crate) fn prepare_content_close(
             if actual.len() != items.len() || !actual.iter().all(|item| items.contains(item)) {
                 return Err(close_invariant("validate frozen close-tabs membership"));
             }
+            let successors =
+                selected_ancestor_close_successors(&candidate, root, source.node(), None);
             clear_tabs_content(&mut candidate, root, source.node()).map_err(close_command_error)?;
             for item in items {
                 Arc::make_mut(&mut candidate.storage.hidden_items).remove(item);
             }
+            apply_selected_ancestor_close_successors(&mut candidate, &successors)
+                .map_err(close_command_error)?;
             cleanup_empty_source_root(&mut candidate, root).map_err(close_command_error)?;
             candidate
                 .complete_root_change(root)
@@ -488,14 +490,16 @@ pub(crate) fn prepare_content_close(
                 validate_close_requirement(policy, *requirement)?;
             }
             let root = source.root();
-            let successor = selected_tab_close_successor(&candidate, source.tabs(), source.tab());
+            let successors = selected_ancestor_close_successors(
+                &candidate,
+                root,
+                source.tabs(),
+                Some(source.tab()),
+            );
             detach_node(&mut candidate, root, node, None).map_err(close_command_error)?;
             remove_subtree_nodes(&mut candidate, node).map_err(close_command_error)?;
-            if let Some(successor) = successor {
-                candidate
-                    .set_visible_tab_selection(source.tabs(), successor)
-                    .map_err(close_command_error)?;
-            }
+            apply_selected_ancestor_close_successors(&mut candidate, &successors)
+                .map_err(close_command_error)?;
             cleanup_empty_source_root(&mut candidate, root).map_err(close_command_error)?;
             candidate
                 .complete_root_change(root)
@@ -575,6 +579,51 @@ pub(crate) fn prepare_content_close(
         });
     }
     Ok(PreparedContentCloseCommit { candidate, outcome })
+}
+
+/// Saves close-specific visual gaps before pruning can discard their rosters.
+/// The direct scope and each structural ancestor use the same successor rule.
+fn selected_ancestor_close_successors(
+    workspace: &Workspace,
+    root: RootId,
+    mut node: NodeId,
+    mut closing: Option<TabKey>,
+) -> Vec<(NodeId, TabKey, TabKey)> {
+    let mut successors = Vec::new();
+    loop {
+        if let Some(closing) = closing
+            && let Some(successor) = selected_tab_close_successor(workspace, node, closing)
+        {
+            successors.push((node, closing, successor));
+        }
+        let Some(parent) = workspace.parent_link(root, node) else {
+            break;
+        };
+        closing = Some(TabKey::for_layout(node));
+        node = parent.parent;
+    }
+    successors
+}
+
+/// Applies a saved gap only when closing exhausted the original selected branch.
+/// Hidden owned siblings retain their slots; an empty central target stays visible.
+fn apply_selected_ancestor_close_successors(
+    workspace: &mut Workspace,
+    successors: &[(NodeId, TabKey, TabKey)],
+) -> Result<(), CommandError> {
+    for &(tabs, closing, successor) in successors {
+        let Some(node) = workspace.node(tabs) else {
+            continue;
+        };
+        let Node::Tabs { items, .. } = node else {
+            return Err(CommandError::NodeIsNotTabs { node: tabs });
+        };
+        if items.contains(&closing) && workspace.tab_is_visible(closing) {
+            continue;
+        }
+        workspace.set_visible_tab_selection(tabs, successor)?;
+    }
+    Ok(())
 }
 
 /// Chooses the same visual successor for direct content and complete layout tabs.

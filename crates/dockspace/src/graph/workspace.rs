@@ -703,6 +703,14 @@ impl Workspace {
         let Some(location) = self.locate_item_by_id(item) else {
             return false;
         };
+        self.item_location_is_active(item, location)
+    }
+
+    /// Checks an already located placement without scanning the item roster again.
+    pub(crate) fn item_location_is_active(&self, item: ItemId, location: ItemLocation) -> bool {
+        if self.item_is_hidden(item) {
+            return false;
+        }
         if let Some(tabs) = location.tabs()
             && self.visible_tab_selection(tabs) != Some(TabKey::for_item(item))
         {

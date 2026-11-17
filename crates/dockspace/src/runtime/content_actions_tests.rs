@@ -19,6 +19,7 @@ mod tab_body_close;
 mod tabs_close;
 mod tabs_group_menu;
 mod visibility;
+mod visibility_close_regressions;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const OTHER_SURFACE: SurfaceId = SurfaceId::new(2);

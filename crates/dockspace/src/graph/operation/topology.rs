@@ -404,12 +404,31 @@ fn move_payload(
 
     // Source removal may prune a layout child from an ancestor destination.
     // Only this candidate's insertion gap changes; captured authority was checked above.
+    let reveal_item = workspace
+        .root_structure(target_root(target))
+        .filter(|structure| structure.has_composition())
+        .and_then(|_| match payload {
+            MovePayload::Item(source) => {
+                (!workspace.item_is_hidden(source.item())).then_some(source.item())
+            }
+            MovePayload::Tabs(source) | MovePayload::Subtree(source) => {
+                workspace.first_active_item(source.node())
+            }
+        });
     let mut insertion_target = target.clone();
     let detached = detach_payload(workspace, payload, Some(&mut insertion_target))?;
     let source_root = detached.source_root();
     let items = detached.items();
     let target_root = target_root(target);
     let inserted_split = insert_payload(workspace, detached, &insertion_target)?;
+    if let Some(item) = reveal_item {
+        let location = workspace
+            .locate_item_by_id(item)
+            .ok_or(CommandError::Invariant {
+                stage: "locate moved content for destination activation",
+            })?;
+        activate_item_ancestry(workspace, target_root, location.place, item)?;
+    }
     let retired_source_surface = cleanup_empty_source_root(workspace, source_root)?;
     workspace.complete_root_change(source_root)?;
     if target_root != source_root {
