@@ -29,7 +29,7 @@ pub(super) const INSPECTOR: ItemId = ItemId::new(4);
 pub(super) const CONSOLE: ItemId = ItemId::new(5);
 const HISTORY: ItemId = ItemId::new(6);
 pub(super) const PROFILER: ItemId = ItemId::new(7);
-const ASSETS: ItemId = ItemId::new(8);
+pub(super) const ASSETS: ItemId = ItemId::new(8);
 
 pub(super) fn new_context() -> Context {
     let context = Context::default();
@@ -238,7 +238,10 @@ pub(super) fn demo_layout() -> DockspaceLayout {
     )
     .with_contained(DockspaceContainedLayout::new(
         FLOATING,
-        DockspaceRootLayout::new(FLOATING_ROOT, DockspaceNode::tabs([INSPECTOR])),
+        DockspaceRootLayout::new(
+            FLOATING_ROOT,
+            DockspaceNode::tabs([INSPECTOR]).named("Inspector"),
+        ),
         LogicalRect::new(940.0, 90.0, 300.0, 340.0).expect("the static Inspector bounds are valid"),
     ))])
     .expect("the workbench layout is valid")
@@ -263,6 +266,8 @@ pub(super) struct DemoPanes {
     objects: [SceneObject; 3],
     #[cfg(test)]
     pub(super) drop_observations: Option<DemoDropObservations>,
+    #[cfg(test)]
+    pub(super) tab_widgets: BTreeMap<egui_dockspace::TabKey, (u64, egui::Id)>,
 }
 
 #[cfg(test)]
@@ -315,6 +320,8 @@ impl DemoPanes {
             }),
             #[cfg(test)]
             drop_observations: None,
+            #[cfg(test)]
+            tab_widgets: BTreeMap::new(),
         }
     }
 
@@ -346,6 +353,9 @@ impl PaneView for DemoPanes {
     }
 
     fn tab_ui(&mut self, ui: &mut egui::Ui, tab: &Tab<'_>) -> TabVisuals {
+        #[cfg(test)]
+        self.tab_widgets
+            .insert(tab.key, (ui.ctx().cumulative_pass_nr(), tab.response.id));
         tabs::tab_ui(self, ui, tab)
     }
 

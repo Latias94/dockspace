@@ -16,11 +16,13 @@ pub use contained::{
 pub use presentation::{PresentationMenuAnchorHost, PresentationMenuAnchorRecord};
 pub use splitter::{
     SplitterGapPresentation, SplitterGapRecord, SplitterJunctionDirection, SplitterJunctionId,
-    SplitterJunctionRecord, SplitterRecord, SplitterResizeTarget, SplitterSceneId,
+    SplitterJunctionRecord, SplitterOwner, SplitterRecord, SplitterResizeTarget, SplitterSceneId,
 };
+pub(crate) use tab::FrozenTabLabel;
+
 pub use tab::{
     PaneRecord, PaneSceneId, TabBarRecord, TabBarSceneId, TabGroupDragRecord,
     TabGroupDragRegionKind, TabGroupDragRegionRecord, TabListMenuBackdropRecord,
     TabListMenuGeometryAvailability, TabListMenuRecord, TabListMenuRowRecord, TabRecord,
-    TabSceneId, TabStripControlRecord, TabStripMemberRecord, TabStripMemberVisibility,
+    TabSceneId, TabStripControlRecord, TabStripMemberRecord, TabStripMemberVisibility, TabsRecord,
 };

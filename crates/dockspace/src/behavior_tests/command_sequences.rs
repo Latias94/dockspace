@@ -7,7 +7,7 @@ use dockspace::engine::{DockEngine, EngineInput};
 use dockspace::geometry::LogicalRect;
 use dockspace::graph::command::{
     CloseCommitOutcome, ContentCloseTarget, DockFraction, DockTarget, Edge, MovePayload,
-    RootContent, RootPresentationTarget, SplitResize, WorkspaceCommand,
+    RootContent, RootPresentationTarget, TrackResize, WorkspaceCommand,
 };
 use dockspace::graph::error::{CommandError, ReferenceRole, TransactionError};
 use dockspace::graph::transaction::WorkspaceTransaction;
@@ -132,7 +132,9 @@ fn same_stack_reorder_uses_pre_removal_gap_indices() {
         .capture_item_source(ROOT_A, tabs, item(1))
         .expect("source exists");
     let report = WorkspaceTransaction::from_commands([WorkspaceCommand::Reorder {
-        source: source.as_tab_source(),
+        source: source
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
         insertion_index: 3,
     }])
     .apply(&mut workspace, &DockPolicySnapshot::default())
@@ -153,7 +155,9 @@ fn same_stack_reorder_uses_pre_removal_gap_indices() {
         .capture_item_source(ROOT_A, tabs, item(1))
         .expect("reordered source exists");
     let report = WorkspaceTransaction::from_commands([WorkspaceCommand::Reorder {
-        source: source.as_tab_source(),
+        source: source
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
         insertion_index: 3,
     }])
     .apply(&mut workspace, &DockPolicySnapshot::default())
@@ -179,7 +183,9 @@ fn reorder_is_rejected_when_tab_merge_policy_is_disabled() {
         &mut workspace,
         &policy,
         WorkspaceCommand::Reorder {
-            source: source.as_tab_source(),
+            source: source
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
             insertion_index: 3,
         },
     )
@@ -329,7 +335,9 @@ fn stale_source_and_target_snapshots_fail_closed() {
         &mut workspace,
         &DockPolicySnapshot::default(),
         WorkspaceCommand::Select {
-            source: changing_source.as_tab_source(),
+            source: changing_source
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     )
     .expect("selection changes the source root snapshot");
@@ -395,8 +403,8 @@ fn resize_requires_a_complete_positive_normalized_vector() {
     let error = apply(
         &mut workspace,
         &DockPolicySnapshot::default(),
-        WorkspaceCommand::ResizeSplits {
-            splits: vec![SplitResize::new(
+        WorkspaceCommand::ResizeTracks {
+            tracks: vec![TrackResize::split(
                 source,
                 vec![SplitWeight::new(0.2).expect("positive")],
             )],
@@ -418,8 +426,8 @@ fn resize_requires_a_complete_positive_normalized_vector() {
     apply(
         &mut workspace,
         &DockPolicySnapshot::default(),
-        WorkspaceCommand::ResizeSplits {
-            splits: vec![SplitResize::new(
+        WorkspaceCommand::ResizeTracks {
+            tracks: vec![TrackResize::split(
                 source,
                 vec![
                     SplitWeight::new(0.25).expect("positive"),
@@ -490,7 +498,9 @@ fn close_selection_uses_the_visual_successor_and_updates_durable_mru() {
         &mut workspace,
         &DockPolicySnapshot::default(),
         WorkspaceCommand::Select {
-            source: select_two.as_tab_source(),
+            source: select_two
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     )
     .expect("selection succeeds");
@@ -528,7 +538,9 @@ fn close_selection_uses_the_visual_successor_and_updates_durable_mru() {
         &mut workspace,
         &DockPolicySnapshot::default(),
         WorkspaceCommand::Select {
-            source: select_three.as_tab_source(),
+            source: select_three
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     )
     .expect("selection succeeds");
@@ -549,7 +561,9 @@ fn close_selection_uses_the_visual_successor_and_updates_durable_mru() {
         &mut workspace,
         &DockPolicySnapshot::default(),
         WorkspaceCommand::Select {
-            source: select_last.as_tab_source(),
+            source: select_last
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     )
     .expect("last item selection succeeds");
@@ -775,7 +789,9 @@ fn root_close_recaptures_current_graph_from_stable_identity() {
         &mut workspace,
         &DockPolicySnapshot::default(),
         WorkspaceCommand::Reorder {
-            source: reorder.as_tab_source(),
+            source: reorder
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
             insertion_index: 2,
         },
     )
@@ -861,7 +877,9 @@ fn ordinary_workspace_transactions_roll_back_without_a_close_command() {
     let before_batch = workspace.clone();
     let batch_error = WorkspaceTransaction::from_commands([
         WorkspaceCommand::Select {
-            source: selection.as_tab_source(),
+            source: selection
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
         WorkspaceCommand::RemoveEmptyRoot { source: nonempty_b },
     ])

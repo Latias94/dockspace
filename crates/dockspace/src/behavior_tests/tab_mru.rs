@@ -98,7 +98,9 @@ fn selection_and_reselection_keep_a_complete_most_recent_first_permutation() {
     apply(
         &mut workspace,
         WorkspaceCommand::Select {
-            source: select.as_tab_source(),
+            source: select
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     );
     assert_eq!(
@@ -110,7 +112,9 @@ fn selection_and_reselection_keep_a_complete_most_recent_first_permutation() {
         .capture_item_source(SOURCE_ROOT, source, item(2))
         .expect("reselection source must exist");
     let report = WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source: reselect.as_tab_source(),
+        source: reselect
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     }])
     .apply(&mut workspace, &DockPolicySnapshot::default())
     .expect("reselection must be valid");
@@ -131,7 +135,9 @@ fn closing_the_selected_tab_restores_the_most_recent_remaining_item() {
         apply(
             &mut workspace,
             WorkspaceCommand::Select {
-                source: source_item.as_tab_source(),
+                source: source_item
+                    .as_tab_source()
+                    .expect("fixture owns an inline item tab"),
             },
         );
     }
@@ -158,7 +164,9 @@ fn reorder_preserves_mru_while_a_single_item_move_updates_both_stacks() {
     apply(
         &mut workspace,
         WorkspaceCommand::Select {
-            source: select.as_tab_source(),
+            source: select
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     );
 
@@ -168,7 +176,9 @@ fn reorder_preserves_mru_while_a_single_item_move_updates_both_stacks() {
     apply(
         &mut workspace,
         WorkspaceCommand::Reorder {
-            source: reorder.as_tab_source(),
+            source: reorder
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
             insertion_index: 0,
         },
     );
@@ -218,7 +228,9 @@ fn merging_tabs_preserves_target_local_history_without_importing_source_history(
         apply(
             &mut workspace,
             WorkspaceCommand::Select {
-                source: source_item.as_tab_source(),
+                source: source_item
+                    .as_tab_source()
+                    .expect("fixture owns an inline item tab"),
             },
         );
     }
@@ -228,7 +240,9 @@ fn merging_tabs_preserves_target_local_history_without_importing_source_history(
     apply(
         &mut workspace,
         WorkspaceCommand::Select {
-            source: target_item.as_tab_source(),
+            source: target_item
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     );
     assert_eq!(
@@ -296,7 +310,9 @@ fn merging_a_tabs_stack_into_an_empty_central_leaf_preserves_its_complete_mru() 
         apply(
             &mut workspace,
             WorkspaceCommand::Select {
-                source: source_item.as_tab_source(),
+                source: source_item
+                    .as_tab_source()
+                    .expect("fixture owns an inline item tab"),
             },
         );
     }
@@ -342,7 +358,9 @@ fn moving_a_complete_root_preserves_tab_identity_selection_and_mru() {
     apply(
         &mut workspace,
         WorkspaceCommand::Select {
-            source: select.as_tab_source(),
+            source: select
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     );
     let expected = workspace

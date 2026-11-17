@@ -230,8 +230,8 @@ fn policy_disabled_tabs_keep_visible_accessibility_and_hover_without_activation(
         output.drop_without_applying_deltas();
         run_frame(&context, &mut dockspace, terminal_owned, Vec::new())
             .drop_without_applying_deltas();
-        assert!(dockspace.view().item(FIRST).unwrap().is_selected());
-        assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+        assert!(dockspace.view().item(FIRST).unwrap().is_active());
+        assert!(!dockspace.view().item(SECOND).unwrap().is_active());
         assert_ne!(
             context
                 .memory(egui::Memory::focused)

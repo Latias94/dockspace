@@ -455,6 +455,7 @@ fn complete_guide_affordance_preflights_only_the_unique_winner() {
         None,
         &payload,
         None,
+        None,
     );
 
     reset_resolution_work();
@@ -509,6 +510,7 @@ fn rejected_geometric_winner_never_falls_through_or_preflights() {
             .plan(),
         None,
         &payload,
+        None,
         None,
     );
 
@@ -1656,9 +1658,9 @@ fn same_root_edge_preview_matches_the_post_detach_payload_layout() {
         .expect("the committed workspace must remain valid");
     let committed_plan = compile_fixture_surface_plan(&committed_engine, surface, rect());
     let payload_bounds = committed_plan
-        .pane_records()
+        .tabs_records()
         .iter()
-        .find(|pane| pane.id().tabs == source_tabs)
+        .find(|tabs| tabs.id().tabs == source_tabs)
         .expect("the moved tabs node must remain the payload leaf")
         .bounds();
 
@@ -1731,7 +1733,7 @@ fn same_root_center_preview_matches_the_post_detach_content_layout() {
     let content_bounds = committed_plan
         .pane_records()
         .iter()
-        .find(|pane| pane.id().tabs == target_tabs)
+        .find(|pane| pane.owner_node() == target_tabs)
         .expect("the target tabs must remain after center merge")
         .content_bounds();
 
@@ -1766,7 +1768,7 @@ fn non_guide_center_basin_resolves_center_target() {
     let content = plan
         .pane_records()
         .iter()
-        .find(|pane| pane.id().tabs == target_tabs)
+        .find(|pane| pane.owner_node() == target_tabs)
         .expect("the target pane must be presented")
         .content_bounds();
     let point = LogicalPoint::new(
@@ -1847,7 +1849,7 @@ fn magnetic_center_resolution_does_not_require_guide_records() {
     let content = plan
         .pane_records()
         .iter()
-        .find(|pane| pane.id().tabs == target_tabs)
+        .find(|pane| pane.owner_node() == target_tabs)
         .expect("the target pane must be presented")
         .content_bounds();
     assert!(plan.drop_guide_clusters().is_empty());
@@ -2191,8 +2193,8 @@ fn cross_surface_unselected_item_preview_uses_retained_source_measurements() {
     let payload_bounds = committed_plan
         .pane_records()
         .iter()
-        .find(|pane| committed_plan.pane_selected(pane) == Some(moved))
-        .expect("the moved item must own its new target leaf")
+        .find(|pane| pane.item() == moved)
+        .expect("the moved item is active real content")
         .bounds();
 
     assert_eq!(resolved.visual().rect(), payload_bounds);

@@ -125,7 +125,7 @@ impl Replay {
                 self.dock
                     .view()
                     .item(item)
-                    .filter(|view| view.is_selected())
+                    .filter(|view| view.is_active())
                     .and_then(|_| pane.content.map(|rect| (item, rect)))
             })
             .collect()

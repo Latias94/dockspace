@@ -6,7 +6,7 @@ use super::SceneCompilationError;
 use super::tabs::{reveal_tab_range, tab_local_range};
 use crate::geometry::{AxisSizing, LogicalSize, PaneSizing};
 use crate::graph::{Node, Workspace};
-use crate::ids::{NodeId, RootId, TabKey};
+use crate::ids::{ItemId, NodeId, RootId, TabKey};
 use crate::policy::TabBarVisibility;
 use crate::presentation::config::DockPresentationConfig;
 use crate::presentation::layout::{
@@ -33,7 +33,7 @@ pub(super) fn measure_root_layout<'workspace>(
 ) -> Result<RootLayoutMeasurement<'workspace>, SceneCompilationError> {
     let surface = requirements.ticket().surface();
     let pane_sizings = root_pane_sizing_measurements(requirements, measurements, root)?;
-    let sizing = root_leaf_sizing(
+    let (sizing, insets) = root_leaf_sizing(
         workspace,
         config,
         requirements,
@@ -64,7 +64,8 @@ pub(super) fn measure_root_layout<'workspace>(
             node,
         },
         error => error.into(),
-    })?;
+    })?
+    .with_tab_content_insets(&insets);
     Ok(RootLayoutMeasurement {
         pane_sizings,
         layout,
@@ -95,40 +96,247 @@ fn root_leaf_sizing(
     root: RootId,
     pane_sizings: &BTreeMap<PaneSizingKey, PaneSizing>,
     tab_strip_states: &TabStripStateStore,
-) -> Result<BTreeMap<NodeId, PaneSizing>, SceneCompilationError> {
-    let mut sizing = BTreeMap::new();
-    for (key, measured) in pane_sizings.iter().filter(|(key, _)| key.root() == root) {
-        let key = *key;
-        let Some(Node::Tabs { .. }) = workspace.node(key.tabs()) else {
-            continue;
-        };
-        if !workspace.node_has_visible_content(key.tabs())
-            || key.selected()
-                != workspace
-                    .visible_tab_selection(key.tabs())
-                    .and_then(TabKey::item)
+) -> Result<(BTreeMap<NodeId, PaneSizing>, BTreeMap<NodeId, f64>), SceneCompilationError> {
+    let measured = pane_sizings
+        .iter()
+        .map(|(key, sizing)| (key.item(), *sizing))
+        .collect();
+    let mut visibility = BTreeMap::new();
+    let topology = workspace
+        .root_structure(root)
+        .ok_or(LayoutError::UnfinishedRoot { root })?;
+    for node in &topology.nodes {
+        if matches!(workspace.node(node.id), Some(Node::Tabs { .. }))
+            && workspace.node_has_visible_content(node.id)
         {
-            continue;
-        }
-        let id = TabBarSceneId {
-            root: key.root(),
-            tabs: key.tabs(),
-        };
-        let tab_bar = requirements
-            .tab_bar(id)
-            .ok_or(SceneCompilationError::MissingTabBarRequirement { id })?;
-        sizing.insert(
-            key.tabs(),
-            pane_outer_sizing(
-                *measured,
-                config,
-                tab_bar
+            let id = TabBarSceneId {
+                root,
+                tabs: node.id,
+            };
+            let requirement = requirements
+                .tab_bar(id)
+                .ok_or(SceneCompilationError::MissingTabBarRequirement { id })?;
+            visibility.insert(
+                node.id,
+                requirement
                     .resolved_policy(requirements.ticket().surface(), tab_strip_states)
                     .visibility(),
-            )?,
-        );
+            );
+        }
     }
-    Ok(sizing)
+    compose_root_sizing(workspace, root, config, &measured, &visibility)
+}
+
+/// Composes the active child constraints while retaining sizing for every eligible item.
+pub(crate) fn compose_root_sizing(
+    workspace: &Workspace,
+    root: RootId,
+    config: &DockPresentationConfig,
+    measured: &BTreeMap<ItemId, PaneSizing>,
+    visibility: &BTreeMap<NodeId, TabBarVisibility>,
+) -> Result<(BTreeMap<NodeId, PaneSizing>, BTreeMap<NodeId, f64>), SceneCompilationError> {
+    let topology = workspace
+        .root_structure(root)
+        .ok_or(LayoutError::UnfinishedRoot { root })?;
+    let mut sizing = BTreeMap::<NodeId, PaneSizing>::new();
+    let mut insets = BTreeMap::new();
+    let read_item = |item| {
+        measured
+            .get(&item)
+            .copied()
+            .ok_or(SceneCompilationError::MissingPaneSizingMeasurement {
+                key: PaneSizingKey::new(root, item),
+            })
+    };
+    for &row in &topology.postorder {
+        let node = topology.nodes[row].id;
+        let value = workspace
+            .node(node)
+            .ok_or(LayoutError::MissingNode { node })?;
+        if matches!(value, Node::Split { .. }) && !topology.has_composition() {
+            continue;
+        }
+        if !workspace.node_has_visible_content(node) {
+            continue;
+        }
+        let value = match value {
+            Node::Pane { item } => {
+                pane_outer_sizing(read_item(*item)?, config, TabBarVisibility::Hidden)?
+            }
+            Node::Tabs { .. } => {
+                let child = match workspace.visible_tab_selection(node) {
+                    Some(tab) => match tab.item() {
+                        Some(item) => read_item(item)?,
+                        None => *sizing
+                            .get(
+                                &tab.layout()
+                                    .ok_or(SceneCompilationError::MissingLeafSizing {
+                                        root,
+                                        tabs: node,
+                                    })?,
+                            )
+                            .ok_or(SceneCompilationError::MissingLeafSizing { root, tabs: node })?,
+                    },
+                    None => PaneSizing::default(),
+                };
+                let visibility = visibility
+                    .get(&node)
+                    .copied()
+                    .unwrap_or(TabBarVisibility::Hidden);
+                if topology.has_composition() {
+                    insets.insert(
+                        node,
+                        if visibility == TabBarVisibility::Visible {
+                            config.tab_bar_height()
+                        } else {
+                            0.0
+                        },
+                    );
+                }
+                pane_outer_sizing(child, config, visibility)?
+            }
+            Node::Split { axis, children, .. } => {
+                let children = children
+                    .iter()
+                    .filter_map(|child| sizing.get(child))
+                    .copied()
+                    .collect::<Vec<_>>();
+                compose_split_sizing(*axis, &children, config.splitter_thickness())?
+            }
+            Node::Grid {
+                shape: crate::model::DockspaceGridShape::Fixed { rows, columns },
+                children,
+                ..
+            } => {
+                let compose = |horizontal: bool| {
+                    let count = if horizontal {
+                        columns.get()
+                    } else {
+                        rows.get()
+                    };
+                    let mut tracks = vec![Vec::new(); count];
+                    for (cell, child) in children.iter().enumerate() {
+                        if let Some(sizing) = sizing.get(child) {
+                            let track = if horizontal {
+                                cell % columns.get()
+                            } else {
+                                cell / columns.get()
+                            };
+                            tracks[track].push(if horizontal {
+                                sizing.width()
+                            } else {
+                                sizing.height()
+                            });
+                        }
+                    }
+                    let gaps = config.splitter_thickness() * count.saturating_sub(1) as f64;
+                    let minimum = tracks
+                        .iter()
+                        .map(|track| track.iter().map(|axis| axis.minimum()).fold(0.0, f64::max))
+                        .sum::<f64>()
+                        + gaps;
+                    let maximum = tracks
+                        .iter()
+                        .map(|track| {
+                            if track.is_empty() {
+                                return None;
+                            }
+                            track
+                                .iter()
+                                .map(|axis| axis.maximum())
+                                .collect::<Option<Vec<_>>>()
+                                .map(|values| values.into_iter().fold(0.0, f64::max))
+                        })
+                        .collect::<Option<Vec<_>>>()
+                        .map(|tracks| tracks.iter().sum::<f64>() + gaps);
+                    AxisSizing::new(minimum, maximum, None)
+                        .map_err(|_| SceneCompilationError::PaneSizingOverflow)
+                };
+                PaneSizing::new(compose(true)?, compose(false)?)
+            }
+            Node::Grid { children, .. } => {
+                let children = children
+                    .iter()
+                    .filter_map(|child| sizing.get(child))
+                    .copied()
+                    .collect::<Vec<_>>();
+                let envelope = |horizontal: bool| {
+                    let axes = children
+                        .iter()
+                        .map(|child| {
+                            if horizontal {
+                                child.width()
+                            } else {
+                                child.height()
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    let minimum = axes.iter().map(|axis| axis.minimum()).fold(0.0, f64::max);
+                    let maximum = axes
+                        .iter()
+                        .map(|axis| axis.maximum())
+                        .collect::<Option<Vec<_>>>()
+                        .map(|values| values.into_iter().fold(0.0, f64::max));
+                    AxisSizing::new(minimum, maximum, None)
+                        .map_err(|_| SceneCompilationError::PaneSizingOverflow)
+                };
+                PaneSizing::new(envelope(true)?, envelope(false)?)
+            }
+        };
+        sizing.insert(node, value);
+    }
+    Ok((sizing, insets))
+}
+
+fn compose_split_sizing(
+    axis: crate::graph::Axis,
+    children: &[PaneSizing],
+    gap: f64,
+) -> Result<PaneSizing, SceneCompilationError> {
+    let gaps = gap * children.len().saturating_sub(1) as f64;
+    let compose = |horizontal: bool| -> Result<AxisSizing, SceneCompilationError> {
+        let along = horizontal == (axis == crate::graph::Axis::Horizontal);
+        let axes = children
+            .iter()
+            .map(|child| {
+                if horizontal {
+                    child.width()
+                } else {
+                    child.height()
+                }
+            })
+            .collect::<Vec<_>>();
+        let minimum = if along {
+            axes.iter().map(|axis| axis.minimum()).sum::<f64>() + gaps
+        } else {
+            axes.iter().map(|axis| axis.minimum()).fold(0.0, f64::max)
+        };
+        let maximum = axes
+            .iter()
+            .map(|axis| axis.maximum())
+            .collect::<Option<Vec<_>>>()
+            .map(|values| {
+                if along {
+                    values.iter().sum::<f64>() + gaps
+                } else {
+                    values.into_iter().fold(0.0, f64::max)
+                }
+            });
+        let preferred = axes
+            .iter()
+            .map(|axis| axis.preferred())
+            .collect::<Option<Vec<_>>>()
+            .map(|values| {
+                if along {
+                    values.iter().sum::<f64>() + gaps
+                } else {
+                    values.into_iter().fold(0.0, f64::max)
+                }
+            });
+        AxisSizing::new(minimum, maximum, preferred)
+            .map_err(|_| SceneCompilationError::PaneSizingOverflow)
+    };
+    Ok(PaneSizing::new(compose(true)?, compose(false)?))
 }
 
 /// Resolves the style floor and adds core-owned chrome exactly once.
@@ -180,22 +388,23 @@ pub(crate) fn selection_geometry_unchanged(
     let Some(root) = layout.root(bar.root) else {
         return Ok(false);
     };
+    if root.projection().nodes.topology_has_composition() {
+        return Ok(false);
+    }
     let old_selected = plan.selected_in_tabs(bar.tabs);
     if old_selected.is_some_and(TabKey::is_layout) || selected.is_some_and(TabKey::is_layout) {
         return Ok(false);
     }
-    let Some(old_sizing) = root.pane_sizing(PaneSizingKey::new(
-        bar.root,
-        bar.tabs,
+    let (Some(old_item), Some(new_item)) = (
         old_selected.and_then(TabKey::item),
-    )) else {
+        selected.and_then(TabKey::item),
+    ) else {
         return Ok(false);
     };
-    let Some(new_sizing) = root.pane_sizing(PaneSizingKey::new(
-        bar.root,
-        bar.tabs,
-        selected.and_then(TabKey::item),
-    )) else {
+    let Some(old_sizing) = root.pane_sizing(PaneSizingKey::new(bar.root, old_item)) else {
+        return Ok(false);
+    };
+    let Some(new_sizing) = root.pane_sizing(PaneSizingKey::new(bar.root, new_item)) else {
         return Ok(false);
     };
     let visibility = requirement

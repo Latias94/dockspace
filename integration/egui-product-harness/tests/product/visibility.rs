@@ -195,7 +195,7 @@ fn assert_shared_state(
             if item == FOURTH { FLOATING_ROOT } else { ROOT }
         );
         assert_eq!(view.contained(), (item == FOURTH).then_some(FLOATING));
-        assert_eq!(view.tab_index(), usize::from(item == SECOND));
+        assert_eq!(view.tab_index(), Some(usize::from(item == SECOND)));
         assert_eq!(
             harness
                 .query_by_role_and_label(Role::Tab, label(item))
@@ -205,7 +205,7 @@ fn assert_shared_state(
         );
         assert_eq!(
             state.panes.rendered.contains(&item),
-            visible && view.is_selected(),
+            visible && view.is_active(),
             "only selected visible content may receive a UI callback",
         );
         if !visible {
@@ -216,7 +216,7 @@ fn assert_shared_state(
                     .is_none(),
                 "hidden content must leave the live accessibility tree",
             );
-        } else if view.is_selected() {
+        } else if view.is_active() {
             assert!(rect_fill_count(harness.output(), document_fill(item)) > 0);
         }
     }
@@ -299,7 +299,7 @@ fn shared_local_visibility_scenario_preserves_content_and_restores_layout_throug
                         .view()
                         .item(SECOND)
                         .unwrap()
-                        .is_selected()
+                        .is_active()
                 );
                 harness
                     .get_by_role_and_label(Role::TextInput, "Content Second")
@@ -391,6 +391,7 @@ fn shared_local_visibility_scenario_preserves_content_and_restores_layout_throug
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         [FIRST, SECOND],
@@ -402,7 +403,7 @@ fn shared_local_visibility_scenario_preserves_content_and_restores_layout_throug
             .view()
             .item(SECOND)
             .unwrap()
-            .is_selected()
+            .is_active()
     );
 }
 
@@ -461,7 +462,7 @@ fn hiding_an_open_menu_member_removes_its_row_and_rejects_old_accesskit_activati
             .view()
             .item(FIRST)
             .unwrap()
-            .is_selected()
+            .is_active()
     );
     assert!(harness.state().close_requests.is_empty());
     assert!(
@@ -485,7 +486,7 @@ fn hiding_an_open_menu_member_removes_its_row_and_rejects_old_accesskit_activati
             .view()
             .item(SECOND)
             .unwrap()
-            .is_selected()
+            .is_active()
     );
     assert_eq!(
         tab_items(&harness.state().dockspace),
@@ -531,8 +532,15 @@ fn hidden_tab_rejects_its_previous_close_control_until_the_application_shows_it(
     assert!(harness.state().close_requests.is_empty());
     let hidden = harness.state().dockspace.view().item(SECOND).unwrap();
     assert!(hidden.is_hidden());
-    assert_eq!(hidden.tab_index(), 1);
-    assert_eq!(hidden.tabs().items().collect::<Vec<_>>(), [FIRST, SECOND]);
+    assert_eq!(hidden.tab_index(), Some(1));
+    assert_eq!(
+        hidden
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
+        [FIRST, SECOND]
+    );
 
     harness
         .get_by_role_and_label(Role::Button, "Show Second")

@@ -57,6 +57,10 @@ fn public_owned_output_structure_and_retained_buffer_are_linear_in_panes() {
         .unwrap();
         let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
         let mut measurement_requests = 0;
+        let mut pane_requests = 0;
+        let mut item_intrinsics = 0;
+        let mut layout_intrinsics = 0;
+        let mut strip_requests = 0;
         let mut frame = session.begin_host_frame().unwrap();
         frame
             .measure_surface_with(SURFACE, |request| {
@@ -70,28 +74,47 @@ fn public_owned_output_structure_and_retained_buffer_are_linear_in_panes() {
                         )
                     }
                     SurfaceMeasurementRequest::PaneSizing { .. } => {
+                        pane_requests += 1;
                         SurfaceMeasurementAnswer::PaneSizing(
                             (LogicalSize::new(64.0, 48.0).unwrap()).into(),
                         )
                     }
-                    SurfaceMeasurementRequest::TabIntrinsic { .. } => {
+                    SurfaceMeasurementRequest::TabIntrinsic { key, label, .. } => {
+                        if key.item().is_some() {
+                            item_intrinsics += 1;
+                        } else {
+                            assert_eq!(label, dockspace::model::TabLabel::Layout { title: "Tabs" });
+                            layout_intrinsics += 1;
+                        }
                         SurfaceMeasurementAnswer::TabIntrinsic(56.0)
                     }
                     SurfaceMeasurementRequest::TabStrip { .. } => {
+                        strip_requests += 1;
                         SurfaceMeasurementAnswer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
                     }
                 })
             })
             .unwrap();
         frame.commit().unwrap();
-        // One pane minimum, intrinsic and strip per leaf, plus fixed surface bounds.
-        assert!((3 * pane_count + 1..=3 * pane_count + 2).contains(&measurement_requests));
+        // Each leaf also measures its prospective whole-group layout label.
+        assert_eq!(
+            (
+                pane_requests,
+                item_intrinsics,
+                layout_intrinsics,
+                strip_requests
+            ),
+            (pane_count, pane_count, pane_count, pane_count)
+        );
+        assert!((4 * pane_count + 1..=4 * pane_count + 2).contains(&measurement_requests));
 
         let mut steps = 0;
         let mut panes = 0;
+        let mut containers = 0;
         let mut bars = 0;
         let mut tabs = 0;
         let mut splitters = 0;
+        let mut menu_anchors = 0;
         let (recording, output) = {
             let mut frame = session.begin_host_frame().unwrap();
             let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
@@ -101,9 +124,11 @@ fn public_owned_output_structure_and_retained_buffer_are_linear_in_panes() {
                 if let Step::Operation { operation, .. } = step {
                     match operation {
                         Operation::Pane(_) => panes += 1,
+                        Operation::Tabs(_) => containers += 1,
                         Operation::TabBar(_) => bars += 1,
                         Operation::Tab(_) => tabs += 1,
                         Operation::Splitter(_) => splitters += 1,
+                        Operation::PresentationMenuAnchor(_) => menu_anchors += 1,
                         _ => {}
                     }
                 }
@@ -119,8 +144,15 @@ fn public_owned_output_structure_and_retained_buffer_are_linear_in_panes() {
 
         // Every assertion on owned records runs after the frame borrow ended.
         assert_eq!(
-            (panes, bars, tabs, splitters),
-            (pane_count, pane_count, pane_count, pane_count - 1)
+            (panes, containers, bars, tabs, splitters, menu_anchors),
+            (
+                pane_count,
+                pane_count,
+                pane_count,
+                pane_count,
+                pane_count - 1,
+                1
+            )
         );
         assert_eq!(
             recording.records.first(),
@@ -134,7 +166,7 @@ fn public_owned_output_structure_and_retained_buffer_are_linear_in_panes() {
             recording
                 .records
                 .iter()
-                .filter(|record| matches!(record, OwnedRecord::PaneContent { item: Some(_), .. }))
+                .filter(|record| matches!(record, OwnedRecord::PaneContent { .. }))
                 .count(),
             pane_count,
         );
@@ -143,6 +175,18 @@ fn public_owned_output_structure_and_retained_buffer_are_linear_in_panes() {
                 OwnedRecord::Geometry { visual, .. } if visual.kind() == DockspaceVisualKind::Pane
             )).count(),
             pane_count,
+        );
+        assert_eq!(
+            recording.records.iter().filter(|record| matches!(record,
+                OwnedRecord::Geometry { visual, .. } if visual.kind() == DockspaceVisualKind::Tabs
+            )).count(),
+            pane_count,
+        );
+        assert_eq!(
+            recording.records.iter().filter(|record| matches!(record,
+                OwnedRecord::Geometry { visual, .. } if visual.kind() == DockspaceVisualKind::PresentationMenuAnchor
+            )).count(),
+            1,
         );
         assert_eq!(
             recording.records.iter().filter(|record| matches!(record,

@@ -323,10 +323,10 @@ fn assert_popup_press_leaves_content_idle(session: &DockspaceSession, report: &H
             | HostInputOutcome::ProductPresentationActionRequested { .. }
     )));
     for item in [FIRST, THIRD] {
-        assert!(session.view().item(item).unwrap().is_selected());
+        assert!(session.view().item(item).unwrap().is_active());
     }
     for item in [SECOND, FOURTH] {
-        assert!(!session.view().item(item).unwrap().is_selected());
+        assert!(!session.view().item(item).unwrap().is_active());
     }
 }
 
@@ -604,7 +604,7 @@ fn owned_program_survives_frame_and_only_presented_commit_grants_receivers() {
         let content_bounds = LogicalRect::new(0.0, height, 800.0, 600.0 - height).unwrap();
         assert!(recording.records.iter().any(|record| matches!(record,
             OwnedRecord::PaneContent {
-                visual, item: Some(FIRST), bounds, paint: SurfacePaintDisposition::Visible,
+                visual, item: FIRST, bounds, paint: SurfacePaintDisposition::Visible,
             } if visual.kind() == DockspaceVisualKind::Pane && *bounds == content_bounds
         )));
         let tabs: Vec<_> = recording
@@ -969,13 +969,13 @@ fn late_presented_output_keeps_its_exact_tab_receivers_after_selection() {
     assert!(matches!(
         selected.submitted_action_outcome(submitted),
         Some(HostInputOutcome::ProductActionApplied(
-            DockspaceActionOutcome::Selected {
-                tab: selected_tab,
+            DockspaceActionOutcome::ItemActivated {
+                item: selected_tab,
                 changed: true,
             }
-        )) if selected_tab.item() == Some(SECOND)));
+        )) if *selected_tab == SECOND));
     assert!(session.view().surface(A).is_some());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert!(session.presented_surface(A).is_none());
 
     session
@@ -992,13 +992,12 @@ fn late_presented_output_keeps_its_exact_tab_receivers_after_selection() {
     assert!(session.bind_presented_receiver(&older_receiver).is_some());
 
     let (current_records, current_output) = paint(&mut session, A);
-    assert!(current_records.records.iter().any(|record| matches!(
-        record,
-        OwnedRecord::PaneContent {
-            item: Some(SECOND),
-            ..
-        }
-    )));
+    assert!(
+        current_records
+            .records
+            .iter()
+            .any(|record| matches!(record, OwnedRecord::PaneContent { item: SECOND, .. }))
+    );
     let current_artifact = current_output.presentation_artifact();
     let current_receiver = tab_receiver(&current_records);
     assert_ne!(current_receiver, older_receiver);
@@ -1086,7 +1085,7 @@ fn surface_bound_tab_actions_select_independently_at_identical_coordinates() {
         let report = frame.commit().unwrap();
         assert!(report.workspace_changed());
         for item in expected {
-            assert!(session.view().item(item).unwrap().is_selected());
+            assert!(session.view().item(item).unwrap().is_active());
         }
         assert!(session.presented_surface(A).is_none());
         assert!(session.presented_surface(B).is_none());
@@ -1109,7 +1108,11 @@ fn semantic_layout_command_moves_an_item_without_pointer_registration() {
     let moved = session.view().item(SECOND).unwrap();
     assert_eq!(moved.surface(), B);
     assert_eq!(
-        moved.tabs().items().collect::<Vec<_>>(),
+        moved
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
         &[THIRD, FOURTH, SECOND]
     );
     assert_eq!(session.view().item(FIRST).unwrap().surface(), A);
@@ -1623,6 +1626,7 @@ fn host_pointer_input_only_preview_cancel_and_repress_allow_independent_prepare_
             .item(SECOND)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[SECOND]
@@ -1633,6 +1637,7 @@ fn host_pointer_input_only_preview_cancel_and_repress_allow_independent_prepare_
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[THIRD, FOURTH, FIRST]
@@ -1805,6 +1810,7 @@ fn backpressured_cancel_and_repress_survive_late_preview_terminals_without_repai
                 .item(SECOND)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[SECOND]
@@ -1815,6 +1821,7 @@ fn backpressured_cancel_and_repress_survive_late_preview_terminals_without_repai
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[THIRD, FOURTH, FIRST]
@@ -1959,7 +1966,7 @@ fn host_pointer_report_cancel_repaints_a_blocked_destinations_ghost() {
         match step {
             Step::DragDecoration(decoration) => {
                 assert_eq!(decoration.source_surface(), A);
-                assert_eq!(decoration.ghost_item(), Some(FIRST));
+                assert_eq!(decoration.label(), dockspace::model::TabLabel::Item(FIRST));
                 assert!(!decoration.source_is_projected());
                 ghost = true;
             }
@@ -2143,6 +2150,7 @@ fn host_pointer_ordinary_release_delivers_in_its_successful_frame_without_previe
             .item(SECOND)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[SECOND]
@@ -2153,6 +2161,7 @@ fn host_pointer_ordinary_release_delivers_in_its_successful_frame_without_previe
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[THIRD, FOURTH, FIRST]
@@ -2281,8 +2290,14 @@ fn host_pointer_two_ordinary_releases_against_p0_are_invariant_under_batch_parti
                 item,
                 view.surface(),
                 view.root(),
-                view.tabs().items().collect::<Vec<_>>(),
-                view.tabs().selected().and_then(|tab| tab.item()),
+                view.tabs()
+                    .expect("item is an inline tab")
+                    .items()
+                    .collect::<Vec<_>>(),
+                view.tabs()
+                    .expect("item is an inline tab")
+                    .selected()
+                    .and_then(|tab| tab.item()),
             )
         })
     };
@@ -2342,6 +2357,7 @@ fn host_pointer_two_ordinary_releases_against_p0_are_invariant_under_batch_parti
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[THIRD, FOURTH, FIRST]
@@ -2352,6 +2368,7 @@ fn host_pointer_two_ordinary_releases_against_p0_are_invariant_under_batch_parti
                 .item(SECOND)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[FIFTH, SECOND]
@@ -2422,6 +2439,7 @@ fn host_pointer_old_group_grip_rejects_unseen_members_but_current_item_stays_usa
             .item(FIFTH)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND, FIFTH]
@@ -2487,6 +2505,7 @@ fn host_pointer_old_group_grip_rejects_unseen_members_but_current_item_stays_usa
             .item(FIFTH)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND, FIFTH]
@@ -2509,6 +2528,7 @@ fn host_pointer_old_group_grip_rejects_unseen_members_but_current_item_stays_usa
             .item(FIFTH)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[SECOND, FIFTH]
@@ -2556,8 +2576,8 @@ fn host_pointer_same_batch_release_delivers_before_the_target_output_settles() {
 #[test]
 fn host_pointer_unselected_source_continues_same_batch_drag_after_selection() {
     let (mut session, scene) = host_pointer_fixture_for_item(SECOND);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
-    assert!(!session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
+    assert!(!session.view().item(SECOND).unwrap().is_active());
 
     let mut frame = session.begin_host_frame().unwrap();
     frame.submit_host_pointer_batch(scene.batch()).unwrap();
@@ -2571,7 +2591,7 @@ fn host_pointer_unselected_source_continues_same_batch_drag_after_selection() {
     let delivered_version = session.version();
     assert!(input_report.take_painted_outputs().is_empty());
     assert_eq!(session.view().item(SECOND).unwrap().surface(), B);
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert!(!session.has_active_gesture());
     assert!(!session.has_pending_presentation());
     assert!(!session.surface_requires_presentation(B));
@@ -2606,6 +2626,7 @@ fn host_pointer_unselected_source_continues_same_batch_drag_after_selection() {
             .item(SECOND)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>()
             .iter()
@@ -2768,6 +2789,7 @@ fn host_pointer_unknown_release_on_current_target_clears_preview_without_poisoni
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND]
@@ -2804,7 +2826,7 @@ fn host_pointer_unknown_release_on_current_target_clears_preview_without_poisoni
         .unwrap();
     measure(&mut frame, 800.0);
     assert!(frame.commit().unwrap().workspace_changed());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert!(!session.has_active_gesture());
 
     let command = session.prepare_dock_item(SECOND, DockPlacement::After(FOURTH));
@@ -2886,6 +2908,7 @@ fn host_pointer_dropped_frame_retries_the_batch_and_duplicate_release_cannot_del
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>()
             .iter()
@@ -2965,8 +2988,8 @@ fn host_pointer_stale_route_cannot_borrow_a_current_receiver() {
         drop(stale);
     }
     assert!(!session.has_active_gesture());
-    assert!(session.view().item(FIRST).unwrap().is_selected());
-    assert!(!session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
+    assert!(!session.view().item(SECOND).unwrap().is_active());
 
     let mut retry = session.begin_host_frame().unwrap();
     retry
@@ -2985,7 +3008,7 @@ fn host_pointer_stale_route_cannot_borrow_a_current_receiver() {
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
     retry.commit().unwrap();
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
 }
 
 #[test]
@@ -3011,7 +3034,7 @@ fn host_pointer_foreign_session_routes_and_receivers_cannot_authorize_matching_s
     assert_eq!(session.view().item(FIRST).unwrap().surface(), A);
     assert_eq!(session.view().item(SECOND).unwrap().surface(), A);
     assert_eq!(session.view().item(THIRD).unwrap().surface(), B);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert_eq!(foreign_session.view().item(FIRST).unwrap().surface(), A);
     assert!(!foreign_session.has_active_gesture());
 }
@@ -3271,12 +3294,12 @@ fn host_pointer_wrong_winner_suffix_rolls_back_its_valid_prefix_and_retries_once
         "the release claims no receiver at B's actual current drop winner"
     );
     assert_ne!(failed.version(), before);
-    assert!(failed.view().item(SECOND).unwrap().is_selected());
+    assert!(failed.view().item(SECOND).unwrap().is_active());
     drop(failed);
 
     assert_eq!(session.version(), before);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
-    assert!(!session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
+    assert!(!session.view().item(SECOND).unwrap().is_active());
     assert_eq!(session.view().item(SECOND).unwrap().surface(), A);
     assert!(!session.has_active_gesture());
     assert!(!session.has_pending_presentation());
@@ -3296,7 +3319,7 @@ fn host_pointer_wrong_winner_suffix_rolls_back_its_valid_prefix_and_retries_once
     assert_eq!(input_report.before(), before);
     let delivered_version = session.version();
     assert!(input_report.take_painted_outputs().is_empty());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert_eq!(session.view().item(SECOND).unwrap().surface(), B);
     assert!(!session.has_active_gesture());
     assert!(!session.has_pending_presentation());
@@ -3322,6 +3345,7 @@ fn host_pointer_wrong_winner_suffix_rolls_back_its_valid_prefix_and_retries_once
             .item(SECOND)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>()
             .iter()

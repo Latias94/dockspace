@@ -42,6 +42,10 @@ content bounds, the unchanged physical window ID, and retained application data
 before completing the second native round trip. It then drains the central
 contained group and the remaining floating pane, requiring all floating shells
 to retire while application content remains intact.
+Style checks wait for the actual child geometry to reach its target while motion
+is enabled; a committed style result alone does not prove that transition has
+finished. The command journey returns a nonzero process status after a failure
+or an early window close, in addition to its console diagnostics.
 
 ## Run against a built editor
 

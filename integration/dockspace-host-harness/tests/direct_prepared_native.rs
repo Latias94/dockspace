@@ -315,14 +315,14 @@ fn paint_without_measurement(
         assert!(recording.records.iter().any(|record| matches!(
             record,
             OwnedRecord::PaneContent {
-                item: Some(CHILD_ITEM),
+                item: CHILD_ITEM,
                 ..
             }
         )));
         assert!(!recording.records.iter().any(|record| matches!(
             record,
             OwnedRecord::PaneContent {
-                item: Some(MAIN_ITEM),
+                item: MAIN_ITEM,
                 ..
             }
         )));
@@ -1096,12 +1096,5 @@ fn unrelated_root_commit_requires_fresh_first_live_output_without_overwriting_it
         fixture.session.view().item(unrelated).unwrap().root(),
         MAIN_ROOT
     );
-    assert!(
-        fixture
-            .session
-            .view()
-            .item(unrelated)
-            .unwrap()
-            .is_selected()
-    );
+    assert!(fixture.session.view().item(unrelated).unwrap().is_active());
 }

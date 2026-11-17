@@ -84,12 +84,13 @@ impl TabStripControlPaintRecord {
 
 /// Read-only row within one core-owned tab-list popup.
 #[derive(Debug, Clone, Copy)]
-pub struct TabListMenuRowPaintRecord {
+pub struct TabListMenuRowPaintRecord<'plan> {
+    pub(super) plan: &'plan crate::presentation::scene::PresentationPlan,
     pub(super) session: TabListMenuSessionId,
     pub(super) record: TabListMenuRowRecord,
 }
 
-impl TabListMenuRowPaintRecord {
+impl<'plan> TabListMenuRowPaintRecord<'plan> {
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::TabListMenuRow {
@@ -111,6 +112,14 @@ impl TabListMenuRowPaintRecord {
     #[must_use]
     pub const fn item(self) -> Option<ItemId> {
         self.key().item()
+    }
+
+    /// Returns the same frozen label used by the exact tab and preview.
+    #[must_use]
+    pub fn label(self) -> crate::graph::TabLabel<'plan> {
+        self.plan
+            .tab_label(self.record.tab())
+            .expect("compiled menu rows retain exact labels")
     }
 
     #[must_use]
@@ -146,6 +155,7 @@ impl TabListMenuRowPaintRecord {
 #[derive(Debug, Clone, Copy)]
 pub struct TabListMenuPaintRecord<'plan> {
     pub(super) record: &'plan TabListMenuRecord,
+    pub(super) plan: &'plan crate::presentation::scene::PresentationPlan,
     pub(super) surface: SurfaceId,
     pub(super) backdrop: TabListMenuBackdropRecord,
 }
@@ -181,13 +191,17 @@ impl<'plan> TabListMenuPaintRecord<'plan> {
         self.record.maximum_scroll_offset()
     }
 
-    pub fn rows(self) -> impl ExactSizeIterator<Item = TabListMenuRowPaintRecord> + 'plan {
+    pub fn rows(self) -> impl ExactSizeIterator<Item = TabListMenuRowPaintRecord<'plan>> + 'plan {
         let session = self.record.session();
         self.record
             .rows()
             .iter()
             .copied()
-            .map(move |record| TabListMenuRowPaintRecord { session, record })
+            .map(move |record| TabListMenuRowPaintRecord {
+                session,
+                record,
+                plan: self.plan,
+            })
     }
 
     #[must_use]

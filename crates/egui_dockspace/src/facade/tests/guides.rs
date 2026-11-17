@@ -241,6 +241,7 @@ fn boxed_custom_guides_keep_stable_receivers_accessibility_and_docking() {
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>()
                 .contains(&SECOND)

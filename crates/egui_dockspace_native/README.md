@@ -115,11 +115,22 @@ data through `with_panes_mut` and request repaint on the affected egui viewport.
 
 Use `NativeCommand::FloatRoot { root, surface }` for the layout menu's **Float
 Layout** operation: the complete root becomes one contained floating window,
-preserving its splits, tab order and selections. `FloatItem` moves one pane;
+preserving Pane/Tabs/Split/Grid structure, layout titles, track shares and tab
+selections. A standalone Pane has no implicit tab bar; Tabs can contain both
+inline items and complete layout subtrees. `FloatItem` moves one item;
 `FloatTabs` moves a captured tabs group. `FloatRoot` keeps the stable root identity
 and uses the core's current geometry and existing presentation barrier. Missing
 geometry, unavailable destinations and policy restrictions are returned through
 `take_action_status`. `DockRootBack` uses the core-derived return destination.
+
+For one direct tab, obtain its `TabKey` through `with_view` and then call
+`capture_tab(key)` after the callback returns. Submit the opaque result through
+`NativeCommand::DockTab`, `FloatTab` or `CloseTab`, or use
+`NativeTearOffSource::Tab` to create an OS window. A layout tab carries all of its
+hidden and inactive descendants. Captures retain their original session and
+version; storage, cloning and admission never refresh them. A standalone Pane
+has no direct tab to capture. Close decisions use the same atomic approval plan
+as item and root closes.
 
 `NativeCommand::SetItemVisibility { item, visible }` retains the pane's tab order,
 split proportions and window ownership. Showing does not activate the window or
@@ -280,15 +291,18 @@ request a Root repaint when changing them outside an update. Creation and recove
 placement, visibility and ownership remain coordinated by the native lifecycle.
 Applications may request ordinary movement of a live window through the host;
 fresh OS observations determine its actual geometry. Configure the external
-Root window through eframe's `NativeOptions::viewport`. Child titles follow selected panes
-without adding a library-brand suffix.
+Root window through eframe's `NativeOptions::viewport`. Child titles combine the
+active real content in visual order, following every ancestor Tabs choice and
+including bare Panes. Hidden and inactive content is omitted; an empty window
+uses a surface caption. Titles have no library-brand suffix.
 
 Window ordering has two scopes:
 
 - `NativeCommand::RaiseContained` raises a floating root inside its logical
   surface. It does not change OS window order.
-- `NativeCommand::SelectItem` selects a pane and requests activation of its
-  native window. Actual focus remains a platform observation.
+- `NativeCommand::SelectItem` activates an item through its Tabs ancestors and
+  requests activation of its native window. Actual focus remains a platform
+  observation.
 - `NativeChildWindowOptions::window_level` requests `Normal`, `AlwaysOnTop` or
   `AlwaysOnBottom` globally or for one overridden surface. The Root uses its own
   viewport builder. A level does not specify order between windows at that level.

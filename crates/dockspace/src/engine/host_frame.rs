@@ -462,6 +462,25 @@ impl DockEngine {
 }
 
 impl<'frame> HostFrameView<'frame> {
+    pub(crate) fn checked_splitter_resize_range(
+        &self,
+        plan: &PresentationPlan,
+        splitter: crate::presentation::scene::SplitterSceneId,
+    ) -> Option<crate::interaction::ResizeDeltaInterval> {
+        self.engine.checked_splitter_resize_range(plan, splitter)
+    }
+
+    pub(crate) fn splitter_adjustment_geometry_is_available(
+        &self,
+        plan: &PresentationPlan,
+        target: crate::presentation::scene::SplitterResizeTarget,
+        axis: Axis,
+        adjustment: crate::interaction::ResizeAdjustment,
+    ) -> Option<bool> {
+        self.engine
+            .splitter_adjustment_geometry_is_available(plan, target, axis, adjustment)
+    }
+
     pub(crate) fn splitter_resize_delta_interval(
         &self,
         plan: &PresentationPlan,
@@ -519,13 +538,6 @@ impl<'frame> HostFrameView<'frame> {
         self.engine.presentation_config()
     }
 
-    pub(crate) fn capture_tabs_group(
-        &self,
-        anchor: crate::model::DockAnchor,
-    ) -> Result<crate::model::PreparedTabsGroup, crate::model::DockspaceActionRejection> {
-        self.engine.capture_tabs_group(anchor)
-    }
-
     pub(crate) fn prepare_product_action_if_available(
         &self,
         action: crate::model::ProductAction,
@@ -550,13 +562,30 @@ impl<'frame> HostFrameView<'frame> {
             && self
                 .engine
                 .capture_content_close(
-                    crate::graph::command::ContentCloseTarget::Tabs {
-                        root: group.source.root(),
-                        anchor: group.anchor,
+                    crate::graph::command::ContentCloseTarget::TabsSource {
+                        source: group.source.clone(),
                     },
                     self.engine.policy_snapshot(),
                 )
                 .is_ok()
+    }
+
+    pub(crate) fn tab_close_is_available(
+        &self,
+        tab: crate::presentation::scene::TabSceneId,
+    ) -> bool {
+        self.engine
+            .workspace
+            .capture_tab_source(tab.root, tab.tabs, tab.tab)
+            .ok()
+            .is_some_and(|source| {
+                self.engine
+                    .capture_content_close(
+                        ContentCloseTarget::Tab { source },
+                        self.engine.policy_snapshot(),
+                    )
+                    .is_ok()
+            })
     }
 
     pub(crate) fn item_close_is_available(&self, item: ItemId) -> bool {

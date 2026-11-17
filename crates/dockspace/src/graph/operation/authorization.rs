@@ -5,24 +5,32 @@ pub(crate) fn authorize_workspace_command(
     policy: &DockPolicySnapshot,
     command: &WorkspaceCommand,
 ) -> Result<(), CommandError> {
+    if matches!(command, WorkspaceCommand::ResizeTracks { tracks } if tracks.is_empty()) {
+        return Ok(());
+    }
     if !matches!(
         command,
-        WorkspaceCommand::Select { .. } | WorkspaceCommand::RaiseContained { .. }
+        WorkspaceCommand::Select { .. }
+            | WorkspaceCommand::SelectItem { .. }
+            | WorkspaceCommand::RaiseContained { .. }
     ) {
         policy.check_arrangement_unlocked()?;
     }
     match command {
         // Selection is a programmatic focus semantic, not a docking mutation.
         WorkspaceCommand::Select { source } => {
-            let item = source
-                .tab()
-                .item()
-                .ok_or(CommandError::UnsupportedLayoutTab {
-                    tabs: source.tabs(),
-                    tab: source.tab(),
-                })?;
-            if workspace.item_is_hidden(item) {
-                Err(CommandError::ItemHidden { item })
+            if let Some(item) = source.tab().item()
+                && workspace.item_is_hidden(item)
+            {
+                return Err(CommandError::ItemHidden { item });
+            }
+            Ok(())
+        }
+        WorkspaceCommand::SelectItem { source } => {
+            if workspace.item_is_hidden(source.item()) {
+                Err(CommandError::ItemHidden {
+                    item: source.item(),
+                })
             } else {
                 Ok(())
             }
@@ -36,8 +44,8 @@ pub(crate) fn authorize_workspace_command(
         WorkspaceCommand::Move { payload, target } => {
             authorize_move(workspace, policy, payload, target)
         }
-        WorkspaceCommand::ResizeSplits { splits } => {
-            validate_split_resizes(workspace, policy, splits).map(|_| ())
+        WorkspaceCommand::ResizeTracks { tracks } => {
+            validate_track_resizes(workspace, policy, tracks).map(|_| ())
         }
         WorkspaceCommand::CreateSurfaceRoot {
             surface, content, ..
@@ -207,29 +215,33 @@ pub(crate) struct DropCommandEligibility<'a> {
 
 /// Blocked positions derived once from an immutable source tab group.
 struct TabReorderBarriers {
+    tabs: NodeId,
     from: usize,
     blocked: Vec<(usize, ItemId)>,
 }
 
 impl TabReorderBarriers {
     fn capture(
+        workspace: &Workspace,
         items: &[TabKey],
         policy: &DockPolicySnapshot,
-        source: &ItemSource,
+        tabs: NodeId,
+        moving: TabKey,
     ) -> Result<Option<Self>, CommandError> {
         let from = items
             .iter()
-            .position(|item| *item == TabKey::for_item(source.item()))
-            .ok_or(CommandError::ItemNotInTabs {
-                tabs: source.tabs(),
-                item: source.item(),
-            })?;
+            .position(|tab| *tab == moving)
+            .ok_or(CommandError::TabNotInTabs { tabs, tab: moving })?;
         let mut blocked = Vec::new();
         for (index, &tab) in items.iter().enumerate() {
-            let item = tab.item().ok_or(CommandError::UnsupportedLayoutTab {
-                tabs: source.tabs(),
-                tab,
-            })?;
+            let Some(item) = tab_items(workspace, tab).into_iter().find(|item| {
+                policy
+                    .policy()
+                    .item_rule(*item)
+                    .is_some_and(|rule| !rule.allows_tab_reorder())
+            }) else {
+                continue;
+            };
             if policy
                 .policy()
                 .item_rule(item)
@@ -243,7 +255,11 @@ impl TabReorderBarriers {
                 }
             }
         }
-        Ok((!blocked.is_empty()).then_some(Self { from, blocked }))
+        Ok((!blocked.is_empty()).then_some(Self {
+            tabs,
+            from,
+            blocked,
+        }))
     }
 
     fn check(&self, insertion_index: usize) -> Result<(), CommandError> {
@@ -305,10 +321,10 @@ impl<'a> DropCommandEligibility<'a> {
         // All targets share one immutable source. Unrelated item rules must
         // not be rescanned for every insertion gap in its tab strip.
         let reorder_barriers = if policy.has_item_rules()
-            && let MovePayload::Item(source) = payload
-            && let Some(Node::Tabs { items, .. }) = workspace.storage.nodes.get(source.tabs())
+            && let Some((tabs, tab)) = direct_tab_payload(workspace, payload)
+            && let Some(Node::Tabs { items, .. }) = workspace.node(tabs)
         {
-            TabReorderBarriers::capture(items, policy, source)?
+            TabReorderBarriers::capture(workspace, items, policy, tabs, tab)?
         } else {
             None
         };
@@ -343,9 +359,9 @@ impl<'a> DropCommandEligibility<'a> {
 
     fn check_validated_target(&self, target: &DockTarget) -> Result<(), CommandError> {
         if let Some(barriers) = &self.reorder_barriers
-            && let MovePayload::Item(source) = self.payload
-            && let DockTarget::TabGap { target, index } = target
-            && source.tabs() == target.tabs()
+            && let DockTarget::TabGap { index, .. } = target
+            && let Some((tabs, _)) = same_tabs_move_source(self.workspace, self.payload, target)
+            && barriers.tabs == tabs
         {
             barriers.check(*index)?;
         }
@@ -365,36 +381,38 @@ fn authorize_reorder(
     insertion_index: usize,
 ) -> Result<(), CommandError> {
     validate_tab_source(workspace, source)?;
-    let item = source
-        .tab()
-        .item()
-        .ok_or(CommandError::UnsupportedLayoutTab {
+    let payload = if let Some(item) = source.tab().item() {
+        MovePayload::Item(workspace.capture_item_source(source.root(), source.tabs(), item)?)
+    } else {
+        let child = source.tab().layout().ok_or(CommandError::TabNotInTabs {
             tabs: source.tabs(),
             tab: source.tab(),
         })?;
-    let item_source = ItemSource {
-        root: source.root(),
-        tabs: source.tabs(),
-        item,
-        reference: source.reference().clone(),
+        MovePayload::Subtree(workspace.capture_node_source(source.root(), child)?)
     };
-    let len = tabs_len(workspace, source.tabs())?;
+    let len = tabs_len(workspace, source.owner_node())?;
     if insertion_index > len {
         return Err(CommandError::TabIndexOutOfBounds {
-            tabs: source.tabs(),
+            tabs: source.owner_node(),
             index: insertion_index,
             len,
         });
     }
     let target = DockTarget::TabGap {
-        target: workspace.capture_tab_target(source.root(), source.tabs())?,
+        target: workspace.capture_tab_target(source.root(), source.owner_node())?,
         index: insertion_index,
     };
     authorize_tab_bar(policy, &target)?;
     if policy.has_item_rules() {
-        authorize_reorder_barriers(workspace, policy, &item_source, insertion_index)?;
+        authorize_tab_reorder_barriers(
+            workspace,
+            policy,
+            source.tabs(),
+            source.tab(),
+            insertion_index,
+        )?;
     }
-    let payload = move_payload_policy_facts(workspace, &MovePayload::Item(item_source), false)?;
+    let payload = move_payload_policy_facts(workspace, &payload, false)?;
     authorize_drop(policy, DockDropOperation::TabMerge, &payload, &target)
 }
 
@@ -430,6 +448,38 @@ fn authorize_move(
     check_move(workspace, Some(policy), payload, target)
 }
 
+/// Identifies the direct child of an already validated move payload.
+/// Explicit Tabs payloads merge their children and retain that distinct intent.
+fn direct_tab_payload(workspace: &Workspace, payload: &MovePayload) -> Option<(NodeId, TabKey)> {
+    match payload {
+        MovePayload::Item(source) => Some((source.tabs()?, TabKey::for_item(source.item()))),
+        MovePayload::Subtree(source) => {
+            let parent = workspace.parent_link(source.root(), source.node())?;
+            let tab = TabKey::for_layout(source.node());
+            match workspace.node(parent.parent) {
+                Some(Node::Tabs { items, .. }) if items.get(parent.index) == Some(&tab) => {
+                    Some((parent.parent, tab))
+                }
+                _ => None,
+            }
+        }
+        MovePayload::Tabs(_) => None,
+    }
+}
+
+/// Recognizes an in-place direct-child move without recapturing authority.
+pub(super) fn same_tabs_move_source(
+    workspace: &Workspace,
+    payload: &MovePayload,
+    target: &DockTarget,
+) -> Option<(NodeId, TabKey)> {
+    if !target_is_tabs(target) || payload_root(payload) != target_root(target) {
+        return None;
+    }
+    let (tabs, tab) = direct_tab_payload(workspace, payload)?;
+    (tabs == target_node(target)).then_some((tabs, tab))
+}
+
 /// Derives current facts for one command only. The caller's immutable borrow
 /// prevents edits until every source, target, semantic and policy check ends.
 pub(super) fn check_move(
@@ -459,34 +509,30 @@ fn authorize_move_reorder(
     payload: &MovePayload,
     target: &DockTarget,
 ) -> Result<(), CommandError> {
-    if let MovePayload::Item(source) = payload
-        && let DockTarget::TabGap { target, index } = target
-        && source.tabs() == target.tabs()
+    if let DockTarget::TabGap { index, .. } = target
         && policy.has_item_rules()
+        && let Some((tabs, tab)) = same_tabs_move_source(workspace, payload, target)
     {
-        authorize_reorder_barriers(workspace, policy, source, *index)?;
+        authorize_tab_reorder_barriers(workspace, policy, tabs, tab, *index)?;
     }
     Ok(())
 }
 
 /// Restricts relative order inside the current group, independently of undocking.
-fn authorize_reorder_barriers(
+fn authorize_tab_reorder_barriers(
     workspace: &Workspace,
     policy: &DockPolicySnapshot,
-    source: &ItemSource,
+    tabs: NodeId,
+    moving: TabKey,
     insertion_index: usize,
 ) -> Result<(), CommandError> {
-    let tabs = source.tabs();
     let Some(Node::Tabs { items, .. }) = workspace.storage.nodes.get(tabs) else {
         return Err(CommandError::NodeIsNotTabs { node: tabs });
     };
     let from = items
         .iter()
-        .position(|item| *item == TabKey::for_item(source.item()))
-        .ok_or(CommandError::ItemNotInTabs {
-            tabs,
-            item: source.item(),
-        })?;
+        .position(|item| *item == moving)
+        .ok_or(CommandError::TabNotInTabs { tabs, tab: moving })?;
     let to = if insertion_index > from {
         insertion_index - 1
     } else {
@@ -504,18 +550,27 @@ fn authorize_reorder_barriers(
                 len: items.len(),
             })?;
     for tab in crossed {
-        let item = tab
-            .item()
-            .ok_or(CommandError::UnsupportedLayoutTab { tabs, tab: *tab })?;
-        if policy
-            .policy()
-            .item_rule(item)
-            .is_some_and(|rule| !rule.allows_tab_reorder())
-        {
-            return Err(crate::policy::PolicyRejection::TabReorderDisabled { item }.into());
+        for item in tab_items(workspace, *tab) {
+            if policy
+                .policy()
+                .item_rule(item)
+                .is_some_and(|rule| !rule.allows_tab_reorder())
+            {
+                return Err(crate::policy::PolicyRejection::TabReorderDisabled { item }.into());
+            }
         }
     }
     Ok(())
+}
+
+fn tab_items(workspace: &Workspace, tab: TabKey) -> Vec<ItemId> {
+    if let Some(item) = tab.item() {
+        vec![item]
+    } else {
+        tab.layout()
+            .map(|node| workspace.collect_items_in_subtree(node))
+            .unwrap_or_default()
+    }
 }
 
 #[cfg(test)]
@@ -735,23 +790,26 @@ fn root_policy_owner(
 }
 
 fn move_undocks_source(workspace: &Workspace, payload: &MovePayload, target: &DockTarget) -> bool {
+    if same_tabs_move_source(workspace, payload, target).is_some() {
+        return false;
+    }
     match payload {
         MovePayload::Item(source) => match target {
             DockTarget::Center(target) | DockTarget::TabGap { target, .. } => {
-                target.root() != source.root() || target.tabs() != source.tabs()
+                target.root() != source.root() || target.tabs() != source.owner_node()
             }
             DockTarget::InnerEdge(target) | DockTarget::OuterEdge(target)
                 if target.root() == source.root() =>
             {
-                if target.node() != source.tabs() {
+                if target.node() != source.owner_node() {
                     return true;
                 }
                 !matches!(
-                    workspace.storage.nodes.get(source.tabs()),
+                    workspace.storage.nodes.get(source.owner_node()),
                     Some(Node::Tabs { items, .. }) if items.len() == 1
                         && workspace.storage.roots
                             .get(&source.root())
-                            .is_some_and(|root| root.central != Some(source.tabs()))
+                            .is_some_and(|root| root.central != Some(source.owner_node()))
                 )
             }
             DockTarget::InnerEdge(_) | DockTarget::OuterEdge(_) => true,
@@ -769,6 +827,11 @@ fn validate_move_target_semantics(
     payload: &MovePayload,
     target: &DockTarget,
 ) -> Result<(), CommandError> {
+    // Reordering a direct layout child retains the entire subtree, including
+    // any protected central anchor, under the same structural parent.
+    if same_tabs_move_source(workspace, payload, target).is_some() {
+        return Ok(());
+    }
     if let Some(source_node) = payload_node(payload) {
         let target_node = target_node(target);
         if workspace.subtree_contains(source_node, target_node) {
@@ -785,14 +848,6 @@ fn validate_move_target_semantics(
                 source_node,
                 target: target_node,
             });
-        }
-        if target_is_tabs(target)
-            && !matches!(
-                workspace.storage.nodes.get(source_node),
-                Some(Node::Tabs { .. })
-            )
-        {
-            return Err(CommandError::SplitPayloadIntoTabs { node: source_node });
         }
 
         let source_root = payload_root(payload);
@@ -835,7 +890,10 @@ fn validate_edge_insertion_weight(
                 weights,
                 ..
             }) if *parent_axis == axis => weights.get(parent.index).copied().map(SplitWeight::get),
-            Some(Node::Tabs { .. } | Node::Split { .. }) | None => None,
+            Some(
+                Node::Pane { .. } | Node::Tabs { .. } | Node::Split { .. } | Node::Grid { .. },
+            )
+            | None => None,
         });
     let (payload_weight, target_weight) = branch.map_or((fraction, 1.0 - fraction), |branch| {
         let payload = branch * fraction;

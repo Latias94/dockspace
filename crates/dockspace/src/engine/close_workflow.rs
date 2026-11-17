@@ -12,9 +12,10 @@ impl DockEngine {
     ) -> Result<FrozenCloseClick, ContentCloseRequestRejection> {
         match target {
             ContentCloseTarget::Item(item) => {
-                let Some((root, tabs, _)) = self.workspace.locate_item_by_id(item) else {
+                let Some(location) = self.workspace.locate_item_by_id(item) else {
                     return Err(ContentCloseRequestRejection::ItemUnavailable { item });
                 };
+                let root = location.root;
                 let capability = policy.pane_close_capability(item);
                 if !capability.allows_close() {
                     return Err(ContentCloseRequestRejection::ItemCloseDisabled { item });
@@ -28,7 +29,7 @@ impl DockEngine {
                     requirements: vec![CloseItemRequirement::new(item, capability)],
                     prepared: ContentCloseScope::Item {
                         root,
-                        tabs,
+                        owner_node: location.owner_node(),
                         item,
                         owner,
                         requirement: CloseItemRequirement::new(item, capability),
@@ -66,42 +67,114 @@ impl DockEngine {
                     },
                 })
             }
-            ContentCloseTarget::Tabs { root, anchor } => {
-                let Some((actual_root, tabs, _)) = self.workspace.locate_item_by_id(anchor) else {
-                    return Err(ContentCloseRequestRejection::ItemUnavailable { item: anchor });
-                };
-                if actual_root != root {
-                    return Err(ContentCloseRequestRejection::RootUnavailable { root });
+            ContentCloseTarget::TabsSource { source } => {
+                self.workspace
+                    .verify_reference(
+                        source.root(),
+                        source.node(),
+                        source.reference(),
+                        ReferenceRole::Source,
+                    )
+                    .map_err(ContentCloseRequestRejection::SourceUnavailable)?;
+                if !matches!(self.workspace.node(source.node()), Some(Node::Tabs { .. })) {
+                    return Err(ContentCloseRequestRejection::SourceUnavailable(
+                        CommandError::NodeIsNotTabs {
+                            node: source.node(),
+                        },
+                    ));
                 }
+                let root = source.root();
+                let tabs = source.node();
                 let owner = self
                     .workspace
                     .presentation_for_root(root)
                     .ok_or(ContentCloseRequestRejection::RootUnavailable { root })?;
-                let Some(Node::Tabs { .. }) = self.workspace.node(tabs) else {
-                    return Err(ContentCloseRequestRejection::ItemUnavailable { item: anchor });
-                };
-                let owned_items = self.workspace.collect_items_in_subtree(tabs);
-                let mut requirements = Vec::with_capacity(owned_items.len());
-                for item in owned_items.iter().copied() {
-                    let capability = policy.pane_close_capability(item);
-                    if !capability.allows_close() {
-                        return Err(ContentCloseRequestRejection::ItemCloseDisabled { item });
-                    }
-                    requirements.push(CloseItemRequirement::new(item, capability));
-                }
+                let items = self.workspace.collect_items_in_subtree(tabs);
+                let requirements = Self::close_requirements(root, &items, policy)?;
                 Ok(FrozenCloseClick {
-                    target: ClosePlanTarget::Tabs { root, anchor },
+                    target: ClosePlanTarget::Tabs {
+                        root,
+                        group: crate::ids::NodeKey(tabs),
+                    },
                     requirements: requirements.clone(),
                     prepared: ContentCloseScope::Tabs {
                         root,
                         tabs,
                         owner,
-                        items: owned_items.into_iter().collect(),
+                        items: items.into_iter().collect(),
+                        requirements,
+                    },
+                })
+            }
+            ContentCloseTarget::Tab { source } => {
+                self.workspace
+                    .verify_reference(
+                        source.root(),
+                        source.tabs(),
+                        source.reference(),
+                        ReferenceRole::Source,
+                    )
+                    .map_err(ContentCloseRequestRejection::SourceUnavailable)?;
+                if !matches!(self.workspace.node(source.tabs()), Some(Node::Tabs { items, .. }) if items.contains(&source.tab()))
+                {
+                    return Err(ContentCloseRequestRejection::SourceUnavailable(
+                        CommandError::TabNotInTabs {
+                            tabs: source.tabs(),
+                            tab: source.tab(),
+                        },
+                    ));
+                }
+                if let Some(item) = source.tab().item() {
+                    return self.capture_content_close(ContentCloseTarget::Item(item), policy);
+                }
+                let node =
+                    crate::graph::operation::validate_layout_tab_close(&self.workspace, &source)
+                        .map_err(ContentCloseRequestRejection::SourceUnavailable)?;
+                let root = source.root();
+                let owner = self
+                    .workspace
+                    .presentation_for_root(root)
+                    .ok_or(ContentCloseRequestRejection::RootUnavailable { root })?;
+                let items = self.workspace.collect_items_in_subtree(node);
+                let requirements = Self::close_requirements(root, &items, policy)?;
+                Ok(FrozenCloseClick {
+                    target: ClosePlanTarget::Tab {
+                        root,
+                        tab: source.tab(),
+                    },
+                    requirements: requirements.clone(),
+                    prepared: ContentCloseScope::Tab {
+                        root,
+                        tabs: source.tabs(),
+                        tab: source.tab(),
+                        node,
+                        owner,
+                        items: items.into_iter().collect(),
                         requirements,
                     },
                 })
             }
         }
+    }
+
+    fn close_requirements(
+        root: RootId,
+        items: &[ItemId],
+        policy: &DockPolicySnapshot,
+    ) -> Result<Vec<CloseItemRequirement>, ContentCloseRequestRejection> {
+        if items.is_empty() {
+            return Err(ContentCloseRequestRejection::RootEmpty { root });
+        }
+        items
+            .iter()
+            .map(|&item| {
+                let capability = policy.pane_close_capability(item);
+                if !capability.allows_close() {
+                    return Err(ContentCloseRequestRejection::ItemCloseDisabled { item });
+                }
+                Ok(CloseItemRequirement::new(item, capability))
+            })
+            .collect()
     }
 
     pub(super) fn content_close_rejection_to_interaction(
@@ -125,15 +198,46 @@ impl DockEngine {
 
     /// Resolves each activation's own region without widening close-button authority.
     pub(super) fn scene_close_region(
+        &self,
         plan: &PresentationPlan,
         target: CloseSceneTarget,
     ) -> Result<(LogicalRect, SceneLayerKey, ContentCloseTarget), InteractionRejection> {
         match target {
+            CloseSceneTarget::Pane(id) => {
+                let record = plan
+                    .pane_records()
+                    .iter()
+                    .find(|record| record.id() == id)
+                    .ok_or(InteractionRejection::CloseSceneTargetUnavailable { target })?;
+                if !plan.receiver_active_path_is_current(
+                    PresentationHitRegionKind::PaneBody(id),
+                    &self.workspace,
+                ) || self
+                    .workspace
+                    .locate_item_by_id(id.item)
+                    .is_none_or(|place| {
+                        place.root != id.root || place.owner_node() != record.owner_node()
+                    })
+                {
+                    return Err(InteractionRejection::CloseSceneTargetUnavailable { target });
+                }
+                Ok((
+                    record.content_bounds(),
+                    record.layer(),
+                    ContentCloseTarget::Item(id.item),
+                ))
+            }
             CloseSceneTarget::Tab(id) | CloseSceneTarget::TabBody(id) => {
                 let Some(record) = plan.tab_records().iter().find(|record| *record.id() == id)
                 else {
                     return Err(InteractionRejection::CloseSceneTargetUnavailable { target });
                 };
+                if !plan.receiver_active_path_is_current(
+                    PresentationHitRegionKind::TabBody(id),
+                    &self.workspace,
+                ) {
+                    return Err(InteractionRejection::CloseSceneTargetUnavailable { target });
+                }
                 let bounds = if matches!(target, CloseSceneTarget::TabBody(_)) {
                     let body = record.drag_hit().rect();
                     if body.width() <= 0.0
@@ -155,11 +259,12 @@ impl DockEngine {
                 Ok((
                     bounds,
                     record.layer(),
-                    ContentCloseTarget::Item(
-                        id.tab
-                            .item()
-                            .ok_or(InteractionRejection::CloseSceneTargetUnavailable { target })?,
-                    ),
+                    ContentCloseTarget::Tab {
+                        source: self
+                            .workspace
+                            .capture_tab_source(id.root, id.tabs, id.tab)
+                            .map_err(InteractionRejection::CloseSourceUnavailable)?,
+                    },
                 ))
             }
             CloseSceneTarget::Contained(floating) => {
@@ -215,7 +320,7 @@ impl DockEngine {
         }
 
         let plan = painted.plan();
-        let (close_bounds, layer, content_target) = match Self::scene_close_region(plan, target) {
+        let (close_bounds, layer, content_target) = match self.scene_close_region(plan, target) {
             Ok(region) => region,
             Err(error) => return Ok(InteractionOutcome::Rejected(error)),
         };
@@ -1004,31 +1109,28 @@ impl DockEngine {
         }?;
         let is_closed = |item| match prepared {
             ContentCloseScope::Item { item: closed, .. } => *closed == item,
-            ContentCloseScope::Root { items, .. } | ContentCloseScope::Tabs { items, .. } => {
-                items.contains(&item)
-            }
+            ContentCloseScope::Root { items, .. }
+            | ContentCloseScope::Tabs { items, .. }
+            | ContentCloseScope::Tab { items, .. } => items.contains(&item),
         };
         if !is_closed(focused) {
             return None;
         }
         let successor = match prepared {
-            ContentCloseScope::Item { tabs, item, .. } => {
-                let Some(Node::Tabs { items, .. }) = self.workspace.node(*tabs) else {
-                    return None;
-                };
-                let index = items.iter().position(|entry| entry.item() == Some(*item))?;
-                items
-                    .iter()
-                    .skip(index + 1)
-                    .chain(items[..index].iter().rev())
-                    .filter_map(|tab| tab.item())
-                    .find(|item| !candidate.item_is_hidden(*item))
+            ContentCloseScope::Item { owner_node, .. }
+            | ContentCloseScope::Tabs {
+                tabs: owner_node, ..
             }
-            ContentCloseScope::Root { .. } | ContentCloseScope::Tabs { .. } => match observed {
+            | ContentCloseScope::Tab {
+                tabs: owner_node, ..
+            } => candidate.first_active_item(*owner_node).or_else(|| {
+                candidate
+                    .root(root)
+                    .and_then(|record| candidate.first_active_item(record.node))
+            }),
+            ContentCloseScope::Root { .. } => match observed {
                 PanelFocusRecord::Item(item)
-                    if !is_closed(item)
-                        && !candidate.item_is_hidden(item)
-                        && candidate.locate_item_by_id(item).is_some() =>
+                    if !is_closed(item) && candidate.item_is_active(item) =>
                 {
                     Some(item)
                 }
@@ -1123,7 +1225,7 @@ impl DockEngine {
                 accepted_base: self.version,
             });
         }
-        let capture = match self.capture_content_close(target, policy) {
+        let capture = match self.capture_content_close(target.clone(), policy) {
             Ok(capture) => capture,
             Err(reason) => {
                 return Ok(InputOutcome::ContentCloseRejected {

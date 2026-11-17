@@ -9,7 +9,7 @@ use dockspace::engine::transition::{
 use dockspace::engine::{CoreHostFrame, DockEngine, EngineInput};
 use dockspace::geometry::{LogicalPoint, LogicalRect, LogicalSize};
 use dockspace::graph::command::{
-    CloseCommitOutcome, CommandOutcome, ContentCloseTarget, SplitResize, WorkspaceCommand,
+    CloseCommitOutcome, CommandOutcome, ContentCloseTarget, TrackResize, WorkspaceCommand,
 };
 use dockspace::graph::error::{CommandError, ReferenceRole, TransactionError};
 use dockspace::graph::transaction::WorkspaceTransaction;
@@ -168,7 +168,7 @@ fn splitter(engine: &DockEngine, split: NodeId) -> (SurfaceSceneStamp, SplitterR
         .plan()
         .splitter_records()
         .iter()
-        .find(|record| record.id().split == split)
+        .find(|record| record.id().node() == split)
         .cloned()
         .expect("splitter is projected");
     (ready.stamp(), record)
@@ -738,7 +738,15 @@ fn handle_resize_clamps_both_directions_at_core_derived_root_limits() {
     let positive_before = record
         .before_maximum_extent()
         .min(pair_extent - record.after_minimum_extent());
-    assert!((positive.weights()[index].get() - positive_before / full_extent).abs() <= 1.0e-6);
+    assert!(
+        (positive
+            .split_weights()
+            .expect("fixture resizes an actual split")[index]
+            .get()
+            - positive_before / full_extent)
+            .abs()
+            <= 1.0e-6
+    );
 
     let negative_point =
         LogicalPoint::new(press.x() - 10_000.0, press.y()).expect("negative update point is valid");
@@ -766,7 +774,15 @@ fn handle_resize_clamps_both_directions_at_core_derived_root_limits() {
     let negative_before = record
         .before_minimum_extent()
         .max(pair_extent - record.after_maximum_extent());
-    assert!((negative.weights()[index].get() - negative_before / full_extent).abs() <= 1.0e-6);
+    assert!(
+        (negative
+            .split_weights()
+            .expect("fixture resizes an actual split")[index]
+            .get()
+            - negative_before / full_extent)
+            .abs()
+            <= 1.0e-6
+    );
 
     let delivered_transition = submit_pointer_edge(
         &mut engine,
@@ -785,7 +801,12 @@ fn handle_resize_clamps_both_directions_at_core_derived_root_limits() {
             ..
         } if *delivered_session == session
     ));
-    assert_eq!(node_weights(engine.workspace(), split), negative.weights());
+    assert_eq!(
+        node_weights(engine.workspace(), split),
+        negative
+            .split_weights()
+            .expect("fixture resizes an actual split")
+    );
 }
 
 #[test]
@@ -879,7 +900,7 @@ fn junction_resize_clamps_one_axis_and_commits_both_axes_in_one_revision() {
 
     let horizontal_update = splits
         .iter()
-        .find(|resize| resize.split().node() == horizontal)
+        .find(|resize| resize.source().node() == horizontal)
         .expect("batch contains horizontal split");
     let horizontal_index = horizontal_record.id().index;
     let horizontal_available = horizontal_record.child_extents().iter().sum::<f64>();
@@ -887,7 +908,10 @@ fn junction_resize_clamps_one_axis_and_commits_both_axes_in_one_revision() {
         + horizontal_record.child_extents()[horizontal_index + 1];
     let horizontal_expected_before = horizontal_pair - horizontal_record.after_minimum_extent();
     assert!(
-        (horizontal_update.weights()[horizontal_index].get()
+        (horizontal_update
+            .split_weights()
+            .expect("fixture resizes an actual split")[horizontal_index]
+            .get()
             - horizontal_expected_before / horizontal_available)
             .abs()
             <= 1.0e-6
@@ -895,7 +919,7 @@ fn junction_resize_clamps_one_axis_and_commits_both_axes_in_one_revision() {
 
     let vertical_update = splits
         .iter()
-        .find(|resize| resize.split().node() == vertical)
+        .find(|resize| resize.source().node() == vertical)
         .expect("batch contains vertical split");
     let vertical_index = vertical_record.id().index;
     let vertical_before = vertical_record.child_extents()[vertical_index];
@@ -903,7 +927,10 @@ fn junction_resize_clamps_one_axis_and_commits_both_axes_in_one_revision() {
     assert!(vertical_delta < vertical_after - vertical_record.after_minimum_extent());
     let vertical_available = vertical_record.child_extents().iter().sum::<f64>();
     assert!(
-        (vertical_update.weights()[vertical_index].get()
+        (vertical_update
+            .split_weights()
+            .expect("fixture resizes an actual split")[vertical_index]
+            .get()
             - (vertical_before + vertical_delta) / vertical_available)
             .abs()
             <= 1.0e-6
@@ -921,8 +948,8 @@ fn junction_resize_clamps_one_axis_and_commits_both_axes_in_one_revision() {
     let InteractionOutcome::ResizeDelivered {
         session: delivered_session,
         outcome:
-            CommandOutcome::SplitsResized {
-                splits: committed,
+            CommandOutcome::TracksResized {
+                tracks: committed,
                 changed: true,
             },
         changed: true,
@@ -942,11 +969,15 @@ fn junction_resize_clamps_one_axis_and_commits_both_axes_in_one_revision() {
     );
     assert_eq!(
         node_weights(engine.workspace(), horizontal),
-        horizontal_update.weights()
+        horizontal_update
+            .split_weights()
+            .expect("fixture resizes an actual split")
     );
     assert_eq!(
         node_weights(engine.workspace(), vertical),
-        vertical_update.weights()
+        vertical_update
+            .split_weights()
+            .expect("fixture resizes an actual split")
     );
     assert_eq!(engine.interaction().status(), InteractionStatus::Idle);
 }
@@ -1043,11 +1074,16 @@ fn cross_junction_clamps_all_touching_handles_to_one_common_axis_delta() {
     let projected_delta = |record: &SplitterRecord, split: NodeId| {
         let update = splits
             .iter()
-            .find(|update| update.split().node() == split)
+            .find(|update| update.source().node() == split)
             .expect("touching split has one update");
         let index = record.id().index;
         let available = record.child_extents().iter().sum::<f64>();
-        update.weights()[index].get() * available - record.child_extents()[index]
+        update
+            .split_weights()
+            .expect("fixture resizes an actual split")[index]
+            .get()
+            * available
+            - record.child_extents()[index]
     };
     let left_delta = projected_delta(&left_record, left);
     let right_delta = projected_delta(&right_record, right);
@@ -1066,8 +1102,8 @@ fn cross_junction_clamps_all_touching_handles_to_one_common_axis_delta() {
     let InteractionOutcome::ResizeDelivered {
         session: delivered_session,
         outcome:
-            CommandOutcome::SplitsResized {
-                splits: committed,
+            CommandOutcome::TracksResized {
+                tracks: committed,
                 changed: true,
             },
         changed: true,
@@ -1118,8 +1154,8 @@ fn stale_second_split_rejects_the_entire_resize_batch_without_mutation() {
         .capture_node_source(ROOT_B, split_b)
         .expect("second source is initially current");
     let current_source_b = stale_source_b.clone();
-    WorkspaceTransaction::from_commands([WorkspaceCommand::ResizeSplits {
-        splits: vec![SplitResize::new(current_source_b, weights(0.4, 0.6))],
+    WorkspaceTransaction::from_commands([WorkspaceCommand::ResizeTracks {
+        tracks: vec![TrackResize::split(current_source_b, weights(0.4, 0.6))],
     }])
     .apply(
         &mut workspace,
@@ -1128,10 +1164,10 @@ fn stale_second_split_rejects_the_entire_resize_batch_without_mutation() {
     .expect("intervening resize makes only root B's source stale");
     let before = workspace.clone();
 
-    let error = WorkspaceTransaction::from_commands([WorkspaceCommand::ResizeSplits {
-        splits: vec![
-            SplitResize::new(source_a, weights(0.25, 0.75)),
-            SplitResize::new(stale_source_b, weights(0.3, 0.7)),
+    let error = WorkspaceTransaction::from_commands([WorkspaceCommand::ResizeTracks {
+        tracks: vec![
+            TrackResize::split(source_a, weights(0.25, 0.75)),
+            TrackResize::split(stale_source_b, weights(0.3, 0.7)),
         ],
     }])
     .apply(
@@ -1168,10 +1204,10 @@ fn disabled_vertical_policy_omits_corner_and_rejects_direct_batch_without_partia
         .capture_node_source(ROOT, vertical)
         .expect("vertical source is current");
     let before_command = command_workspace.clone();
-    let error = WorkspaceTransaction::from_commands([WorkspaceCommand::ResizeSplits {
-        splits: vec![
-            SplitResize::new(horizontal_source, weights(0.25, 0.75)),
-            SplitResize::new(vertical_source, weights(0.25, 0.75)),
+    let error = WorkspaceTransaction::from_commands([WorkspaceCommand::ResizeTracks {
+        tracks: vec![
+            TrackResize::split(horizontal_source, weights(0.25, 0.75)),
+            TrackResize::split(vertical_source, weights(0.25, 0.75)),
         ],
     }])
     .apply(
@@ -1205,13 +1241,13 @@ fn disabled_vertical_policy_omits_corner_and_rejects_direct_batch_without_partia
         .plan()
         .splitter_records()
         .iter()
-        .find(|record| record.id().split == horizontal)
+        .find(|record| record.id().node() == horizontal)
         .expect("horizontal splitter is present");
     let vertical = ready
         .plan()
         .splitter_records()
         .iter()
-        .find(|record| record.id().split == vertical)
+        .find(|record| record.id().node() == vertical)
         .expect("vertical splitter is present");
     assert!(horizontal.operable());
     assert!(!vertical.operable());
@@ -1260,7 +1296,7 @@ fn fully_occluded_splitter_has_no_pointer_or_scene_bound_action_authority() {
         .plan()
         .splitter_records()
         .iter()
-        .find(|record| record.id().split == rear_split)
+        .find(|record| record.id().node() == rear_split)
         .cloned()
         .expect("rear splitter remains paintable");
     assert!(!record.operable());

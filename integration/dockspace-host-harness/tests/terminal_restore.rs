@@ -104,8 +104,15 @@ fn assert_original(session: &DockspaceSession) {
     assert_eq!(session.view().surfaces().count(), 1);
     let first = session.view().item(FIRST).unwrap();
     assert_eq!((first.surface(), first.root()), (SURFACE, ROOT));
-    assert_eq!(first.tabs().items().collect::<Vec<_>>(), &[FIRST]);
-    assert!(first.is_selected());
+    assert_eq!(
+        first
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
+        &[FIRST]
+    );
+    assert!(first.is_active());
     assert!(session.view().item(HISTORICAL).is_none());
     assert!(session.view().item(MISSING).is_none());
     assert_eq!(session.item_id_for_external_key("pane:first"), Some(FIRST));
@@ -155,7 +162,7 @@ fn ordinary_terminal_restore_retries_atomically_and_recognizes_unloaded_content(
         frame
             .open_item_current(HISTORICAL, DockPlacement::After(FIRST))
             .unwrap();
-        assert!(frame.view().item(HISTORICAL).unwrap().is_selected());
+        assert!(frame.view().item(HISTORICAL).unwrap().is_active());
         assert_eq!(frame.external_key_for_item(MISSING), None);
         let prefix_version = frame.version();
         assert_ne!(prefix_version, before);
@@ -164,10 +171,14 @@ fn ordinary_terminal_restore_retries_atomically_and_recognizes_unloaded_content(
         assert_eq!(restored.surface(), SURFACE);
         assert_eq!(restored.root(), RootId::new(1));
         assert_eq!(
-            restored.tabs().items().collect::<Vec<_>>(),
+            restored
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
             &[FIRST, MISSING]
         );
-        assert!(restored.is_selected());
+        assert!(restored.is_active());
         assert!(frame.view().item(HISTORICAL).is_none());
         assert_eq!(frame.external_key_for_item(MISSING), Some("pane:missing"));
         assert_eq!(
@@ -251,7 +262,7 @@ fn ordinary_terminal_restore_retries_atomically_and_recognizes_unloaded_content(
     frame
         .open_item_current(local, DockPlacement::After(FIRST))
         .unwrap();
-    assert!(frame.view().item(local).unwrap().is_selected());
+    assert!(frame.view().item(local).unwrap().is_active());
     drop(frame);
     assert!(session.view().item(local).is_none());
     assert_eq!(
@@ -420,7 +431,7 @@ fn bounded_native_prefix_and_terminal_restore_share_retry_watermarks_and_root_su
         session.view().item(MISSING).unwrap().root(),
         candidate_root.unwrap()
     );
-    assert!(session.view().item(MISSING).unwrap().is_selected());
+    assert!(session.view().item(MISSING).unwrap().is_active());
     let idle = commit_deferred(session.begin_native_host_frame(|_| unreachable!()).unwrap());
     assert!(idle.inputs().is_empty());
     assert!(!idle.native_input_pending());
@@ -478,8 +489,16 @@ fn foreign_stale_and_changed_sidecar_preparations_reject_without_publishing_the_
         let generation = session.next_document_generation();
         let later = session.item_id_for_external_key("pane:later");
         let first = session.view().item(FIRST).unwrap();
-        let items = first.tabs().items().collect::<Vec<_>>();
-        let selected = first.tabs().selected().and_then(|tab| tab.item());
+        let items = first
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>();
+        let selected = first
+            .tabs()
+            .expect("item is an inline tab")
+            .selected()
+            .and_then(|tab| tab.item());
         {
             let mut frame = session.begin_host_frame().unwrap();
             if selected == Some(FIRST) {
@@ -505,6 +524,7 @@ fn foreign_stale_and_changed_sidecar_preparations_reject_without_publishing_the_
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             items
@@ -515,6 +535,7 @@ fn foreign_stale_and_changed_sidecar_preparations_reject_without_publishing_the_
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .selected()
                 .and_then(|tab| tab.item()),
             selected
@@ -605,6 +626,6 @@ fn locked_restore_rejects_and_successful_restore_closes_semantic_and_configurati
         [HostInputOutcome::DocumentRestored { .. }]
     ));
     assert!(!session.policy().arrangement_locked());
-    assert!(session.view().item(MISSING).unwrap().is_selected());
+    assert!(session.view().item(MISSING).unwrap().is_active());
     assert_eq!(session.next_document_generation(), Some(2));
 }

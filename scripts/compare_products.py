@@ -195,7 +195,7 @@ def main() -> int:
     ]).split("\0")
     metadata["dockspace_sources"] = {
         name: digest(ROOT / name) for name in source_paths
-        if name and Path(name).suffix in {".rs", ".toml", ".lock"}
+        if name and Path(name).suffix in {".rs", ".toml", ".lock"} and (ROOT / name).is_file()
     }
     metadata_path = output / "environment.json"
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")

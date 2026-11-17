@@ -187,10 +187,12 @@ fn apply_random_action(
 
 struct GroupExpectation {
     members: Vec<ItemId>,
+    children: Vec<TabKey>,
     selected: Option<TabKey>,
     source: SurfaceId,
     target: SurfaceId,
-    target_items: Vec<ItemId>,
+    target_node: crate::ids::NodeId,
+    target_children: Vec<TabKey>,
 }
 
 impl GroupExpectation {
@@ -205,24 +207,25 @@ impl GroupExpectation {
         };
         assert!(*changed, "{trace}");
         assert_eq!(items, &self.members, "{trace}");
-        let mut target_items = self.target_items.clone();
-        target_items.extend_from_slice(&self.members);
+        let mut target_children = self.target_children.clone();
+        target_children.extend_from_slice(&self.children);
+        let Some(crate::graph::Node::Tabs { items: tabs, .. }) =
+            session.workspace().node(self.target_node)
+        else {
+            panic!("{trace}: the destination must remain the same Tabs owner");
+        };
+        assert_eq!(tabs, &target_children, "{trace}");
         for item in &self.members {
             let view = session.view();
             let location = view.item(*item).expect(trace);
             assert_eq!(location.surface(), self.target, "{trace}");
+        }
+        if let Some(selected) = self.selected {
             assert_eq!(
-                location.tabs().items().collect::<Vec<_>>(),
-                target_items,
+                session.workspace().visible_tab_selection(self.target_node),
+                Some(selected),
                 "{trace}"
             );
-            if let Some(selected) = self.selected {
-                assert_eq!(
-                    location.tabs().visible_selected(),
-                    Some(selected),
-                    "{trace}"
-                );
-            }
         }
         self.members.len() > 1 && self.source != self.target
     }
@@ -355,7 +358,15 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
                             .iter()
                             .copied()
                             .filter(|item| {
-                                session.view().item(*item).unwrap().tabs().items().count() > 1
+                                session
+                                    .view()
+                                    .item(*item)
+                                    .unwrap()
+                                    .tabs()
+                                    .expect("fixture item is an inline tab")
+                                    .items()
+                                    .count()
+                                    > 1
                             })
                             .collect();
                         let source = if grouped.is_empty() {
@@ -375,7 +386,8 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
                                         root.central().map(|central| {
                                             (
                                                 DockAnchor::Central(root.id()),
-                                                central.tabs().unwrap().items().collect::<Vec<_>>(),
+                                                central.tabs().unwrap().key().0,
+                                                central.tabs().unwrap().tabs().to_vec(),
                                             )
                                         })
                                     })
@@ -395,22 +407,46 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
                                                 .item(target)
                                                 .unwrap()
                                                 .tabs()
-                                                .items()
-                                                .collect::<Vec<_>>(),
+                                                .expect("fixture item is an inline tab")
+                                                .key()
+                                                .0,
+                                            session
+                                                .view()
+                                                .item(target)
+                                                .unwrap()
+                                                .tabs()
+                                                .unwrap()
+                                                .tabs()
+                                                .to_vec(),
                                         )
                                     });
                                 (surface.id(), destination)
                             })
                             .collect();
-                        let (target, (anchor, target_items)) =
+                        let (target, (anchor, target_node, target_children)) =
                             &destinations[rng.index(destinations.len())];
                         let location = session.view().item(source).unwrap();
                         group_expectation = Some(GroupExpectation {
-                            members: location.tabs().items().collect::<Vec<_>>(),
-                            selected: location.tabs().visible_selected(),
+                            members: location
+                                .tabs()
+                                .expect("fixture item is an inline tab")
+                                .children()
+                                .flat_map(|child| match child {
+                                    crate::model::DockspaceTabView::Item(item) => vec![item],
+                                    crate::model::DockspaceTabView::Layout(node) => {
+                                        node.items().collect()
+                                    }
+                                })
+                                .collect(),
+                            children: location.tabs().unwrap().tabs().to_vec(),
+                            selected: location
+                                .tabs()
+                                .expect("fixture item is an inline tab")
+                                .visible_selected(),
                             source: owner,
                             target: *target,
-                            target_items: target_items.clone(),
+                            target_node: *target_node,
+                            target_children: target_children.clone(),
                         });
                         let group = session
                             .capture_tabs_group(DockAnchor::Item(source))
@@ -476,11 +512,11 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
             );
             for &item in &expected {
                 let location = session.view().item(item).expect(&trace);
-                let tabs = location.tabs();
+                let tabs = location.tabs().expect("fixture item is an inline tab");
                 assert_eq!(location.is_hidden(), hidden.contains(&item), "{trace}");
                 assert_eq!(
                     tabs.visible_selected().is_some(),
-                    tabs.visible_items().next().is_some(),
+                    tabs.visible_tabs().next().is_some(),
                     "{trace}",
                 );
                 assert!(

@@ -77,6 +77,7 @@ fn configured_activation_uses_native_event_modifiers_and_platform_command_mappin
             baseline.with_metadata(
                 PointerEventMetadata::new(PointerDeviceKind::Mouse, Duration::from_millis(40))
                     .with_docking_enabled(enabled)
+                    .with_group_dock_mode(config.tab_group_dock_mode(egui_modifiers(observed)))
             ),
             "{activation:?} with {observed:?}"
         );
@@ -139,10 +140,87 @@ fn mouse_press_move_and_release_keep_only_their_own_modifier_directive() {
             };
             let mut expected = PointerEventMetadata::new(PointerDeviceKind::Mouse, captured_at);
             if let Some(modifiers) = modifiers {
-                expected = expected.with_docking_enabled(!modifiers.shift_key());
+                expected = expected
+                    .with_docking_enabled(!modifiers.shift_key())
+                    .with_group_dock_mode(
+                        DockInputConfig::default().tab_group_dock_mode(egui_modifiers(modifiers)),
+                    );
             }
             assert_eq!(input, untimed.with_metadata(expected));
             assert_eq!(record.event(), &event);
+        }
+    }
+}
+
+#[test]
+fn configured_group_mode_uses_event_time_modifiers_for_mouse_and_touch() {
+    use dockspace::model::TabGroupDockMode::{MergeTabs, PreserveLayout};
+    use eframe::egui::Modifiers;
+
+    for (binding, modifiers, mode) in [
+        (Some(Modifiers::ALT), ModifiersState::ALT, PreserveLayout),
+        (Some(Modifiers::ALT), ModifiersState::empty(), MergeTabs),
+        (None, ModifiersState::ALT, MergeTabs),
+        (
+            Some(Modifiers::CTRL | Modifiers::SHIFT),
+            ModifiersState::CONTROL | ModifiersState::SHIFT,
+            PreserveLayout,
+        ),
+        (
+            Some(Modifiers::CTRL | Modifiers::SHIFT),
+            ModifiersState::CONTROL,
+            MergeTabs,
+        ),
+    ] {
+        let config = DockInputConfig {
+            group_preserve_layout: binding,
+            ..Default::default()
+        };
+        let facts = PointerEventFacts {
+            modifiers: Some(modifiers),
+            ..Default::default()
+        };
+        for (event, device) in [
+            (
+                WindowEvent::MouseInput {
+                    device_id: DeviceId::dummy(),
+                    primary_press: None,
+                    state: ElementState::Pressed,
+                    button: MouseButton::Left,
+                    facts,
+                },
+                PointerDeviceKind::Mouse,
+            ),
+            (
+                WindowEvent::Touch(Touch {
+                    device_id: DeviceId::dummy(),
+                    phase: TouchPhase::Started,
+                    location: PhysicalPosition::new(10.0, 20.0),
+                    facts,
+                    force: None,
+                    id: 7,
+                }),
+                PointerDeviceKind::Touch,
+            ),
+        ] {
+            let record = record(1, event);
+            let mut translator = NativePointerTranslator::default();
+            let NativePointerTranslation::Input(baseline) =
+                translator.clone().translate(&record, |_| None)
+            else {
+                panic!("the real contact starts a stream");
+            };
+            let at = Duration::from_millis(40);
+            assert_eq!(
+                translator.translate_captured_with_input(&record, at, &config, |_| None),
+                NativePointerTranslation::Input(
+                    baseline.with_metadata(
+                        PointerEventMetadata::new(device, at)
+                            .with_docking_enabled(config.docking_enabled(egui_modifiers(modifiers)))
+                            .with_group_dock_mode(mode),
+                    )
+                ),
+            );
         }
     }
 }
@@ -238,6 +316,10 @@ fn a_new_mouse_press_reseeds_activation_after_a_missing_release() {
         let mut metadata = PointerEventMetadata::new(PointerDeviceKind::Mouse, captured_at);
         if let Some(enabled) = directive {
             metadata = metadata.with_docking_enabled(enabled);
+        }
+        if let Some(modifiers) = modifiers {
+            metadata = metadata
+                .with_group_dock_mode(config.tab_group_dock_mode(egui_modifiers(modifiers)));
         }
         let expected = match baseline {
             NativePointerTranslation::Input(input) => {
@@ -425,6 +507,11 @@ fn touch_edges_preserve_event_time_modifiers_and_missing_facts() {
             PointerEventMetadata::new(PointerDeviceKind::Touch, Duration::from_millis(40));
         if let Some(enabled) = expected {
             metadata = metadata.with_docking_enabled(enabled);
+        }
+        if let Some(modifiers) = modifiers {
+            metadata = metadata.with_group_dock_mode(
+                DockInputConfig::default().tab_group_dock_mode(egui_modifiers(modifiers)),
+            );
         }
         assert_eq!(input, untimed.with_metadata(metadata));
     }

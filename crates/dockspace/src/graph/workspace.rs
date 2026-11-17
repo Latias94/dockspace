@@ -20,6 +20,56 @@ pub(crate) struct ParentLink {
     pub(crate) index: usize,
 }
 
+/// Actual immediate ownership of one real application item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemPlace {
+    /// Compact direct item child inside a tabs container.
+    InlineTab { tabs: NodeId, index: usize },
+    /// Independently allocated pane without implicit tabs chrome.
+    Pane { node: NodeId },
+}
+
+impl ItemPlace {
+    /// Returns the immediate actual graph owner.
+    pub const fn owner_node(self) -> NodeId {
+        match self {
+            Self::InlineTab { tabs, .. } => tabs,
+            Self::Pane { node } => node,
+        }
+    }
+    /// Returns the immediate inline tabs owner.
+    pub const fn tabs(self) -> Option<NodeId> {
+        match self {
+            Self::InlineTab { tabs, .. } => Some(tabs),
+            Self::Pane { .. } => None,
+        }
+    }
+    /// Returns the actual inline roster index.
+    pub const fn tab_index(self) -> Option<usize> {
+        match self {
+            Self::InlineTab { index, .. } => Some(index),
+            Self::Pane { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ItemLocation {
+    pub(crate) root: RootId,
+    pub(crate) place: ItemPlace,
+}
+impl ItemLocation {
+    pub(crate) const fn owner_node(self) -> NodeId {
+        self.place.owner_node()
+    }
+    pub(crate) const fn tabs(self) -> Option<NodeId> {
+        self.place.tabs()
+    }
+    pub(crate) const fn tab_index(self) -> Option<usize> {
+        self.place.tab_index()
+    }
+}
+
 /// Current presentation which exclusively owns a logical docking root.
 ///
 /// A root keeps its identity when it moves between these presentation
@@ -178,7 +228,7 @@ impl WorkspaceIndex {
         }
         let (selected, mru) = match workspace.node(tabs) {
             Some(Node::Tabs { selected, mru, .. }) => (*selected, mru.as_slice()),
-            Some(Node::Split { .. }) => {
+            Some(Node::Pane { .. } | Node::Split { .. } | Node::Grid { .. }) => {
                 return Err(CommandError::NodeIsNotTabs { node: tabs });
             }
             None => {
@@ -221,7 +271,9 @@ impl WorkspaceIndex {
                 *previous = selected;
                 *previous_mru = Arc::from(mru);
             }
-            FingerprintNode::Split { .. } => {
+            FingerprintNode::Pane { .. }
+            | FingerprintNode::Split { .. }
+            | FingerprintNode::Grid { .. } => {
                 return Err(CommandError::NodeIsNotTabs { node: tabs });
             }
         }
@@ -302,27 +354,18 @@ impl WorkspaceIndex {
         workspace: &Workspace,
         version: WorkspaceVersion,
         root: RootId,
-        tabs: NodeId,
+        owner: NodeId,
         item: ItemId,
     ) -> Result<ItemSource, CommandError> {
         let indexed =
-            self.capture_reference(workspace, version, root, tabs, ReferenceRole::Source)?;
-        match workspace.node(tabs) {
-            Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(item)) => {
-                Ok(ItemSource {
-                    root,
-                    tabs,
-                    item,
-                    reference: indexed.reference.clone(),
-                })
-            }
-            Some(Node::Tabs { .. }) => Err(CommandError::ItemNotInTabs { tabs, item }),
-            Some(Node::Split { .. }) => Err(CommandError::NodeIsNotTabs { node: tabs }),
-            None => Err(CommandError::MissingNode {
-                role: ReferenceRole::Source,
-                node: tabs,
-            }),
-        }
+            self.capture_reference(workspace, version, root, owner, ReferenceRole::Source)?;
+        let place = workspace.item_place_in_owner(owner, item)?;
+        Ok(ItemSource {
+            root,
+            place,
+            item,
+            reference: indexed.reference.clone(),
+        })
     }
 
     pub(crate) fn capture_complete_root_source(
@@ -332,7 +375,7 @@ impl WorkspaceIndex {
         payload: &MovePayload,
     ) -> Result<Option<NodeSource>, CommandError> {
         let (root, node, reference) = match payload {
-            MovePayload::Item(source) => (source.root(), source.tabs(), source.reference()),
+            MovePayload::Item(source) => (source.root(), source.owner_node(), source.reference()),
             MovePayload::Tabs(source) | MovePayload::Subtree(source) => {
                 (source.root(), source.node(), source.reference())
             }
@@ -344,10 +387,9 @@ impl WorkspaceIndex {
         let removes_complete_root = match payload {
             MovePayload::Item(source) => {
                 workspace.item_move_removes_root(root, indexed.item_count)
-                    && matches!(
-                        workspace.node(source.tabs()),
-                        Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(source.item()))
-                    )
+                    && workspace
+                        .item_place_in_owner(source.owner_node(), source.item())
+                        .is_ok()
             }
             MovePayload::Tabs(source) => {
                 source.node() == indexed.root_node
@@ -560,24 +602,33 @@ impl Workspace {
     pub fn capture_item_source(
         &self,
         root: RootId,
-        tabs: NodeId,
+        owner: NodeId,
         item: ItemId,
     ) -> Result<ItemSource, CommandError> {
-        let reference = self.capture_reference(root, tabs, ReferenceRole::Source)?;
-        match self.storage().nodes.get(tabs) {
-            Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(item)) => {
-                Ok(ItemSource {
-                    root,
-                    tabs,
-                    item,
-                    reference,
-                })
+        let reference = self.capture_reference(root, owner, ReferenceRole::Source)?;
+        let place = self.item_place_in_owner(owner, item)?;
+        Ok(ItemSource {
+            root,
+            place,
+            item,
+            reference,
+        })
+    }
+
+    fn item_place_in_owner(&self, owner: NodeId, item: ItemId) -> Result<ItemPlace, CommandError> {
+        match self.node(owner) {
+            Some(Node::Pane { item: actual }) if *actual == item => {
+                Ok(ItemPlace::Pane { node: owner })
             }
-            Some(Node::Tabs { .. }) => Err(CommandError::ItemNotInTabs { tabs, item }),
-            Some(Node::Split { .. }) => Err(CommandError::NodeIsNotTabs { node: tabs }),
+            Some(Node::Tabs { items, .. }) => items
+                .iter()
+                .position(|tab| tab.item() == Some(item))
+                .map(|index| ItemPlace::InlineTab { tabs: owner, index })
+                .ok_or(CommandError::ItemNotInTabs { tabs: owner, item }),
+            Some(_) => Err(CommandError::ItemNotInTabs { tabs: owner, item }),
             None => Err(CommandError::MissingNode {
                 role: ReferenceRole::Source,
-                node: tabs,
+                node: owner,
             }),
         }
     }
@@ -591,19 +642,16 @@ impl Workspace {
     ) -> Result<TabSource, CommandError> {
         let reference = self.capture_reference(root, tabs, ReferenceRole::Source)?;
         match self.node(tabs) {
-            Some(Node::Tabs { items, .. }) if items.contains(&tab) => {
-                if tab.is_layout() {
-                    return Err(CommandError::UnsupportedLayoutTab { tabs, tab });
-                }
-                Ok(TabSource {
-                    root,
-                    tabs,
-                    tab,
-                    reference,
-                })
-            }
+            Some(Node::Tabs { items, .. }) if items.contains(&tab) => Ok(TabSource {
+                root,
+                tabs,
+                tab,
+                reference,
+            }),
             Some(Node::Tabs { .. }) => Err(CommandError::TabNotInTabs { tabs, tab }),
-            Some(Node::Split { .. }) => Err(CommandError::NodeIsNotTabs { node: tabs }),
+            Some(Node::Pane { .. } | Node::Split { .. } | Node::Grid { .. }) => {
+                Err(CommandError::NodeIsNotTabs { node: tabs })
+            }
             None => Err(CommandError::MissingNode {
                 role: ReferenceRole::Source,
                 node: tabs,
@@ -620,10 +668,11 @@ impl Workspace {
         &self,
         item: ItemId,
     ) -> Result<Option<ItemSource>, CommandError> {
-        let Some((root, tabs, _)) = self.locate_item_by_id(item) else {
+        let Some(location) = self.locate_item_by_id(item) else {
             return Ok(None);
         };
-        self.capture_item_source(root, tabs, item).map(Some)
+        self.capture_item_source(location.root, location.owner_node(), item)
+            .map(Some)
     }
 
     /// Locates one open item without capturing a structural fingerprint.
@@ -631,20 +680,74 @@ impl Workspace {
     /// This is the lightweight query counterpart to
     /// [`Self::capture_item_source_by_id`]. Mutation paths must still capture a
     /// source fingerprint before constructing a command.
-    pub(crate) fn locate_item_by_id(&self, item: ItemId) -> Option<(RootId, NodeId, usize)> {
-        let (tabs, tab_index) =
-            self.storage()
-                .nodes
+    pub(crate) fn locate_item_by_id(&self, item: ItemId) -> Option<ItemLocation> {
+        let place = self.nodes().find_map(|(owner, node)| match node {
+            Node::Pane { item: actual } if *actual == item => Some(ItemPlace::Pane { node: owner }),
+            Node::Tabs { items, .. } => items
                 .iter()
-                .find_map(|(tabs, node)| match node {
-                    Node::Tabs { items, .. } => items
-                        .iter()
-                        .position(|candidate| candidate.item() == Some(item))
-                        .map(|index| (tabs, index)),
-                    Node::Split { .. } => None,
-                })?;
-        let root = self.node_root(tabs)?;
-        Some((root, tabs, tab_index))
+                .position(|tab| tab.item() == Some(item))
+                .map(|index| ItemPlace::InlineTab { tabs: owner, index }),
+            _ => None,
+        })?;
+        Some(ItemLocation {
+            root: self.node_root(place.owner_node())?,
+            place,
+        })
+    }
+
+    /// Returns whether real content is visible through every containing tabs choice.
+    pub(crate) fn item_is_active(&self, item: ItemId) -> bool {
+        if self.item_is_hidden(item) {
+            return false;
+        }
+        let Some(location) = self.locate_item_by_id(item) else {
+            return false;
+        };
+        if let Some(tabs) = location.tabs()
+            && self.visible_tab_selection(tabs) != Some(TabKey::for_item(item))
+        {
+            return false;
+        }
+        let mut node = location.owner_node();
+        while let Some(parent) = self.parent_link(location.root, node) {
+            if matches!(self.node(parent.parent), Some(Node::Tabs { .. }))
+                && self.visible_tab_selection(parent.parent) != Some(TabKey::for_layout(node))
+            {
+                return false;
+            }
+            node = parent.parent;
+        }
+        true
+    }
+
+    /// Borrows the label of one exact direct child without selecting a descendant proxy.
+    pub(crate) fn tab_label(
+        &self,
+        tabs: NodeId,
+        tab: TabKey,
+    ) -> Option<crate::graph::TabLabel<'_>> {
+        let Node::Tabs { items, .. } = self.node(tabs)? else {
+            return None;
+        };
+        if !items.contains(&tab) {
+            return None;
+        }
+        if let Some(item) = tab.item() {
+            return Some(crate::graph::TabLabel::Item(item));
+        }
+        let node = self.node(tab.layout()?)?;
+        let fallback = match node {
+            Node::Tabs { .. } => "Tabs",
+            Node::Split { .. } => "Split",
+            Node::Grid { .. } => "Grid",
+            Node::Pane { .. } => return None,
+        };
+        Some(crate::graph::TabLabel::Layout {
+            title: node
+                .layout_title()
+                .filter(|title| !title.is_empty())
+                .unwrap_or(fallback),
+        })
     }
 
     /// Captures one source node and the complete state of its owning root.
@@ -670,7 +773,7 @@ impl Workspace {
     /// # Errors
     ///
     /// Returns [`CommandError`] when the root or node is absent, the node is
-    /// outside the root, or it is not a tabs leaf.
+    /// outside the root, or it is neither a bare Pane nor a Tabs container.
     pub fn capture_tab_target(
         &self,
         root: RootId,
@@ -689,13 +792,13 @@ impl Workspace {
         })
     }
 
-    /// Captures one branch-local edge of a selected tabs leaf.
+    /// Captures one branch-local edge of a bare Pane or Tabs container.
     ///
     /// # Errors
     ///
-    /// Returns [`CommandError`] when the root or tabs node is absent, the node
-    /// does not belong to the supplied root, is not a tabs leaf, or has no
-    /// selected item to represent its pane-local policy scope.
+    /// Returns [`CommandError`] when the root or node is absent, the node
+    /// does not belong to the supplied root, or it is not a supported local
+    /// target. A non-central Tabs container must have a selected direct child.
     pub fn capture_inner_edge_target(
         &self,
         root: RootId,
@@ -886,18 +989,26 @@ impl Workspace {
                 })?;
             #[cfg(test)]
             crate::interaction::targeting::resolver::structural_work::record_root_fingerprint_node_visit();
+            stack.extend(node.child_nodes().rev().map(|(_, child)| child));
             let snapshot = match node {
+                Node::Pane { item } => {
+                    item_count += 1;
+                    FingerprintNode::Pane {
+                        item: *item,
+                        hidden: self.item_is_hidden(*item),
+                    }
+                }
                 Node::Tabs {
                     items,
                     selected,
                     mru,
+                    ..
                 } => {
-                    item_count =
-                        item_count
-                            .checked_add(items.len())
-                            .ok_or(CommandError::Invariant {
-                                stage: "capture root item count",
-                            })?;
+                    item_count = item_count
+                        .checked_add(items.iter().filter(|tab| tab.item().is_some()).count())
+                        .ok_or(CommandError::Invariant {
+                            stage: "capture root item count",
+                        })?;
                     FingerprintNode::Tabs {
                         items: Arc::from(items.as_slice()),
                         hidden: if self.storage.hidden_items.is_empty() {
@@ -918,17 +1029,30 @@ impl Workspace {
                     axis,
                     children,
                     weights,
-                } => {
-                    stack.extend(children.iter().rev().copied());
-                    FingerprintNode::Split {
-                        axis: *axis,
-                        children: Arc::from(children.as_slice()),
-                        weight_bits: weights
-                            .iter()
-                            .map(|weight| weight.get().to_bits())
-                            .collect(),
-                    }
-                }
+                    ..
+                } => FingerprintNode::Split {
+                    axis: *axis,
+                    children: Arc::from(children.as_slice()),
+                    weight_bits: weights
+                        .iter()
+                        .map(|weight| weight.get().to_bits())
+                        .collect(),
+                },
+                Node::Grid {
+                    shape,
+                    children,
+                    shares,
+                    ..
+                } => FingerprintNode::Grid {
+                    shape: *shape,
+                    children: Arc::from(children.as_slice()),
+                    share_bits: shares.as_ref().map(|shares| {
+                        (
+                            shares.rows().map(f64::to_bits).collect(),
+                            shares.columns().map(f64::to_bits).collect(),
+                        )
+                    }),
+                },
             };
             nodes.push(NodeFingerprintRecord { id, node: snapshot });
         }
@@ -971,8 +1095,8 @@ impl Workspace {
             if !visited.insert(node_id) {
                 continue;
             }
-            if let Some(Node::Split { children, .. }) = self.storage().nodes.get(node_id) {
-                stack.extend(children.iter().rev().copied());
+            if let Some(node) = self.node(node_id) {
+                stack.extend(node.child_nodes().rev().map(|(_, child)| child));
             }
         }
         false
@@ -1005,60 +1129,107 @@ impl Workspace {
     }
 
     pub(crate) fn subtree_has_items(&self, root: NodeId) -> bool {
-        let mut stack = vec![root];
-        let mut visited = HashSet::new();
-        while let Some(node_id) = stack.pop() {
-            if !visited.insert(node_id) {
-                continue;
-            }
-            match self.storage().nodes.get(node_id) {
-                Some(Node::Tabs { items, .. }) if !items.is_empty() => return true,
-                Some(Node::Split { children, .. }) => {
-                    stack.extend(children.iter().rev().copied());
-                }
-                Some(Node::Tabs { .. }) | None => {}
-            }
-        }
-        false
+        self.items_in_subtree(root).next().is_some()
     }
 
-    /// Finds the first visible application item along the active layout branches.
-    ///
-    /// This chooses a default content focus; it never supplies a tab identity.
-    pub(crate) fn first_active_item(&self, node: NodeId) -> Option<ItemId> {
+    /// Visits real content along selected eligible branches in visual layout order.
+    pub(crate) fn active_items_in_subtree(
+        &self,
+        node: NodeId,
+    ) -> impl Iterator<Item = ItemId> + '_ {
         let mut pending = vec![node];
-        while let Some(node) = pending.pop() {
-            match self.node(node)? {
-                Node::Tabs { .. } => {
-                    if let Some(item) = self.visible_tab_selection(node).and_then(TabKey::item) {
-                        return Some(item);
+        std::iter::from_fn(move || {
+            while let Some(node) = pending.pop() {
+                match self.node(node)? {
+                    Node::Pane { item } if !self.item_is_hidden(*item) => return Some(*item),
+                    Node::Pane { .. } => {}
+                    Node::Tabs { .. } => {
+                        if let Some(tab) = self.visible_tab_selection(node) {
+                            if let Some(item) = tab.item() {
+                                return Some(item);
+                            }
+                            if let Some(child) = tab.layout() {
+                                pending.push(child);
+                            }
+                        }
+                    }
+                    value @ (Node::Split { .. } | Node::Grid { .. }) => {
+                        pending.extend(value.child_nodes().rev().map(|(_, child)| child))
                     }
                 }
-                Node::Split { children, .. } => pending.extend(children.iter().rev().copied()),
             }
+            None
+        })
+    }
+
+    /// Finds the first real content along selected eligible branches.
+    pub(crate) fn first_active_item(&self, node: NodeId) -> Option<ItemId> {
+        self.active_items_in_subtree(node).next()
+    }
+
+    /// Visits all owned real content in visual preorder, including hidden content.
+    pub(crate) fn items_in_subtree(&self, root: NodeId) -> impl Iterator<Item = ItemId> + '_ {
+        enum Visit<'a> {
+            Node(NodeId),
+            Tabs(&'a [TabKey]),
         }
-        None
+        let mut pending = vec![Visit::Node(root)];
+        let mut visited = HashSet::new();
+        std::iter::from_fn(move || {
+            while let Some(visit) = pending.pop() {
+                let id = match visit {
+                    Visit::Node(id) => id,
+                    Visit::Tabs(tabs) => {
+                        let Some((tab, remaining)) = tabs.split_first() else {
+                            continue;
+                        };
+                        pending.push(Visit::Tabs(remaining));
+                        if let Some(item) = tab.item() {
+                            return Some(item);
+                        }
+                        let Some(child) = tab.layout() else {
+                            continue;
+                        };
+                        child
+                    }
+                };
+                if !visited.insert(id) {
+                    continue;
+                }
+                let Some(node) = self.node(id) else {
+                    continue;
+                };
+                match node {
+                    Node::Pane { item } => return Some(*item),
+                    Node::Tabs { items: tabs, .. } => {
+                        pending.push(Visit::Tabs(tabs));
+                    }
+                    Node::Split { .. } | Node::Grid { .. } => {
+                        pending.extend(
+                            node.child_nodes()
+                                .rev()
+                                .map(|(_, child)| Visit::Node(child)),
+                        );
+                    }
+                }
+            }
+            None
+        })
     }
 
     pub(crate) fn collect_items_in_subtree(&self, root: NodeId) -> Vec<ItemId> {
-        let mut items = Vec::new();
-        let mut stack = vec![root];
-        let mut visited = HashSet::new();
-        while let Some(node_id) = stack.pop() {
-            if !visited.insert(node_id) {
-                continue;
-            }
-            match self.storage().nodes.get(node_id) {
-                Some(Node::Tabs {
-                    items: tab_items, ..
-                }) => items.extend(tab_items.iter().filter_map(|tab| tab.item())),
-                Some(Node::Split { children, .. }) => {
-                    stack.extend(children.iter().rev().copied());
-                }
-                None => {}
-            }
-        }
-        items
+        self.items_in_subtree(root).collect()
+    }
+
+    /// Returns whether closing this layout child would remove its root's central anchor.
+    /// Callers still prove direct roster membership before admitting an action.
+    pub(crate) fn layout_tab_contains_central(&self, root: RootId, tab: TabKey) -> bool {
+        let Some(node) = tab.layout() else {
+            return false;
+        };
+        self.root(root)
+            .and_then(|record| record.central)
+            .is_some_and(|central| self.subtree_contains(node, central))
     }
 
     /// Returns the current presentation owner of `root`.
@@ -1102,13 +1273,14 @@ fn pane_local_target_rule(
     central: bool,
 ) -> Result<DockTargetRuleKey, CommandError> {
     match storage.nodes.get(tabs) {
+        Some(Node::Pane { item }) => Ok(DockTargetRuleKey::Item(*item)),
         Some(Node::Tabs {
             selected: Some(item),
             ..
         }) => item
             .item()
             .map(DockTargetRuleKey::Item)
-            .ok_or(CommandError::UnsupportedLayoutTab { tabs, tab: *item }),
+            .map_or(Ok(DockTargetRuleKey::Root(root)), Ok),
         // An empty central leaf is a deliberate docking sink, not an
         // unselected pane. It has no item identity, so root scope is the
         // only stable policy identity available to the core.
@@ -1118,7 +1290,9 @@ fn pane_local_target_rule(
             ..
         }) if central && items.is_empty() => Ok(DockTargetRuleKey::Root(root)),
         Some(Node::Tabs { selected: None, .. }) => Err(CommandError::TargetTabsUnselected { tabs }),
-        Some(Node::Split { .. }) => Err(CommandError::NodeIsNotTabs { node: tabs }),
+        Some(Node::Split { .. } | Node::Grid { .. }) => {
+            Err(CommandError::NodeIsNotTabs { node: tabs })
+        }
         None => Err(CommandError::MissingNode {
             role: ReferenceRole::Target,
             node: tabs,
@@ -1304,7 +1478,9 @@ mod tests {
             .unwrap();
         crate::graph::transaction::WorkspaceTransaction::from_commands([
             crate::graph::command::WorkspaceCommand::Select {
-                source: source.as_tab_source(),
+                source: source
+                    .as_tab_source()
+                    .expect("fixture owns an inline item tab"),
             },
         ])
         .apply(
@@ -1486,7 +1662,7 @@ mod tests {
             .expect("source capture is valid")
             .expect("item is present");
         assert_eq!(source.root(), second_root);
-        assert_eq!(source.tabs(), second_tabs);
+        assert_eq!(source.tabs(), Some(second_tabs));
         assert_eq!(source.item(), ItemId::new(3));
         assert_eq!(
             workspace

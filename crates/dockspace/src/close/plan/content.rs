@@ -7,7 +7,7 @@ use crate::graph::operation::{
     PreparedContentClose, PreparedContentCloseCommit, prepare_content_close,
 };
 use crate::graph::workspace::RootPresentationOwner;
-use crate::ids::{ItemId, NodeId, RootId};
+use crate::ids::{ItemId, NodeId, RootId, TabKey};
 use crate::policy::DockPolicySnapshot;
 
 use super::CloseItemRequirement;
@@ -21,7 +21,7 @@ use super::CloseItemRequirement;
 pub(crate) enum ContentCloseScope {
     Item {
         root: RootId,
-        tabs: NodeId,
+        owner_node: NodeId,
         item: ItemId,
         owner: RootPresentationOwner,
         requirement: CloseItemRequirement,
@@ -39,12 +39,24 @@ pub(crate) enum ContentCloseScope {
         items: BTreeSet<ItemId>,
         requirements: Vec<CloseItemRequirement>,
     },
+    Tab {
+        root: RootId,
+        tabs: NodeId,
+        tab: TabKey,
+        node: NodeId,
+        owner: RootPresentationOwner,
+        items: BTreeSet<ItemId>,
+        requirements: Vec<CloseItemRequirement>,
+    },
 }
 
 impl ContentCloseScope {
     pub(crate) const fn root(&self) -> RootId {
         match self {
-            Self::Item { root, .. } | Self::Root { root, .. } | Self::Tabs { root, .. } => *root,
+            Self::Item { root, .. }
+            | Self::Root { root, .. }
+            | Self::Tabs { root, .. }
+            | Self::Tab { root, .. } => *root,
         }
     }
 
@@ -52,17 +64,15 @@ impl ContentCloseScope {
         match self {
             Self::Item {
                 root,
-                tabs,
+                owner_node,
                 item,
                 owner,
                 requirement,
             } => {
                 workspace.presentation_for_root(*root) == Some(*owner)
-                    && workspace.locate_item_by_id(*item).is_some_and(
-                        |(actual_root, actual_tabs, _)| {
-                            actual_root == *root && actual_tabs == *tabs
-                        },
-                    )
+                    && workspace.locate_item_by_id(*item).is_some_and(|location| {
+                        location.root == *root && location.owner_node() == *owner_node
+                    })
                     && requirement_matches(*requirement, policy)
             }
             Self::Root {
@@ -90,14 +100,38 @@ impl ContentCloseScope {
             } => {
                 workspace.presentation_for_root(*root) == Some(*owner)
                     && workspace.node_root(*tabs) == Some(*root)
-                    && matches!(workspace.node(*tabs), Some(crate::graph::Node::Tabs { items: actual, .. })
-                        if actual.len() == items.len() && actual.iter().all(|tab| tab.item().is_some_and(|item| items.contains(&item))))
+                    && matches!(workspace.node(*tabs), Some(crate::graph::Node::Tabs { .. }))
+                    && subtree_items_match(workspace, *tabs, items)
+                    && requirements
+                        .iter()
+                        .all(|requirement| requirement_matches(*requirement, policy))
+            }
+            Self::Tab {
+                root,
+                tabs,
+                tab,
+                node,
+                owner,
+                items,
+                requirements,
+            } => {
+                workspace.presentation_for_root(*root) == Some(*owner)
+                    && workspace.node_root(*tabs) == Some(*root)
+                    && tab.layout() == Some(*node)
+                    && !workspace.layout_tab_contains_central(*root, *tab)
+                    && matches!(workspace.node(*tabs), Some(crate::graph::Node::Tabs { items, .. }) if items.contains(tab))
+                    && subtree_items_match(workspace, *node, items)
                     && requirements
                         .iter()
                         .all(|requirement| requirement_matches(*requirement, policy))
             }
         }
     }
+}
+
+fn subtree_items_match(workspace: &Workspace, node: NodeId, expected: &BTreeSet<ItemId>) -> bool {
+    let actual = workspace.collect_items_in_subtree(node);
+    actual.len() == expected.len() && actual.iter().all(|item| expected.contains(item))
 }
 
 fn requirement_matches(requirement: CloseItemRequirement, policy: &DockPolicySnapshot) -> bool {
@@ -127,13 +161,13 @@ pub(crate) fn prepare_scoped_content_close(
     let prepared = match scope {
         ContentCloseScope::Item {
             root,
-            tabs,
+            owner_node,
             item,
             requirement,
             ..
         } => PreparedContentClose::Item {
             source: workspace
-                .capture_item_source(*root, *tabs, *item)
+                .capture_item_source(*root, *owner_node, *item)
                 .map_err(command_error)?,
             expected_items,
             requirement: *requirement,
@@ -161,6 +195,23 @@ pub(crate) fn prepare_scoped_content_close(
         } => PreparedContentClose::Tabs {
             source: workspace
                 .capture_node_source(*root, *tabs)
+                .map_err(command_error)?,
+            items: requirements
+                .iter()
+                .map(|requirement| requirement.item())
+                .collect(),
+            expected_items,
+            requirements: requirements.clone(),
+        },
+        ContentCloseScope::Tab {
+            root,
+            tabs,
+            tab,
+            requirements,
+            ..
+        } => PreparedContentClose::Tab {
+            source: workspace
+                .capture_tab_source(*root, *tabs, *tab)
                 .map_err(command_error)?,
             items: requirements
                 .iter()

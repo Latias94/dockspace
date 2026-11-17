@@ -207,7 +207,7 @@ fn tab_list_keyboard_batch_activates_an_offscreen_destination() {
                 let remaining = batch(&mut harness, vec![key(Key::End), key(activate)], discards);
                 let output = settle(&mut harness);
                 assert!(
-                    harness.dockspace.view().item(LAST).unwrap().is_selected(),
+                    harness.dockspace.view().item(LAST).unwrap().is_active(),
                     "End then {activate:?} must activate the terminal row in the same packet"
                 );
                 assert!(menu_state(&mut harness).is_none());
@@ -244,7 +244,7 @@ fn tab_list_keyboard_batch_escape_closes_after_navigation() {
                     .view()
                     .item(ItemId::new(1))
                     .unwrap()
-                    .is_selected()
+                    .is_active()
             );
             assert!(pressed_keys(&remaining).is_empty());
             let trigger = nodes(&output)
@@ -289,14 +289,7 @@ fn tab_list_keyboard_batch_preserves_the_events_after_its_terminal_command() {
             } else {
                 ItemId::new(1)
             };
-            assert!(
-                harness
-                    .dockspace
-                    .view()
-                    .item(selected)
-                    .unwrap()
-                    .is_selected()
-            );
+            assert!(harness.dockspace.view().item(selected).unwrap().is_active());
         }
     }
 }
@@ -336,7 +329,7 @@ fn tab_list_keyboard_batch_escape_after_tab_uses_the_new_input_owner() {
                     .view()
                     .item(ItemId::new(1))
                     .unwrap()
-                    .is_selected()
+                    .is_active()
             );
         }
     }

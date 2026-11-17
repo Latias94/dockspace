@@ -4,10 +4,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::geometry::{LogicalRect, PaneSizing};
-use crate::ids::{FloatingPresentationId, RootId, SurfaceId};
+use crate::ids::{FloatingPresentationId, NodeId, RootId, SurfaceId};
 use crate::interaction::{ContainedTransformSessionId, DragSessionId};
 use crate::presentation::config::DockPresentationConfig;
-use crate::presentation::layout::LayoutProjection;
+use crate::presentation::layout::{LayoutProjection, NodeMap};
 use crate::presentation::manifest::{
     AuthoritativeSurfaceMeasurements, PaneSizingKey, SurfaceMeasurements, TabIntrinsic,
     TabIntrinsicKey, TabStripKey, TabStripMetrics,
@@ -86,6 +86,10 @@ impl PresentationLayoutFacts {
             .is_none()
     }
 
+    pub(crate) fn tab_intrinsic_for_tab(&self, tab: crate::ids::TabKey) -> Option<TabIntrinsic> {
+        self.measurements.tab_intrinsic_for_tab(tab)
+    }
+
     pub(crate) fn tab_intrinsic(&self, key: TabIntrinsicKey) -> Option<TabIntrinsic> {
         self.measurements.measured_tab_intrinsic(key)
     }
@@ -121,6 +125,7 @@ pub(crate) struct RootLayoutFacts {
     bounds: LogicalRect,
     pane_sizings: BTreeMap<PaneSizingKey, PaneSizing>,
     projection: Arc<LayoutProjection>,
+    labels: Option<NodeMap<super::FrozenTabLabel>>,
 }
 
 impl RootLayoutFacts {
@@ -135,7 +140,20 @@ impl RootLayoutFacts {
             bounds,
             pane_sizings,
             projection,
+            labels: None,
         }
+    }
+
+    pub(crate) fn with_node_labels(mut self, labels: NodeMap<super::FrozenTabLabel>) -> Self {
+        self.labels = Some(labels);
+        self
+    }
+
+    pub(crate) fn node_label(&self, node: NodeId) -> Option<crate::graph::TabLabel<'_>> {
+        self.labels
+            .as_ref()?
+            .get(&node)
+            .map(super::FrozenTabLabel::as_label)
     }
 
     pub(crate) const fn root(&self) -> RootId {
@@ -144,6 +162,15 @@ impl RootLayoutFacts {
 
     pub(crate) const fn bounds(&self) -> LogicalRect {
         self.bounds
+    }
+
+    /// Returns the actual root allocation after reserving independent controls.
+    pub(crate) fn content_bounds(&self) -> LogicalRect {
+        self.projection
+            .nodes
+            .iter_preorder()
+            .next()
+            .map_or(self.bounds, |(_, node)| node.slot)
     }
 
     pub(crate) fn projection(&self) -> &LayoutProjection {

@@ -343,12 +343,18 @@ impl Exercise {
             Phase::ReleaseTab => {
                 let view = dock.view();
                 let preview = view.item(PREVIEW).ok_or("Preview disappeared")?;
-                if preview.tabs().items().collect::<Vec<_>>() != [OUTLINE, PREVIEW]
-                    || !preview.is_selected()
+                if preview
+                    .tabs()
+                    .expect("item is an inline tab")
+                    .items()
+                    .collect::<Vec<_>>()
+                    != [OUTLINE, PREVIEW]
+                    || !preview.is_active()
                     || view
                         .item(EDITOR)
                         .unwrap()
                         .tabs()
+                        .expect("item is an inline tab")
                         .items()
                         .collect::<Vec<_>>()
                         != [EDITOR]

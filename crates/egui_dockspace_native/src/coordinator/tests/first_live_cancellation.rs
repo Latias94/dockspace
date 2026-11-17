@@ -384,12 +384,12 @@ fn paint_child_output(
                 ..
             } = step
             {
-                panes.push((pane.root(), pane.selected()));
+                panes.push((pane.root(), pane.item()));
             }
             Ok::<(), ()>(())
         })
         .unwrap();
-    assert_eq!(panes, [(RootId::new(2), Some(ItemId::new(2)))]);
+    assert_eq!(panes, [(RootId::new(2), ItemId::new(2))]);
     painted.confirm_surface_painted(receipt).unwrap();
     painted
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)

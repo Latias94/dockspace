@@ -250,7 +250,8 @@ fn a_mixed_program_selects_complete_fallback_before_any_edit() {
             .workspace
             .capture_item_source(LOCAL_ROOT, fixture.source, MOVED)
             .unwrap()
-            .as_tab_source(),
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     };
     let (local, _) = prepare_transaction(
         &fixture.workspace,
@@ -401,6 +402,7 @@ fn inner_edge_input_weight_sum_boundary_matches_general_success() {
         weights: [0x3f89_945b_6c37_60bf, 0x3fef_99ae_924f_45ac]
             .map(|bits| SplitWeight::new(f64::from_bits(bits)).unwrap())
             .to_vec(),
+        layout_title: None,
     });
     builder.set_root(LOCAL_ROOT, RootRecord::new(source));
     builder.set_root(OTHER_ROOT, RootRecord::new(target));
@@ -467,6 +469,7 @@ fn source_collapse_of_wide_split_matches_general_success_and_preserves_items() {
         axis: Axis::Horizontal,
         children,
         weights: SplitWeight::normalize(std::iter::repeat_n(1.0, 2000)).unwrap(),
+        layout_title: None,
     });
     let target = builder.insert_node(Node::tabs([ItemId::new(3), ItemId::new(4)]));
     builder.set_root(LOCAL_ROOT, RootRecord::new(source_split));

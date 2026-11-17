@@ -960,7 +960,7 @@ mod document {
                 .view()
                 .item(SECOND)
                 .unwrap()
-                .is_selected()
+                .is_active()
         );
         assert!(state.shutdown.is_none());
     }

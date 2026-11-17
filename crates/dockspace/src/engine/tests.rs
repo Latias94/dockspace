@@ -1472,7 +1472,9 @@ fn backend_ingress_interleaves_semantic_input_between_pointer_checkpoints() {
         .record_semantic_input(EngineInput::WorkspaceCommand {
             expected,
             command: WorkspaceCommand::Select {
-                source: source.as_tab_source(),
+                source: source
+                    .as_tab_source()
+                    .expect("fixture item is an inline tab"),
             },
         })
         .expect("semantic command must record between pointer checkpoints");

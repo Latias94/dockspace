@@ -298,13 +298,14 @@ fn merge_tab(
     frame(ctx, dock, panes, size, vec![Event::PointerMoved(guide)]);
     frame(ctx, dock, panes, size, vec![pointer_button(guide, false)]);
     frame(ctx, dock, panes, size, Vec::new());
-    assert!(dock.view().item(source).unwrap().is_selected());
+    assert!(dock.view().item(source).unwrap().is_active());
     assert!(dock.view().item(source).unwrap().contained().is_none());
     assert!(
         dock.view()
             .item(target)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>()
             .contains(&source),
@@ -340,7 +341,7 @@ fn reveal_first(ctx: &Context, dock: &mut Dockspace, panes: &mut ContentPanes, s
         );
     }
     let revealed = frame(ctx, dock, panes, size, Vec::new());
-    assert!(dock.view().item(FIRST).unwrap().is_selected());
+    assert!(dock.view().item(FIRST).unwrap().is_active());
     assert!(node_rect(&revealed.output, Role::Tab, TITLES[0]).is_positive());
 }
 
@@ -424,16 +425,31 @@ fn oversized_content_remains_scrollable_and_clipped_through_continuous_docking()
         scroll_to_document_end(&ctx, &mut dock, &mut panes, size);
         let retained = panes.current[&FIRST];
         for _ in 0..5 {
-            let target_tabs = dock.view().item(FIRST).unwrap().tabs();
+            let target_tabs = dock
+                .view()
+                .item(FIRST)
+                .unwrap()
+                .tabs()
+                .expect("fixture item is an inline tab");
             let target = target_tabs.selected().and_then(|tab| tab.item()).unwrap();
             let remaining = (2..=6)
                 .map(ItemId::new)
                 .find(|item| !target_tabs.items().collect::<Vec<_>>().contains(item))
                 .unwrap();
-            let source_tabs = dock.view().item(remaining).unwrap().tabs();
+            let source_tabs = dock
+                .view()
+                .item(remaining)
+                .unwrap()
+                .tabs()
+                .expect("fixture item is an inline tab");
             let source = source_tabs.selected().and_then(|tab| tab.item()).unwrap();
             merge_tab(&ctx, &mut dock, &mut panes, size, source, target);
-            let merged = dock.view().item(source).unwrap().tabs();
+            let merged = dock
+                .view()
+                .item(source)
+                .unwrap()
+                .tabs()
+                .expect("fixture item is an inline tab");
             assert!(merged.items().collect::<Vec<_>>().contains(&FIRST));
             conserve_items(&dock, 6);
         }
@@ -583,6 +599,11 @@ fn tiny_and_zero_surfaces_recover_scrolled_content_and_new_float_redock_gestures
     conserve_items(&dock, 2);
     assert_eq!(panes.current[&FIRST].scroll, retained.scroll);
     assert_eq!(panes.clicks.get(&FIRST), Some(&1));
-    let merged = dock.view().item(FIRST).unwrap().tabs();
+    let merged = dock
+        .view()
+        .item(FIRST)
+        .unwrap()
+        .tabs()
+        .expect("fixture item is an inline tab");
     assert!(merged.items().collect::<Vec<_>>().contains(&SECOND));
 }

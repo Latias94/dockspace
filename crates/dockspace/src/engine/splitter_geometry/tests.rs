@@ -9,7 +9,7 @@ use crate::policy::PolicyRevision;
 use crate::presentation::config::{DockPresentationConfig, PresentationConfigRevision};
 use crate::presentation::hit::region::HitRegion;
 use crate::presentation::layout::{
-    LayoutMetrics, SplitWeightOverride, project_root, project_root_with_overrides,
+    LayoutMetrics, TrackWeightOverride, project_root, project_root_with_overrides,
 };
 use crate::presentation::manifest::{
     Measurement, SurfaceMeasurementTicket, SurfaceMeasurements, SurfaceRequirementRevision,
@@ -27,6 +27,7 @@ struct Fixture {
     constraints: BTreeMap<NodeId, Constraints>,
     bounds: LogicalRect,
     metrics: LayoutMetrics,
+    capped: bool,
 }
 
 impl Fixture {
@@ -36,8 +37,52 @@ impl Fixture {
         constraints: BTreeMap<NodeId, Constraints>,
         thickness: f64,
     ) -> Self {
+        Self::with_propagation(
+            workspace,
+            bounds,
+            constraints,
+            thickness,
+            crate::presentation::config::ResizePropagation::Adjacent,
+        )
+    }
+
+    fn with_propagation(
+        workspace: Workspace,
+        bounds: LogicalRect,
+        constraints: BTreeMap<NodeId, Constraints>,
+        thickness: f64,
+        propagation: crate::presentation::config::ResizePropagation,
+    ) -> Self {
+        Self::with_mode(
+            workspace,
+            bounds,
+            constraints,
+            thickness,
+            propagation,
+            false,
+        )
+    }
+
+    fn with_mode(
+        workspace: Workspace,
+        bounds: LogicalRect,
+        constraints: BTreeMap<NodeId, Constraints>,
+        thickness: f64,
+        propagation: crate::presentation::config::ResizePropagation,
+        capped: bool,
+    ) -> Self {
         let metrics = LayoutMetrics::new(thickness).unwrap();
-        let projection = Arc::new(
+        let projection = Arc::new(if capped {
+            crate::presentation::layout::measure_root_sizing(
+                &workspace,
+                ROOT,
+                &pane_sizing(&constraints),
+                metrics,
+            )
+            .unwrap()
+            .project(bounds, &[])
+            .unwrap()
+        } else {
             project_root(
                 &workspace,
                 ROOT,
@@ -45,8 +90,8 @@ impl Fixture {
                 |node| constraints.get(&node).copied(),
                 metrics,
             )
-            .unwrap(),
-        );
+            .unwrap()
+        });
         let ticket = SurfaceMeasurementTicket::new(
             EngineAuthorityDomainId::new_for_test(1),
             WorkspaceEpoch::new(1),
@@ -74,6 +119,7 @@ impl Fixture {
             .unwrap();
         let config = DockPresentationConfig::builder()
             .splitter_thickness(thickness)
+            .resize_propagation(propagation)
             .build()
             .unwrap();
         let mut plan = PresentationPlan::new(SURFACE, bounds);
@@ -91,6 +137,7 @@ impl Fixture {
             constraints,
             bounds,
             metrics,
+            capped,
         }
     }
 
@@ -99,6 +146,7 @@ impl Fixture {
             axis,
             children,
             weights,
+            ..
         } = self.workspace.node(node).unwrap()
         else {
             unreachable!();
@@ -107,11 +155,7 @@ impl Fixture {
         let after = split.following_child_index(index).unwrap();
         let draw = split.children[index].following_gap.unwrap();
         let record = SplitterRecord::new(
-            SplitterSceneId {
-                root: ROOT,
-                split: node,
-                index,
-            },
+            SplitterSceneId::split(ROOT, node, index),
             draw,
             HitRegion::new(draw),
             *axis,
@@ -150,11 +194,22 @@ impl Fixture {
         .unwrap()
     }
 
-    fn project_updates(&self, updates: &[SplitResize]) -> LayoutProjection {
+    fn project_updates(&self, updates: &[TrackResize]) -> LayoutProjection {
         let overrides = updates
             .iter()
-            .map(|update| SplitWeightOverride::new(update.split(), update.weights()))
+            .map(|update| TrackWeightOverride::new(update.source(), update.weights()))
             .collect::<Vec<_>>();
+        if self.capped {
+            return crate::presentation::layout::measure_root_sizing(
+                &self.workspace,
+                ROOT,
+                &pane_sizing(&self.constraints),
+                self.metrics,
+            )
+            .unwrap()
+            .project(self.bounds, &overrides)
+            .unwrap();
+        }
         project_root_with_overrides(
             &self.workspace,
             ROOT,
@@ -165,6 +220,26 @@ impl Fixture {
         )
         .unwrap()
     }
+}
+
+fn pane_sizing(
+    constraints: &BTreeMap<NodeId, Constraints>,
+) -> BTreeMap<NodeId, crate::geometry::PaneSizing> {
+    constraints
+        .iter()
+        .map(|(&node, constraints)| {
+            (
+                node,
+                crate::geometry::PaneSizing::builder()
+                    .min_width(constraints.min().width())
+                    .max_width(constraints.max().width())
+                    .min_height(constraints.min().height())
+                    .max_height(constraints.max().height())
+                    .build()
+                    .unwrap(),
+            )
+        })
+        .collect()
 }
 
 fn rect(width: f64, height: f64) -> LogicalRect {
@@ -231,6 +306,8 @@ fn close(actual: f64, expected: f64) {
         "{actual} != {expected}"
     );
 }
+
+mod piecewise_tests;
 
 #[test]
 fn frontier_rejects_a_reordered_live_tree_with_equal_child_extents() {
@@ -317,7 +394,7 @@ fn two_axes_keep_orthogonal_sources_but_emit_each_split_once() {
     assert_eq!(
         updates
             .iter()
-            .map(|update| update.split().node())
+            .map(|update| update.source().node())
             .collect::<BTreeSet<_>>(),
         BTreeSet::from([outer, across, inner])
     );
@@ -388,9 +465,12 @@ fn resize_across_hidden_siblings_preserves_their_weight_and_restoration_share() 
     assert_eq!(frozen.child_coefficients, [1.0, 0.0, -1.0]);
     let updates = resize_axis_group_updates(&groups, [50.0, 0.0]).unwrap();
     assert_eq!(updates.len(), 1);
-    assert_eq!(updates[0].weights()[1].get().to_bits(), 0.3_f64.to_bits());
-    close(updates[0].weights()[0].get(), 0.235);
-    close(updates[0].weights()[2].get(), 0.465);
+    assert_eq!(
+        updates[0].split_weights().unwrap()[1].get().to_bits(),
+        0.3_f64.to_bits()
+    );
+    close(updates[0].split_weights().unwrap()[0].get(), 0.235);
+    close(updates[0].split_weights().unwrap()[2].get(), 0.465);
     let projected = fixture.project_updates(&updates);
     close(
         projected.nodes[&a].rect.width(),
@@ -402,7 +482,10 @@ fn resize_across_hidden_siblings_preserves_their_weight_and_restoration_share() 
     );
     assert!(!projected.nodes[&b].visible);
     let unchanged = resize_axis_group_updates(&groups, [0.0, 0.0]).unwrap();
-    assert_eq!(unchanged[0].weights(), frozen.weights.as_slice());
+    assert_eq!(
+        unchanged[0].split_weights().unwrap(),
+        frozen.weights.as_slice()
+    );
 }
 
 #[test]
@@ -430,7 +513,10 @@ fn hidden_constraints_do_not_limit_the_visible_frontier_but_visible_maxima_still
     let projected = fixture.project_updates(&updates);
     close(projected.nodes[&a].rect.width(), 300.0);
     close(projected.nodes[&c].rect.width(), 700.0);
-    assert_eq!(updates[0].weights()[1].get().to_bits(), 0.3_f64.to_bits());
+    assert_eq!(
+        updates[0].split_weights().unwrap()[1].get().to_bits(),
+        0.3_f64.to_bits()
+    );
 }
 
 #[test]
@@ -455,9 +541,12 @@ fn resize_limits_keep_subnormal_visible_weights_representable_when_a_hidden_sibl
     for delta in [-1e6, 1e6] {
         let updates = resize_axis_group_updates(&groups, [delta, 0.0])
             .expect("every advertised endpoint must keep positive durable weights");
-        assert_eq!(updates[0].weights()[1].get().to_bits(), 1.0_f64.to_bits());
-        assert!(updates[0].weights()[0].get() > 0.0);
-        assert!(updates[0].weights()[2].get() > 0.0);
+        assert_eq!(
+            updates[0].split_weights().unwrap()[1].get().to_bits(),
+            1.0_f64.to_bits()
+        );
+        assert!(updates[0].split_weights().unwrap()[0].get() > 0.0);
+        assert!(updates[0].split_weights().unwrap()[2].get() > 0.0);
         let projected = fixture.project_updates(&updates);
         assert!(projected.nodes[&a].rect.width() > 0.0);
         assert!(projected.nodes[&c].rect.width() > 0.0);
@@ -504,11 +593,12 @@ fn hidden_boundary_children_do_not_break_nested_touching_frontier() {
     let updates = resize_axis_group_updates(&groups, [40.0, 0.0]).unwrap();
     let nested_update = updates
         .iter()
-        .find(|update| update.split().node() == nested)
+        .find(|update| update.source().node() == nested)
         .unwrap();
     assert_eq!(
         nested_update
-            .weights()
+            .split_weights()
+            .unwrap()
             .iter()
             .map(|weight| weight.get())
             .collect::<Vec<_>>(),
@@ -577,7 +667,10 @@ fn nonadjacent_four_arm_junction_keeps_both_axes_and_central_routes_consistent()
         let updates = resize_axis_group_updates(&groups, [30.0, 40.0]).unwrap();
         assert_eq!(updates.len(), 3);
         for update in &updates {
-            assert_eq!(update.weights()[1].get().to_bits(), 0.5_f64.to_bits());
+            assert_eq!(
+                update.split_weights().unwrap()[1].get().to_bits(),
+                0.5_f64.to_bits()
+            );
         }
         let projected = fixture.project_updates(&updates);
         for (leaf, dx, dy) in [
@@ -630,7 +723,7 @@ proptest::proptest! {
         let Node::Split { weights, .. } = fixture.workspace.node(split).unwrap() else { unreachable!() };
         for index in 0..count {
             if hidden_mask & (1 << index) != 0 {
-                proptest::prop_assert_eq!(updates[0].weights()[index].get().to_bits(), weights[index].get().to_bits());
+                proptest::prop_assert_eq!(updates[0].split_weights().unwrap()[index].get().to_bits(), weights[index].get().to_bits());
             }
         }
         let projected = fixture.project_updates(&updates);
@@ -682,7 +775,8 @@ fn zero_effective_motion_preserves_constrained_split_intent_bitwise() {
         let updates = resize_axis_group_updates(&groups, [requested, 0.0]).unwrap();
         assert_eq!(
             updates[0]
-                .weights()
+                .split_weights()
+                .unwrap()
                 .iter()
                 .map(|weight| weight.get().to_bits())
                 .collect::<Vec<_>>(),
@@ -698,7 +792,8 @@ fn returning_to_the_press_boundary_restores_the_original_intent() {
     let moved = resize_axis_group_updates(&groups, [50.0, 0.0]).unwrap();
     assert_eq!(
         moved[0]
-            .weights()
+            .split_weights()
+            .unwrap()
             .iter()
             .map(|weight| weight.get())
             .collect::<Vec<_>>(),
@@ -706,7 +801,7 @@ fn returning_to_the_press_boundary_restores_the_original_intent() {
     );
     let returned = resize_axis_group_updates(&groups, [0.0, 0.0]).unwrap();
     assert_eq!(
-        returned[0].weights(),
+        returned[0].split_weights().unwrap(),
         groups[0].splits[0].weights.as_slice()
     );
 }
@@ -721,7 +816,8 @@ fn discrete_round_trip_commits_visible_proportions() {
         resize_axis_group_adjustment_updates(&groups, Axis::Horizontal, adjustment).unwrap();
     assert_eq!(
         updates[0]
-            .weights()
+            .split_weights()
+            .unwrap()
             .iter()
             .map(|weight| weight.get())
             .collect::<Vec<_>>(),
@@ -744,7 +840,8 @@ fn discrete_clamped_adjustments_preserve_latent_shares() {
             resize_axis_group_adjustment_updates(&groups, Axis::Horizontal, adjustment).unwrap();
         assert_eq!(
             updates[0]
-                .weights()
+                .split_weights()
+                .unwrap()
                 .iter()
                 .map(|weight| weight.get().to_bits())
                 .collect::<Vec<_>>(),
@@ -794,11 +891,12 @@ fn discrete_round_trip_preserves_unmoved_and_sub_ulp_splits() {
         assert_eq!(updates.len(), 2);
         let moved = updates
             .iter()
-            .find(|update| update.split().node() == moving)
+            .find(|update| update.source().node() == moving)
             .unwrap();
         assert_eq!(
             moved
-                .weights()
+                .split_weights()
+                .unwrap()
                 .iter()
                 .map(|weight| weight.get())
                 .collect::<Vec<_>>(),
@@ -806,11 +904,12 @@ fn discrete_round_trip_preserves_unmoved_and_sub_ulp_splits() {
         );
         let untouched = updates
             .iter()
-            .find(|update| update.split().node() == stationary)
+            .find(|update| update.source().node() == stationary)
             .unwrap();
         assert_eq!(
             untouched
-                .weights()
+                .split_weights()
+                .unwrap()
                 .iter()
                 .map(|weight| weight.get().to_bits())
                 .collect::<Vec<_>>(),
@@ -987,8 +1086,8 @@ fn small_far_central_keeps_nary_resize_available_on_both_axes() {
             let updates = resize_axis_group_updates(&groups, delta_along(axis, delta))
                 .unwrap_or_else(|| panic!("{axis:?}: delta={delta} must remain available"));
             assert_eq!(updates.len(), 1);
-            assert_eq!(updates[0].split().node(), split);
-            let weights = updates[0].weights();
+            assert_eq!(updates[0].source().node(), split);
+            let weights = updates[0].split_weights().unwrap();
             assert!(
                 weights
                     .iter()
@@ -1060,6 +1159,7 @@ fn rounded_nested_minimum_overflow_allows_reverse_expansion_on_both_axes() {
         // Pin valid complementary shares so rectangle rounding produces a positive
         // nested minimum residual independently of constructor normalization.
         let outer = builder.insert_node(Node::Split {
+            layout_title: None,
             axis,
             children: vec![a, across],
             weights: vec![
@@ -1096,11 +1196,11 @@ fn rounded_nested_minimum_overflow_allows_reverse_expansion_on_both_axes() {
         close(far.y(), original_far.y());
         for update in resize_axis_group_updates(&groups, delta_along(axis, 10.0)).unwrap() {
             let Node::Split { weights, .. } =
-                fixture.workspace.node(update.split().node()).unwrap()
+                fixture.workspace.node(update.source().node()).unwrap()
             else {
                 unreachable!();
             };
-            assert_eq!(update.weights(), weights.as_slice());
+            assert_eq!(update.split_weights().unwrap(), weights.as_slice());
         }
     }
 }
@@ -1149,11 +1249,11 @@ fn rounded_nested_maximum_unallocated_allows_reverse_shrink_on_both_axes() {
         close(far.y(), original_far.y());
         for update in resize_axis_group_updates(&groups, delta_along(axis, -10.0)).unwrap() {
             let Node::Split { weights, .. } =
-                fixture.workspace.node(update.split().node()).unwrap()
+                fixture.workspace.node(update.source().node()).unwrap()
             else {
                 unreachable!();
             };
-            assert_eq!(update.weights(), weights.as_slice());
+            assert_eq!(update.split_weights().unwrap(), weights.as_slice());
         }
     }
 }
@@ -1185,7 +1285,10 @@ fn large_origin_rounded_minimum_allows_reverse_expansion_on_both_axes() {
         close(rect_extent(projected.nodes[&a].rect, axis), 210.1);
         close(rect_extent(projected.nodes[&b].rect, axis), 789.9);
         let blocked = resize_axis_group_updates(&groups, delta_along(axis, -10.0)).unwrap();
-        assert_eq!(blocked[0].weights(), groups[0].splits[0].weights.as_slice());
+        assert_eq!(
+            blocked[0].split_weights().unwrap(),
+            groups[0].splits[0].weights.as_slice()
+        );
     }
 }
 
@@ -1216,7 +1319,10 @@ fn large_origin_rounded_maximum_allows_reverse_shrink_on_both_axes() {
         close(rect_extent(projected.nodes[&a].rect, axis), 190.3);
         close(rect_extent(projected.nodes[&b].rect, axis), 809.7);
         let blocked = resize_axis_group_updates(&groups, delta_along(axis, 10.0)).unwrap();
-        assert_eq!(blocked[0].weights(), groups[0].splits[0].weights.as_slice());
+        assert_eq!(
+            blocked[0].split_weights().unwrap(),
+            groups[0].splits[0].weights.as_slice()
+        );
     }
 }
 

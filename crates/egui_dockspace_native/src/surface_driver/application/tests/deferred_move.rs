@@ -184,7 +184,13 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
         assert_tabs(&state, first_tabs, other_tabs);
     }
     assert_eq!(
-        state.view().item(FIRST).unwrap().tabs().selected(),
+        state
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .expect("item is an inline tab")
+            .selected(),
         Some(FIRST.into())
     );
 

@@ -636,6 +636,7 @@ mod tests {
                 .item(document)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[inspector, document]
@@ -980,7 +981,7 @@ mod tests {
         "Closed document".clone_into(&mut app.preset_name);
         app.save();
         app.reopen(document);
-        assert!(app.dockspace.view().item(document).unwrap().is_selected());
+        assert!(app.dockspace.view().item(document).unwrap().is_active());
         assert_eq!(app.panes.items[&document].text, text);
         let _ = run_frame(&context, &mut app, Vec::new());
         let reopened = app.dockspace.version();

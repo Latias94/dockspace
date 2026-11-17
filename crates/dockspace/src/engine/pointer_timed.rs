@@ -780,7 +780,7 @@ impl DockEngine {
         let payload = match &drag.payload {
             MovePayload::Item(source) => self
                 .workspace
-                .capture_item_source(source.root(), source.tabs(), source.item())
+                .capture_item_source(source.root(), source.owner_node(), source.item())
                 .map(MovePayload::Item),
             MovePayload::Tabs(source) => self
                 .workspace

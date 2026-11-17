@@ -6,7 +6,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use super::surface::{
-    clip_rect, operable_tab_chrome, pane_outer_sizing, tab_strip_optional_chrome_layout,
+    clip_rect, compose_root_sizing, operable_tab_chrome, tab_strip_optional_chrome_layout,
 };
 use super::tab_strip_layout::{TabStripFlow, desired_tab_width, select_menu_host};
 use crate::geometry::{GeometryError, LogicalRect, PaneSizing};
@@ -38,8 +38,9 @@ pub(crate) struct FutureTabStrip {
 }
 
 /// One future member, including members clipped out of the target viewport.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FutureTab {
+    pub(crate) layout_title: Option<Arc<str>>,
     pub(crate) key: TabKey,
     pub(crate) ordinal: usize,
     pub(crate) full_bounds: LogicalRect,
@@ -117,76 +118,71 @@ pub(crate) fn project_future_root(
         | Some(RootPresentationOwner::Contained { .. }) => {}
         None => return Err(FutureLayoutProjectionError::TargetRootNotPresented { root }),
     };
-    let root_record = workspace
-        .root(root)
-        .ok_or(FutureLayoutProjectionError::MissingRoot { root })?;
-    let root_node = root_record.node;
-    let mut leaf_minimums = BTreeMap::new();
-    let mut pending = vec![root_node];
-    let mut visited = BTreeSet::new();
-    while let Some(node) = pending.pop() {
-        if !visited.insert(node) {
-            return Err(FutureLayoutProjectionError::RepeatedNode { root, node });
-        }
+    let topology = workspace
+        .root_structure(root)
+        .ok_or(LayoutError::UnfinishedRoot { root })?;
+    let mut measured_items = BTreeMap::new();
+    let mut visibility = BTreeMap::new();
+    for record in &topology.nodes {
+        let node = record.id;
         match workspace
             .node(node)
             .ok_or(FutureLayoutProjectionError::MissingNode { root, node })?
         {
+            Node::Pane { item } => {
+                if !workspace.item_is_hidden(*item) {
+                    measured_items.insert(
+                        *item,
+                        candidate_pane_sizing(original, &pane_sizings, root, node, *item)?,
+                    );
+                }
+            }
             Node::Tabs { .. } => {
                 if !workspace.node_has_visible_content(node) {
                     continue;
                 }
-                let selected = workspace.visible_tab_selection(node);
-                let measured = match selected {
-                    Some(tab) => {
-                        let item = tab.item().ok_or(
-                            FutureLayoutProjectionError::LayoutTabSizingUnavailable {
-                                root,
-                                tabs: node,
-                                tab,
-                            },
-                        )?;
-                        candidate_pane_sizing(original, &pane_sizings, root, node, item)?
-                    }
-                    None => match pane_sizings.get(&PaneSizingKey::new(root, node, None)) {
-                        Some(measured) => *measured,
-                        None if original.node_has_visible_content(node)
-                            && original.visible_tab_selection(node).is_none() =>
-                        {
-                            return Err(FutureLayoutProjectionError::EmptyPaneSizingUnavailable {
-                                root,
-                                tabs: node,
-                            });
-                        }
-                        // Removing the last item can create a newly empty anchor
-                        // for which no prior empty-content declaration existed.
-                        None => PaneSizing::default(),
-                    },
-                };
-                let tab_bar =
-                    candidate_tab_bar_policy(original, workspace, policy, target_plan, root, node)?;
-                leaf_minimums.insert(
+                visibility.insert(
                     node,
-                    pane_outer_sizing(measured, target_facts.config(), tab_bar.visibility())?,
+                    candidate_tab_bar_policy(original, workspace, policy, target_plan, root, node)?
+                        .visibility(),
                 );
+                for item in workspace
+                    .visible_tab_keys(node)
+                    .iter()
+                    .copied()
+                    .filter_map(TabKey::item)
+                {
+                    measured_items.insert(
+                        item,
+                        candidate_pane_sizing(original, &pane_sizings, root, node, item)?,
+                    );
+                }
             }
-            Node::Split { children, .. } => {
-                pending.extend(children.iter().rev().copied());
-            }
+            Node::Split { .. } | Node::Grid { .. } => {}
         }
     }
-
-    let measured = measure_root_sizing(
+    let (sizing, insets) = compose_root_sizing(
         workspace,
         root,
-        &leaf_minimums,
+        target_facts.config(),
+        &measured_items,
+        &visibility,
+    )?;
+    measure_root_sizing(
+        workspace,
+        root,
+        &sizing,
         LayoutMetrics::new(target_facts.config().splitter_thickness())?
             .with_pane_overflow_policy(target_facts.config().pane_overflow_policy()),
-    )?;
-    measured
-        .project(target_root.bounds(), &[])
-        .map(Some)
-        .map_err(FutureLayoutProjectionError::Layout)
+    )?
+    .with_tab_content_insets(&insets)
+    .project(
+        super::root_controls_layout(workspace, root, target_root.bounds(), target_facts.config())?
+            .map_or(target_root.bounds(), |controls| controls.content),
+        &[],
+    )
+    .map(Some)
+    .map_err(FutureLayoutProjectionError::Layout)
 }
 
 /// Projects every candidate member and the first payload tab's insertion marker once.
@@ -256,7 +252,7 @@ pub(crate) fn project_future_tab_strip(
     }
     let original_selected = match original.node(target.tabs()) {
         Some(Node::Tabs { .. }) => original.visible_tab_selection(target.tabs()),
-        Some(Node::Split { .. }) => {
+        Some(Node::Pane { .. } | Node::Split { .. } | Node::Grid { .. }) => {
             return Err(FutureLayoutProjectionError::TargetIsNotTabs {
                 root: target.root(),
                 node: target.tabs(),
@@ -326,9 +322,8 @@ pub(crate) fn project_future_tab_strip(
             target.tabs(),
             item,
         )?;
-        let close = item
-            .item()
-            .is_some_and(|item| policy.pane_close_capability(item).allows_close());
+        let close =
+            super::tab_close_capability(candidate, policy, target.root(), item).allows_close();
         desired_widths.push(desired_tab_width(intrinsic.content_width(), close, config));
         close_allowed.push(close);
     }
@@ -377,6 +372,10 @@ pub(crate) fn project_future_tab_strip(
         let full_bounds = LogicalRect::new(cursor, bar.y(), width, bar.height())?;
         let chrome = operable_tab_chrome(full_bounds, viewport, close, config)?;
         tabs.push(FutureTab {
+            layout_title: match candidate.tab_label(target.tabs(), item) {
+                Some(crate::graph::TabLabel::Layout { title }) => Some(Arc::from(title)),
+                _ => None,
+            },
             key: item,
             ordinal,
             full_bounds,
@@ -490,7 +489,7 @@ fn future_presentation_menu_tab_bar(
 }
 
 fn candidate_tab_intrinsic(
-    original: &Workspace,
+    _original: &Workspace,
     target_plan: &PresentationPlan,
     source_layout_facts: Option<&PresentationLayoutFacts>,
     candidate_surface: crate::ids::SurfaceId,
@@ -512,28 +511,9 @@ fn candidate_tab_intrinsic(
         return Ok(intrinsic);
     }
 
-    let item = tab
-        .item()
-        .ok_or(FutureLayoutProjectionError::TabIntrinsicUnavailable { key: candidate_key })?;
-    let source = original
-        .capture_item_source_by_id(item)?
-        .ok_or(FutureLayoutProjectionError::PayloadItemMissing { item })?;
-    let source_surface = presentation_surface(original, source.root()).ok_or(
-        FutureLayoutProjectionError::SourceRootNotPresented {
-            root: source.root(),
-        },
-    )?;
-    let source_key = TabIntrinsicKey::new(
-        source_surface,
-        TabSceneId {
-            root: source.root(),
-            tabs: source.tabs(),
-            tab,
-        },
-    );
     layout_facts(target_plan, source_layout_facts)
-        .find_map(|facts| facts.tab_intrinsic(source_key))
-        .ok_or(FutureLayoutProjectionError::TabIntrinsicUnavailable { key: source_key })
+        .find_map(|facts| facts.tab_intrinsic_for_tab(tab))
+        .ok_or(FutureLayoutProjectionError::TabIntrinsicUnavailable { key: candidate_key })
 }
 
 fn layout_facts<'a>(
@@ -545,22 +525,19 @@ fn layout_facts<'a>(
         .flatten()
 }
 
-fn presentation_surface(workspace: &Workspace, root: RootId) -> Option<crate::ids::SurfaceId> {
-    match workspace.presentation_for_root(root)? {
-        RootPresentationOwner::Main { surface }
-        | RootPresentationOwner::Contained { surface, .. } => Some(surface),
-    }
-}
-
 fn payload_items(original: &Workspace, payload: &MovePayload) -> Vec<TabKey> {
-    let mut items = match payload {
-        MovePayload::Item(source) => vec![source.item()],
-        MovePayload::Tabs(source) | MovePayload::Subtree(source) => {
-            original.collect_items_in_subtree(source.node())
-        }
-    };
-    items.retain(|&item| !original.item_is_hidden(item));
-    items.into_iter().map(TabKey::for_item).collect()
+    match payload {
+        MovePayload::Item(source) => vec![TabKey::for_item(source.item())],
+        MovePayload::Subtree(source) => match original.node(source.node()) {
+            Some(Node::Pane { item }) => vec![TabKey::for_item(*item)],
+            Some(_) => vec![TabKey::for_layout(source.node())],
+            None => Vec::new(),
+        },
+        MovePayload::Tabs(source) => match original.node(source.node()) {
+            Some(Node::Tabs { .. }) => original.visible_tab_keys(source.node()).into_owned(),
+            _ => Vec::new(),
+        },
+    }
 }
 
 fn collect_pane_sizings(
@@ -584,7 +561,7 @@ fn candidate_pane_sizing(
     candidate_tabs: NodeId,
     item: ItemId,
 ) -> Result<PaneSizing, FutureLayoutProjectionError> {
-    let candidate_key = PaneSizingKey::new(candidate_root, candidate_tabs, Some(item));
+    let candidate_key = PaneSizingKey::new(candidate_root, item);
     if let Some(minimum) = minimums.get(&candidate_key) {
         return Ok(*minimum);
     }
@@ -596,7 +573,7 @@ fn candidate_pane_sizing(
             item,
         },
     )?;
-    let source_key = PaneSizingKey::new(source.root(), source.tabs(), Some(item));
+    let source_key = PaneSizingKey::new(source.root(), item);
     minimums
         .get(&source_key)
         .copied()
@@ -610,16 +587,12 @@ fn candidate_pane_sizing(
 /// Failure to project the post-transaction layout from retained authority.
 #[derive(Debug, Error)]
 pub(crate) enum FutureLayoutProjectionError {
-    #[error("empty pane sizing in {root}/{tabs:?} was not presented")]
-    EmptyPaneSizingUnavailable { root: RootId, tabs: NodeId },
     #[error("target root {root} has no retained layout facts")]
     TargetRootNotPresented { root: RootId },
     #[error("candidate workspace is missing target root {root}")]
     MissingRoot { root: RootId },
     #[error("candidate root {root} is missing node {node:?}")]
     MissingNode { root: RootId, node: NodeId },
-    #[error("candidate root {root} repeats node {node:?}")]
-    RepeatedNode { root: RootId, node: NodeId },
     #[error("candidate projection omitted node {root}/{node:?}")]
     MissingNodeProjection { root: RootId, node: NodeId },
     #[error("candidate target {root}/{node:?} is not a tabs leaf")]
@@ -630,12 +603,6 @@ pub(crate) enum FutureLayoutProjectionError {
         tabs: NodeId,
         item: ItemId,
     },
-    #[error("sizing for layout tab {tab:?} in {root}/{tabs:?} is unavailable")]
-    LayoutTabSizingUnavailable {
-        root: RootId,
-        tabs: NodeId,
-        tab: TabKey,
-    },
     #[error("retained outputs disagree about the pane sizing for exact key {key:?}")]
     ConflictingPaneSizing { key: PaneSizingKey },
     #[error("target presentation omitted retained layout facts")]
@@ -644,12 +611,8 @@ pub(crate) enum FutureLayoutProjectionError {
     TabIntrinsicUnavailable { key: TabIntrinsicKey },
     #[error("tab-strip measurement {key:?} is unavailable")]
     TabStripMeasurementUnavailable { key: TabStripKey },
-    #[error("source root {root} is not presented")]
-    SourceRootNotPresented { root: RootId },
     #[error("drag payload contains no item")]
     PayloadContainsNoItems,
-    #[error("drag payload item {item} vanished from the candidate target")]
-    PayloadItemMissing { item: ItemId },
     #[error("drag payload tab {tab:?} vanished from the candidate target")]
     PayloadTabMissing { tab: TabKey },
     #[error("source and target outputs were compiled with different presentation configs")]

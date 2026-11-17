@@ -212,15 +212,56 @@ impl Replay {
     }
 
     fn source(&self, item: egui_dockspace::ItemId) -> Option<(egui::Id, Pos2)> {
-        let role = if self.dock.view().item(item)?.contained().is_some() {
-            Role::TitleBar
-        } else {
-            Role::Tab
-        };
-        let title = self.panes.title(item)?;
-        self.controls(role, title.text())
+        let (role, label, contained, tab_widget) =
+            if let Some(floating) = self.dock.view().item(item)?.contained() {
+                let rect = self.dock.view().contained(floating)?.rect();
+                let label = self
+                    .output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()?
+                    .nodes
+                    .iter()
+                    .find_map(|(_, node)| {
+                        let bounds = node.bounds()?;
+                        (node.role() == Role::TitleBar
+                            && !node.is_disabled()
+                            && bounds.x0 >= rect.x()
+                            && bounds.x1 <= rect.max().x()
+                            && bounds.y0 >= rect.y()
+                            && bounds.y1 <= rect.max().y())
+                        .then(|| node.label().map(str::to_owned))
+                        .flatten()
+                    })?;
+                (Role::TitleBar, label, Some(rect), None)
+            } else {
+                let &(pass, widget) = self.panes.tab_widgets.get(&item.into())?;
+                if pass + 1 != self.context.cumulative_pass_nr() {
+                    return None;
+                }
+                // A layout tab can share its title with a nested pane. Only the
+                // exact real-item callback identifies this single-pane source.
+                (
+                    Role::Tab,
+                    self.panes.title(item)?.text().to_owned(),
+                    None,
+                    Some(widget),
+                )
+            };
+        self.controls(role, &label)
             .into_iter()
-            .find(|(_, bounds)| bounds.width() > 8.0 && bounds.height() > 8.0)
+            .find(|(widget, bounds)| {
+                tab_widget.is_none_or(|expected| *widget == expected)
+                    && bounds.width() > 8.0
+                    && bounds.height() > 8.0
+                    && contained.is_none_or(|rect| {
+                        let center = bounds.center();
+                        f64::from(center.x) >= rect.x()
+                            && f64::from(center.x) <= rect.max().x()
+                            && f64::from(center.y) >= rect.y()
+                            && f64::from(center.y) <= rect.max().y()
+                    })
+            })
             .map(|(widget, bounds)| (widget, bounds.center()))
     }
 
@@ -265,7 +306,41 @@ impl Replay {
             }
             self.frame(Vec::new());
         }
+        if exposed.is_none() {
+            let hits = self.context.viewport(|viewport| {
+                (
+                    viewport.hits.click.map(|hit| hit.id),
+                    viewport.hits.drag.map(|hit| hit.id),
+                )
+            });
+            let floating = self
+                .dock
+                .view()
+                .surface(SURFACE)
+                .unwrap()
+                .contained()
+                .map(|floating| (floating.id(), floating.rect()))
+                .collect::<Vec<_>>();
+            self.note(format!(
+                "source {item} unavailable: candidate={:?}, (click, drag)={hits:?}, floating={floating:?}",
+                self.source(item),
+            ));
+        }
         exposed
+    }
+
+    fn exposed_main_source(&mut self) -> (egui_dockspace::ItemId, Pos2) {
+        let choices = self.main_items();
+        let first = self.pick(&choices).expect("there is an available main tab");
+        // A visible widget can sit behind a contained window. Required gesture
+        // scenarios must find an actual receiver, without pressing through it.
+        for item in std::iter::once(first).chain(choices.into_iter().filter(|item| *item != first))
+        {
+            if let Some(point) = self.exposed_source(item) {
+                return (item, point);
+            }
+        }
+        panic!("a required gesture needs at least one exposed main tab");
     }
 
     fn begin_drag(&mut self, item: egui_dockspace::ItemId, modifiers: Modifiers) -> bool {
@@ -273,6 +348,11 @@ impl Replay {
             self.note(format!("begin {item}: no exposed source after reflow"));
             return false;
         };
+        self.begin_drag_at(item, source, modifiers);
+        true
+    }
+
+    fn begin_drag_at(&mut self, item: egui_dockspace::ItemId, source: Pos2, modifiers: Modifiers) {
         self.frame(vec![
             Event::ModifiersChanged(modifiers),
             Event::PointerMoved(source),
@@ -287,12 +367,13 @@ impl Replay {
         self.note(format!(
             "begin {item} at {source:?}: active={}, selected={}, group={:?}",
             self.dock.has_active_gesture(),
-            self.dock.view().item(item).unwrap().is_selected(),
+            self.dock.view().item(item).unwrap().is_active(),
             self.dock
                 .view()
                 .item(item)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
         ));
@@ -300,7 +381,6 @@ impl Replay {
             self.dock.has_active_gesture(),
             "a freshly exposed source must acquire the requested drag"
         );
-        true
     }
 
     fn escape(&mut self) {
@@ -328,13 +408,12 @@ impl Replay {
     }
 
     fn cancel_and_recover(&mut self, outside: bool) {
-        let items = self.main_items();
-        let item = self.pick(&items).expect("there is an available main tab");
+        let (item, source) = self.exposed_main_source();
         self.note(format!(
             "drag {item}; {}",
             if outside { "release outside" } else { "Escape" }
         ));
-        assert!(self.begin_drag(item, Modifiers::NONE));
+        self.begin_drag_at(item, source, Modifiers::NONE);
         if outside {
             let point = egui::pos2(-80.0, -80.0);
             self.frame(vec![Event::PointerMoved(point), Event::PointerGone]);
@@ -433,9 +512,8 @@ impl Replay {
     }
 
     fn toggle_docking_and_cancel(&mut self) {
-        let items = self.main_items();
-        let item = self.pick(&items).unwrap();
-        assert!(self.begin_drag(item, Modifiers::NONE));
+        let (item, source) = self.exposed_main_source();
+        self.begin_drag_at(item, source, Modifiers::NONE);
         let point = self
             .context
             .input(|input| input.pointer.interact_pos())
@@ -459,9 +537,8 @@ impl Replay {
     }
 
     fn focus_loss_and_late_release(&mut self) {
-        let items = self.main_items();
-        let item = self.pick(&items).unwrap();
-        assert!(self.begin_drag(item, Modifiers::NONE));
+        let (item, source) = self.exposed_main_source();
+        self.begin_drag_at(item, source, Modifiers::NONE);
         let version = self.dock.version();
         self.note(format!(
             "focus lost during {item}; reenter with a late release"
@@ -480,11 +557,7 @@ impl Replay {
     }
 
     fn press_move_release_one_packet(&mut self) {
-        let choices = self.main_items();
-        let item = self.pick(&choices).unwrap();
-        let source = self
-            .exposed_source(item)
-            .expect("the selected packet source becomes exposed after reflow");
+        let (item, source) = self.exposed_main_source();
         let target = egui::pos2(640.0 + self.pick(&[-60.0, 60.0]).unwrap(), 360.0);
         self.note(format!(
             "same-packet press/move/release {item} to {target:?}"
@@ -543,8 +616,19 @@ impl Replay {
                         for item in tabs.items() {
                             assert!(actual.insert(item), "one item cannot occupy two groups");
                         }
+                        pending.extend(tabs.children().filter_map(|child| match child {
+                            egui_dockspace::DockspaceTabView::Layout(node) => Some(node),
+                            egui_dockspace::DockspaceTabView::Item(_) => None,
+                        }));
+                    } else if let Some(item) = node.item() {
+                        assert!(
+                            actual.insert(item),
+                            "one item cannot occupy two content slots"
+                        );
                     } else if let Some(split) = node.split() {
                         pending.extend(split.children());
+                    } else if let Some(grid) = node.grid() {
+                        pending.extend(grid.children());
                     }
                 }
             }
@@ -634,7 +718,10 @@ fn a_fractional_floating_title_move_keeps_its_canonical_target() {
     )
     .with_contained(DockspaceContainedLayout::new(
         floating,
-        DockspaceRootLayout::new(RootId::new(2), DockspaceNode::tabs([INSPECTOR])),
+        DockspaceRootLayout::new(
+            RootId::new(2),
+            DockspaceNode::tabs([INSPECTOR]).named("Inspector"),
+        ),
         source,
     ))])
     .unwrap();

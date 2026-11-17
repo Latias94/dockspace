@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, convert::Infallible};
 use anyhow::{Result, anyhow};
 use dockspace::{
     geometry::LogicalRect,
-    model::{ItemId, TabKey},
+    model::{ItemId, TabLabel},
     runtime::{
         DockspaceDropEligibility, DockspacePreviewVisual, DockspaceReceiverDescriptor,
         SurfacePaintPlan, SurfacePaintProgramOperation as Operation,
@@ -28,9 +28,9 @@ pub(super) fn record(
         item.and_then(|item| panels.get(&item))
             .map_or_else(|| "Workspace".to_owned(), |pane| pane.title.to_string())
     };
-    let tab_label = |key: TabKey| {
-        key.item()
-            .map_or_else(|| "Layout".to_owned(), |item| label(Some(item)))
+    let tab_label = |tab: TabLabel<'_>| match tab {
+        TabLabel::Item(item) => label(Some(item)),
+        TabLabel::Layout { title } => title.to_owned(),
     };
     let receiver = |draws: &mut Vec<Draw>, value: Option<DockspaceReceiverDescriptor>| {
         if let Some(value) = value {
@@ -57,9 +57,12 @@ pub(super) fn record(
                         receiver(&mut draws, plan.receiver_for_pane(pane));
                         if !paint.is_source_gap() {
                             draws.push(Draw::Fill(pane.content_bounds(), colors.pane));
-                            if let Some(item) = pane.selected() {
-                                draws.push(Draw::Pane(pane.content_bounds(), item));
-                            }
+                            draws.push(Draw::Pane(pane.content_bounds(), pane.item()));
+                        }
+                    }
+                    Operation::Tabs(tabs) => {
+                        if !paint.is_source_gap() {
+                            draws.push(Draw::Fill(tabs.bounds(), colors.pane));
                         }
                     }
                     Operation::TabBar(bar) => {
@@ -87,7 +90,7 @@ pub(super) fn record(
                                 tab.text_layout_bounds(),
                                 tab.text_bounds(),
                                 tab.key(),
-                                tab_label(tab.key()),
+                                tab_label(tab.label()),
                                 if tab.selected() {
                                     colors.text
                                 } else {
@@ -120,7 +123,7 @@ pub(super) fn record(
                             ));
                             draws.push(Draw::Text(
                                 contained.title_drag_bounds(),
-                                label(root.title_item()),
+                                tab_label(root.label()),
                                 colors.text,
                             ));
                         }
@@ -131,7 +134,13 @@ pub(super) fn record(
                             draws.push(Draw::Fill(control.bounds(), colors.tab));
                         }
                     }
-                    Operation::PresentationMenuAnchor(_) => {}
+                    Operation::PresentationMenuAnchor(anchor) => {
+                        if !paint.is_source_gap()
+                            && let Some(bounds) = anchor.reserved_bounds()
+                        {
+                            draws.push(Draw::Fill(bounds, colors.tab_bar));
+                        }
+                    }
                 },
                 Step::DropGuide {
                     affordance: Some(cluster),
@@ -182,7 +191,7 @@ pub(super) fn record(
                                 draws.push(Draw::Outline(ghost, colors.accent));
                                 draws.push(Draw::Text(
                                     ghost,
-                                    label(decoration.ghost_item()),
+                                    tab_label(decoration.label()),
                                     colors.text,
                                 ));
                             }
@@ -198,7 +207,11 @@ pub(super) fn record(
                     receiver(&mut draws, plan.receiver_for_tab_list_menu_frame(menu));
                     for row in menu.rows() {
                         receiver(&mut draws, plan.receiver_for_tab_list_menu_row(row));
-                        draws.push(Draw::Text(row.bounds(), tab_label(row.key()), colors.text));
+                        draws.push(Draw::Text(
+                            row.bounds(),
+                            tab_label(row.label()),
+                            colors.text,
+                        ));
                     }
                 }
                 Step::DropTarget(_)

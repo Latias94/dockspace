@@ -64,10 +64,17 @@ impl DockEngine {
         self.publish_workspace(staged.publication);
         self.reconcile_viewport_focus_authority();
         if staged.changed {
-            if let WorkspaceCommand::Select { source } = command {
-                self.advance_selection_revision_caused(cause, source)?;
-            } else {
-                self.advance_revision_caused(cause)?;
+            match command {
+                WorkspaceCommand::Select { source } => {
+                    self.advance_selection_revision_caused(cause, source)?
+                }
+                WorkspaceCommand::SelectItem { source } if source.as_tab_source().is_some() => {
+                    let tab = source
+                        .as_tab_source()
+                        .expect("the inline source was checked");
+                    self.advance_selection_revision_caused(cause, &tab)?;
+                }
+                _ => self.advance_revision_caused(cause)?,
             }
             events.push(WorkspaceEvent::new_caused(
                 cause,
@@ -146,8 +153,8 @@ impl DockEngine {
         let raise = match activation {
             JournalDeliveryActivation::SelectItem { item, source_root } => workspace
                 .locate_item_by_id(item)
-                .filter(|(root, _, _)| *root == source_root)
-                .and_then(|(root, _, _)| workspace.presentation_for_root(root))
+                .filter(|location| location.root == source_root)
+                .and_then(|location| workspace.presentation_for_root(location.root))
                 .and_then(|owner| match owner {
                     crate::graph::workspace::RootPresentationOwner::Contained {
                         floating, ..
@@ -227,15 +234,10 @@ impl DockEngine {
                         .ok_or(CommandError::Invariant {
                             stage: "select delivered item after manipulation",
                         })?;
-                if matches!(
-                    workspace.node(source.tabs()),
-                    Some(Node::Tabs { selected: Some(selected), .. }) if selected.item() == Some(item)
-                ) {
+                if workspace.item_is_active(item) {
                     Ok(None)
                 } else {
-                    Ok(Some(WorkspaceCommand::Select {
-                        source: source.as_tab_source(),
-                    }))
+                    Ok(Some(WorkspaceCommand::SelectItem { source }))
                 }
             }
             JournalDeliveryActivation::RaiseContained(floating) => {

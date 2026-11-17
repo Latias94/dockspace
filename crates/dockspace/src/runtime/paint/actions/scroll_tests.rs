@@ -128,7 +128,7 @@ fn menu_scroll_sequence_clamps_each_delta_before_reversing() {
 
     scroll(&mut session, &[20.0, -20.0]);
     assert_eq!(menu_state(&mut session).0, 20.0);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
 }
 
 #[test]

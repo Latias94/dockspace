@@ -34,9 +34,9 @@ impl DockEngine {
             WorkspaceReplacementFocus::Dock { surface, item } => Some((surface, item)),
         };
         if let Some(item) = previous.and_then(|(_, item)| item)
-            && let Some((root, tabs, _)) = self.workspace.locate_item_by_id(item)
-            && self.replacement_selected_item(tabs) == Some(item)
-            && let Some(surface) = self.root_surface(root)
+            && self.workspace.item_is_active(item)
+            && let Some(location) = self.workspace.locate_item_by_id(item)
+            && let Some(surface) = self.root_surface(location.root)
         {
             return Some((surface, PanelFocus::Item(item)));
         }
@@ -61,18 +61,8 @@ impl DockEngine {
         let root = self.workspace.root(root)?;
         root.central
             .and_then(|tabs| self.replacement_selected_item(tabs))
-            .or_else(|| {
-                self.workspace
-                    .collect_items_in_subtree(root.node)
-                    .into_iter()
-                    .find(|item| {
-                        self.workspace
-                            .locate_item_by_id(*item)
-                            .is_some_and(|(_, tabs, _)| {
-                                self.replacement_selected_item(tabs) == Some(*item)
-                            })
-                    })
-            })
+            .filter(|item| self.workspace.item_is_active(*item))
+            .or_else(|| self.workspace.first_active_item(root.node))
     }
 
     fn replacement_selected_item(&self, tabs: crate::ids::NodeId) -> Option<ItemId> {

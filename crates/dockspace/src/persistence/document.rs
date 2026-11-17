@@ -31,7 +31,7 @@ use crate::persistence::placement::{
     ViewportPlacementRestoreError, ViewportPlacementSnapshot,
 };
 use crate::persistence::snapshot::{
-    SnapshotCaptureError, SnapshotNode, SnapshotRestoreError, SnapshotTabKey, WorkspaceSnapshot,
+    SnapshotCaptureError, SnapshotNode, SnapshotRestoreError, WorkspaceSnapshot,
 };
 use crate::platform::registry::ViewportAdmission;
 use crate::platform::viewport::ViewportRole;
@@ -1135,23 +1135,22 @@ fn snapshot_item_ids(snapshot: &WorkspaceSnapshot) -> BTreeSet<ItemId> {
     snapshot
         .nodes
         .iter()
-        .filter_map(|record| match &record.node {
+        .flat_map(|record| match &record.node {
+            SnapshotNode::Pane { item } => vec![ItemId::new(*item)],
             SnapshotNode::Tabs {
                 items,
                 selected,
                 mru,
-            } => Some(
-                items
-                    .iter()
-                    .copied()
-                    .chain(selected.iter().copied())
-                    .chain(mru.iter().copied()),
-            ),
-            SnapshotNode::Split { .. } => None,
+                ..
+            } => items
+                .iter()
+                .chain(selected.iter())
+                .chain(mru.iter())
+                .filter_map(|tab| tab.item())
+                .map(ItemId::new)
+                .collect(),
+            SnapshotNode::Split { .. } | SnapshotNode::Grid { .. } => Vec::new(),
         })
-        .flatten()
-        .filter_map(SnapshotTabKey::item)
-        .map(ItemId::new)
         .collect()
 }
 

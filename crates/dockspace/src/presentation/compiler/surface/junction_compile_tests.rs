@@ -56,7 +56,9 @@ fn draft(roots: &[RootId], allowed: [bool; 2]) -> PresentationPlan {
         let layer = SceneLayerKey::new(u64::try_from(ordinal).unwrap() + 1);
         let ids = [0, 1, 2].map(|_| SplitterSceneId {
             root,
-            split: nodes.insert_node(Node::tabs([])),
+            owner: crate::presentation::scene::SplitterOwner::Split(
+                nodes.insert_node(Node::tabs([])),
+            ),
             index: 0,
         });
         let horizontal = policy.splitter_resize_is_allowed(root, Axis::Horizontal, SURFACE);

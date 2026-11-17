@@ -13,12 +13,14 @@ use crate::{DockStyle, PaneResponse, PaneView};
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 
+mod composable;
 mod contained_keyboard;
 mod group_menu;
 mod menu_keyboard;
 mod presentation_keyboard;
 mod scroll;
 mod splitters;
+mod tab_menu;
 mod tab_shortcuts;
 mod visibility;
 
@@ -337,7 +339,7 @@ fn pane_focus_cue_tracks_content_across_split_and_floating_groups_without_changi
                     .view()
                     .item(ItemId::new(*item))
                     .unwrap()
-                    .is_selected()
+                    .is_active()
             })
             .collect::<Vec<_>>()
     };
@@ -468,7 +470,7 @@ fn egui_derived_geometry_keeps_large_tab_and_floating_title_glyphs_inside_their_
         let output = harness.run(640.0, Vec::new());
         let titles = texts(&output)
             .into_iter()
-            .filter(|(_, text)| text.galley.job.text == "Inspector")
+            .filter(|(_, text)| matches!(text.galley.job.text.as_str(), "Inspector" | "Tabs"))
             .collect::<Vec<_>>();
         assert_eq!(
             titles.len(),
@@ -561,7 +563,7 @@ fn compact_density_keeps_short_tabs_operable_without_shrinking_fonts() {
                 .view()
                 .item(ItemId::new(2))
                 .unwrap()
-                .is_selected()
+                .is_active()
         );
     }
 }
@@ -778,7 +780,7 @@ fn keyboard_navigation_reveals_hidden_targets_and_preserves_tab_focus() {
                     .view()
                     .item(ItemId::new(destination))
                     .unwrap()
-                    .is_selected()
+                    .is_active()
             );
         }
     }
@@ -877,7 +879,7 @@ fn overflow_menu_with_first_row_focused() -> (Harness, f32, NodeId) {
             .view()
             .item(ItemId::new(2))
             .unwrap()
-            .is_selected()
+            .is_active()
     );
     (harness, width, first_row)
 }
@@ -923,7 +925,7 @@ fn assert_overflow_arrow_up_then_enter(discarded_passes: usize) {
                 .view()
                 .item(ItemId::new(1))
                 .unwrap()
-                .is_selected(),
+                .is_active(),
             harness.context.memory(egui::Memory::focused),
         ),
         (
@@ -1012,7 +1014,7 @@ fn assert_overflow_tab_then_enter(discarded_passes: usize, reverse: bool) {
             .view()
             .item(ItemId::new(2))
             .unwrap()
-            .is_selected(),
+            .is_active(),
         "Tab traversal must not activate a row, reverse={reverse}, discarded_passes={discarded_passes}"
     );
 
@@ -1034,12 +1036,7 @@ fn assert_overflow_tab_then_enter(discarded_passes: usize, reverse: bool) {
     }
     let expected = ItemId::new(if reverse { 1 } else { 2 });
     assert!(
-        harness
-            .dockspace
-            .view()
-            .item(expected)
-            .unwrap()
-            .is_selected(),
+        harness.dockspace.view().item(expected).unwrap().is_active(),
         "Enter must activate the row reached by Tab traversal, reverse={reverse}, discarded_passes={discarded_passes}"
     );
     assert_eq!(
@@ -1182,7 +1179,7 @@ fn overflow_consecutive_tabs_leave_for_real_buttons_without_activating_the_old_r
                 .view()
                 .item(ItemId::new(2))
                 .unwrap()
-                .is_selected()
+                .is_active()
         );
         assert!(
             !harness
@@ -1190,7 +1187,7 @@ fn overflow_consecutive_tabs_leave_for_real_buttons_without_activating_the_old_r
                 .view()
                 .item(ItemId::new(1))
                 .unwrap()
-                .is_selected()
+                .is_active()
         );
     }
 }
@@ -1246,7 +1243,7 @@ fn overflow_focus_confirmation_preserves_a_new_accesskit_focus_request() {
                 .view()
                 .item(ItemId::new(2))
                 .unwrap()
-                .is_selected()
+                .is_active()
         );
     }
 }
@@ -1393,7 +1390,7 @@ fn shrinking_a_strip_reveals_selection_without_overriding_later_manual_scroll() 
                 .view()
                 .item(ItemId::new(6))
                 .unwrap()
-                .is_selected()
+                .is_active()
         );
     }
     harness.focus_tab(360.0, "Document 1");

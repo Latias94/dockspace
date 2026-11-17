@@ -4,17 +4,17 @@ use crate::geometry::LogicalRect;
 use crate::ids::{ItemId, RootId, TabKey};
 use crate::policy::TabBarInteraction;
 use crate::presentation::scene::{
-    PaneRecord, TabBarRecord, TabBarSceneId, TabGroupDragRegionKind, TabGroupDragRegionRecord,
-    TabRecord, TabStripMemberRecord, TabStripMemberVisibility as CoreTabStripMemberVisibility,
+    PaneRecord, PresentationPlan, TabBarRecord, TabBarSceneId, TabGroupDragRegionKind,
+    TabGroupDragRegionRecord, TabRecord, TabStripMemberRecord,
+    TabStripMemberVisibility as CoreTabStripMemberVisibility, TabsRecord,
 };
 
 use super::{DockspacePaintLayer, DockspaceVisualId, VisualIdentity};
 
-/// Read-only tabs-leaf and pane-content geometry.
+/// Read-only geometry and identity for one real application Pane.
 #[derive(Debug, Clone, Copy)]
 pub struct PanePaintRecord<'plan> {
     pub(super) record: &'plan PaneRecord,
-    pub(super) selected: Option<ItemId>,
 }
 
 impl PanePaintRecord<'_> {
@@ -23,14 +23,13 @@ impl PanePaintRecord<'_> {
         DockspaceVisualId(VisualIdentity::Pane(self.record.id()))
     }
 
-    /// Returns the tab strip which owns this pane slot.
+    /// Returns the nearest active containing tab strip, when present.
     #[must_use]
-    pub const fn tab_bar_visual_id(self) -> DockspaceVisualId {
-        let pane = self.record.id();
-        DockspaceVisualId(VisualIdentity::TabBar(TabBarSceneId {
-            root: pane.root,
-            tabs: pane.tabs,
-        }))
+    pub const fn tab_bar_visual_id(self) -> Option<DockspaceVisualId> {
+        match self.record.containing_tab_bar() {
+            Some(bar) => Some(DockspaceVisualId(VisualIdentity::TabBar(bar))),
+            None => None,
+        }
     }
 
     #[must_use]
@@ -49,10 +48,54 @@ impl PanePaintRecord<'_> {
     }
 
     #[must_use]
-    pub const fn selected(self) -> Option<ItemId> {
-        self.selected
+    pub const fn item(self) -> ItemId {
+        self.record.item()
     }
 
+    /// Returns the exact application content clip.
+    #[must_use]
+    pub const fn clip(self) -> LogicalRect {
+        self.record.clip()
+    }
+
+    #[must_use]
+    pub const fn layer(self) -> DockspacePaintLayer {
+        DockspacePaintLayer::from_core(self.record.layer())
+    }
+}
+
+/// Independent background of one active Tabs container.
+#[derive(Debug, Clone, Copy)]
+pub struct TabsPaintRecord<'plan> {
+    pub(super) record: &'plan TabsRecord,
+}
+impl TabsPaintRecord<'_> {
+    /// Returns this container's stable visual identity.
+    #[must_use]
+    pub const fn visual_id(self) -> DockspaceVisualId {
+        DockspaceVisualId(VisualIdentity::Tabs(self.record.id()))
+    }
+    /// Returns the complete container frame.
+    #[must_use]
+    pub const fn bounds(self) -> LogicalRect {
+        self.record.bounds()
+    }
+    /// Returns the remaining child slot below this container's header.
+    #[must_use]
+    pub const fn content_bounds(self) -> LogicalRect {
+        self.record.content_bounds()
+    }
+    /// Returns the exact container clip.
+    #[must_use]
+    pub const fn clip(self) -> LogicalRect {
+        self.record.clip()
+    }
+    /// Returns the owning root.
+    #[must_use]
+    pub const fn root(self) -> RootId {
+        self.record.id().root
+    }
+    /// Returns the semantic paint layer.
     #[must_use]
     pub const fn layer(self) -> DockspacePaintLayer {
         DockspacePaintLayer::from_core(self.record.layer())
@@ -63,11 +106,12 @@ impl PanePaintRecord<'_> {
 #[derive(Debug, Clone, Copy)]
 pub struct TabPaintRecord<'plan> {
     pub(super) record: &'plan TabRecord,
+    pub(super) plan: &'plan PresentationPlan,
     pub(super) selected: bool,
     pub(super) operable: bool,
 }
 
-impl TabPaintRecord<'_> {
+impl<'plan> TabPaintRecord<'plan> {
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::Tab(*self.record.id()))
@@ -96,6 +140,14 @@ impl TabPaintRecord<'_> {
     #[must_use]
     pub const fn item(self) -> Option<ItemId> {
         self.key().item()
+    }
+
+    /// Returns the exact label frozen with this output.
+    #[must_use]
+    pub fn label(self) -> crate::graph::TabLabel<'plan> {
+        self.plan
+            .tab_label(*self.record.id())
+            .expect("compiled tabs retain their exact labels")
     }
 
     #[must_use]
@@ -169,11 +221,12 @@ pub enum TabStripMemberVisibility {
 
 /// Read-only member of one tab strip, including clipped visibility.
 #[derive(Debug, Clone, Copy)]
-pub struct TabStripMemberPaintRecord {
+pub struct TabStripMemberPaintRecord<'plan> {
+    pub(super) plan: &'plan PresentationPlan,
     pub(super) record: TabStripMemberRecord,
 }
 
-impl TabStripMemberPaintRecord {
+impl<'plan> TabStripMemberPaintRecord<'plan> {
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::Tab(self.record.tab()))
@@ -196,6 +249,14 @@ impl TabStripMemberPaintRecord {
     #[must_use]
     pub const fn item(self) -> Option<ItemId> {
         self.key().item()
+    }
+
+    /// Returns the exact member label frozen with this output.
+    #[must_use]
+    pub fn label(self) -> crate::graph::TabLabel<'plan> {
+        self.plan
+            .tab_label(self.record.tab())
+            .expect("compiled members retain exact labels")
     }
 
     #[must_use]
@@ -224,6 +285,7 @@ impl TabStripMemberPaintRecord {
 #[derive(Debug, Clone, Copy)]
 pub struct TabBarPaintRecord<'plan> {
     pub(super) record: &'plan TabBarRecord,
+    pub(super) plan: &'plan PresentationPlan,
     pub(super) selected: Option<TabKey>,
 }
 
@@ -263,16 +325,10 @@ impl<'plan> TabBarPaintRecord<'plan> {
         DockspaceVisualId(VisualIdentity::TabBar(*self.record.id()))
     }
 
-    /// Returns the pane slot owned by this tab strip.
+    /// Returns the independent Tabs container represented by this strip.
     #[must_use]
-    pub const fn pane_visual_id(self) -> DockspaceVisualId {
-        let bar = self.record.id();
-        DockspaceVisualId(VisualIdentity::Pane(
-            crate::presentation::scene::PaneSceneId {
-                root: bar.root,
-                tabs: bar.tabs,
-            },
-        ))
+    pub const fn tabs_visual_id(self) -> DockspaceVisualId {
+        DockspaceVisualId(VisualIdentity::Tabs(*self.record.id()))
     }
 
     #[must_use]
@@ -311,12 +367,17 @@ impl<'plan> TabBarPaintRecord<'plan> {
         self.record.hidden_tabs()
     }
 
-    pub fn members(self) -> impl ExactSizeIterator<Item = TabStripMemberPaintRecord> + 'plan {
+    pub fn members(
+        self,
+    ) -> impl ExactSizeIterator<Item = TabStripMemberPaintRecord<'plan>> + 'plan {
         self.record
             .members()
             .iter()
             .copied()
-            .map(|record| TabStripMemberPaintRecord { record })
+            .map(move |record| TabStripMemberPaintRecord {
+                record,
+                plan: self.plan,
+            })
     }
 
     #[must_use]

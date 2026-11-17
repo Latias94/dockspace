@@ -73,7 +73,14 @@ fn group_and_root_menu_float_commands_preserve_their_distinct_payloads() {
         assert_eq!(first.contained(), view.item(SECOND).unwrap().contained());
         assert_eq!(view.item(THIRD).unwrap().contained().is_some(), whole_root);
         assert_eq!(view.item(FOURTH).unwrap().contained().is_some(), whole_root);
-        assert_eq!(first.tabs().items().collect::<Vec<_>>(), &[FIRST, SECOND]);
+        assert_eq!(
+            first
+                .tabs()
+                .expect("fixture item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
+            &[FIRST, SECOND]
+        );
     }
 }
 

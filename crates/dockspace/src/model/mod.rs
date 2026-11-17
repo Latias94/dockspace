@@ -5,25 +5,29 @@
 //! declaration into its validated runtime graph.
 
 mod action;
+mod grid;
 mod layout;
 mod revision;
 mod view;
 #[cfg(test)]
 mod visibility_tests;
 
-pub use crate::ids::{FloatingPresentationId, ItemId, RootId, SurfaceId, TabKey};
+pub use crate::graph::{InvalidSplitWeight, InvalidSplitWeights, TabLabel};
+pub use crate::ids::{FloatingPresentationId, ItemId, NodeKey, RootId, SurfaceId, TabKey};
 pub use action::{
     DockAnchor, DockEdge, DockFraction, DockPlacement, DockspaceActionOutcome,
     DockspaceActionRejection, InvalidDockFraction, LogicalSurfaceRejection, NativeTearOffSource,
-    NativeWindowPlacement, PreparedDockAction, PreparedTabsGroup,
+    NativeWindowPlacement, PreparedDockAction, PreparedTab, PreparedTabsGroup, TabGroupDockMode,
 };
 pub(crate) use action::{PreparedDockActionAuthorityMismatch, ProductAction};
+pub use grid::{DockspaceGridError, DockspaceGridShape, DockspaceGridShares};
 pub use layout::{
     DockspaceAxis, DockspaceContainedLayout, DockspaceLayout, DockspaceLayoutError, DockspaceNode,
     DockspaceRootLayout, DockspaceSurfaceLayout, RootAllocation,
 };
 pub use revision::WorkspaceVersion;
 pub use view::{
-    DockspaceContainedView, DockspaceItemView, DockspaceNodeView, DockspaceRootView,
-    DockspaceSplitView, DockspaceSurfaceView, DockspaceTabsView, DockspaceView,
+    DockspaceContainedView, DockspaceGridView, DockspaceItemView, DockspaceNodeView,
+    DockspaceRootView, DockspaceSplitView, DockspaceSurfaceView, DockspaceTabView,
+    DockspaceTabsView, DockspaceView,
 };

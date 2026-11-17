@@ -10,7 +10,8 @@ use crate::model::{
 use crate::policy::DockPolicy;
 use crate::runtime::{
     DockspaceRuntimeError, DockspaceSession, SurfaceMeasurementAnswer, SurfaceMeasurementRequest,
-    SurfaceUnavailableReason, TabStripMetrics,
+    SurfacePaintProgramOperation, SurfacePaintProgramStep, SurfaceUnavailableReason,
+    TabStripMetrics,
 };
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -53,11 +54,11 @@ fn weighted_layout(
     .unwrap()
 }
 
-fn measured_panes(
+fn measured_tabs(
     session: &mut DockspaceSession,
     axis: DockspaceAxis,
     constrained: bool,
-) -> Vec<(Option<ItemId>, LogicalRect)> {
+) -> Vec<LogicalRect> {
     let config = session.presentation_config();
     let full_extent = 800.0 + 2.0 * config.splitter_thickness();
     let bounds = match axis {
@@ -97,15 +98,23 @@ fn measured_panes(
         .unwrap()
         .ready()
         .expect("valid measured panes must compile");
-    let panes = plan
-        .panes()
-        .map(|pane| (pane.selected(), pane.bounds()))
-        .collect();
+    let mut tabs = Vec::new();
+    plan.visit_surface_program(|step| {
+        if let SurfacePaintProgramStep::Operation {
+            operation: SurfacePaintProgramOperation::Tabs(record),
+            ..
+        } = step
+        {
+            tabs.push(record.bounds());
+        }
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap();
     frame
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
     frame.commit().unwrap();
-    panes
+    tabs
 }
 
 #[test]
@@ -118,21 +127,15 @@ fn measured_weighted_and_preferred_anchors_have_explicit_independent_sizes() {
                     let mut session =
                         DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
                     for constrained in [false, true] {
-                        let panes = measured_panes(&mut session, axis, constrained);
+                        let tabs = measured_tabs(&mut session, axis, constrained);
+                        assert_eq!(tabs.len(), 3 + usize::from(nested));
                         let expected = match (constrained, allocation) {
                             (false, _) => [200.0, 400.0, 200.0],
                             (true, RootAllocation::Weighted) => [300.0, 1000.0 / 3.0, 500.0 / 3.0],
                             (true, RootAllocation::PreferCentral) => [300.0, 300.0, 200.0],
                         };
-                        for (item, size) in [Some(FIRST), (!empty).then_some(MIDDLE), Some(LAST)]
-                            .into_iter()
-                            .zip(expected)
-                        {
-                            let rect = panes
-                                .iter()
-                                .find(|(selected, _)| *selected == item)
-                                .unwrap()
-                                .1;
+                        for (index, size) in [0, 1, tabs.len() - 1].into_iter().zip(expected) {
+                            let rect = tabs[index];
                             let actual = match axis {
                                 DockspaceAxis::Horizontal => rect.width(),
                                 DockspaceAxis::Vertical => rect.height(),
@@ -260,12 +263,17 @@ fn moving_last_content_preserves_main_anchor_and_retires_contained_source_for_bo
             view.item(MIDDLE)
                 .unwrap()
                 .tabs()
+                .expect("fixture item belongs to a tabs container")
                 .items()
                 .collect::<Vec<_>>(),
             &[MIDDLE, FIRST, LAST]
         );
         assert_eq!(
-            view.item(MIDDLE).unwrap().tabs().selected(),
+            view.item(MIDDLE)
+                .unwrap()
+                .tabs()
+                .expect("fixture item belongs to a tabs container")
+                .selected(),
             Some(TabKey::for_item(LAST))
         );
         let restored = view.to_layout();

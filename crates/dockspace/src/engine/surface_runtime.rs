@@ -903,26 +903,12 @@ impl DockEngine {
         surface: crate::ids::SurfaceId,
         item: crate::ids::ItemId,
     ) -> Option<crate::graph::command::ItemSource> {
-        let presentation = workspace.surface(surface)?;
-        let mut roots = Vec::with_capacity(presentation.contained.len().saturating_add(1));
-        roots.extend(presentation.main_root);
-        roots.extend(presentation.contained.iter().filter_map(|floating| {
-            workspace
-                .contained_floating(*floating)
-                .map(|record| record.root)
-        }));
-        for root in roots {
-            for (tabs, node) in workspace.nodes() {
-                if !matches!(node, Node::Tabs { items, .. } if items.contains(&TabKey::for_item(item)))
-                {
-                    continue;
-                }
-                if let Ok(source) = workspace.capture_item_source(root, tabs, item) {
-                    return Some(source);
-                }
-            }
-        }
-        None
+        let source = workspace.capture_item_source_by_id(item).ok()??;
+        let owner_surface = match workspace.presentation_for_root(source.root())? {
+            crate::graph::workspace::RootPresentationOwner::Main { surface }
+            | crate::graph::workspace::RootPresentationOwner::Contained { surface, .. } => surface,
+        };
+        (owner_surface == surface).then_some(source)
     }
 
     pub(super) fn surface_items(
@@ -2478,9 +2464,7 @@ impl DockEngine {
             let selection_outcome = match crate::graph::operation::apply_owned_draft_command(
                 &mut candidate,
                 &self.policy,
-                &WorkspaceCommand::Select {
-                    source: source.as_tab_source(),
-                },
+                &WorkspaceCommand::SelectItem { source },
             ) {
                 Ok(outcome) => outcome,
                 Err(TransactionError::Command { source, .. }) if source.is_expected_rejection() => {

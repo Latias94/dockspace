@@ -1043,11 +1043,12 @@ fn retained_changed_tab_press(activate_drag: bool) {
     ] {
         reset_surface_compilation_count();
         let before = engine.version();
-        let previous_ticket = engine
+        let previous_candidate = engine
             .scene()
             .ready_candidate(SOURCE_SURFACE)
             .unwrap()
-            .output_ticket();
+            .clone();
+        let previous_ticket = previous_candidate.output_ticket();
         let mut frame = match output {
             Some(output) => observe_output(&engine, host, output),
             None => begin_test_host_frame(&engine, host),
@@ -1063,9 +1064,7 @@ fn retained_changed_tab_press(activate_drag: bool) {
             let projection = frame.view().interaction_projection(SOURCE_SURFACE).unwrap();
             assert_eq!(projection.output_ticket(), original.output_ticket());
             assert_eq!(
-                projection
-                    .plan()
-                    .pane_selected(&projection.plan().pane_records()[0]),
+                Some(projection.plan().pane_records()[0].item()),
                 Some(first)
             );
             let delivery = PointerReceiverDelivery::new(
@@ -1145,26 +1144,33 @@ fn retained_changed_tab_press(activate_drag: bool) {
             .scene()
             .ready_candidate(SOURCE_SURFACE)
             .unwrap();
-        assert!(current.plan().shares_facts(original.plan()));
+        assert!(!current.plan().shares_facts(original.plan()));
         assert_eq!(
-            current.hit_manifest().regions().as_ptr(),
-            original.hit_manifest().regions().as_ptr()
+            current.plan().pane_records()[0].bounds(),
+            original.plan().pane_records()[0].bounds()
         );
-        assert!(std::ptr::eq(
-            current.paint_program().unwrap(),
-            original.paint_program().unwrap()
-        ));
+        assert_eq!(current.plan().tab_records(), original.plan().tab_records());
+        assert_eq!(
+            current.hit_manifest().regions().len(),
+            original.hit_manifest().regions().len()
+        );
+        assert!(
+            current
+                .hit_manifest()
+                .region_for_kind(PresentationHitRegionKind::PaneBody(
+                    crate::presentation::scene::PaneSceneId {
+                        root: SOURCE_ROOT,
+                        item: second
+                    },
+                ))
+                .is_some()
+        );
         assert_ne!(current.output_ticket(), original.output_ticket());
         if previous == 1 {
             assert_eq!(current.output_ticket(), previous_ticket);
         }
         assert_eq!(current.hit_manifest().output(), current.output_ticket());
-        assert_eq!(
-            original
-                .plan()
-                .pane_selected(&original.plan().pane_records()[0]),
-            Some(first)
-        );
+        assert_eq!(Some(original.plan().pane_records()[0].item()), Some(first));
 
         let mut recorded = Vec::new();
         let mut painted_panes = Vec::new();
@@ -1175,11 +1181,14 @@ fn retained_changed_tab_press(activate_drag: bool) {
                 recorded.push(format!("{step:?}"));
                 match step {
                     ResolvedSurfaceProgramStep::RootBegin(root) => {
-                        assert_eq!(root.title_item(), Some(second))
+                        assert_eq!(
+                            root.label(),
+                            Some(crate::graph::TabLabel::Layout { title: "Tabs" })
+                        )
                     }
                     ResolvedSurfaceProgramStep::Operation { operation, .. } => match operation {
                         ResolvedSurfaceProgramOperation::Pane(pane) => {
-                            painted_panes.push(current.plan().pane_selected(pane))
+                            painted_panes.push(Some(pane.item()))
                         }
                         ResolvedSurfaceProgramOperation::Tab(tab) => {
                             painted_tabs.push((tab.id().tab, current.plan().tab_selected(tab)))
@@ -1246,14 +1255,14 @@ fn retained_changed_tab_press(activate_drag: bool) {
             0,
             "edge {previous} must never compile a full scene"
         );
-        assert!(
-            engine
-                .scene()
-                .ready_candidate(SOURCE_SURFACE)
-                .unwrap()
-                .plan()
-                .shares_facts(original.plan())
-        );
+        let committed = engine.scene().ready_candidate(SOURCE_SURFACE).unwrap();
+        assert!(!committed.plan().shares_facts(original.plan()));
+        if previous == 1 {
+            assert!(
+                committed.plan().shares_facts(previous_candidate.plan()),
+                "a release must keep the already rebound content facts"
+            );
+        }
         assert_ne!(engine.version(), version);
         if activate_drag {
             break;
@@ -1369,9 +1378,7 @@ fn retained_changed_tab_press(activate_drag: bool) {
     );
     let presented = engine.interaction_projection(SOURCE_SURFACE).unwrap();
     assert_eq!(
-        presented
-            .plan()
-            .pane_selected(&presented.plan().pane_records()[0]),
+        Some(presented.plan().pane_records()[0].item()),
         Some(second)
     );
     assert_eq!(
@@ -1409,7 +1416,7 @@ fn retained_selection_encoding_restart_rejects_old_receipt_and_drops_atomically(
                     ..
                 } = step
                 {
-                    panes.push(pane.selected());
+                    panes.push(Some(pane.item()));
                 }
                 Ok::<(), ()>(())
             })
@@ -1488,7 +1495,7 @@ fn retained_selection_encoding_restart_rejects_old_receipt_and_drops_atomically(
     drop(frame);
 
     assert_eq!(session.version(), before);
-    assert!(session.view().item(first).unwrap().is_selected());
+    assert!(session.view().item(first).unwrap().is_active());
     assert_eq!(
         session.workspace().tab_mru(tabs),
         Some([first.into(), second.into()].as_slice())
@@ -2120,7 +2127,7 @@ fn real_host_frame_splitter_gesture_has_bounded_clone_work() {
             matches!(
                 region.id().kind(),
                 PresentationHitRegionKind::SplitterHandle(splitter)
-                    if splitter.split == split
+                    if splitter.node() == split
             )
         })
         .expect("split must expose one pointer handle")

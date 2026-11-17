@@ -26,6 +26,7 @@ use crate::runtime::{
     UniformSurfaceMetrics,
 };
 
+mod composable_resize;
 mod contained_resize_sequence;
 mod splitter_equalization;
 mod splitter_preferences;
@@ -483,6 +484,16 @@ fn submit_host_edges(
     session: &mut DockspaceSession,
     edges: &[(SurfacePointerEvent, Option<LogicalPoint>)],
 ) -> HostFrameReport {
+    submit_host_edges_with(session, edges, |frame| {
+        frame.measure_surface(SURFACE, metrics()).unwrap();
+    })
+}
+
+fn submit_host_edges_with(
+    session: &mut DockspaceSession,
+    edges: &[(SurfacePointerEvent, Option<LogicalPoint>)],
+    measure: impl FnOnce(&mut crate::runtime::DockspaceHostFrame<'_>),
+) -> HostFrameReport {
     session
         .enable_host_pointer()
         .expect("one host producer owns the ordered input");
@@ -501,10 +512,11 @@ fn submit_host_edges(
                 })
         })
         .collect::<Vec<_>>();
+    let retained_source = session.host_pointer_manipulation_surface(SurfacePointerId::new(1));
     // This recording host has no framework overlays; core resolves every lane.
     let inputs = edges.iter().zip(&hits).map(|((event, point), hit)| {
         let mut facts = SurfacePointerReceiverFacts::unknown();
-        let route = if let (Some((surface, click, drag, hover)), Some(point)) = (hit, point) {
+        let hover_route = if let (Some((surface, click, drag, hover)), Some(point)) = (hit, point) {
             facts = click.as_ref().map_or_else(
                 || facts.with_empty_delivery_lane(surface),
                 |receiver| facts.with_delivery(receiver),
@@ -521,11 +533,15 @@ fn submit_host_edges(
         } else {
             HostPointerRoute::Unknown
         };
+        let manipulation = match (retained_source, point) {
+            (Some(surface), Some(point)) => HostPointerRoute::new(surface, *point),
+            _ => hover_route,
+        };
         HostPointerInput::new(
             SurfacePointerId::new(1),
             *event,
-            route,
-            route,
+            manipulation,
+            hover_route,
             SurfacePointerCapture::None,
             facts,
         )
@@ -540,9 +556,7 @@ fn submit_host_edges(
         .is_none()
     {
         // Raise invalidates measurements; an existing Ready preview must remain untouched.
-        frame
-            .measure_surface(SURFACE, metrics())
-            .expect("the stale post-input surface receives current measurements");
+        measure(&mut frame);
     }
     frame
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
@@ -1145,7 +1159,7 @@ fn exact_surface_tab_action_selects_without_exposing_scene_identity() {
             .view()
             .item(SECOND)
             .expect("second item remains open")
-            .is_selected()
+            .is_active()
     );
 }
 
@@ -1521,7 +1535,7 @@ fn rear_contained_pane_press_raises_and_requests_the_exact_selected_pane_focus()
     let point = inspect_surface(&mut session, |plan| {
         let pane = plan
             .panes()
-            .find(|pane| pane.root() == FLOATING_ROOT && pane.selected() == Some(SECOND))
+            .find(|pane| pane.root() == FLOATING_ROOT && pane.item() == SECOND)
             .expect("the selected rear pane is painted");
         plan.receiver_for_pane(pane)
             .expect("the pane owns an exact fallback receiver")
@@ -1594,6 +1608,7 @@ fn contained_tab_exits_its_source_rect_then_redocks_through_the_pane_basin() {
         .item(FIRST)
         .expect("the main group exists before redocking")
         .tabs()
+        .expect("fixture item belongs to a tabs container")
         .items()
         .collect::<Vec<_>>();
     expected_items.push(SECOND);
@@ -1664,7 +1679,11 @@ fn contained_tab_exits_its_source_rect_then_redocks_through_the_pane_basin() {
     assert_eq!(moved.root(), ROOT);
     assert_eq!(moved.contained(), None);
     assert_eq!(
-        moved.tabs().items().collect::<Vec<_>>(),
+        moved
+            .tabs()
+            .expect("fixture item belongs to a tabs container")
+            .items()
+            .collect::<Vec<_>>(),
         expected_items.as_slice()
     );
     assert!(!session.has_active_gesture());
@@ -2344,9 +2363,13 @@ fn local_dock_back_without_focus_history_does_not_guess_from_selection() {
     assert_eq!(docked.surface(), SURFACE);
     assert_eq!(docked.root(), ROOT);
     assert_eq!(docked.contained(), None);
-    assert!(docked.is_selected());
+    assert!(docked.is_active());
     assert_eq!(
-        docked.tabs().items().collect::<Vec<_>>(),
+        docked
+            .tabs()
+            .expect("fixture item belongs to a tabs container")
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, THIRD, SECOND]
     );
 
@@ -2552,7 +2575,7 @@ fn stale_surface_action_is_inert_after_a_new_workspace_revision() {
             .view()
             .item(SECOND)
             .expect("second item remains open")
-            .is_selected()
+            .is_active()
     );
 }
 
@@ -2581,7 +2604,7 @@ fn cross_session_surface_action_is_rejected_without_poisoning_the_frame() {
             .view()
             .item(FIRST)
             .expect("first item remains open")
-            .is_selected()
+            .is_active()
     );
 }
 
@@ -2716,7 +2739,7 @@ fn exact_junction_axis_adjustment_updates_only_that_axis_in_one_revision() {
     assert_eq!(
         session.version().revision().get(),
         before_version.revision().get() + 1,
-        "one axis-wide ResizeSplits command advances exactly one revision"
+        "one axis-wide ResizeTracks command advances exactly one revision"
     );
 }
 
@@ -2845,7 +2868,7 @@ fn exact_surface_tab_list_actions_open_and_select_from_the_current_candidate() {
             .view()
             .item(FOURTH)
             .expect("fourth item remains open")
-            .is_selected()
+            .is_active()
     );
 }
 

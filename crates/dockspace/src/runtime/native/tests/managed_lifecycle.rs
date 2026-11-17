@@ -105,7 +105,7 @@ fn joined_document_restore_preserves_identities_after_a_workspace_mutating_nativ
         target
             .view()
             .item(first)
-            .is_some_and(|item| item.is_selected())
+            .is_some_and(|item| item.is_active())
     );
 
     let mut restore = target
@@ -135,7 +135,7 @@ fn joined_document_restore_preserves_identities_after_a_workspace_mutating_nativ
         target
             .view()
             .item(first)
-            .is_some_and(|item| item.is_selected())
+            .is_some_and(|item| item.is_active())
     );
 }
 
@@ -181,7 +181,7 @@ fn joined_layout_reset_retries_after_a_workspace_mutating_native_prefix() {
             .expect("the rollbackable joined reset begins");
         assert_ne!(reset.version().epoch(), expected.epoch());
         assert_eq!(reset.view().item(ITEM).unwrap().root(), ROOT);
-        assert!(reset.view().item(ITEM).unwrap().is_selected());
+        assert!(reset.view().item(ITEM).unwrap().is_active());
         assert_eq!(reset.frame.backend_ingress_through(), prefix);
         reset.version()
     };
@@ -190,7 +190,7 @@ fn joined_layout_reset_retries_after_a_workspace_mutating_native_prefix() {
     assert_eq!(target.committed_source_sequence, source_sequence);
     assert_eq!(target.native_input_recorded_count(), recorded);
     assert_eq!(target.view().item(ITEM).unwrap().root(), RootId::new(2));
-    assert!(target.view().item(ITEM).unwrap().is_selected());
+    assert!(target.view().item(ITEM).unwrap().is_active());
 
     let mut reset = target
         .begin_native_layout_reset_frame(&prepared, |_| NativeReceiverAnswer::Unknown)
@@ -224,7 +224,7 @@ fn joined_layout_reset_retries_after_a_workspace_mutating_native_prefix() {
     assert_eq!(target.engine.backend_ingress_committed_through(), prefix);
     assert_eq!(target.committed_source_sequence, source_sequence + 1);
     assert_eq!(target.native_input_recorded_count(), recorded);
-    assert!(target.view().item(ITEM).unwrap().is_selected());
+    assert!(target.view().item(ITEM).unwrap().is_active());
 
     let mut next = target
         .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)

@@ -96,7 +96,7 @@ fn sample(dock: &mut Dockspace) -> (LogicalRect, bool, usize) {
             Step::Operation {
                 operation: Operation::Pane(record),
                 ..
-            } if record.selected() == Some(ItemId::new(2)) => pane = Some(record.bounds()),
+            } if record.item() == ItemId::new(2) => pane = Some(record.bounds()),
             Step::Operation {
                 operation: Operation::Splitter(_),
                 ..
@@ -171,7 +171,7 @@ fn visibility_reflow_can_be_interrupted_by_showing_the_same_pane_again() {
                 ..
             } = step
             {
-                assert_ne!(pane.selected(), Some(ItemId::new(3)));
+                assert_ne!(pane.item(), ItemId::new(3));
             }
             Ok::<(), ()>(())
         })

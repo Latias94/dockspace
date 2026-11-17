@@ -1,11 +1,13 @@
 use super::*;
 use crate::graph::normalized_weight_sum;
+use crate::model::DockspaceGridShares;
 
 #[derive(Debug)]
 enum DetachedPayload {
     Item {
         source_root: RootId,
         item: ItemId,
+        standalone: bool,
     },
     Node {
         source_root: RootId,
@@ -13,7 +15,7 @@ enum DetachedPayload {
         items: Vec<ItemId>,
         selected: Option<TabKey>,
         mru: Option<Vec<TabKey>>,
-        is_tabs: bool,
+        merge_tabs: bool,
         central: Option<NodeId>,
     },
 }
@@ -54,6 +56,7 @@ pub(super) fn apply_command(
     }
     let result = match command {
         WorkspaceCommand::Select { source } => select(workspace, source),
+        WorkspaceCommand::SelectItem { source } => select_item(workspace, source),
         WorkspaceCommand::SetItemVisibility { source, visible } => {
             set_item_visibility(workspace, source, *visible)
         }
@@ -69,7 +72,7 @@ pub(super) fn apply_command(
             };
             return move_payload(workspace, policy, payload, target);
         }
-        WorkspaceCommand::ResizeSplits { splits } => resize_splits(workspace, splits),
+        WorkspaceCommand::ResizeTracks { tracks } => resize_tracks(workspace, tracks),
         WorkspaceCommand::AttachEmptySurface { surface, root } => {
             attach_empty_surface(workspace, *surface, *root)
         }
@@ -153,6 +156,60 @@ pub(super) fn select(
     })
 }
 
+pub(super) fn select_item(
+    workspace: &mut Workspace,
+    source: &ItemSource,
+) -> Result<AppliedCommand, CommandError> {
+    validate_item_source(workspace, source)?;
+    if workspace.item_is_hidden(source.item()) {
+        return Err(CommandError::ItemHidden {
+            item: source.item(),
+        });
+    }
+    if let Some(tabs) = source.tabs()
+        && workspace
+            .root_structure(source.root())
+            .is_some_and(|structure| !structure.has_composition())
+    {
+        let changed = workspace.set_visible_tab_selection(tabs, TabKey::for_item(source.item()))?;
+        if changed {
+            workspace.complete_selection_change(source.root(), tabs)?;
+        }
+        return Ok(AppliedCommand {
+            outcome: CommandOutcome::ItemActivated {
+                item: source.item(),
+                changed,
+            },
+            delta: ItemDelta::None,
+        });
+    }
+    let mut choices = Vec::new();
+    if let Some(tabs) = source.tabs() {
+        choices.push((tabs, TabKey::for_item(source.item())));
+    }
+    let mut node = source.owner_node();
+    while let Some(parent) = workspace.parent_link(source.root(), node) {
+        if matches!(workspace.node(parent.parent), Some(Node::Tabs { .. })) {
+            choices.push((parent.parent, TabKey::for_layout(node)));
+        }
+        node = parent.parent;
+    }
+    let mut changed = false;
+    for (tabs, tab) in choices {
+        changed |= workspace.set_visible_tab_selection(tabs, tab)?;
+    }
+    if changed {
+        workspace.complete_root_change(source.root())?;
+    }
+    Ok(AppliedCommand {
+        outcome: CommandOutcome::ItemActivated {
+            item: source.item(),
+            changed,
+        },
+        delta: ItemDelta::None,
+    })
+}
+
 fn set_item_visibility(
     workspace: &mut Workspace,
     source: &ItemSource,
@@ -170,7 +227,16 @@ fn set_item_visibility(
         } else {
             hidden_items.insert(item);
         }
-        workspace.repair_visible_tab_selection(source.tabs())?;
+        let mut node = source.owner_node();
+        loop {
+            if matches!(workspace.node(node), Some(Node::Tabs { .. })) {
+                workspace.repair_visible_tab_selection(node)?;
+            }
+            let Some(parent) = workspace.parent_link(root, node) else {
+                break;
+            };
+            node = parent.parent;
+        }
         workspace.complete_root_change(root)?;
         workspace.complete_root_structure(root)?;
     }
@@ -219,6 +285,7 @@ fn open(
     let payload = DetachedPayload::Item {
         source_root: root,
         item,
+        standalone: false,
     };
     let _ = insert_payload(workspace, payload, target)?;
     workspace.complete_root_change(root)?;
@@ -239,17 +306,35 @@ fn move_payload(
     // exclusive candidate. No checked token or index can cross a mutation.
     check_move(workspace, policy, payload, target)?;
 
-    if let MovePayload::Item(source) = payload
-        && let Some(changed) = move_item_within_same_tabs(workspace, source, target)?
+    let in_place = if let Some((tabs, tab)) =
+        super::authorization::same_tabs_move_source(workspace, payload, target)
     {
-        if changed {
-            workspace.complete_root_change(source.root())?;
+        match target {
+            DockTarget::Center(_) => Some(false),
+            DockTarget::TabGap { index, .. } => Some(reorder_tab(workspace, tabs, tab, *index)?.2),
+            DockTarget::InnerEdge(_) | DockTarget::OuterEdge(_) => None,
         }
+    } else if let MovePayload::Item(source) = payload {
+        item_move_is_noop(workspace, source, target).then_some(false)
+    } else {
+        None
+    };
+    if let Some(changed) = in_place {
+        let source_root = payload_root(payload);
+        if changed {
+            workspace.complete_root_change(source_root)?;
+        }
+        let items = match payload {
+            MovePayload::Item(source) => vec![source.item()],
+            MovePayload::Tabs(source) | MovePayload::Subtree(source) => {
+                workspace.collect_items_in_subtree(source.node())
+            }
+        };
         return Ok((
             AppliedCommand {
                 outcome: CommandOutcome::Moved {
-                    items: vec![source.item()],
-                    source_root: source.root(),
+                    items,
+                    source_root,
                     target_root: target_root(target),
                     changed,
                 },
@@ -356,6 +441,7 @@ fn node_move_is_exact_inner_edge_noop(
         axis,
         children,
         weights,
+        ..
     }) = workspace.storage.nodes.get(source_parent.parent)
     else {
         return false;
@@ -396,120 +482,227 @@ fn node_move_is_exact_inner_edge_noop(
     simulated_children == *children && simulated_weights == *weights
 }
 
-pub(crate) fn validate_split_resizes(
+fn axis_is_equal_default(weights: &[SplitWeight]) -> bool {
+    weights
+        .first()
+        .is_some_and(|first| weights.iter().all(|weight| weight == first))
+}
+
+fn grid_resize_changed_axes(
+    resize: &TrackResize,
+    current: Option<&DockspaceGridShares>,
+    proposed: &DockspaceGridShares,
+) -> [bool; 2] {
+    let effective = current.filter(|shares| {
+        resize.grid_basis().is_none_or(|basis| {
+            shares.row_weights().len() == basis.rows()
+                && shares.column_weights().len() == basis.columns()
+        })
+    });
+    let changed_axis = |current: Option<&[SplitWeight]>, proposed: &[SplitWeight]| {
+        current.map_or_else(
+            || !axis_is_equal_default(proposed),
+            |current| current != proposed,
+        )
+    };
+    [
+        changed_axis(
+            effective.map(DockspaceGridShares::column_weights),
+            proposed.column_weights(),
+        ),
+        changed_axis(
+            effective.map(DockspaceGridShares::row_weights),
+            proposed.row_weights(),
+        ),
+    ]
+}
+
+pub(crate) fn validate_track_resizes(
     workspace: &Workspace,
     policy: &DockPolicySnapshot,
-    splits: &[SplitResize],
+    tracks: &[TrackResize],
 ) -> Result<Vec<(NodeId, bool)>, CommandError> {
-    let validated = validate_split_resizes_structure(workspace, splits)?;
-    for resize in splits {
-        let split = resize.split();
-        let axis = match workspace.storage.nodes.get(split.node()) {
-            Some(Node::Split { axis, .. }) => *axis,
-            _ => {
-                return Err(CommandError::Invariant {
-                    stage: "authorize structurally validated split resize",
-                });
-            }
-        };
+    let validated = validate_track_resizes_structure(workspace, tracks)?;
+    for (resize, (_, changed)) in tracks.iter().zip(&validated) {
+        if !changed {
+            continue;
+        }
+        let source = resize.source();
         let surface = workspace
-            .presentation_for_root(split.root())
+            .presentation_for_root(source.root())
             .map(|owner| match owner {
                 RootPresentationOwner::Main { surface }
                 | RootPresentationOwner::Contained { surface, .. } => surface,
             });
-        evaluate_policy(
-            policy,
-            &DockPolicyRequest::Resize(DockResizePolicyRequest::new(split.root(), axis, surface)),
-        )?;
-    }
-    Ok(validated)
-}
-
-pub(super) fn validate_split_resizes_structure(
-    workspace: &Workspace,
-    splits: &[SplitResize],
-) -> Result<Vec<(NodeId, bool)>, CommandError> {
-    if splits.is_empty() {
-        return Err(CommandError::EmptySplitResizeBatch);
-    }
-    let mut seen = std::collections::BTreeSet::new();
-    let mut validated = Vec::with_capacity(splits.len());
-    for resize in splits {
-        let split = resize.split();
-        let weights = resize.weights();
-        validate_node_source(workspace, split)?;
-        let node_id = split.node();
-        if !seen.insert(node_id) {
-            return Err(CommandError::DuplicateSplitResize { split: node_id });
-        }
-        let node = workspace
-            .storage
-            .nodes
-            .get(node_id)
-            .ok_or(CommandError::MissingNode {
-                role: ReferenceRole::Source,
-                node: node_id,
-            })?;
-        let Node::Split {
-            children,
-            weights: current,
-            ..
-        } = node
-        else {
-            return Err(CommandError::NodeIsNotSplit { node: node_id });
-        };
-        if children.len() != weights.len() {
-            return Err(CommandError::SplitWeightCountMismatch {
-                split: node_id,
-                children: children.len(),
-                weights: weights.len(),
-            });
-        }
-        let sum = normalized_weight_sum(weights.iter().map(|weight| weight.get()));
-        if !sum.is_finite() || (sum - 1.0).abs() > NORMALIZED_WEIGHT_TOLERANCE {
-            return Err(CommandError::SplitWeightsNotNormalized {
-                split: node_id,
-                sum,
-            });
-        }
-        validated.push((node_id, current != weights));
-    }
-    Ok(validated)
-}
-
-fn resize_splits(
-    workspace: &mut Workspace,
-    splits: &[SplitResize],
-) -> Result<AppliedCommand, CommandError> {
-    let validated = validate_split_resizes_structure(workspace, splits)?;
-    for (resize, (_, changed)) in splits.iter().zip(&validated) {
-        if !changed {
-            continue;
-        }
-        workspace.begin_root_edit(resize.split().root());
-        let current = match workspace.storage.nodes.get_mut(resize.split().node()) {
-            Some(Node::Split { weights, .. }) => weights,
+        let axes = match (workspace.node(source.node()), resize.weights()) {
+            (Some(Node::Split { axis, .. }), TrackWeights::Split(_)) => [Some(*axis), None],
+            (
+                Some(Node::Grid {
+                    shares: current, ..
+                }),
+                TrackWeights::Grid(shares),
+            ) => {
+                let [horizontal, vertical] =
+                    grid_resize_changed_axes(resize, current.as_ref(), shares);
+                [
+                    horizontal.then_some(Axis::Horizontal),
+                    vertical.then_some(Axis::Vertical),
+                ]
+            }
             _ => {
                 return Err(CommandError::Invariant {
-                    stage: "apply validated split resize batch",
+                    stage: "authorize structurally validated track resize",
                 });
             }
         };
-        current.clone_from_slice(resize.weights());
+        for axis in axes.into_iter().flatten() {
+            evaluate_policy(
+                policy,
+                &DockPolicyRequest::Resize(DockResizePolicyRequest::new(
+                    source.root(),
+                    axis,
+                    surface,
+                )),
+            )?;
+        }
     }
-    let changed_roots = splits
+    Ok(validated)
+}
+
+pub(super) fn validate_track_resizes_structure(
+    workspace: &Workspace,
+    tracks: &[TrackResize],
+) -> Result<Vec<(NodeId, bool)>, CommandError> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut validated = Vec::with_capacity(tracks.len());
+    for resize in tracks {
+        let source = resize.source();
+        validate_node_source(workspace, source)?;
+        let node = source.node();
+        if !seen.insert(node) {
+            return Err(CommandError::DuplicateTrackResize { node });
+        }
+        let current = workspace.node(node).ok_or(CommandError::MissingNode {
+            role: ReferenceRole::Source,
+            node,
+        })?;
+        let changed = match (current, resize.weights()) {
+            (
+                Node::Split {
+                    children,
+                    weights: current,
+                    ..
+                },
+                TrackWeights::Split(weights),
+            ) => {
+                if children.len() != weights.len() {
+                    return Err(CommandError::SplitWeightCountMismatch {
+                        split: node,
+                        children: children.len(),
+                        weights: weights.len(),
+                    });
+                }
+                for (index, weight) in weights.iter().enumerate() {
+                    SplitWeight::new(weight.get()).map_err(|source| {
+                        CommandError::InvalidTrackWeight {
+                            node,
+                            index,
+                            source,
+                        }
+                    })?;
+                }
+                let sum = normalized_weight_sum(weights.iter().map(|weight| weight.get()));
+                if !sum.is_finite() || (sum - 1.0).abs() > NORMALIZED_WEIGHT_TOLERANCE {
+                    return Err(CommandError::SplitWeightsNotNormalized { split: node, sum });
+                }
+                current != weights
+            }
+            (
+                Node::Grid {
+                    shape,
+                    children,
+                    shares: current,
+                    ..
+                },
+                TrackWeights::Grid(shares),
+            ) => {
+                shares
+                    .validate_for(*shape, children.len())
+                    .map_err(|source| CommandError::InvalidGrid { node, source })?;
+                if let Some(basis) = resize.grid_basis() {
+                    if basis.children() != children.as_slice() {
+                        return Err(CommandError::GridResizeBasisMismatch { node });
+                    }
+                    if basis.rows() != shares.row_weights().len()
+                        || basis.columns() != shares.column_weights().len()
+                    {
+                        return Err(CommandError::InvalidGrid {
+                            node,
+                            source: crate::model::DockspaceGridError::ShareShapeMismatch {
+                                expected_rows: basis.rows(),
+                                expected_columns: basis.columns(),
+                                rows: shares.row_weights().len(),
+                                columns: shares.column_weights().len(),
+                            },
+                        });
+                    }
+                }
+                grid_resize_changed_axes(resize, current.as_ref(), shares)
+                    .into_iter()
+                    .any(|changed| changed)
+            }
+            _ => return Err(CommandError::TrackOwnerKindMismatch { node }),
+        };
+        validated.push((node, changed));
+    }
+    Ok(validated)
+}
+
+fn resize_tracks(
+    workspace: &mut Workspace,
+    tracks: &[TrackResize],
+) -> Result<AppliedCommand, CommandError> {
+    let validated = validate_track_resizes_structure(workspace, tracks)?;
+    for (resize, (_, changed)) in tracks.iter().zip(&validated) {
+        if !changed {
+            continue;
+        }
+        workspace.begin_root_edit(resize.source().root());
+        match (
+            workspace.storage.nodes.get_mut(resize.source().node()),
+            resize.weights(),
+        ) {
+            (
+                Some(Node::Split {
+                    weights: current, ..
+                }),
+                TrackWeights::Split(weights),
+            ) => current.clone_from(weights),
+            (
+                Some(Node::Grid {
+                    shares: current, ..
+                }),
+                TrackWeights::Grid(shares),
+            ) => *current = Some(shares.clone()),
+            _ => {
+                return Err(CommandError::Invariant {
+                    stage: "apply validated track resize batch",
+                });
+            }
+        }
+    }
+    let changed_roots = tracks
         .iter()
         .zip(&validated)
-        .filter_map(|(resize, (_, changed))| changed.then_some(resize.split().root()))
+        .filter_map(|(resize, (_, changed))| changed.then_some(resize.source().root()))
         .collect::<BTreeSet<_>>();
     for root in changed_roots {
         workspace.complete_root_change(root)?;
         workspace.complete_root_structure(root)?;
     }
     Ok(AppliedCommand {
-        outcome: CommandOutcome::SplitsResized {
-            splits: validated.iter().map(|(split, _)| *split).collect(),
+        outcome: CommandOutcome::TracksResized {
+            tracks: validated.iter().map(|(node, _)| *node).collect(),
             changed: validated.iter().any(|(_, changed)| *changed),
         },
         delta: ItemDelta::None,
@@ -1197,8 +1390,15 @@ fn detach_root_content(
             workspace.complete_root_change(detached.source_root())?;
             workspace.complete_root_structure(detached.source_root())?;
             match detached {
-                DetachedPayload::Item { item, .. } => {
-                    let node = workspace.insert_runtime_node(Node::tabs([item]));
+                DetachedPayload::Item {
+                    item, standalone, ..
+                } => {
+                    let value = if standalone {
+                        Node::pane(item)
+                    } else {
+                        Node::tabs([item])
+                    };
+                    let node = workspace.insert_runtime_node(value);
                     Ok((node, None, items, ItemDelta::None))
                 }
                 DetachedPayload::Node { node, central, .. } => {
@@ -1215,10 +1415,11 @@ fn detach_payload(
 ) -> Result<DetachedPayload, CommandError> {
     match payload {
         MovePayload::Item(source) => {
-            remove_item(workspace, source.tabs(), source.item())?;
+            remove_item(workspace, source.owner_node(), source.item())?;
             Ok(DetachedPayload::Item {
                 source_root: source.root(),
                 item: source.item(),
+                standalone: matches!(source.place(), ItemPlace::Pane { .. }),
             })
         }
         MovePayload::Tabs(source) | MovePayload::Subtree(source) => {
@@ -1227,7 +1428,9 @@ fn detach_payload(
             let items = workspace.collect_items_in_subtree(node);
             let (selected, mru, is_tabs) = match workspace.storage.nodes.get(node) {
                 Some(Node::Tabs { selected, mru, .. }) => (*selected, Some(mru.clone()), true),
-                Some(Node::Split { .. }) => (None, None, false),
+                Some(Node::Pane { .. } | Node::Split { .. } | Node::Grid { .. }) => {
+                    (None, None, false)
+                }
                 None => {
                     return Err(CommandError::MissingNode {
                         role: ReferenceRole::Source,
@@ -1248,7 +1451,14 @@ fn detach_payload(
                             role: ReferenceRole::Source,
                             node,
                         })?;
-                let contents = std::mem::replace(source, Node::tabs([]));
+                let title = match source {
+                    Node::Tabs { layout_title, .. } => layout_title.clone(),
+                    _ => None,
+                };
+                let mut empty = Node::tabs([]);
+                empty.set_layout_title(title);
+                let mut contents = std::mem::replace(source, empty);
+                contents.set_layout_title(None);
                 node = workspace.insert_runtime_node(contents);
                 None
             } else {
@@ -1260,7 +1470,7 @@ fn detach_payload(
                 items,
                 selected,
                 mru,
-                is_tabs,
+                merge_tabs: is_tabs && matches!(payload, MovePayload::Tabs(_)),
                 central,
             })
         }
@@ -1273,7 +1483,7 @@ pub(super) fn moves_central_tab_contents(workspace: &Workspace, payload: &MovePa
     ))
 }
 
-fn detach_node(
+pub(super) fn detach_node(
     workspace: &mut Workspace,
     root: RootId,
     node: NodeId,
@@ -1303,42 +1513,107 @@ fn detach_node(
             root,
             node,
         })?;
-    remove_split_child(workspace, parent.parent, parent.index)?;
+    remove_child(workspace, parent.parent, parent.index)?;
     Ok(None)
 }
 
-fn remove_split_child(
+fn remove_child(
     workspace: &mut Workspace,
-    parent: NodeId,
-    index: usize,
+    mut parent: NodeId,
+    mut index: usize,
 ) -> Result<(), CommandError> {
-    if let Some(root) = workspace.node_root(parent) {
-        workspace.begin_root_edit(root);
-    }
-    let node = workspace
-        .storage
-        .nodes
-        .get_mut(parent)
-        .ok_or(CommandError::MissingNode {
+    let root = workspace.node_root(parent).ok_or(CommandError::Invariant {
+        stage: "locate structural child removal root",
+    })?;
+    let removed = workspace
+        .node(parent)
+        .and_then(|value| value.child_nodes().find(|(slot, _)| *slot == index))
+        .map(|(_, child)| child)
+        .ok_or(CommandError::Invariant {
+            stage: "detach indexed structural child",
+        })?;
+    workspace.begin_root_edit(root);
+    workspace.unroot_subtree(removed);
+    loop {
+        let ancestor = workspace.parent_link(root, parent);
+        let central = workspace.root(root).and_then(|record| record.central);
+        let current = workspace.node(parent).ok_or(CommandError::MissingNode {
             role: ReferenceRole::Source,
             node: parent,
         })?;
-    let Node::Split {
-        children, weights, ..
-    } = node
-    else {
-        return Err(CommandError::NodeIsNotSplit { node: parent });
-    };
-    let removed = children
-        .get(index)
-        .copied()
-        .ok_or(CommandError::Invariant {
-            stage: "detach indexed split child",
-        })?;
-    remove_split_child_from_roster(children, weights, index)?;
-    workspace.unroot_subtree(removed);
-    workspace.refresh_child_placements(parent);
-    Ok(())
+        let empty = match current {
+            Node::Tabs { .. } => {
+                let child = current
+                    .child_nodes()
+                    .find(|(slot, _)| *slot == index)
+                    .map(|(_, child)| child)
+                    .ok_or(CommandError::Invariant {
+                        stage: "remove actual layout-tab roster entry",
+                    })?;
+                remove_tab(workspace, parent, TabKey::for_layout(child))?;
+                matches!(workspace.node(parent), Some(Node::Tabs { items, .. }) if items.is_empty())
+                    && central != Some(parent)
+            }
+            Node::Split { .. } => {
+                let Some(Node::Split {
+                    children, weights, ..
+                }) = workspace.storage.nodes.get_mut(parent)
+                else {
+                    unreachable!()
+                };
+                remove_split_child_from_roster(children, weights, index)?;
+                children.is_empty()
+            }
+            Node::Grid { .. } => {
+                let value =
+                    workspace
+                        .storage
+                        .nodes
+                        .get_mut(parent)
+                        .ok_or(CommandError::MissingNode {
+                            role: ReferenceRole::Source,
+                            node: parent,
+                        })?;
+                let Node::Grid { children, .. } = value else {
+                    unreachable!()
+                };
+                if index >= children.len() {
+                    return Err(CommandError::Invariant {
+                        stage: "remove actual grid roster entry",
+                    });
+                }
+                children.remove(index);
+                let empty = children.is_empty();
+                if !empty {
+                    value
+                        .repair_grid_tracks()
+                        .map_err(|source| CommandError::InvalidGrid {
+                            node: parent,
+                            source,
+                        })?;
+                }
+                empty
+            }
+            Node::Pane { .. } => {
+                return Err(CommandError::Invariant {
+                    stage: "remove structural child from a bare pane",
+                });
+            }
+        };
+        if !empty {
+            workspace.refresh_child_placements(parent);
+            return Ok(());
+        }
+        if let Some(ancestor) = ancestor {
+            workspace.remove_runtime_node(parent);
+            parent = ancestor.parent;
+            index = ancestor.index;
+        } else {
+            detach_root(workspace, root)?;
+            workspace.remove_runtime_node(parent);
+            return Ok(());
+        }
+    }
 }
 
 fn remove_split_child_from_roster(
@@ -1393,28 +1668,31 @@ fn merge_payload_into_tabs(
     target: NodeId,
     index: usize,
 ) -> Result<(), CommandError> {
-    let (items, selected, mru) = match payload {
-        DetachedPayload::Item { item, .. } => {
-            return insert_tabs(
-                workspace,
-                target,
-                index,
-                &[TabKey::for_item(item)],
-                Some(TabKey::for_item(item)),
-                None,
-            );
+    if matches!(payload, DetachedPayload::Node { .. })
+        && let Some(root) = workspace.node_root(target)
+    {
+        workspace.begin_root_edit(root);
+    }
+    if let Some(Node::Pane { item }) = workspace.node(target) {
+        let item = *item;
+        if let Some(root) = workspace.node_root(target) {
+            workspace.begin_root_edit(root);
         }
+        workspace.storage.nodes.replace(target, Node::tabs([item]));
+    }
+    let (items, selected, mru) = match payload {
+        DetachedPayload::Item { item, .. } => (
+            vec![TabKey::for_item(item)],
+            Some(TabKey::for_item(item)),
+            None,
+        ),
         DetachedPayload::Node {
             node,
-            items,
+            merge_tabs: true,
             selected,
             mru,
-            is_tabs,
             ..
         } => {
-            if !is_tabs {
-                return Err(CommandError::SplitPayloadIntoTabs { node });
-            }
             let source =
                 workspace
                     .storage
@@ -1425,21 +1703,36 @@ fn merge_payload_into_tabs(
                         node,
                     })?;
             let Node::Tabs {
-                items: source_items,
+                items,
                 selected: source_selected,
                 mru: source_mru,
+                ..
             } = source
             else {
                 return Err(CommandError::NodeIsNotTabs { node });
             };
-            source_items.clear();
+            let items = std::mem::take(items);
             *source_selected = None;
             source_mru.clear();
-            (
-                items.into_iter().map(TabKey::for_item).collect::<Vec<_>>(),
-                selected,
-                mru,
-            )
+            workspace.remove_runtime_node(node);
+            (items, selected, mru)
+        }
+        DetachedPayload::Node { node, .. } => {
+            let tab = match workspace.node(node) {
+                Some(Node::Pane { item }) => {
+                    let tab = TabKey::for_item(*item);
+                    workspace.remove_runtime_node(node);
+                    tab
+                }
+                Some(_) => TabKey::for_layout(node),
+                None => {
+                    return Err(CommandError::MissingNode {
+                        role: ReferenceRole::Source,
+                        node,
+                    });
+                }
+            };
+            (vec![tab], Some(tab), None)
         }
     };
     insert_tabs(workspace, target, index, &items, selected, mru.as_deref())
@@ -1477,6 +1770,7 @@ fn insert_tabs(
         items,
         selected,
         mru: target_mru,
+        ..
     } = node
     else {
         return Err(CommandError::NodeIsNotTabs { node: tabs });
@@ -1495,6 +1789,10 @@ fn insert_tabs(
     }
     if target_was_empty && let Some(source_mru) = source_mru {
         *target_mru = source_mru.to_vec();
+        if let Some(item) = selected_item {
+            target_mru.retain(|entry| *entry != item);
+            target_mru.insert(0, item);
+        }
     } else {
         if let Some(item) = selected_item {
             target_mru.retain(|candidate| *candidate != item);
@@ -1507,6 +1805,14 @@ fn insert_tabs(
         }
     }
     workspace.repair_visible_tab_selection(tabs)?;
+    workspace.refresh_child_placements(tabs);
+    if let Some(root) = workspace.node_root(tabs) {
+        for tab in inserted {
+            if let Some(child) = tab.layout() {
+                workspace.assign_subtree(root, child, workspace.parent_link(root, child));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1517,8 +1823,15 @@ fn insert_payload_at_edge(
 ) -> Result<NodeId, CommandError> {
     workspace.begin_root_edit(target.root());
     let payload_node = match payload {
-        DetachedPayload::Item { item, .. } => {
-            let node = workspace.insert_runtime_node(Node::tabs([*item]));
+        DetachedPayload::Item {
+            item, standalone, ..
+        } => {
+            let value = if *standalone {
+                Node::pane(*item)
+            } else {
+                Node::tabs([*item])
+            };
+            let node = workspace.insert_runtime_node(value);
             workspace.place_node(target.root(), node, None);
             node
         }
@@ -1528,27 +1841,19 @@ fn insert_payload_at_edge(
         }
     };
     let (axis, before) = edge_axis_and_order(target.edge());
-    if let Some(parent) = workspace.parent_link(target.root(), target.node()) {
-        let parent_axis = match workspace.storage.nodes.get(parent.parent) {
-            Some(Node::Split { axis, .. }) => *axis,
-            _ => {
-                return Err(CommandError::Invariant {
-                    stage: "inspect edge target parent",
-                });
-            }
-        };
-        if parent_axis == axis {
-            split_existing_branch(
-                workspace,
-                parent.parent,
-                target.node(),
-                payload_node,
-                before,
-                target.fraction().get(),
-                axis,
-            )?;
-            return Ok(parent.parent);
-        }
+    if let Some(parent) = workspace.parent_link(target.root(), target.node())
+        && matches!(workspace.node(parent.parent), Some(Node::Split { axis: parent_axis, .. }) if *parent_axis == axis)
+    {
+        split_existing_branch(
+            workspace,
+            parent.parent,
+            target.node(),
+            payload_node,
+            before,
+            target.fraction().get(),
+            axis,
+        )?;
+        return Ok(parent.parent);
     }
     wrap_target_branch(
         workspace,
@@ -1648,6 +1953,7 @@ fn wrap_target_branch(
         axis,
         children,
         weights,
+        layout_title: None,
     });
     if let Some(parent) = previous_parent {
         let node =
@@ -1659,17 +1965,10 @@ fn wrap_target_branch(
                     role: ReferenceRole::Target,
                     node: parent.parent,
                 })?;
-        let Node::Split { children, .. } = node else {
-            return Err(CommandError::NodeIsNotSplit {
-                node: parent.parent,
-            });
-        };
-        let slot = children
-            .get_mut(parent.index)
-            .ok_or(CommandError::Invariant {
+        node.replace_child(parent.index, wrapper)
+            .map_err(|_| CommandError::Invariant {
                 stage: "replace wrapped target branch",
             })?;
-        *slot = wrapper;
     } else {
         let mut record = workspace
             .storage
@@ -1692,39 +1991,27 @@ fn wrap_target_branch(
     Ok(wrapper)
 }
 
-fn move_item_within_same_tabs(
-    workspace: &mut Workspace,
-    source: &ItemSource,
-    target: &DockTarget,
-) -> Result<Option<bool>, CommandError> {
+fn item_move_is_noop(workspace: &Workspace, source: &ItemSource, target: &DockTarget) -> bool {
+    if source.tabs().is_none() && source.owner_node() == target_node(target) {
+        return true;
+    }
     match target {
-        DockTarget::Center(target) if target.tabs() == source.tabs() => Ok(Some(false)),
-        DockTarget::TabGap { target, index } if target.tabs() == source.tabs() => {
-            let (_, _, changed) = reorder_tab(
-                workspace,
-                source.tabs(),
-                TabKey::for_item(source.item()),
-                *index,
-            )?;
-            Ok(Some(changed))
-        }
         DockTarget::InnerEdge(target) | DockTarget::OuterEdge(target)
-            if target.node() == source.tabs() =>
+            if Some(target.node()) == source.tabs() =>
         {
-            let is_noncentral_singleton = matches!(
-                workspace.storage.nodes.get(source.tabs()),
+            matches!(
+                workspace.storage.nodes.get(source.owner_node()),
                 Some(Node::Tabs { items, .. }) if items.len() == 1
             ) && workspace
                 .storage
                 .roots
                 .get(&source.root())
-                .is_some_and(|record| record.central != Some(source.tabs()));
-            Ok(is_noncentral_singleton.then_some(false))
+                .is_some_and(|record| record.central != source.tabs())
         }
         DockTarget::Center(_)
         | DockTarget::TabGap { .. }
         | DockTarget::InnerEdge(_)
-        | DockTarget::OuterEdge(_) => Ok(None),
+        | DockTarget::OuterEdge(_) => false,
     }
 }
 
@@ -1734,6 +2021,12 @@ fn reorder_tab(
     item: TabKey,
     insertion_index: usize,
 ) -> Result<(usize, usize, bool), CommandError> {
+    let has_layout = workspace
+        .node(tabs)
+        .is_some_and(|node| node.child_nodes().next().is_some());
+    if has_layout && let Some(root) = workspace.node_root(tabs) {
+        workspace.begin_root_edit(root);
+    }
     let node = workspace
         .storage
         .nodes
@@ -1766,15 +2059,32 @@ fn reorder_tab(
     }
     items.remove(from);
     items.insert(to, item);
+    if has_layout {
+        workspace.refresh_child_placements(tabs);
+    }
     Ok((from, to, true))
 }
 
 pub(super) fn remove_item(
     workspace: &mut Workspace,
-    tabs: NodeId,
+    owner: NodeId,
     item: ItemId,
 ) -> Result<(), CommandError> {
-    let tab = TabKey::for_item(item);
+    if let Some(Node::Pane { item: actual }) = workspace.node(owner) {
+        if *actual != item {
+            return Err(CommandError::ItemNotInTabs { tabs: owner, item });
+        }
+        let root = workspace.node_root(owner).ok_or(CommandError::Invariant {
+            stage: "locate removed pane root",
+        })?;
+        detach_node(workspace, root, owner)?;
+        workspace.remove_runtime_node(owner);
+        return Ok(());
+    }
+    remove_tab(workspace, owner, TabKey::for_item(item))
+}
+
+fn remove_tab(workspace: &mut Workspace, tabs: NodeId, tab: TabKey) -> Result<(), CommandError> {
     let node = workspace
         .storage
         .nodes
@@ -1787,6 +2097,7 @@ pub(super) fn remove_item(
         items,
         selected,
         mru,
+        ..
     } = node
     else {
         return Err(CommandError::NodeIsNotTabs { node: tabs });
@@ -1794,20 +2105,14 @@ pub(super) fn remove_item(
     let index = items
         .iter()
         .position(|entry| *entry == tab)
-        .ok_or(CommandError::ItemNotInTabs { tabs, item })?;
+        .ok_or(CommandError::TabNotInTabs { tabs, tab })?;
     items.remove(index);
-    let was_selected = *selected == Some(tab);
-    let mru_index =
-        mru.iter()
-            .position(|candidate| *candidate == tab)
-            .ok_or(CommandError::Invariant {
-                stage: "locate removed item in tabs MRU",
-            })?;
-    mru.remove(mru_index);
-    if was_selected {
+    mru.retain(|entry| *entry != tab);
+    if *selected == Some(tab) {
         *selected = mru.first().copied();
     }
     workspace.repair_visible_tab_selection(tabs)?;
+    workspace.refresh_child_placements(tabs);
     Ok(())
 }
 

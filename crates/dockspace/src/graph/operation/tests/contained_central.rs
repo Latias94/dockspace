@@ -124,7 +124,9 @@ fn checked_in_both_paths(workspace: &Workspace, command: WorkspaceCommand) -> Wo
     let tabs = workspace.root(SURVIVOR_ROOT).unwrap().node;
     let selected = match workspace.node(tabs).unwrap() {
         Node::Tabs { selected, .. } => selected.unwrap(),
-        Node::Split { .. } => panic!("the destination fixture is one tabs leaf"),
+        Node::Pane { .. } | Node::Split { .. } | Node::Grid { .. } => {
+            panic!("the destination fixture is one tabs leaf")
+        }
     };
     let noop = WorkspaceCommand::Select {
         source: workspace
@@ -160,7 +162,7 @@ fn moving_the_last_main_central_item_preserves_the_empty_main_region() {
     assert_eq!(candidate.surface(SOURCE).unwrap().main_root, Some(MAIN));
     assert!(matches!(
         candidate.node(central),
-        Some(Node::Tabs { items, selected: None, mru }) if items.is_empty() && mru.is_empty()
+        Some(Node::Tabs { items, selected: None, mru , .. }) if items.is_empty() && mru.is_empty()
     ));
     assert_items(&candidate, &[FIRST, DESTINATION]);
 }
@@ -479,7 +481,8 @@ fn creating_a_new_root_from_a_contained_central_singleton_requires_rehome() {
         source: workspace
             .capture_item_source(SURVIVOR_ROOT, destination, DESTINATION)
             .unwrap()
-            .as_tab_source(),
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     };
     for commands in [vec![command.clone()], vec![noop, command]] {
         let error = WorkspaceTransaction::from_commands(commands.clone())

@@ -98,7 +98,7 @@ fn select_b(frame: &mut DockspaceHostFrame<'_>) -> dockspace::runtime::PreparedS
 #[test]
 fn current_action_prepared_after_independent_selection_uses_current_candidate() {
     let mut session = session();
-    assert!(!session.view().item(B2).unwrap().is_selected());
+    assert!(!session.view().item(B2).unwrap().is_active());
     let mut frame = session.begin_host_frame().expect("input frame begins");
     let initial = frame.version();
     frame.select_item_current(A2).expect("A selection stages");
@@ -120,14 +120,14 @@ fn current_action_prepared_after_independent_selection_uses_current_candidate() 
             .view()
             .item(A2)
             .expect("A2 remains open")
-            .is_selected()
+            .is_active()
     );
     assert!(
         session
             .view()
             .item(B2)
             .expect("B2 remains open")
-            .is_selected()
+            .is_active()
     );
     assert!(
         !report
@@ -175,7 +175,7 @@ fn contained_resize_uses_the_version_of_the_candidate_it_observed() {
         } else {
             assert!(after.width() > before.width());
         }
-        assert!(session.view().item(A2).unwrap().is_selected());
+        assert!(session.view().item(A2).unwrap().is_active());
     }
 }
 
@@ -195,14 +195,14 @@ fn action_captured_before_candidate_advance_remains_stale() {
             .view()
             .item(A2)
             .expect("A2 remains open")
-            .is_selected()
+            .is_active()
     );
     assert!(
         !session
             .view()
             .item(B2)
             .expect("B2 remains open")
-            .is_selected()
+            .is_active()
     );
     assert!(
         report
@@ -235,7 +235,7 @@ fn action_from_another_session_is_rejected_at_submission() {
             .view()
             .item(B2)
             .expect("B2 remains open")
-            .is_selected()
+            .is_active()
     );
 }
 

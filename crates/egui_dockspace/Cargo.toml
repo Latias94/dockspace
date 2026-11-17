@@ -69,6 +69,16 @@ required-features = ["example-app"]
 test = true
 
 [[example]]
+name = "composable"
+required-features = ["example-app"]
+test = true
+
+[[example]]
+name = "shared_grid"
+required-features = ["wgpu"]
+test = true
+
+[[example]]
 name = "background_save"
 required-features = ["example-app"]
 test = true

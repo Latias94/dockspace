@@ -203,7 +203,7 @@ fn pane_content(fixture: &Fixture) -> LogicalRect {
     target_plan(fixture)
         .pane_records()
         .iter()
-        .find(|pane| pane.id().root == ROOT && pane.id().tabs == fixture.tabs)
+        .find(|pane| pane.id().root == ROOT && pane.owner_node() == fixture.tabs)
         .expect("the target tabs expose one pane")
         .content_bounds()
 }
@@ -212,7 +212,7 @@ fn pane_content_for(fixture: &Fixture, tabs: NodeId) -> LogicalRect {
     target_plan(fixture)
         .pane_records()
         .iter()
-        .find(|pane| pane.id().root == ROOT && pane.id().tabs == tabs)
+        .find(|pane| pane.id().root == ROOT && pane.owner_node() == tabs)
         .expect("the requested tabs expose one pane")
         .content_bounds()
 }
@@ -675,7 +675,7 @@ fn magnetic_edge_latch_releases_after_the_configured_hysteresis_envelope() {
         .workspace()
         .locate_item_by_id(MOVED_ITEM)
         .expect("the moved item remains present");
-    assert_eq!(moved.0, RootId::new(2));
+    assert_eq!(moved.root, RootId::new(2));
 }
 
 #[test]
@@ -779,21 +779,25 @@ fn top_and_bottom_buttons_publish_source_aware_future_layout_previews() {
         assert!(active.eligibility().is_eligible());
         assert_eq!(active.target_id(), expected.target);
         let preview = match edge {
-            Edge::Top => rect(0.0, 0.0, 400.0, 149.5),
-            Edge::Bottom => rect(0.0, 150.5, 400.0, 149.5),
+            Edge::Top => rect(0.0, 28.0, 400.0, 121.5),
+            Edge::Bottom => rect(0.0, 178.5, 400.0, 121.5),
             Edge::Left | Edge::Right => unreachable!("test uses only vertical edges"),
         };
         assert_ne!(preview, expected.preview);
-        assert!(matches!(
-            fixture
-                .engine
-                .interaction()
-                .preview()
-                .expect("edge preview must exist")
-                .visual(),
-            PreviewVisual::Dock { target, rect, .. }
-                if *target == expected.target && *rect == preview
-        ));
+        let visual = fixture
+            .engine
+            .interaction()
+            .preview()
+            .expect("edge preview must exist")
+            .visual();
+        let PreviewVisual::Dock { target, rect, .. } = visual else {
+            panic!("the source-aware edge must have a docking preview: {visual:?}");
+        };
+        assert_eq!(*target, expected.target);
+        assert_eq!(
+            *rect, preview,
+            "{edge:?} must preview the real item content below its tab bar"
+        );
     }
 }
 

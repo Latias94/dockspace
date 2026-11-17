@@ -93,7 +93,7 @@ fn an_unfocused_snapshot_rejects_new_mouse_edges_and_a_late_release() {
     ));
     assert!(!dockspace.has_active_gesture());
     assert_eq!(dockspace.version(), version);
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
 
     let (_, statuses) = frame(&context, &mut dockspace, 1.2, vec![button(target, false)]);
     assert!(statuses.is_empty());
@@ -101,7 +101,7 @@ fn an_unfocused_snapshot_rejects_new_mouse_edges_and_a_late_release() {
     assert_eq!(dockspace.version(), version);
     frame(&context, &mut dockspace, 1.3, vec![button(target, true)]);
     assert!(dockspace.has_active_gesture());
-    assert!(dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(dockspace.view().item(SECOND).unwrap().is_active());
     frame(&context, &mut dockspace, 1.4, vec![button(target, false)]);
     assert!(!dockspace.has_active_gesture());
 }
@@ -121,7 +121,7 @@ fn a_focused_snapshot_preserves_ordered_focus_loss_and_gain() {
             [DockspaceManipulationStatus::Cancelled(_)]
         ));
         assert_eq!(dockspace.has_active_gesture(), regain);
-        assert_eq!(dockspace.view().item(SECOND).unwrap().is_selected(), regain);
+        assert_eq!(dockspace.view().item(SECOND).unwrap().is_active(), regain);
         if !regain {
             assert_eq!(dockspace.version(), version);
         }
@@ -160,7 +160,7 @@ fn an_unfocused_snapshot_retires_touch_contacts_and_cannot_rearm_them() {
         vec![contact(TouchPhase::End, target)],
     );
     assert_eq!(dockspace.version(), version);
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
     frame(
         &context,
         &mut dockspace,
@@ -173,7 +173,7 @@ fn an_unfocused_snapshot_retires_touch_contacts_and_cannot_rearm_them() {
         1.4,
         vec![contact(TouchPhase::End, target)],
     );
-    assert!(dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(dockspace.view().item(SECOND).unwrap().is_active());
     assert!(!dockspace.has_active_gesture());
 }
 
@@ -212,7 +212,7 @@ fn a_discarded_touch_in_an_unfocused_interval_does_not_suppress_the_focused_mous
             dockspace.has_active_gesture(),
             "touch before loss={touch_before_loss}: a retired or discarded contact cannot suppress a real press after focus returns"
         );
-        assert!(dockspace.view().item(SECOND).unwrap().is_selected());
+        assert!(dockspace.view().item(SECOND).unwrap().is_active());
         let selected = dockspace.version();
         frame(&context, &mut dockspace, 1.2, vec![button(target, false)]);
         assert!(!dockspace.has_active_gesture());
@@ -223,6 +223,7 @@ fn a_discarded_touch_in_an_unfocused_interval_does_not_suppress_the_focused_mous
                 .item(SECOND)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             [FIRST, SECOND],

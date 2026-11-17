@@ -68,8 +68,8 @@ fn contained_group_close_waits_for_application_approval_for_every_activation() {
                 assert_eq!(location.contained(), Some(FLOATING), "{name}");
             }
         };
-        let (close, _) = accesskit_node(&stable.output, Role::Button, "Close floating Second");
-        let point = node_center(&stable.output, Role::Button, "Close floating Second");
+        let (close, _) = accesskit_node(&stable.output, Role::Button, "Close floating Tabs");
+        let point = node_center(&stable.output, Role::Button, "Close floating Tabs");
         let activated = match activation {
             Activation::Pointer => {
                 let _ = run_frame(
@@ -307,11 +307,19 @@ fn contained_group_close_veto_preserves_every_item_through_the_public_facade() {
         assert_eq!(location.root(), FLOATING_ROOT);
         assert_eq!(location.contained(), Some(FLOATING));
         assert_eq!(
-            location.tabs().items().collect::<Vec<_>>(),
+            location
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
             &[SECOND, THIRD]
         );
         assert_eq!(
-            location.tabs().selected().and_then(|tab| tab.item()),
+            location
+                .tabs()
+                .expect("item is an inline tab")
+                .selected()
+                .and_then(|tab| tab.item()),
             Some(SECOND)
         );
     }
@@ -426,11 +434,19 @@ fn contained_group_close_deferred_allow_commits_once_through_the_public_facade()
         assert_eq!(location.root(), FLOATING_ROOT);
         assert_eq!(location.contained(), Some(FLOATING));
         assert_eq!(
-            location.tabs().items().collect::<Vec<_>>(),
+            location
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
             &[SECOND, THIRD]
         );
         assert_eq!(
-            location.tabs().selected().and_then(|tab| tab.item()),
+            location
+                .tabs()
+                .expect("item is an inline tab")
+                .selected()
+                .and_then(|tab| tab.item()),
             Some(SECOND)
         );
     }
@@ -691,11 +707,19 @@ fn contained_presentation_menu_close_group_requests_a_root_close_plan() {
         assert_eq!(location.root(), FLOATING_ROOT);
         assert_eq!(location.contained(), Some(FLOATING));
         assert_eq!(
-            location.tabs().items().collect::<Vec<_>>(),
+            location
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
             &[SECOND, THIRD]
         );
         assert_eq!(
-            location.tabs().selected().and_then(|tab| tab.item()),
+            location
+                .tabs()
+                .expect("item is an inline tab")
+                .selected()
+                .and_then(|tab| tab.item()),
             Some(SECOND)
         );
     }

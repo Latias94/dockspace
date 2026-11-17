@@ -6,7 +6,7 @@ use egui::{Pos2, TouchDeviceId, TouchId, TouchPhase};
 
 use super::{
     DockspaceInteractionError, PointerDeviceKind, PointerSample, SurfacePointerButton,
-    SurfacePointerCancelReason, SurfacePointerEvent, SurfacePointerId,
+    SurfacePointerCancelReason, SurfacePointerEvent, SurfacePointerId, TabGroupDockMode,
 };
 
 #[derive(Clone, Copy)]
@@ -47,6 +47,7 @@ impl TouchContacts {
         phase: TouchPhase,
         position: Pos2,
         docking_enabled: Option<bool>,
+        group_dock_mode: Option<TabGroupDockMode>,
     ) -> Result<Option<PointerSample>, DockspaceInteractionError> {
         let key = (device, id);
         let (contact, event) = match phase {
@@ -91,13 +92,19 @@ impl TouchContacts {
                 (contact, event)
             }
         };
-        Ok(Some(sample(contact, event, docking_enabled)))
+        Ok(Some(sample(
+            contact,
+            event,
+            docking_enabled,
+            group_dock_mode,
+        )))
     }
 
     pub(super) fn cancel_all(
         &mut self,
         reason: SurfacePointerCancelReason,
         docking_enabled: Option<bool>,
+        group_dock_mode: Option<TabGroupDockMode>,
     ) -> Vec<PointerSample> {
         std::mem::take(&mut self.active)
             .into_values()
@@ -106,6 +113,7 @@ impl TouchContacts {
                     contact,
                     SurfacePointerEvent::StreamCancelled(reason),
                     docking_enabled,
+                    group_dock_mode,
                 )
             })
             .collect()
@@ -124,6 +132,25 @@ impl TouchContacts {
                     contact,
                     SurfacePointerEvent::DockingEnabledChanged { enabled },
                     Some(enabled),
+                    None,
+                )
+            })
+    }
+
+    pub(super) fn group_dock_mode_changed(
+        &self,
+        mode: TabGroupDockMode,
+    ) -> impl Iterator<Item = PointerSample> {
+        self.active
+            .values()
+            .copied()
+            .map(move |contact| PointerSample {
+                position: None,
+                ..sample(
+                    contact,
+                    SurfacePointerEvent::GroupDockModeChanged { mode },
+                    None,
+                    Some(mode),
                 )
             })
     }
@@ -133,23 +160,26 @@ impl TouchContacts {
         pointer: SurfacePointerId,
         event: SurfacePointerEvent,
         docking_enabled: Option<bool>,
+        group_dock_mode: Option<TabGroupDockMode>,
     ) -> Option<PointerSample> {
         self.active
             .values()
             .find(|contact| contact.pointer == pointer)
             .copied()
-            .map(|contact| sample(contact, event, docking_enabled))
+            .map(|contact| sample(contact, event, docking_enabled, group_dock_mode))
     }
 
     pub(super) fn capture_changed(
         &self,
         docking_enabled: Option<bool>,
+        group_dock_mode: Option<TabGroupDockMode>,
     ) -> impl Iterator<Item = PointerSample> {
         self.active.values().copied().map(move |contact| {
             sample(
                 contact,
                 SurfacePointerEvent::CaptureChanged,
                 docking_enabled,
+                group_dock_mode,
             )
         })
     }
@@ -159,6 +189,7 @@ fn sample(
     contact: Contact,
     event: SurfacePointerEvent,
     docking_enabled: Option<bool>,
+    group_dock_mode: Option<TabGroupDockMode>,
 ) -> PointerSample {
     PointerSample {
         pointer: contact.pointer,
@@ -166,5 +197,6 @@ fn sample(
         event,
         position: Some(contact.position),
         docking_enabled,
+        group_dock_mode,
     }
 }

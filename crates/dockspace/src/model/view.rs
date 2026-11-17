@@ -1,10 +1,12 @@
-use std::{collections::BTreeSet, fmt};
+use std::fmt;
 
 use crate::geometry::LogicalRect;
 use crate::graph::{Node, SplitWeight, SurfacePresentation, Workspace};
 use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
 
-use super::{DockspaceAxis, DockspaceLayout, RootAllocation};
+use super::{
+    DockspaceAxis, DockspaceGridShape, DockspaceGridShares, DockspaceLayout, RootAllocation,
+};
 use crate::model::PreparedTabsGroup;
 
 /// Read-only product view of a validated docking workspace.
@@ -97,6 +99,20 @@ impl<'a> DockspaceView<'a> {
         })
     }
 
+    /// Borrows a currently owned node by its session-local opaque identity.
+    ///
+    /// Removed identities return `None`. A key is a query handle within its
+    /// originating session; it is neither persistent nor mutation authority.
+    #[must_use]
+    pub fn node(self, key: crate::ids::NodeKey) -> Option<DockspaceNodeView<'a>> {
+        let root = self.workspace.node_root(key.0)?;
+        Some(DockspaceNodeView {
+            workspace: self.workspace,
+            node: key.0,
+            central: self.workspace.root(root)?.central,
+        })
+    }
+
     /// Returns a contained-floating presentation by stable identity.
     #[must_use]
     pub fn contained(self, id: FloatingPresentationId) -> Option<DockspaceContainedView<'a>> {
@@ -115,13 +131,19 @@ impl<'a> DockspaceView<'a> {
     /// This query hides runtime node identities and returns `None` when the item is not open.
     #[must_use]
     pub fn item(self, item: ItemId) -> Option<DockspaceItemView<'a>> {
-        let (root, tabs, tab_index) = self.workspace.locate_item_by_id(item)?;
-        let Node::Tabs {
-            items, selected, ..
-        } = self.workspace.node(tabs)?
-        else {
-            return None;
-        };
+        let location = self.workspace.locate_item_by_id(item)?;
+        let root = location.root;
+        let tabs = location.tabs().and_then(|node| {
+            self.workspace.node(node).map(|_| DockspaceTabsView {
+                workspace: self.workspace,
+                node,
+                central: self
+                    .workspace
+                    .root(root)
+                    .is_some_and(|record| record.central == Some(node)),
+                central_node: self.workspace.root(root).and_then(|record| record.central),
+            })
+        });
         let (surface, contained) = match self.workspace.presentation_for_root(root)? {
             crate::graph::workspace::RootPresentationOwner::Main { surface } => (surface, None),
             crate::graph::workspace::RootPresentationOwner::Contained { surface, floating } => {
@@ -133,16 +155,9 @@ impl<'a> DockspaceView<'a> {
             surface,
             root,
             contained,
-            tab_index,
-            tabs: DockspaceTabsView {
-                items,
-                selected: *selected,
-                hidden_items: &self.workspace.storage().hidden_items,
-                central: self
-                    .workspace
-                    .root(root)
-                    .is_some_and(|record| record.central == Some(tabs)),
-            },
+            tab_index: location.tab_index(),
+            tabs,
+            workspace: self.workspace,
         })
     }
 }
@@ -154,8 +169,9 @@ pub struct DockspaceItemView<'a> {
     surface: SurfaceId,
     root: RootId,
     contained: Option<FloatingPresentationId>,
-    tab_index: usize,
-    tabs: DockspaceTabsView<'a>,
+    tab_index: Option<usize>,
+    tabs: Option<DockspaceTabsView<'a>>,
+    workspace: &'a Workspace,
 }
 
 impl<'a> DockspaceItemView<'a> {
@@ -174,7 +190,7 @@ impl<'a> DockspaceItemView<'a> {
     /// Returns whether this item remains owned but is excluded from presentation.
     #[must_use]
     pub fn is_hidden(self) -> bool {
-        self.tabs.hidden_items.contains(&self.item)
+        self.workspace.item_is_hidden(self.item)
     }
 
     /// Returns the logical surface presenting this item.
@@ -195,22 +211,23 @@ impl<'a> DockspaceItemView<'a> {
         self.contained
     }
 
-    /// Returns the item's index in the complete durable tab order, including hidden members.
+    /// Returns the inline item's durable roster index, or `None` for a bare pane.
     #[must_use]
-    pub const fn tab_index(self) -> usize {
+    pub const fn tab_index(self) -> Option<usize> {
         self.tab_index
     }
 
-    /// Returns the current tabs leaf without exposing its runtime node identity.
+    /// Returns the immediate inline tabs owner, or `None` for a bare pane.
+    /// A containing layout tab does not become a bare pane's immediate owner.
     #[must_use]
-    pub const fn tabs(self) -> DockspaceTabsView<'a> {
+    pub const fn tabs(self) -> Option<DockspaceTabsView<'a>> {
         self.tabs
     }
 
-    /// Returns whether this item is the selected visible content of its tabs leaf.
+    /// Returns whether this real content is visible through every ancestor tabs choice.
     #[must_use]
-    pub fn is_selected(self) -> bool {
-        self.tabs.visible_selected() == Some(TabKey::for_item(self.item))
+    pub fn is_active(self) -> bool {
+        self.workspace.item_is_active(self.item)
     }
 }
 
@@ -258,6 +275,27 @@ impl<'a> DockspaceSurfaceView<'a> {
                 allocation: record.allocation,
             })
         })
+    }
+
+    /// Visits active real content in main-root order, then contained roots back to front.
+    /// Inactive layout branches and hidden content are excluded.
+    pub fn active_items(self) -> impl Iterator<Item = ItemId> + 'a {
+        let workspace = self.workspace;
+        self.presentation
+            .main_root
+            .into_iter()
+            .chain(
+                self.presentation
+                    .contained
+                    .iter()
+                    .filter_map(move |floating| {
+                        workspace
+                            .contained_floating(*floating)
+                            .map(|record| record.root)
+                    }),
+            )
+            .filter_map(move |root| workspace.root(root).map(|record| record.node))
+            .flat_map(move |node| workspace.active_items_in_subtree(node))
     }
 
     /// Returns the number of contained-floating roots on this surface.
@@ -308,6 +346,16 @@ impl<'a> DockspaceRootView<'a> {
     #[must_use]
     pub const fn id(self) -> RootId {
         self.id
+    }
+
+    /// Visits all owned real content in visual preorder, including hidden and inactive content.
+    pub fn items(self) -> impl Iterator<Item = ItemId> + 'a {
+        self.workspace.items_in_subtree(self.content)
+    }
+
+    /// Visits active real content in visual layout order using selected tabs branches.
+    pub fn active_items(self) -> impl Iterator<Item = ItemId> + 'a {
+        self.workspace.active_items_in_subtree(self.content)
     }
 
     /// Returns the root topology without exposing its runtime identity.
@@ -366,30 +414,14 @@ impl<'a> DockspaceRootView<'a> {
     /// root that backs a fixed host surface.
     #[must_use]
     pub fn contains_only_item(self, item: ItemId) -> bool {
-        let mut pending = vec![self.content];
-        let mut found = false;
-        while let Some(node) = pending.pop() {
-            match self.workspace.node(node) {
-                Some(Node::Tabs { items, .. }) => {
-                    for candidate in items {
-                        if candidate.item() != Some(item) || found {
-                            return false;
-                        }
-                        found = true;
-                    }
-                }
-                Some(Node::Split { children, .. }) => pending.extend(children.iter().copied()),
-                None => return false,
-            }
-        }
-        found
+        self.workspace.collect_items_in_subtree(self.content) == [item]
     }
 
     /// Returns whether this root contains no content outside one captured tabs
     /// group.
     ///
     /// The captured group must still refer to the current node in this root.
-    /// Empty tabs leaves are ignored, which keeps the query aligned with root
+    /// Empty central anchors are ignored, which keeps the query aligned with root
     /// retirement after a nested split has been drained.
     #[must_use]
     pub fn contains_only_tabs_group(self, group: &PreparedTabsGroup) -> bool {
@@ -399,26 +431,40 @@ impl<'a> DockspaceRootView<'a> {
             return false;
         }
         let target = group.source.node;
-        let mut pending = vec![self.content];
-        let mut found = false;
-        while let Some(node) = pending.pop() {
-            match self.workspace.node(node) {
-                Some(Node::Tabs { items, .. }) if node == target => {
-                    if items.is_empty() || found {
-                        return false;
-                    }
-                    found = true;
-                }
-                Some(Node::Tabs { items, .. }) => {
-                    if !items.is_empty() {
-                        return false;
-                    }
-                }
-                Some(Node::Split { children, .. }) => pending.extend(children.iter().copied()),
-                None => return false,
-            }
+        if self.workspace.node_root(target) != Some(self.id) {
+            return false;
         }
-        found
+        let group_items = self.workspace.collect_items_in_subtree(target);
+        !group_items.is_empty()
+            && group_items.len() == self.workspace.collect_items_in_subtree(self.content).len()
+    }
+
+    /// Returns whether this root has no real content outside one exact tab.
+    ///
+    /// A layout tab includes every hidden and inactive descendant. The captured
+    /// membership must still match this root; this query grants no close or
+    /// native-window retirement permission.
+    #[must_use]
+    pub fn contains_only_tab(self, tab: &super::PreparedTab) -> bool {
+        let source = &tab.source;
+        if source.root() != self.id
+            || self.workspace.root_reference(self.id) != Some(source.reference())
+            || self
+                .workspace
+                .capture_tab_source(source.root(), source.tabs(), source.tab())
+                .as_ref()
+                .ok()
+                != Some(source)
+        {
+            return false;
+        }
+        match source.tab().item() {
+            Some(item) => self.contains_only_item(item),
+            None => source.tab().layout().is_some_and(|node| {
+                let count = self.workspace.items_in_subtree(node).count();
+                count != 0 && count == self.items().count()
+            }),
+        }
     }
 }
 
@@ -470,7 +516,7 @@ impl<'a> DockspaceContainedView<'a> {
     }
 }
 
-/// Read-only product view of one tabs or split node.
+/// Read-only product view of one real pane or structural container.
 #[derive(Clone, Copy)]
 pub struct DockspaceNodeView<'a> {
     workspace: &'a Workspace,
@@ -492,36 +538,78 @@ impl fmt::Debug for DockspaceNodeView<'_> {
                 .field("split", &split)
                 .finish();
         }
+        if let Some(grid) = self.grid() {
+            return formatter
+                .debug_struct("DockspaceNodeView")
+                .field("grid", &grid)
+                .finish();
+        }
+        if let Some(item) = self.item() {
+            return formatter
+                .debug_struct("DockspaceNodeView")
+                .field("item", &item)
+                .finish();
+        }
         formatter.write_str("DockspaceNodeView(<invalid>)")
     }
 }
 
 impl<'a> DockspaceNodeView<'a> {
+    /// Returns this session-local opaque identity without granting mutation authority.
+    #[must_use]
+    pub const fn key(self) -> crate::ids::NodeKey {
+        crate::ids::NodeKey(self.node)
+    }
+
+    /// Returns the root currently owning this real node.
+    #[must_use]
+    pub fn root(self) -> Option<DockspaceRootView<'a>> {
+        DockspaceView::new(self.workspace).root(self.workspace.node_root(self.node)?)
+    }
+
+    /// Visits all owned real content in visual preorder, including hidden and inactive content.
+    pub fn items(self) -> impl Iterator<Item = ItemId> + 'a {
+        self.workspace.items_in_subtree(self.node)
+    }
+
     /// Returns whether this subtree contributes visible content or an empty central target.
     #[must_use]
     pub fn has_visible_content(self) -> bool {
         self.workspace.node_has_visible_content(self.node)
     }
 
-    /// Returns whether this node is the root's central tabs leaf.
+    /// Returns whether this node is the root's central Tabs anchor.
     #[must_use]
     pub fn is_central(self) -> bool {
         self.central == Some(self.node)
     }
 
-    /// Returns a tabs view when this node is a tabs leaf.
+    /// Returns real content when this is a bare pane.
+    #[must_use]
+    pub fn item(self) -> Option<ItemId> {
+        match self.workspace.node(self.node) {
+            Some(Node::Pane { item }) => Some(*item),
+            _ => None,
+        }
+    }
+
+    /// Borrows this structural container's explicit layout title.
+    #[must_use]
+    pub fn layout_title(self) -> Option<&'a str> {
+        self.workspace.node(self.node)?.layout_title()
+    }
+
+    /// Returns a view when this node is a Tabs container.
     #[must_use]
     pub fn tabs(self) -> Option<DockspaceTabsView<'a>> {
         match self.workspace.node(self.node) {
-            Some(Node::Tabs {
-                items, selected, ..
-            }) => Some(DockspaceTabsView {
-                items,
-                selected: *selected,
-                hidden_items: &self.workspace.storage().hidden_items,
+            Some(Node::Tabs { .. }) => Some(DockspaceTabsView {
+                workspace: self.workspace,
+                node: self.node,
                 central: self.is_central(),
+                central_node: self.central,
             }),
-            Some(Node::Split { .. }) | None => None,
+            _ => None,
         }
     }
 
@@ -533,6 +621,7 @@ impl<'a> DockspaceNodeView<'a> {
                 axis,
                 children,
                 weights,
+                ..
             }) => Some(DockspaceSplitView {
                 workspace: self.workspace,
                 axis: (*axis).into(),
@@ -540,64 +629,185 @@ impl<'a> DockspaceNodeView<'a> {
                 weights,
                 central: self.central,
             }),
-            Some(Node::Tabs { .. }) | None => None,
+            Some(Node::Pane { .. } | Node::Tabs { .. } | Node::Grid { .. }) | None => None,
+        }
+    }
+
+    /// Returns a grid view with one durable row-major child roster.
+    #[must_use]
+    pub fn grid(self) -> Option<DockspaceGridView<'a>> {
+        match self.workspace.node(self.node) {
+            Some(Node::Grid {
+                shape,
+                children,
+                shares,
+                ..
+            }) => Some(DockspaceGridView {
+                workspace: self.workspace,
+                shape: *shape,
+                children,
+                shares: shares.as_ref(),
+                central: self.central,
+            }),
+            _ => None,
         }
     }
 }
 
-/// Read-only product view of one tabs leaf.
+/// Read-only product view of a grid with shared row and column tracks.
+#[derive(Clone, Copy)]
+pub struct DockspaceGridView<'a> {
+    workspace: &'a Workspace,
+    shape: DockspaceGridShape,
+    children: &'a [NodeId],
+    shares: Option<&'a DockspaceGridShares>,
+    central: Option<NodeId>,
+}
+
+impl fmt::Debug for DockspaceGridView<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DockspaceGridView")
+            .field("shape", &self.shape)
+            .field("child_count", &self.children.len())
+            .field("shares", &self.shares)
+            .finish()
+    }
+}
+
+impl<'a> DockspaceGridView<'a> {
+    /// Returns declared dimensions without resolving Auto for a viewport.
+    #[must_use]
+    pub const fn shape(self) -> DockspaceGridShape {
+        self.shape
+    }
+
+    /// Borrows explicit shared track values, or `None` for equal default shares.
+    #[must_use]
+    pub const fn shares(self) -> Option<&'a DockspaceGridShares> {
+        self.shares
+    }
+
+    /// Returns the real durable child count, including hidden children.
+    #[must_use]
+    pub fn child_count(self) -> usize {
+        self.children.len()
+    }
+
+    /// Visits every real child in durable row-major order, including hidden children.
+    pub fn children(
+        self,
+    ) -> impl ExactSizeIterator<Item = DockspaceNodeView<'a>> + DoubleEndedIterator + 'a {
+        self.children
+            .iter()
+            .copied()
+            .map(move |node| DockspaceNodeView {
+                workspace: self.workspace,
+                node,
+                central: self.central,
+            })
+    }
+}
+
+/// One direct tab child without a representative descendant item.
+#[derive(Debug, Clone, Copy)]
+pub enum DockspaceTabView<'a> {
+    /// Compact real application content.
+    Item(ItemId),
+    /// A complete structural child layout.
+    Layout(DockspaceNodeView<'a>),
+}
+
+/// Read-only product view of one tabs container.
 #[derive(Debug, Clone, Copy)]
 pub struct DockspaceTabsView<'a> {
-    items: &'a [TabKey],
-    selected: Option<TabKey>,
-    hidden_items: &'a BTreeSet<ItemId>,
+    workspace: &'a Workspace,
+    node: NodeId,
     central: bool,
+    central_node: Option<NodeId>,
 }
 
 impl<'a> DockspaceTabsView<'a> {
-    /// Returns every direct child in durable tab order, including hidden members.
+    /// Returns this session-local opaque identity without granting mutation authority.
     #[must_use]
-    pub const fn tabs(self) -> &'a [TabKey] {
-        self.items
+    pub const fn key(self) -> crate::ids::NodeKey {
+        crate::ids::NodeKey(self.node)
     }
 
-    /// Iterates directly owned application items, including hidden members.
+    /// Returns every direct child key in durable order, including hidden members.
+    #[must_use]
+    pub fn tabs(self) -> &'a [TabKey] {
+        match self.workspace.node(self.node) {
+            Some(Node::Tabs { items, .. }) => items,
+            _ => &[],
+        }
+    }
+
+    /// Iterates each direct child as real content or a complete layout view.
+    pub fn children(self) -> impl DoubleEndedIterator<Item = DockspaceTabView<'a>> + Clone + 'a {
+        self.tabs()
+            .iter()
+            .copied()
+            .filter_map(move |tab| self.child(tab))
+    }
+
+    /// Returns one exact direct child.
+    #[must_use]
+    pub fn child(self, tab: TabKey) -> Option<DockspaceTabView<'a>> {
+        if !self.tabs().contains(&tab) {
+            return None;
+        }
+        if let Some(item) = tab.item() {
+            return Some(DockspaceTabView::Item(item));
+        }
+        let node = tab.layout()?;
+        Some(DockspaceTabView::Layout(DockspaceNodeView {
+            workspace: self.workspace,
+            node,
+            central: self.central_node,
+        }))
+    }
+
+    /// Borrows the authoritative label of one direct child.
+    #[must_use]
+    pub fn tab_label(self, tab: TabKey) -> Option<crate::graph::TabLabel<'a>> {
+        self.workspace.tab_label(self.node, tab)
+    }
+
+    /// Iterates directly owned real content, including hidden members.
     pub fn items(self) -> impl DoubleEndedIterator<Item = ItemId> + Clone + 'a {
-        self.items.iter().filter_map(|tab| tab.item())
+        self.tabs().iter().filter_map(|tab| tab.item())
     }
 
-    /// Returns the logical selected direct child, or `None` for an empty central container.
-    ///
-    /// A completely hidden stack retains a logical selection. Renderers should
-    /// use [`Self::visible_selected`] when deciding which content to present.
+    /// Returns the logical selected direct child.
     #[must_use]
-    pub const fn selected(self) -> Option<TabKey> {
-        self.selected
+    pub fn selected(self) -> Option<TabKey> {
+        match self.workspace.node(self.node) {
+            Some(Node::Tabs { selected, .. }) => *selected,
+            _ => None,
+        }
     }
 
-    /// Iterates visible direct children in their durable tab order.
+    /// Iterates visible direct children in durable order.
     pub fn visible_tabs(self) -> impl DoubleEndedIterator<Item = TabKey> + Clone + 'a {
-        self.items.iter().copied().filter(move |tab| {
-            tab.item()
-                .is_some_and(|item| !self.hidden_items.contains(&item))
-        })
+        self.tabs()
+            .iter()
+            .copied()
+            .filter(move |tab| self.workspace.tab_is_visible(*tab))
     }
 
-    /// Iterates visible directly owned application items in durable tab order.
+    /// Iterates visible directly owned real content.
     pub fn visible_items(self) -> impl DoubleEndedIterator<Item = ItemId> + Clone + 'a {
         self.visible_tabs().filter_map(TabKey::item)
     }
 
-    /// Returns the selected visible child, or `None` for empty or entirely hidden tabs.
+    /// Returns the selected eligible direct child.
     #[must_use]
     pub fn visible_selected(self) -> Option<TabKey> {
-        self.selected.filter(|tab| {
-            tab.item()
-                .is_some_and(|item| !self.hidden_items.contains(&item))
-        })
+        self.workspace.visible_tab_selection(self.node)
     }
 
-    /// Returns whether this leaf is the root's central docking anchor.
+    /// Returns whether this container is the root's retained central anchor.
     #[must_use]
     pub const fn is_central(self) -> bool {
         self.central

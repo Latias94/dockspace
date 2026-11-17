@@ -216,9 +216,7 @@ impl TabStripControlId {
     pub(crate) fn has_source_in(self, plan: &PresentationPlan) -> bool {
         let bar = self.bar();
         if matches!(self, Self::RevealTabBar(_)) {
-            plan.pane_records()
-                .iter()
-                .any(|pane| pane.id().root == bar.root && pane.id().tabs == bar.tabs)
+            plan.tabs_records().iter().any(|tabs| tabs.id() == bar)
         } else {
             plan.tab_bar_records()
                 .iter()

@@ -10,7 +10,7 @@ use std::{
 use anyhow::{Result, ensure};
 use dockspace::{
     geometry::{LogicalPoint, LogicalRect, LogicalSize},
-    model::{DockspaceNodeView, DockspaceView, ItemId, SurfaceId},
+    model::{DockspaceView, ItemId, SurfaceId},
     policy::{CloseCapability, DockItemRule},
     runtime::{DockspaceSession, SurfacePresentationArtifact},
 };
@@ -183,8 +183,8 @@ impl HostState {
             nodes.extend(contained.root().and_then(|root| root.content()));
         }
         let mut items = Vec::new();
-        while let Some(node) = nodes.pop() {
-            collect_items(node, &mut nodes, &mut items);
+        for node in nodes {
+            items.extend(node.items());
         }
         // Check declared close capabilities even while arrangement editing is locked.
         let policy = session.policy();
@@ -266,17 +266,5 @@ impl HostState {
         let message = error.to_string();
         eprintln!("GPUI docking: {message}");
         self.error = Some(message);
-    }
-}
-
-fn collect_items<'a>(
-    node: DockspaceNodeView<'a>,
-    nodes: &mut Vec<DockspaceNodeView<'a>>,
-    items: &mut Vec<ItemId>,
-) {
-    if let Some(tabs) = node.tabs() {
-        items.extend(tabs.items());
-    } else if let Some(split) = node.split() {
-        nodes.extend(split.children());
     }
 }

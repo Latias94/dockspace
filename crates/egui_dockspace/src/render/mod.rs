@@ -361,7 +361,7 @@ pub(crate) fn paint_surface(
         &mut dyn FnMut(&Ui, egui::Rect, Id) -> (Id, egui::LayerId),
     >,
 ) -> Result<ProductPaintOutput, DockspaceRuntimeError> {
-    presentation_menu::invalidate_stale(ui, instance_id, plan.workspace_stamp());
+    presentation_menu::invalidate_stale(ui, instance_id, plan);
     prepare_menu_layer(ui, instance_id, plan.surface());
     let visuals = style.resolved_visuals(ui.visuals());
     resources.prepare_for_plan(plan, ui, panes)?;
@@ -723,12 +723,15 @@ fn paint_surface_program_operation(
         SurfacePaintProgramOperation::Pane(pane) => {
             tabs::paint_pane(context, pane, visual_context, paint);
         }
+        SurfacePaintProgramOperation::Tabs(record) => {
+            tabs::paint_tabs(context, record, visual_context, paint);
+        }
         SurfacePaintProgramOperation::TabBar(bar) => {
             tabs::paint_tab_bar(context, bar, paint);
             presentation_menu::paint_tabs(context, bar, paint)?;
         }
         SurfacePaintProgramOperation::Tab(tab) => {
-            tabs::paint_tab_record(context, tab, paint);
+            tabs::paint_tab_record(context, tab, paint)?;
         }
         SurfacePaintProgramOperation::Splitter(splitter) => {
             splitters::paint_splitter(context, splitter, paint);

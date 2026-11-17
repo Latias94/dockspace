@@ -6,6 +6,7 @@ mod canonical_graph;
 mod central_allocation;
 mod command_model;
 mod command_sequences;
+mod composable_model;
 mod contained_placement;
 mod contained_presentation_update;
 mod contained_transform;

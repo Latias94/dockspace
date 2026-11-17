@@ -22,6 +22,13 @@ pub(crate) fn materialize_presentation_sample(
     ranks: &BTreeMap<PaneSceneId, usize>,
 ) -> Result<PresentationPlan, PresentationCompilationError> {
     let surface = target.surface();
+    if target.layout_facts().is_some_and(|facts| {
+        facts
+            .roots()
+            .any(|root| root.projection().nodes.topology_has_composition())
+    }) {
+        return Ok(target.clone());
+    }
     if target.popup().visual_for_surface(surface).is_some() {
         return Ok(target.clone());
     }
@@ -79,8 +86,12 @@ pub(crate) fn materialize_presentation_sample(
                     sampled.begin_surface_program_root(root.root(), presentation)?;
                 }
                 ResolvedSurfaceProgramStep::Operation { operation, .. } => match operation {
-                    ResolvedSurfaceProgramOperation::Pane(pane) => {
-                        let id = pane.id();
+                    ResolvedSurfaceProgramOperation::Tabs(tabs_record) => {
+                        let id = tabs_record.id();
+                        let pane = target
+                            .pane_records()
+                            .iter()
+                            .find(|pane| pane.containing_tab_bar() == Some(id));
                         let Some(Node::Tabs {
                             items: persistent_items,
                             ..
@@ -101,16 +112,31 @@ pub(crate) fn materialize_presentation_sample(
                                     surface,
                                     root: id.root,
                                 })?;
-                        let sampled_bounds =
-                            rects.get(&id).copied().unwrap_or_else(|| pane.bounds());
-                        let key = PaneSizingKey::new(
-                            id.root,
-                            id.tabs,
-                            selected.and_then(crate::ids::TabKey::item),
-                        );
-                        let sizing = root_layout
-                            .pane_sizing(key)
-                            .ok_or(SceneCompilationError::MissingPaneSizingMeasurement { key })?;
+                        let sampled_bounds = pane
+                            .and_then(|pane| rects.get(&pane.id()).copied())
+                            .map(|rect| {
+                                let inset =
+                                    tabs_record.content_bounds().y() - tabs_record.bounds().y();
+                                LogicalRect::from_min_max(
+                                    LogicalPoint::new(rect.x(), rect.y() - inset)?,
+                                    rect.max(),
+                                )
+                            })
+                            .transpose()?
+                            .unwrap_or_else(|| tabs_record.bounds());
+                        let content_top = pane
+                            .and_then(|pane| rects.get(&pane.id()))
+                            .map_or(tabs_record.content_bounds().y(), |rect| rect.y());
+                        let sizing = selected
+                            .and_then(crate::ids::TabKey::item)
+                            .map(|item| {
+                                let key = PaneSizingKey::new(id.root, item);
+                                root_layout.pane_sizing(key).ok_or(
+                                    SceneCompilationError::MissingPaneSizingMeasurement { key },
+                                )
+                            })
+                            .transpose()?
+                            .unwrap_or_default();
                         let maximum = root_layout
                             .projection()
                             .nodes
@@ -121,21 +147,24 @@ pub(crate) fn materialize_presentation_sample(
                             })?
                             .constraints
                             .max();
-                        let capped_bounds = LogicalRect::new(
-                            sampled_bounds.x(),
-                            sampled_bounds.y(),
-                            sizing
-                                .width()
-                                .maximum()
-                                .map_or(sampled_bounds.width(), |_| {
-                                    sampled_bounds.width().min(maximum.width())
-                                }),
-                            sizing
-                                .height()
-                                .maximum()
-                                .map_or(sampled_bounds.height(), |_| {
-                                    sampled_bounds.height().min(maximum.height())
-                                }),
+                        let capped_bounds = LogicalRect::from_min_max(
+                            sampled_bounds.min(),
+                            LogicalPoint::new(
+                                sizing
+                                    .width()
+                                    .maximum()
+                                    .map_or(sampled_bounds.max().x(), |_| {
+                                        (sampled_bounds.x() + maximum.width())
+                                            .min(sampled_bounds.max().x())
+                                    }),
+                                sizing
+                                    .height()
+                                    .maximum()
+                                    .map_or(sampled_bounds.max().y(), |_| {
+                                        (sampled_bounds.y() + maximum.height())
+                                            .min(sampled_bounds.max().y())
+                                    }),
+                            )?,
                         )?;
                         let bounds = clip_rect(capped_bounds, root_layout.bounds())?;
                         let presentation_menu_anchor = target
@@ -148,7 +177,7 @@ pub(crate) fn materialize_presentation_sample(
                                         tabs: id.tabs,
                                     })
                             });
-                        compile_tabs_leaf(
+                        let content = compile_tabs_leaf(
                             policy,
                             layout.config(),
                             requirements,
@@ -158,19 +187,48 @@ pub(crate) fn materialize_presentation_sample(
                             id.tabs,
                             0,
                             bounds,
+                            Some(content_top),
                             &items,
                             persistent_items,
                             selected,
-                            pane.layer(),
+                            tabs_record.layer(),
                             fraction,
                             tab_strip_states,
                             false,
                             presentation_menu_anchor,
                             None,
                             false,
+                            None,
                             &mut sampled,
                         )?;
+                        if let Some(item) = selected.and_then(crate::ids::TabKey::item) {
+                            let branch = Some(sampled.push_active_tab_choice(
+                                None,
+                                id.tabs,
+                                selected.expect("selected content has a key"),
+                            ));
+                            let pane_id = PaneSceneId {
+                                root: id.root,
+                                item,
+                            };
+                            sampled.push_pane_record(
+                                PaneRecord::new(
+                                    pane_id,
+                                    id.tabs,
+                                    content,
+                                    content,
+                                    tabs_record.layer(),
+                                )
+                                .with_context(
+                                    content,
+                                    Some(id),
+                                    branch,
+                                ),
+                            );
+                            sampled.push_surface_program_pane_operation(pane_id)?;
+                        }
                     }
+                    ResolvedSurfaceProgramOperation::Pane(_) => {}
                     ResolvedSurfaceProgramOperation::Splitter(record) => {
                         if sampled.partition_available(record.id().root) {
                             sampled.push_surface_program_root_operation(
@@ -193,7 +251,8 @@ pub(crate) fn materialize_presentation_sample(
                     ResolvedSurfaceProgramOperation::PresentationMenuAnchor(record)
                         if matches!(
                             record.host(),
-                            PresentationMenuAnchorHost::ContainedTitle(_)
+                            PresentationMenuAnchorHost::RootControls
+                                | PresentationMenuAnchorHost::ContainedTitle(_)
                         ) =>
                     {
                         sampled.push_surface_program_root_operation(

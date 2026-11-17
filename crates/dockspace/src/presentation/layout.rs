@@ -9,7 +9,7 @@ use crate::engine::transition::WorkspaceVersion;
 use crate::geometry::{Constraints, GeometryError, LogicalRect, LogicalSize, PaneSizing};
 #[cfg(test)]
 use crate::graph::WorkspaceData;
-use crate::graph::command::NodeSource;
+use crate::graph::command::{NodeSource, TrackWeights};
 use crate::graph::error::{CommandError, ReferenceRole};
 use crate::graph::workspace::WorkspaceIndex;
 use crate::graph::{
@@ -22,10 +22,14 @@ mod projection;
 pub use projection::{
     ChildProjection, LayoutProjection, NodeMap, NodeResult, SplitMap, SplitProjection,
 };
+mod grid;
+pub use grid::{GridMap, GridProjection, ResolvedGridShape};
+mod reflow;
+pub(crate) use reflow::FrozenRootLayout;
 
-mod resize_contact;
+mod resize_geometry;
 mod topology;
-pub(crate) use resize_contact::measure_resize_contacts;
+pub(crate) use resize_geometry::{ResizeGeometryFacts, measure_resize_geometry};
 
 use crate::graph::root_structure::{RootNodeKind, RootStructure};
 
@@ -171,15 +175,15 @@ pub enum LayoutMetricsError {
 /// validates the exact source owner reference and complete weight collection
 /// against the workspace being projected before using the override.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SplitWeightOverride<'state> {
+pub struct TrackWeightOverride<'state> {
     source: &'state NodeSource,
-    weights: &'state [SplitWeight],
+    weights: &'state TrackWeights,
 }
 
-impl<'state> SplitWeightOverride<'state> {
+impl<'state> TrackWeightOverride<'state> {
     /// Creates an override which will be validated during projection.
     #[must_use]
-    pub const fn new(source: &'state NodeSource, weights: &'state [SplitWeight]) -> Self {
+    pub const fn new(source: &'state NodeSource, weights: &'state TrackWeights) -> Self {
         Self { source, weights }
     }
 
@@ -191,7 +195,7 @@ impl<'state> SplitWeightOverride<'state> {
 
     /// Returns the proposed transient weights.
     #[must_use]
-    pub const fn weights(self) -> &'state [SplitWeight] {
+    pub const fn weights(self) -> &'state TrackWeights {
         self.weights
     }
 }
@@ -264,7 +268,7 @@ pub enum LayoutError {
     #[error(
         "split-weight override for root {override_root} cannot be used while projecting root {projected_root}"
     )]
-    SplitWeightOverrideRootMismatch {
+    TrackWeightOverrideRootMismatch {
         /// Root currently being projected.
         projected_root: RootId,
         /// Root captured by the override source.
@@ -272,22 +276,22 @@ pub enum LayoutError {
     },
     /// A split-weight override source is no longer exact for this workspace.
     #[error("split-weight override source is invalid: {source}")]
-    InvalidSplitWeightOverrideSource {
+    InvalidTrackWeightOverrideSource {
         /// Frozen-reference validation failure.
         #[source]
         source: CommandError,
     },
     /// More than one transient override names the same split.
     #[error("split node {node:?} has more than one transient weight override")]
-    DuplicateSplitWeightOverride { node: NodeId },
+    DuplicateTrackWeightOverride { node: NodeId },
     /// A transient weight override names a tabs leaf rather than a split.
     #[error("transient weight override node {node:?} is not a split")]
-    SplitWeightOverrideNodeNotSplit { node: NodeId },
+    TrackWeightOverrideNodeNotTracks { node: NodeId },
     /// Transient weights do not match the target split's child count.
     #[error(
         "split node {node:?} has {children} children but its transient override has {weights} weights"
     )]
-    SplitWeightOverrideLengthMismatch {
+    TrackWeightOverrideLengthMismatch {
         /// Target split.
         node: NodeId,
         /// Durable child count.
@@ -297,7 +301,7 @@ pub enum LayoutError {
     },
     /// Transient split weights are individually valid but not normalized.
     #[error("split node {node:?} transient weights are not normalized; sum is {sum}")]
-    SplitWeightOverrideNotNormalized {
+    TrackWeightOverrideNotNormalized {
         /// Target split.
         node: NodeId,
         /// Accumulated override weight.
@@ -536,13 +540,13 @@ pub fn project_root_with_overrides(
     bounds: LogicalRect,
     mut read_leaf: impl FnMut(NodeId) -> Option<Constraints>,
     metrics: LayoutMetrics,
-    weight_overrides: &[SplitWeightOverride<'_>],
+    weight_overrides: &[TrackWeightOverride<'_>],
 ) -> Result<LayoutProjection, LayoutError> {
     workspace
         .root(root)
         .ok_or(LayoutError::MissingRoot { root })?;
     let weight_overrides =
-        validate_split_weight_overrides(workspace, root, weight_overrides, None)?;
+        validate_track_weight_overrides(workspace, root, weight_overrides, None)?;
     let record = *workspace
         .root(root)
         .ok_or(LayoutError::MissingRoot { root })?;
@@ -568,6 +572,7 @@ pub fn project_root_with_overrides(
         false,
         None,
         &weight_overrides,
+        &BTreeMap::new(),
     )
 }
 
@@ -619,9 +624,20 @@ pub(crate) struct RootMeasurement<'workspace> {
     central_leaf_row: Option<usize>,
     minimums_only: bool,
     leaf_sizing: Option<BTreeMap<NodeId, PaneSizing>>,
+    tab_projections: BTreeMap<usize, (Option<usize>, f64)>,
 }
 
 impl RootMeasurement<'_> {
+    pub(crate) fn with_tab_content_insets(mut self, insets: &BTreeMap<NodeId, f64>) -> Self {
+        for (&row, (_, inset)) in &mut self.tab_projections {
+            *inset = insets
+                .get(&self.topology.nodes[row].id)
+                .copied()
+                .unwrap_or(0.0);
+        }
+        self
+    }
+
     pub(crate) fn minimum(&self) -> LogicalSize {
         self.minimum
     }
@@ -629,21 +645,21 @@ impl RootMeasurement<'_> {
     pub(crate) fn project(
         self,
         bounds: LogicalRect,
-        weight_overrides: &[SplitWeightOverride<'_>],
+        weight_overrides: &[TrackWeightOverride<'_>],
     ) -> Result<LayoutProjection, LayoutError> {
         let weights =
-            validate_split_weight_overrides(self.workspace, self.root, weight_overrides, None)?;
+            validate_track_weight_overrides(self.workspace, self.root, weight_overrides, None)?;
         self.project_with_weights(bounds, &weights)
     }
 
     pub(crate) fn project_with_index(
         self,
         bounds: LogicalRect,
-        weight_overrides: &[SplitWeightOverride<'_>],
+        weight_overrides: &[TrackWeightOverride<'_>],
         index: &WorkspaceIndex,
         version: WorkspaceVersion,
     ) -> Result<LayoutProjection, LayoutError> {
-        let weights = validate_split_weight_overrides(
+        let weights = validate_track_weight_overrides(
             self.workspace,
             self.root,
             weight_overrides,
@@ -655,7 +671,7 @@ impl RootMeasurement<'_> {
     fn project_with_weights(
         self,
         bounds: LogicalRect,
-        weight_overrides: &BTreeMap<NodeId, Vec<f64>>,
+        weight_overrides: &BTreeMap<NodeId, TrackWeights>,
     ) -> Result<LayoutProjection, LayoutError> {
         project_measurements(
             self.topology,
@@ -666,6 +682,7 @@ impl RootMeasurement<'_> {
             self.minimums_only,
             self.leaf_sizing.as_ref(),
             weight_overrides,
+            &self.tab_projections,
         )
     }
 }
@@ -673,13 +690,52 @@ impl RootMeasurement<'_> {
 #[allow(clippy::too_many_arguments)]
 fn project_measurements(
     topology: Arc<RootStructure>,
+    values: Vec<NodeResult>,
+    central: CentralRoute,
+    bounds: LogicalRect,
+    metrics: LayoutMetrics,
+    minimums_only: bool,
+    leaf_sizing: Option<&BTreeMap<NodeId, PaneSizing>>,
+    weight_overrides: &BTreeMap<NodeId, TrackWeights>,
+    tab_projections: &BTreeMap<usize, (Option<usize>, f64)>,
+) -> Result<LayoutProjection, LayoutError> {
+    let reflow = FrozenRootLayout::capture(
+        &topology,
+        &values,
+        &central,
+        bounds,
+        metrics,
+        minimums_only,
+        leaf_sizing,
+        weight_overrides,
+        tab_projections,
+    );
+    let mut projection = project_measurements_inner(
+        topology,
+        values,
+        central,
+        bounds,
+        metrics,
+        minimums_only,
+        leaf_sizing,
+        weight_overrides,
+        tab_projections,
+    )?;
+    projection.auto_reflow = reflow;
+    Ok(projection)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn project_measurements_inner(
+    topology: Arc<RootStructure>,
     mut values: Vec<NodeResult>,
     mut central: CentralRoute,
     bounds: LogicalRect,
     metrics: LayoutMetrics,
     minimums_only: bool,
     leaf_sizing: Option<&BTreeMap<NodeId, PaneSizing>>,
-    weight_overrides: &BTreeMap<NodeId, Vec<f64>>,
+    weight_overrides: &BTreeMap<NodeId, TrackWeights>,
+    tab_projections: &BTreeMap<usize, (Option<usize>, f64)>,
 ) -> Result<LayoutProjection, LayoutError> {
     if minimums_only {
         let minimum = values[0].constraints.min();
@@ -702,7 +758,7 @@ fn project_measurements(
                 continue;
             }
             let maximum = match &topology.nodes[row].kind {
-                RootNodeKind::Tabs => match leaf_sizing {
+                RootNodeKind::Pane { .. } | RootNodeKind::Tabs { .. } => match leaf_sizing {
                     Some(sizing) => {
                         let sizing = sizing.get(&topology.nodes[row].id).ok_or(
                             LayoutError::MissingLeafConstraints {
@@ -757,6 +813,26 @@ fn project_measurements(
                         bounded_axes,
                     )?
                 }
+                RootNodeKind::Grid { payload, .. } => {
+                    if let crate::model::DockspaceGridShape::Fixed { rows, columns } =
+                        payload.shape()
+                    {
+                        grid::grid_constraints(
+                            &topology,
+                            row,
+                            &values,
+                            ResolvedGridShape {
+                                rows: rows.get(),
+                                columns: columns.get(),
+                            },
+                            metrics,
+                            leaf_maximum,
+                        )?
+                        .max()
+                    } else {
+                        leaf_maximum
+                    }
+                }
             };
             let measurement = &mut values[row];
             measurement.constraints = Constraints::new(measurement.constraints.min(), maximum)?;
@@ -765,7 +841,10 @@ fn project_measurements(
     let mut projection = LayoutProjection {
         nodes: NodeMap::from_values(Arc::clone(&topology), values),
         splits: SplitMap::new(Arc::clone(&topology)),
+        grids: GridMap::default(),
+        auto_reflow: None,
     };
+    let initial_central = central.clone();
     project_subtree(
         &topology,
         bounds,
@@ -774,7 +853,36 @@ fn project_measurements(
         leaf_sizing.is_some(),
         weight_overrides,
         &mut projection,
+        tab_projections,
+        None,
     )?;
+    if !topology.grid_rows.is_empty() {
+        let shapes = projection
+            .grids
+            .iter()
+            .map(|(&node, grid)| (node, grid.shape))
+            .collect();
+        grid::remeasure_frozen_grids(
+            &topology,
+            &mut projection.nodes.values,
+            &shapes,
+            metrics,
+            bounds.size(),
+            tab_projections,
+        )?;
+        central = initial_central;
+        project_subtree(
+            &topology,
+            bounds,
+            metrics,
+            &mut central,
+            leaf_sizing.is_some(),
+            weight_overrides,
+            &mut projection,
+            tab_projections,
+            Some(&shapes),
+        )?;
+    }
     Ok(projection)
 }
 
@@ -816,20 +924,21 @@ fn project_draft(
         matches!(leaves, LeafMeasurements::Minimums(_)),
         None,
         &BTreeMap::new(),
+        &BTreeMap::new(),
     )
 }
 
-fn validate_split_weight_overrides(
+fn validate_track_weight_overrides(
     workspace: &Workspace,
     root: RootId,
-    overrides: &[SplitWeightOverride<'_>],
+    overrides: &[TrackWeightOverride<'_>],
     index: Option<(&WorkspaceIndex, WorkspaceVersion)>,
-) -> Result<BTreeMap<NodeId, Vec<f64>>, LayoutError> {
+) -> Result<BTreeMap<NodeId, TrackWeights>, LayoutError> {
     let mut validated = BTreeMap::new();
     for weight_override in overrides {
         let source = weight_override.source;
         if source.root() != root {
-            return Err(LayoutError::SplitWeightOverrideRootMismatch {
+            return Err(LayoutError::TrackWeightOverrideRootMismatch {
                 projected_root: root,
                 override_root: source.root(),
             });
@@ -847,39 +956,66 @@ fn validate_split_weight_overrides(
         } else {
             workspace.verify_reference(source.root(), source.node(), source.reference(), role)
         }
-        .map_err(|source| LayoutError::InvalidSplitWeightOverrideSource { source })?;
+        .map_err(|source| LayoutError::InvalidTrackWeightOverrideSource { source })?;
 
         if validated.contains_key(&source.node()) {
-            return Err(LayoutError::DuplicateSplitWeightOverride {
+            return Err(LayoutError::DuplicateTrackWeightOverride {
                 node: source.node(),
             });
         }
-        let Some(Node::Split { children, .. }) = workspace.node(source.node()) else {
-            return Err(LayoutError::SplitWeightOverrideNodeNotSplit {
-                node: source.node(),
-            });
-        };
-        if children.len() != weight_override.weights.len() {
-            return Err(LayoutError::SplitWeightOverrideLengthMismatch {
-                node: source.node(),
-                children: children.len(),
-                weights: weight_override.weights.len(),
-            });
+        let weights = weight_override.weights;
+        match (workspace.node(source.node()), weights) {
+            (Some(Node::Split { children, .. }), TrackWeights::Split(weights)) => {
+                if children.len() != weights.len() {
+                    return Err(LayoutError::TrackWeightOverrideLengthMismatch {
+                        node: source.node(),
+                        children: children.len(),
+                        weights: weights.len(),
+                    });
+                }
+                let sum = normalized_weight_sum(weights.iter().map(|weight| weight.get()));
+                if !sum.is_finite() || (sum - 1.0).abs() > NORMALIZED_WEIGHT_TOLERANCE {
+                    return Err(LayoutError::TrackWeightOverrideNotNormalized {
+                        node: source.node(),
+                        sum,
+                    });
+                }
+            }
+            (
+                Some(Node::Grid {
+                    shape, children, ..
+                }),
+                TrackWeights::Grid(shares),
+            ) => {
+                let rows = shares.rows().len();
+                let columns = shares.columns().len();
+                let cardinality = rows.checked_mul(columns).is_some_and(|capacity| {
+                    capacity >= children.len()
+                        && children.len() >= columns
+                        && children.len() > (rows - 1) * columns
+                });
+                let fixed_matches = match shape {
+                    crate::model::DockspaceGridShape::Fixed {
+                        rows: expected_rows,
+                        columns: expected_columns,
+                    } => rows == expected_rows.get() && columns == expected_columns.get(),
+                    crate::model::DockspaceGridShape::Auto => true,
+                };
+                if !cardinality || !fixed_matches {
+                    return Err(LayoutError::TrackWeightOverrideLengthMismatch {
+                        node: source.node(),
+                        children: children.len(),
+                        weights: rows.saturating_mul(columns),
+                    });
+                }
+            }
+            _ => {
+                return Err(LayoutError::TrackWeightOverrideNodeNotTracks {
+                    node: source.node(),
+                });
+            }
         }
-
-        let weights = weight_override
-            .weights
-            .iter()
-            .map(|weight| weight.get())
-            .collect::<Vec<_>>();
-        let sum = normalized_weight_sum(weights.iter().copied());
-        if !sum.is_finite() || (sum - 1.0).abs() > NORMALIZED_WEIGHT_TOLERANCE {
-            return Err(LayoutError::SplitWeightOverrideNotNormalized {
-                node: source.node(),
-                sum,
-            });
-        }
-        validated.insert(source.node(), weights);
+        validated.insert(source.node(), weights.clone());
     }
 
     Ok(validated)
@@ -962,6 +1098,33 @@ fn measure_root_with_reader<'workspace>(
         metrics,
         minimums_only,
     )?;
+    let mut values = values;
+    let mut tab_projections = BTreeMap::new();
+    if topology.has_composition() {
+        let mut active = vec![false; topology.nodes.len()];
+        active[0] = true;
+        for (row, node) in topology.nodes.iter().enumerate() {
+            values[row].visible &= active[row];
+            match &node.kind {
+                RootNodeKind::Tabs { children } => {
+                    let selected = workspace
+                        .visible_tab_selection(node.id)
+                        .and_then(crate::ids::TabKey::layout)
+                        .and_then(|node| topology.row(&node));
+                    tab_projections.insert(row, (selected, 0.0));
+                    for &child in &topology.children[children.clone()] {
+                        active[child] = values[row].visible && selected == Some(child);
+                    }
+                }
+                RootNodeKind::Split { children, .. } | RootNodeKind::Grid { children, .. } => {
+                    for &child in &topology.children[children.clone()] {
+                        active[child] = values[row].visible;
+                    }
+                }
+                RootNodeKind::Pane { .. } => {}
+            }
+        }
+    }
     Ok(RootMeasurement {
         workspace,
         root,
@@ -972,6 +1135,7 @@ fn measure_root_with_reader<'workspace>(
         central_leaf_row: preferred_central_row(record.allocation, central_leaf_row),
         minimums_only,
         leaf_sizing: None,
+        tab_projections,
     })
 }
 
@@ -1115,6 +1279,7 @@ fn total_splitter_extent(
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 enum CentralRoute {
     Absent,
     Tree {
@@ -1171,8 +1336,10 @@ fn project_subtree(
     metrics: LayoutMetrics,
     central: &mut CentralRoute,
     cap_frames: bool,
-    weight_overrides: &BTreeMap<NodeId, Vec<f64>>,
+    weight_overrides: &BTreeMap<NodeId, TrackWeights>,
     projection: &mut LayoutProjection,
+    tab_projections: &BTreeMap<usize, (Option<usize>, f64)>,
+    grid_shapes: Option<&BTreeMap<NodeId, ResolvedGridShape>>,
 ) -> Result<(), LayoutError> {
     let mut stack = Vec::with_capacity(topology.nodes.len().min(8));
     stack.push(ProjectionFrame::Enter { row: 0, bounds });
@@ -1200,6 +1367,46 @@ fn project_subtree(
                     &mut scratch,
                 )? {
                     stack.push(ProjectionFrame::ContinueSplit(state));
+                } else if matches!(&topology.nodes[row].kind, RootNodeKind::Grid { .. }) {
+                    let bounds = projection.nodes.at_row(row).rect;
+                    let placements = grid::prepare_grid_projection(
+                        topology,
+                        row,
+                        bounds,
+                        metrics,
+                        central,
+                        weight_overrides,
+                        grid_shapes,
+                        projection,
+                    )?;
+                    for (row, bounds) in placements.into_iter().rev() {
+                        stack.push(ProjectionFrame::Enter { row, bounds });
+                    }
+                } else if let RootNodeKind::Tabs { children } = &topology.nodes[row].kind
+                    && !children.is_empty()
+                {
+                    let (selected, inset) =
+                        tab_projections.get(&row).copied().unwrap_or((None, 0.0));
+                    let rect = projection.nodes.at_row(row).rect;
+                    let inset = inset.min(rect.height());
+                    let content = LogicalRect::new(
+                        rect.x(),
+                        rect.y() + inset,
+                        rect.width(),
+                        (rect.height() - inset).max(0.0),
+                    )?;
+                    for &child in topology.children[children.clone()].iter().rev() {
+                        let child_bounds =
+                            if selected == Some(child) && projection.nodes.at_row(child).visible {
+                                content
+                            } else {
+                                LogicalRect::new(content.x(), content.y(), 0.0, 0.0)?
+                            };
+                        stack.push(ProjectionFrame::Enter {
+                            row: child,
+                            bounds: child_bounds,
+                        });
+                    }
                 }
             }
             ProjectionFrame::ContinueSplit(state) => {
@@ -1220,7 +1427,7 @@ fn prepare_split_projection(
     metrics: LayoutMetrics,
     central: &mut CentralRoute,
     cap_frames: bool,
-    weight_overrides: &BTreeMap<NodeId, Vec<f64>>,
+    weight_overrides: &BTreeMap<NodeId, TrackWeights>,
     projection: &mut LayoutProjection,
     scratch: &mut ProjectionScratch,
 ) -> Result<Option<SplitProjectionState>, LayoutError> {
@@ -1247,8 +1454,20 @@ fn prepare_split_projection(
         ..
     } = &node.kind
     else {
-        if matches!(central, CentralRoute::Tree { leaf, .. } if *leaf == row) {
-            *central = CentralRoute::Absent;
+        match central {
+            CentralRoute::Tree { leaf, .. } if *leaf == row => *central = CentralRoute::Absent,
+            CentralRoute::Tree { leaf, next } if *next == row => {
+                if let RootNodeKind::Tabs { children } = &node.kind {
+                    if let Some(&child) = topology.children[children.clone()]
+                        .iter()
+                        .rev()
+                        .find(|&&child| child <= *leaf)
+                    {
+                        *next = child;
+                    }
+                }
+            }
+            _ => {}
         }
         return Ok(None);
     };
@@ -1294,23 +1513,28 @@ fn prepare_split_projection(
         child.following_gap = None;
     }
     let binary_weights;
-    let stored_weights = if let Some(overrides) = weight_overrides.get(&node_id) {
-        overrides.as_slice()
-    } else {
-        match (children, payload.weights()) {
-            ([_, _], [first, second]) => {
-                binary_weights = [first.get(), second.get()];
-                binary_weights.as_slice()
+    let stored_weights =
+        if let Some(TrackWeights::Split(overrides)) = weight_overrides.get(&node_id) {
+            scratch.weights.clear();
+            scratch
+                .weights
+                .extend(overrides.iter().map(|weight| weight.get()));
+            scratch.weights.as_slice()
+        } else {
+            match (children, payload.weights()) {
+                ([_, _], [first, second]) => {
+                    binary_weights = [first.get(), second.get()];
+                    binary_weights.as_slice()
+                }
+                (_, weights) => {
+                    scratch.weights.clear();
+                    scratch
+                        .weights
+                        .extend(weights.iter().map(|weight| weight.get()));
+                    scratch.weights.as_slice()
+                }
             }
-            (_, weights) => {
-                scratch.weights.clear();
-                scratch
-                    .weights
-                    .extend(weights.iter().map(|weight| weight.get()));
-                scratch.weights.as_slice()
-            }
-        }
-    };
+        };
     let visible_weights;
     let axis_weights = if visible_count == children.len() {
         stored_weights
@@ -1780,8 +2004,8 @@ mod tests {
             ]);
             let root_minimum = LogicalSize::new(77.0, 29.0).unwrap();
             let source = workspace.capture_node_source(root, inner).unwrap();
-            let weights = SplitWeight::normalize([0.4, 0.6]).unwrap();
-            let overrides = [SplitWeightOverride::new(&source, &weights)];
+            let weights = TrackWeights::Split(SplitWeight::normalize([0.4, 0.6]).unwrap());
+            let overrides = [TrackWeightOverride::new(&source, &weights)];
 
             for (width, height) in [(300.0, 200.0), (77.0, 29.0), (41.0, 23.0)] {
                 let bounds = LogicalRect::new(5.0, 7.0, width, height).unwrap();

@@ -76,6 +76,7 @@ fn the_default_workbench_keeps_its_original_pane_dimensions() {
             .item(EDITOR)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[EDITOR, PREVIEW],
@@ -105,6 +106,7 @@ fn the_sizing_menu_caps_real_panes_tracks_tab_selection_and_restores_normal_geom
         .item(CONSOLE)
         .unwrap()
         .tabs()
+        .expect("item is an inline tab")
         .selected()
         .and_then(|tab| tab.item())
         .unwrap();
@@ -117,7 +119,7 @@ fn the_sizing_menu_caps_real_panes_tracks_tab_selection_and_restores_normal_geom
 
     let console = semantic_rect(&output, Role::Tab, "Console").center();
     let _ = click(&context, &mut dock, &mut panes, console);
-    assert!(dock.view().item(CONSOLE).unwrap().is_selected());
+    assert!(dock.view().item(CONSOLE).unwrap().is_active());
     assert_extent(panes.panes[&CONSOLE].content.unwrap().height(), 120.0);
 
     let _ = toggle_sizing(&context, &mut dock, &mut panes);

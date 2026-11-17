@@ -643,10 +643,7 @@ fn payload_target_and_policy_matrix_is_prevalidated_by_u3() {
                     payload(&fixture, payload_spec),
                     point(10.0, 10.0),
                 );
-                let split_into_tabs = payload_spec == PayloadSpec::Subtree
-                    && matches!(target_spec, TargetSpec::TabGap | TargetSpec::Center);
-
-                if enabled && !split_into_tabs {
+                if enabled {
                     assert!(
                         matches!(result, DropResolution::Resolved(_)),
                         "{payload_spec:?} x {target_spec:?} x enabled"
@@ -750,7 +747,9 @@ fn front_contained_layer_wins_before_back_target_class_priority() {
 #[test]
 fn rejected_front_candidate_never_falls_through_its_occlusion() {
     let fixture = fixture();
-    let policy = DockPolicySnapshot::default();
+    let mut policy = DockPolicySnapshot::default().to_policy();
+    policy.set_allow_tab_merge(false);
+    let policy = policy.snapshot(dockspace::policy::PolicyRevision::default());
     let overlap = rect(30.0, 40.0, 40.0, 30.0);
     let background = target_record(
         &fixture,
@@ -775,7 +774,7 @@ fn rejected_front_candidate_never_falls_through_its_occlusion() {
         payload(&fixture, PayloadSpec::Subtree),
         point(50.0, 50.0),
     ) else {
-        panic!("the visible center target must reject a subtree without exposing the back layer");
+        panic!("the policy-denied foreground must block the eligible back-layer edge");
     };
     assert_eq!(rejected.candidates().len(), 1);
     assert_eq!(rejected.candidates()[0].target_id(), foreground_id);
@@ -1189,7 +1188,7 @@ fn rootless_background_requires_partial_offer_and_promotes_same_surface_containe
 }
 
 #[test]
-fn split_subtree_into_tabs_is_an_expected_prevalidation_rejection() {
+fn split_subtree_into_tabs_preserves_the_complete_layout_as_one_direct_tab() {
     let fixture = fixture();
     let policy = DockPolicySnapshot::default();
     let scene = seal_scene(
@@ -1204,22 +1203,38 @@ fn split_subtree_into_tabs_is_an_expected_prevalidation_rejection() {
         )],
     );
 
-    let DropResolution::Rejected(rejected) = resolve(
+    let DropResolution::Resolved(resolved) = resolve(
         &scene,
         &fixture,
         &policy,
         payload(&fixture, PayloadSpec::Subtree),
         point(10.0, 10.0),
     ) else {
-        panic!("split subtree must be rejected by exact command prevalidation");
+        panic!("an exact center accepts a complete layout tab");
     };
+    let mut candidate = fixture.workspace.clone();
+    WorkspaceTransaction::from_commands([resolved.command().clone()])
+        .apply(&mut candidate, &policy)
+        .unwrap();
+    let Some(Node::Tabs {
+        items, selected, ..
+    }) = candidate.node(fixture.target_tabs_a)
+    else {
+        panic!("the destination remains its original Tabs container");
+    };
+    let key = crate::ids::TabKey::for_layout(fixture.source_subtree);
+    assert!(items.contains(&key));
+    assert_eq!(*selected, Some(key));
     assert!(matches!(
-        rejected.candidates()[0].reason(),
-        DropRejectionReason::Prevalidation(dockspace::graph::error::TransactionError::Command {
-            source: dockspace::graph::error::CommandError::SplitPayloadIntoTabs { .. },
-            ..
-        })
+        candidate.node(fixture.source_subtree),
+        Some(Node::Split { .. })
     ));
+    assert_eq!(
+        candidate.collect_items_in_subtree(fixture.source_subtree),
+        fixture
+            .workspace
+            .collect_items_in_subtree(fixture.source_subtree)
+    );
 }
 
 #[test]
@@ -1238,7 +1253,9 @@ fn retained_target_location_binds_current_selection_when_sealed() {
         .capture_item_source(TARGET_ROOT, fixture.target_tabs_a, ItemId::new(11))
         .expect("selection source exists");
     WorkspaceTransaction::from_commands([dockspace::graph::command::WorkspaceCommand::Select {
-        source: select.as_tab_source(),
+        source: select
+            .as_tab_source()
+            .expect("fixture item is an inline tab"),
     }])
     .apply(&mut fixture.workspace, &policy)
     .expect("selection changes the plan's command basis");
@@ -1453,17 +1470,19 @@ fn duplicate_semantic_ids_are_rejected_before_install() {
     let bounds = rect(0.0, 0.0, 100.0, 100.0);
     let duplicate_id = PaneSceneId {
         root: TARGET_ROOT,
-        tabs: fixture.target_tabs_a,
+        item: ItemId::new(10),
     };
     let mut ready = PresentationPlan::new(TARGET_SURFACE, bounds);
     ready.push_pane_record(PaneRecord::new(
         duplicate_id,
+        fixture.target_tabs_a,
         bounds,
         bounds,
         SceneLayerKey::new(1),
     ));
     ready.push_pane_record(PaneRecord::new(
         duplicate_id,
+        fixture.target_tabs_a,
         bounds,
         bounds,
         SceneLayerKey::new(1),

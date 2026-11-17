@@ -100,9 +100,39 @@ pub(super) fn resolved_visual(
             target,
             &projection.nodes,
         )?,
-        DockTarget::InnerEdge(_) | DockTarget::OuterEdge(_) => {
-            projected_payload_rect(original, candidate, root, payload, &projection.nodes)?
-        }
+        DockTarget::InnerEdge(_) | DockTarget::OuterEdge(_) => match payload {
+            MovePayload::Item(source) => {
+                let location = candidate.locate_item_by_id(source.item()).ok_or(
+                    DropPreviewProjectionError::PayloadItemMissing {
+                        item: source.item(),
+                    },
+                )?;
+                if let Some(tabs) = location.tabs() {
+                    let target = candidate.capture_tab_target(location.root, tabs)?;
+                    projected_center_rect(
+                        original,
+                        candidate,
+                        policy,
+                        target_plan,
+                        &target,
+                        &projection.nodes,
+                    )?
+                } else {
+                    projection
+                        .nodes
+                        .get(&location.owner_node())
+                        .filter(|result| result.visible)
+                        .map(|result| result.rect)
+                        .ok_or(DropPreviewProjectionError::PayloadProjectionMissing {
+                            root,
+                            node: location.owner_node(),
+                        })?
+                }
+            }
+            MovePayload::Tabs(_) | MovePayload::Subtree(_) => {
+                projected_payload_rect(original, candidate, root, payload, &projection.nodes)?
+            }
+        },
         DockTarget::TabGap { target, .. } => match tab_strip.as_ref() {
             Some(projected) => projected.insertion,
             None => projected_center_rect(
@@ -216,8 +246,20 @@ fn projected_payload_rect(
     payload: &MovePayload,
     node_results: &NodeMap<NodeResult>,
 ) -> Result<LogicalRect, DropPreviewProjectionError> {
+    if let MovePayload::Subtree(source) = payload {
+        if candidate.node_root(source.node()) == Some(target_root) {
+            return node_results
+                .get(&source.node())
+                .filter(|result| result.visible)
+                .map(|result| result.rect)
+                .ok_or(DropPreviewProjectionError::PayloadProjectionMissing {
+                    root: target_root,
+                    node: source.node(),
+                });
+        }
+    }
     let (source_root, source_node, items) = match payload {
-        MovePayload::Item(source) => (source.root(), source.tabs(), vec![source.item()]),
+        MovePayload::Item(source) => (source.root(), source.owner_node(), vec![source.item()]),
         MovePayload::Tabs(source) | MovePayload::Subtree(source) => (
             source.root(),
             source.node(),
@@ -236,7 +278,7 @@ fn projected_payload_rect(
     // Only visible members contribute geometric evidence for the drag preview.
     for item in items
         .into_iter()
-        .filter(|&item| !candidate.item_is_hidden(item))
+        .filter(|&item| candidate.item_is_active(item))
     {
         nodes.insert(destination_item_node(candidate, target_root, item)?);
     }
@@ -287,7 +329,7 @@ fn destination_item_node(
             actual: source.root(),
         });
     }
-    Ok(source.tabs())
+    Ok(source.owner_node())
 }
 
 const fn target_root(target: &DockTarget) -> RootId {

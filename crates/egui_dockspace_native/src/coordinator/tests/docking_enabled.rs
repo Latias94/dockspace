@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use dockspace::geometry::LogicalPoint;
+use dockspace::model::TabGroupDockMode;
 use dockspace::runtime::{
     DockspaceManipulationDelivery as Delivery, DockspaceManipulationStatus as Status,
     DockspacePreviewVisual, DockspaceReceiverDescriptor, NativeInputStorageLimit,
@@ -768,7 +769,8 @@ fn shared_window_destroyed_callback_survives_retirement_of_its_original_placemen
 }
 
 #[test]
-fn one_modifier_callback_records_once_for_several_mouse_devices_and_charges_only_at_poll() {
+fn one_modifier_callback_records_one_directive_pair_for_several_mouse_devices_and_charges_only_at_poll()
+ {
     let (mut native, _, binding) = presented_routes();
     let press = captured_record(
         &native,
@@ -811,7 +813,7 @@ fn one_modifier_callback_records_once_for_several_mouse_devices_and_charges_only
             .get(),
         1
     );
-    assert_eq!(native.session.native_input_recorded_count(), recorded + 1);
+    assert_eq!(native.session.native_input_recorded_count(), recorded + 2);
     assert_eq!(
         format!("{:?}", native.pointer_translator),
         format!("{expected_translator:?}")
@@ -822,9 +824,30 @@ fn one_modifier_callback_records_once_for_several_mouse_devices_and_charges_only
         .poll_host_frame(&mut budget, |_| NativeReceiverAnswer::Unknown)
         .unwrap()
         .unwrap();
-    finish(frame);
-    assert_eq!(budget.remaining_records(), allowance - 1);
-    assert_eq!(native.session.native_input_recorded_count(), recorded + 1);
+    let report = finish(frame);
+    let directives = report
+        .inputs()
+        .iter()
+        .filter(|input| {
+            matches!(
+                input,
+                HostInputOutcome::DockingEnabledUpdated { .. }
+                    | HostInputOutcome::GroupDockModeUpdated { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        directives.as_slice(),
+        [
+            HostInputOutcome::DockingEnabledUpdated { enabled: false, .. },
+            HostInputOutcome::GroupDockModeUpdated {
+                mode: TabGroupDockMode::MergeTabs,
+                ..
+            }
+        ]
+    ));
+    assert_eq!(budget.remaining_records(), allowance - 2);
+    assert_eq!(native.session.native_input_recorded_count(), recorded + 2);
 }
 
 #[test]
@@ -859,14 +882,14 @@ fn raw_modifier_order_survives_a_dropped_frame_without_recording_the_successor()
             .unwrap()
             .is_none()
     );
-    assert_eq!(native.session.native_input_recorded_count(), recorded + 1);
+    assert_eq!(native.session.native_input_recorded_count(), recorded + 2);
     assert_eq!(native.next_window_event().unwrap().unwrap().ordinal(), 2);
     commit_boundary(&mut native);
     native
         .reduce_callback_prefix(&egui::Context::default(), &mut test_budget())
         .unwrap()
         .unwrap();
-    assert_eq!(native.session.native_input_recorded_count(), recorded + 2);
+    assert_eq!(native.session.native_input_recorded_count(), recorded + 4);
     assert!(native.next_window_event().unwrap().is_none());
     commit_boundary(&mut native);
 }
@@ -895,7 +918,7 @@ fn modifier_callback_waits_for_core_capacity_before_acknowledgement() {
     };
     native
         .session
-        .record_native_pointer_sequence([input; 4])
+        .record_native_pointer_sequence([input; 3])
         .unwrap();
     let record = captured_record(
         &native,
@@ -923,7 +946,7 @@ fn modifier_callback_waits_for_core_capacity_before_acknowledgement() {
         .reduce_callback_prefix(&egui::Context::default(), &mut test_budget())
         .unwrap()
         .unwrap();
-    assert_eq!(native.session.native_input_recorded_count(), recorded + 1);
+    assert_eq!(native.session.native_input_recorded_count(), recorded + 2);
     assert!(native.next_window_event().unwrap().is_none());
     commit_boundary(&mut native);
 }
@@ -961,7 +984,7 @@ fn same_batch_press_modifier_move_and_release_choose_the_owner_during_reduction(
                 mouse_event(target, state, 11, None),
             );
         }
-        assert_eq!(native.session.native_input_recorded_count(), recorded + 4);
+        assert_eq!(native.session.native_input_recorded_count(), recorded + 5);
         let version = native.session.version();
         let mut dropped = native
             .begin_host_frame(|query| resolve(query, &receiver))
@@ -973,7 +996,7 @@ fn same_batch_press_modifier_move_and_release_choose_the_owner_during_reduction(
         );
         drop(dropped);
         assert_eq!(native.session.version(), version);
-        assert_eq!(native.session.native_input_recorded_count(), recorded + 4);
+        assert_eq!(native.session.native_input_recorded_count(), recorded + 5);
         let mut retry = native
             .begin_host_frame(|query| resolve(query, &receiver))
             .unwrap();
@@ -1014,7 +1037,7 @@ fn same_batch_press_modifier_move_and_release_choose_the_owner_during_reduction(
         assert!(!native.session.has_pending_native_input());
         assert!(!native.session.has_active_gesture());
         assert!(!native.session.has_pending_presentation());
-        assert_eq!(native.session.native_input_recorded_count(), recorded + 4);
+        assert_eq!(native.session.native_input_recorded_count(), recorded + 5);
         let committed = native.session.version();
         let repeated = commit_boundary(&mut native);
         assert!(repeated.manipulation_feedback().is_empty());
@@ -1212,7 +1235,7 @@ fn stale_modifier_binding_cannot_suspend_the_successor_gesture() {
         .reduce_callback_prefix(&egui::Context::default(), &mut test_budget())
         .unwrap()
         .unwrap();
-    assert_eq!(native.session.native_input_recorded_count(), recorded + 1);
+    assert_eq!(native.session.native_input_recorded_count(), recorded + 2);
     let mut frame = native
         .begin_host_frame(|query| resolve(query, &receiver))
         .unwrap();

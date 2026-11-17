@@ -912,7 +912,7 @@ fn after_tabs_button_scrolls_with_tabs_and_keeps_its_own_input() {
     harness.click(harness.panes.after_button.unwrap().center());
     assert_eq!(harness.panes.after_clicks, 1);
     assert_eq!(harness.close_requests, 0);
-    assert!(harness.dock.view().item(FIRST).unwrap().is_selected());
+    assert!(harness.dock.view().item(FIRST).unwrap().is_active());
 }
 
 #[test]
@@ -1037,7 +1037,7 @@ fn custom_paint_keeps_default_selection_accessibility_and_close_controls() {
     )));
     let point = harness.tab(SECOND).content.left_center() + vec2(4.0, 0.0);
     harness.click(point);
-    assert!(harness.dock.view().item(SECOND).unwrap().is_selected());
+    assert!(harness.dock.view().item(SECOND).unwrap().is_active());
     let output = harness.run(Vec::new());
     let nodes = &output
         .platform_output
@@ -1072,10 +1072,10 @@ fn application_buttons_own_clicks_without_selecting_the_underlying_tab() {
     harness.settle();
     harness.click(harness.panes.tab_button.unwrap().center());
     assert_eq!(harness.panes.tab_clicks, 1);
-    assert!(harness.dock.view().item(FIRST).unwrap().is_selected());
+    assert!(harness.dock.view().item(FIRST).unwrap().is_active());
     harness.click(harness.panes.slot_button.unwrap().center());
     assert_eq!(harness.panes.slot_clicks, 1);
-    assert!(harness.dock.view().item(FIRST).unwrap().is_selected());
+    assert!(harness.dock.view().item(FIRST).unwrap().is_active());
     assert_eq!(harness.close_requests, 0);
 }
 
@@ -1095,7 +1095,7 @@ fn ordinary_egui_menus_in_slots_keep_complete_output_settlement() {
         })
         .collect::<Vec<_>>();
     assert!(texts.contains(&"Custom action"), "painted text: {texts:?}");
-    assert!(harness.dock.view().item(FIRST).unwrap().is_selected());
+    assert!(harness.dock.view().item(FIRST).unwrap().is_active());
 }
 
 #[test]

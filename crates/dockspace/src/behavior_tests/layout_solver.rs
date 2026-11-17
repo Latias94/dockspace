@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
 use dockspace::geometry::{Constraints, LogicalRect, LogicalSize};
+use dockspace::graph::command::TrackWeights;
 use dockspace::graph::{Axis, Node, RootRecord, SplitWeight, SurfacePresentation, Workspace};
 use dockspace::ids::{ItemId, NodeId, RootId, SurfaceId};
 use dockspace::presentation::layout::{
     AxisConstraint, AxisConstraintError, LayoutError, LayoutMetrics, LayoutMetricsError,
-    SplitWeightOverride, project_root, project_root_with_overrides, solve_axis,
+    TrackWeightOverride, project_root, project_root_with_overrides, solve_axis,
 };
 
 fn constraints(values: &[(f64, f64)]) -> Vec<AxisConstraint> {
@@ -510,7 +511,9 @@ fn exact_split_override_changes_only_transient_projection() {
     let source = workspace
         .capture_node_source(root, inner)
         .expect("inner split source must be current");
-    let weights = SplitWeight::normalize([0.25, 0.75]).expect("override must be normalized");
+    let weights = TrackWeights::Split(
+        SplitWeight::normalize([0.25, 0.75]).expect("override must be normalized"),
+    );
     let before = workspace.clone();
     let constraints = leaf_constraints(leaves);
 
@@ -520,7 +523,7 @@ fn exact_split_override_changes_only_transient_projection() {
         LogicalRect::new(0.0, 0.0, 400.0, 400.0).expect("valid bounds"),
         |node| constraints.get(&node).copied(),
         layout_metrics(0.0),
-        &[SplitWeightOverride::new(&source, &weights)],
+        &[TrackWeightOverride::new(&source, &weights)],
     )
     .expect("current override must project");
 
@@ -550,7 +553,9 @@ fn stale_split_override_fingerprint_fails_closed() {
         nested_split_workspace([0.4, 0.6]);
     assert_eq!(root, current_root);
     assert_eq!(captured_inner, current_inner);
-    let weights = SplitWeight::normalize([0.25, 0.75]).expect("override must be normalized");
+    let weights = TrackWeights::Split(
+        SplitWeight::normalize([0.25, 0.75]).expect("override must be normalized"),
+    );
     let constraints = leaf_constraints(leaves);
 
     assert!(matches!(
@@ -560,9 +565,9 @@ fn stale_split_override_fingerprint_fails_closed() {
             LogicalRect::new(0.0, 0.0, 400.0, 400.0).expect("valid bounds"),
             |node| constraints.get(&node).copied(),
             layout_metrics(0.0),
-            &[SplitWeightOverride::new(&source, &weights)],
+            &[TrackWeightOverride::new(&source, &weights)],
         ),
-        Err(LayoutError::InvalidSplitWeightOverrideSource { .. })
+        Err(LayoutError::InvalidTrackWeightOverrideSource { .. })
     ));
 }
 
@@ -596,7 +601,9 @@ fn split_override_must_belong_to_the_projected_root() {
     let source = workspace
         .capture_node_source(second_root, second_split)
         .expect("second source must be current");
-    let weights = SplitWeight::normalize([0.25, 0.75]).expect("override must be normalized");
+    let weights = TrackWeights::Split(
+        SplitWeight::normalize([0.25, 0.75]).expect("override must be normalized"),
+    );
     let constraints = leaf_constraints([first_left, first_right]);
 
     assert!(matches!(
@@ -606,9 +613,9 @@ fn split_override_must_belong_to_the_projected_root() {
             LogicalRect::new(0.0, 0.0, 400.0, 400.0).expect("valid bounds"),
             |node| constraints.get(&node).copied(),
             layout_metrics(0.0),
-            &[SplitWeightOverride::new(&source, &weights)],
+            &[TrackWeightOverride::new(&source, &weights)],
         ),
-        Err(LayoutError::SplitWeightOverrideRootMismatch {
+        Err(LayoutError::TrackWeightOverrideRootMismatch {
             projected_root,
             override_root,
         }) if projected_root == first_root && override_root == second_root
@@ -623,7 +630,9 @@ fn split_override_rejects_wrong_length_unnormalized_and_duplicate_weights() {
         .expect("inner source must be current");
     let constraints = leaf_constraints(leaves);
     let bounds = LogicalRect::new(0.0, 0.0, 400.0, 400.0).expect("valid bounds");
-    let wrong_length = SplitWeight::normalize([0.2, 0.3, 0.5]).expect("weights must be normalized");
+    let wrong_length = TrackWeights::Split(
+        SplitWeight::normalize([0.2, 0.3, 0.5]).expect("weights must be normalized"),
+    );
     assert!(matches!(
         project_root_with_overrides(
             &workspace,
@@ -631,19 +640,19 @@ fn split_override_rejects_wrong_length_unnormalized_and_duplicate_weights() {
             bounds,
             |node| constraints.get(&node).copied(),
             layout_metrics(0.0),
-            &[SplitWeightOverride::new(&source, &wrong_length)],
+            &[TrackWeightOverride::new(&source, &wrong_length)],
         ),
-        Err(LayoutError::SplitWeightOverrideLengthMismatch {
+        Err(LayoutError::TrackWeightOverrideLengthMismatch {
             node,
             children: 2,
             weights: 3,
         }) if node == inner
     ));
 
-    let unnormalized = [
+    let unnormalized = TrackWeights::Split(vec![
         SplitWeight::new(0.8).expect("positive weight"),
         SplitWeight::new(0.8).expect("positive weight"),
-    ];
+    ]);
     assert!(matches!(
         project_root_with_overrides(
             &workspace,
@@ -651,13 +660,15 @@ fn split_override_rejects_wrong_length_unnormalized_and_duplicate_weights() {
             bounds,
             |node| constraints.get(&node).copied(),
             layout_metrics(0.0),
-            &[SplitWeightOverride::new(&source, &unnormalized)],
+            &[TrackWeightOverride::new(&source, &unnormalized)],
         ),
-        Err(LayoutError::SplitWeightOverrideNotNormalized { node, .. }) if node == inner
+        Err(LayoutError::TrackWeightOverrideNotNormalized { node, .. }) if node == inner
     ));
 
-    let valid = SplitWeight::normalize([0.25, 0.75]).expect("weights must be normalized");
-    let duplicate = SplitWeightOverride::new(&source, &valid);
+    let valid = TrackWeights::Split(
+        SplitWeight::normalize([0.25, 0.75]).expect("weights must be normalized"),
+    );
+    let duplicate = TrackWeightOverride::new(&source, &valid);
     assert!(matches!(
         project_root_with_overrides(
             &workspace,
@@ -667,13 +678,14 @@ fn split_override_rejects_wrong_length_unnormalized_and_duplicate_weights() {
             layout_metrics(0.0),
             &[duplicate, duplicate],
         ),
-        Err(LayoutError::DuplicateSplitWeightOverride { node }) if node == inner
+        Err(LayoutError::DuplicateTrackWeightOverride { node }) if node == inner
     ));
 
     let leaf_source = workspace
         .capture_node_source(root, leaves[0])
         .expect("leaf source must be current");
-    let one_weight = SplitWeight::normalize([1.0]).expect("one weight is normalized");
+    let one_weight =
+        TrackWeights::Split(SplitWeight::normalize([1.0]).expect("one weight is normalized"));
     assert!(matches!(
         project_root_with_overrides(
             &workspace,
@@ -681,9 +693,9 @@ fn split_override_rejects_wrong_length_unnormalized_and_duplicate_weights() {
             bounds,
             |node| constraints.get(&node).copied(),
             layout_metrics(0.0),
-            &[SplitWeightOverride::new(&leaf_source, &one_weight)],
+            &[TrackWeightOverride::new(&leaf_source, &one_weight)],
         ),
-        Err(LayoutError::SplitWeightOverrideNodeNotSplit { node }) if node == leaves[0]
+        Err(LayoutError::TrackWeightOverrideNodeNotTracks { node }) if node == leaves[0]
     ));
 }
 

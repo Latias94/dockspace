@@ -38,9 +38,20 @@ fn visibility_is_durable_idempotent_and_keeps_tab_membership() {
     let pane = session.view().item(SECOND).unwrap();
     assert_eq!(pane.surface(), SURFACE);
     assert_eq!(pane.root(), ROOT);
-    assert_eq!(pane.tab_index(), 1);
-    assert_eq!(pane.tabs().items().collect::<Vec<_>>(), [FIRST, SECOND]);
-    assert_eq!(pane.tabs().selected(), Some(FIRST.into()));
+    assert_eq!(pane.tab_index(), Some(1));
+    assert_eq!(
+        pane.tabs()
+            .expect("fixture item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
+        [FIRST, SECOND]
+    );
+    assert_eq!(
+        pane.tabs()
+            .expect("fixture item is an inline tab")
+            .selected(),
+        Some(FIRST.into())
+    );
     assert!(session.view().item_is_hidden(SECOND));
     assert_eq!(session.pending_content_close_plans().count(), 0);
 
@@ -58,9 +69,15 @@ fn visibility_is_durable_idempotent_and_keeps_tab_membership() {
 
     set_visibility(&mut session, SECOND, true);
     assert!(!session.view().item_is_hidden(SECOND));
-    assert_eq!(session.view().item(SECOND).unwrap().tab_index(), 1);
+    assert_eq!(session.view().item(SECOND).unwrap().tab_index(), Some(1));
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().selected(),
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .expect("fixture item is an inline tab")
+            .selected(),
         Some(FIRST.into())
     );
 }
@@ -97,7 +114,9 @@ fn hidden_content_needs_no_measurement_metadata_until_it_is_shown_again() {
                             visible || key.item() != Some(SECOND),
                             "hidden tabs have no text measurement"
                         );
-                        tab_items.push(key.item());
+                        if let Some(item) = key.item() {
+                            tab_items.push(item);
+                        }
                         SurfaceMeasurementAnswer::TabIntrinsic(96.0)
                     }
                     SurfaceMeasurementRequest::TabStrip { .. } => {
@@ -114,10 +133,7 @@ fn hidden_content_needs_no_measurement_metadata_until_it_is_shown_again() {
             vec![FIRST]
         };
         assert_eq!(pane_items, expected);
-        assert_eq!(
-            tab_items,
-            expected.into_iter().map(Some).collect::<Vec<_>>()
-        );
+        assert_eq!(tab_items, expected);
     }
 }
 
@@ -202,7 +218,13 @@ fn hiding_a_focused_pane_uses_visible_successors_and_showing_does_not_activate()
 
     set_visibility(&mut session, SECOND, false);
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().selected(),
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .expect("fixture item is an inline tab")
+            .selected(),
         Some(FIRST.into())
     );
     assert_eq!(
@@ -218,13 +240,20 @@ fn hiding_a_focused_pane_uses_visible_successors_and_showing_does_not_activate()
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("fixture item is an inline tab")
             .visible_selected(),
         None
     );
 
     set_visibility(&mut session, SECOND, true);
     assert_eq!(
-        session.view().item(SECOND).unwrap().tabs().selected(),
+        session
+            .view()
+            .item(SECOND)
+            .unwrap()
+            .tabs()
+            .expect("fixture item is an inline tab")
+            .selected(),
         Some(SECOND.into())
     );
     assert_eq!(session.pane_focus_request(SURFACE), Some(workspace_focus));
@@ -280,6 +309,7 @@ fn closing_a_focused_pane_skips_its_hidden_neighbor() {
             .item(THIRD)
             .unwrap()
             .tabs()
+            .expect("fixture item is an inline tab")
             .visible_selected(),
         Some(THIRD.into())
     );
@@ -335,7 +365,11 @@ fn hidden_items_survive_group_moves_and_reopen_visible_after_close() {
     let second = session.view().item(SECOND).unwrap();
     assert_eq!(second.surface(), OTHER_SURFACE);
     assert_eq!(
-        second.tabs().items().collect::<Vec<_>>(),
+        second
+            .tabs()
+            .expect("fixture item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
         [THIRD, FOURTH, FIRST, SECOND]
     );
 
@@ -365,6 +399,7 @@ fn hidden_items_survive_group_moves_and_reopen_visible_after_close() {
             .item(SECOND)
             .unwrap()
             .tabs()
+            .expect("fixture item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         [THIRD, FOURTH, FIRST, SECOND]
@@ -435,7 +470,12 @@ fn default_center_and_dock_back_prefer_visible_content_over_a_hidden_layout_slot
             }
             let view = session.view();
             assert_eq!(
-                view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>(),
+                view.item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .expect("fixture item is an inline tab")
+                    .items()
+                    .collect::<Vec<_>>(),
                 [FIRST]
             );
             assert!(view.item(FIRST).unwrap().is_hidden());
@@ -443,11 +483,12 @@ fn default_center_and_dock_back_prefer_visible_content_over_a_hidden_layout_slot
                 view.item(SECOND)
                     .unwrap()
                     .tabs()
+                    .expect("fixture item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 [SECOND, THIRD]
             );
-            assert!(view.item(THIRD).unwrap().is_selected());
+            assert!(view.item(THIRD).unwrap().is_active());
             assert!(view.root(OTHER_ROOT).is_none());
             assert_eq!(
                 view.root(ROOT)

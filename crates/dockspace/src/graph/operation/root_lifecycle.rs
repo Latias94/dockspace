@@ -46,7 +46,10 @@ pub(super) fn retire_root(
     Ok(owner)
 }
 
-fn remove_subtree_nodes(workspace: &mut Workspace, root: NodeId) -> Result<(), CommandError> {
+pub(super) fn remove_subtree_nodes(
+    workspace: &mut Workspace,
+    root: NodeId,
+) -> Result<(), CommandError> {
     let mut stack = vec![root];
     while let Some(node_id) = stack.pop() {
         let node = workspace
@@ -55,8 +58,14 @@ fn remove_subtree_nodes(workspace: &mut Workspace, root: NodeId) -> Result<(), C
                 role: ReferenceRole::Source,
                 node: node_id,
             })?;
+        stack.extend(node.child_nodes().rev().map(|(_, child)| child));
         match node.as_ref() {
-            Node::Split { children, .. } => stack.extend(children.iter().rev().copied()),
+            Node::Split { .. } | Node::Grid { .. } => {}
+            Node::Pane { item } => {
+                if !workspace.storage.hidden_items.is_empty() {
+                    Arc::make_mut(&mut workspace.storage.hidden_items).remove(item);
+                }
+            }
             Node::Tabs { items, .. } => {
                 if !workspace.storage.hidden_items.is_empty() {
                     let hidden_items = Arc::make_mut(&mut workspace.storage.hidden_items);

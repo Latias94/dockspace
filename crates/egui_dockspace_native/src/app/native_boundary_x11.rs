@@ -882,8 +882,8 @@ fn drive_pointer_lineage(
         let native = state.boundary_coordinator();
         assert!(native.session().has_active_gesture());
         assert!(!native.session().has_pending_native_create());
-        assert!(native.session().view().item(TABS[0]).unwrap().is_selected());
-        assert!(!native.session().view().item(TABS[1]).unwrap().is_selected());
+        assert!(native.session().view().item(TABS[0]).unwrap().is_active());
+        assert!(!native.session().view().item(TABS[1]).unwrap().is_active());
     }
     xdotool(&["key", "Escape"])?;
     context.request_repaint_of(ViewportId::ROOT);
@@ -924,11 +924,12 @@ fn drive_pointer_lineage(
                 .item(TABS[0])
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             TABS
         );
-        assert!(native.session().view().item(TABS[0]).unwrap().is_selected());
+        assert!(native.session().view().item(TABS[0]).unwrap().is_active());
         facts.pointer_phase = PointerPhase::Off;
     }
     assert_capacity(state);
@@ -1219,6 +1220,7 @@ fn drive(state: &State, context: &egui::Context, host: &BoundaryHost) -> Result<
                 .item(TABS[0])
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             TABS

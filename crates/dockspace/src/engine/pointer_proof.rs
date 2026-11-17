@@ -627,6 +627,7 @@ const fn delivery_action_lane(kind: PresentationHitRegionKind) -> Option<Present
         | PresentationHitRegionKind::ContainedTitle(_)
         | PresentationHitRegionKind::ContainedResize { .. } => Some(PresentationPointerLane::Drag),
         PresentationHitRegionKind::PaneBody(_)
+        | PresentationHitRegionKind::TabsBackground(_)
         | PresentationHitRegionKind::ContainedFrameBlocker(_)
         | PresentationHitRegionKind::DropGuideActivation(_)
         | PresentationHitRegionKind::DropTarget(_) => None,
@@ -1709,6 +1710,7 @@ impl DockEngine {
                     matches!(
                         region.kind(),
                         PresentationHitRegionKind::PaneBody(_)
+                            | PresentationHitRegionKind::TabsBackground(_)
                             | PresentationHitRegionKind::ContainedFrameBlocker(_)
                     )
                 })

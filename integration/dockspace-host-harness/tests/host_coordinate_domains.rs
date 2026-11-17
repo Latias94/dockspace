@@ -303,7 +303,7 @@ fn window_dpi_and_framebuffer_density_are_independent_for_cross_surface_batches(
                     .iter()
                     .find_map(|record| match record {
                         OwnedRecord::PaneContent {
-                            item: Some(THIRD),
+                            item: THIRD,
                             bounds,
                             ..
                         } => Some(*bounds),
@@ -415,7 +415,7 @@ fn window_dpi_and_framebuffer_density_are_independent_for_cross_surface_batches(
                     .iter()
                     .find_map(|record| match record {
                         OwnedRecord::PaneContent {
-                            item: Some(FIRST),
+                            item: FIRST,
                             bounds,
                             paint: SurfacePaintDisposition::Visible,
                             ..
@@ -463,7 +463,10 @@ fn window_dpi_and_framebuffer_density_are_independent_for_cross_surface_batches(
                             item,
                             view.surface(),
                             view.root(),
-                            view.tabs().items().collect::<Vec<_>>(),
+                            view.tabs()
+                                .expect("item is an inline tab")
+                                .items()
+                                .collect::<Vec<_>>(),
                         )
                     })
                     .into_iter()

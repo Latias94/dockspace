@@ -5,7 +5,7 @@ use std::{cell::Cell, rc::Rc};
 use anyhow::{Context as _, Result};
 use dockspace::{
     geometry::{LogicalRect, LogicalSize},
-    model::{ItemId, TabKey},
+    model::{ItemId, TabKey, TabLabel},
     runtime::{
         DockspaceReceiverDescriptor, DockspaceReceiverRole, DockspaceUpdate,
         SurfaceMeasurementAnswer as Answer, SurfaceMeasurementRequest as Request,
@@ -717,24 +717,25 @@ fn build_candidate(
                 ))
                 .into(),
             ),
-            Request::TabIntrinsic { key, .. } => {
-                let width = key
-                    .item()
-                    .and_then(|item| panels.get(&item))
-                    .map_or(120.0, |pane| {
-                        let line = window.text_system().shape_line(
-                            pane.title.clone(),
-                            config.text_size,
-                            &[TextRun {
-                                len: pane.title.len(),
-                                font: config.font.clone(),
-                                color: config.colors.text,
-                                ..Default::default()
-                            }],
-                            None,
-                        );
-                        f64::from(f32::from(line.width))
-                    });
+            Request::TabIntrinsic { label, .. } => {
+                let title = match label {
+                    TabLabel::Item(item) => panels.get(&item).map(|pane| pane.title.clone()),
+                    TabLabel::Layout { title } => Some(title.to_owned().into()),
+                };
+                let width = title.map_or(120.0, |title| {
+                    let line = window.text_system().shape_line(
+                        title.clone(),
+                        config.text_size,
+                        &[TextRun {
+                            len: title.len(),
+                            font: config.font.clone(),
+                            color: config.colors.text,
+                            ..Default::default()
+                        }],
+                        None,
+                    );
+                    f64::from(f32::from(line.width))
+                });
                 Answer::TabIntrinsic(width)
             }
             Request::TabStrip { .. } => Answer::TabStrip(

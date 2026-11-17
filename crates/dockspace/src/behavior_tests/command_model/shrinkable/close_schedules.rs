@@ -180,6 +180,7 @@ fn edit(model: &mut Semantics, session: &mut DockspaceSession, edit: Edit, group
                         .item(target)
                         .unwrap()
                         .tabs()
+                        .expect("fixture item belongs to a tabs container")
                         .items()
                         .next()
                         .unwrap();

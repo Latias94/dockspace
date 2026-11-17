@@ -29,6 +29,7 @@ use super::NativeRuntimeState;
 mod deferred_move;
 mod policy;
 mod root_float;
+mod tab;
 mod tabs_group;
 mod visibility;
 
@@ -414,7 +415,7 @@ fn a_queued_item_move_keeps_its_admission_revision() {
             .view()
             .item(SECOND)
             .unwrap()
-            .is_selected()
+            .is_active()
     );
     assert!(state.error().is_none());
 }
@@ -642,8 +643,8 @@ fn contained_recovery_preserves_stacking_and_raising_does_not_select_another_tab
             .collect::<Vec<_>>(),
         [rear_id, front_id]
     );
-    assert!(view.item(rear).unwrap().is_selected());
-    assert!(!view.item(THIRD).unwrap().is_selected());
+    assert!(view.item(rear).unwrap().is_active());
+    assert!(!view.item(THIRD).unwrap().is_active());
 
     present_geometry(&mut state, bounds);
     state
@@ -674,7 +675,7 @@ fn contained_recovery_preserves_stacking_and_raising_does_not_select_another_tab
             .collect::<Vec<_>>(),
         [front_id, rear_id]
     );
-    assert!(view.item(rear).unwrap().is_selected());
+    assert!(view.item(rear).unwrap().is_active());
     assert_eq!(view.contained(rear_id).unwrap().rect(), recovered);
 }
 
@@ -1211,6 +1212,7 @@ fn return_complete_group_through_the_result_slot(
                     .item(SECOND)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FIRST, SECOND, THIRD]
@@ -1219,7 +1221,7 @@ fn return_complete_group_through_the_result_slot(
         status => panic!("the slot must settle the exact complete-group terminal: {status:?}"),
     }
     assert_eq!(state.view().item(SECOND).unwrap().surface(), SURFACE);
-    assert!(state.view().item(SECOND).unwrap().is_selected());
+    assert!(state.view().item(SECOND).unwrap().is_active());
     assert!(!state.application_actions.is_occupied());
     assert!(state.error().is_none());
     terminal.clone()
@@ -1339,6 +1341,7 @@ fn native_group_commands_preserve_the_remaining_central_area() {
                         .item(SECOND)
                         .unwrap()
                         .tabs()
+                        .expect("item is an inline tab")
                         .items()
                         .collect::<Vec<_>>(),
                     &[SECOND, THIRD]
@@ -1349,6 +1352,7 @@ fn native_group_commands_preserve_the_remaining_central_area() {
                         .item(FIRST)
                         .unwrap()
                         .tabs()
+                        .expect("item is an inline tab")
                         .items()
                         .collect::<Vec<_>>(),
                     &[FIRST]
@@ -1369,6 +1373,7 @@ fn native_group_commands_preserve_the_remaining_central_area() {
                         .item(SECOND)
                         .unwrap()
                         .tabs()
+                        .expect("item is an inline tab")
                         .items()
                         .collect::<Vec<_>>(),
                     &[FIRST, SECOND, THIRD]
@@ -1378,7 +1383,7 @@ fn native_group_commands_preserve_the_remaining_central_area() {
         }
         assert_eq!(state.view().item(FIRST).unwrap().root(), ROOT);
         assert!(state.view().root(ROOT).unwrap().central().is_some());
-        assert!(state.view().item(SECOND).unwrap().is_selected());
+        assert!(state.view().item(SECOND).unwrap().is_active());
         assert!(!state.coordinator.session().has_pending_presentation());
         assert!(state.error().is_none());
     }
@@ -1431,6 +1436,7 @@ fn native_group_dock_and_float_commands_keep_stale_and_foreign_authority() {
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FIRST, SECOND, THIRD]
@@ -1442,8 +1448,8 @@ fn native_group_dock_and_float_commands_keep_stale_and_foreign_authority() {
             assert!(matches!(
                 take(&mut target),
                 NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-                    DockspaceActionOutcome::Selected { tab, .. }
-                )) if tab == THIRD.into()
+                    DockspaceActionOutcome::ItemActivated { item: tab, .. }
+                )) if tab == THIRD
             ));
             assert!(target.error().is_none());
         }
@@ -1481,11 +1487,12 @@ fn stored_native_group_command_keeps_its_capture_revision_after_admission() {
             .item(SECOND)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND, THIRD]
     );
-    assert!(state.view().item(SECOND).unwrap().is_selected());
+    assert!(state.view().item(SECOND).unwrap().is_active());
     assert!(!state.coordinator.session().has_pending_native_create());
     assert!(state.error().is_none());
 }
@@ -1539,7 +1546,7 @@ fn foreign_native_groups_reject_without_staling_or_stopping_the_command_pipeline
                 ))
             );
             assert_eq!(destination.coordinator.session().version(), before);
-            assert!(destination.view().item(FIRST).unwrap().is_selected());
+            assert!(destination.view().item(FIRST).unwrap().is_active());
             assert!(
                 !destination
                     .coordinator
@@ -1558,10 +1565,10 @@ fn foreign_native_groups_reject_without_staling_or_stopping_the_command_pipeline
             assert!(matches!(
                 take(&mut destination),
                 NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-                    DockspaceActionOutcome::Selected { tab, .. }
-                )) if tab == SECOND.into()
+                    DockspaceActionOutcome::ItemActivated { item: tab, .. }
+                )) if tab == SECOND
             ));
-            assert!(destination.view().item(SECOND).unwrap().is_selected());
+            assert!(destination.view().item(SECOND).unwrap().is_active());
             assert!(destination.error().is_none());
         }
     }
@@ -1613,7 +1620,7 @@ fn dock_submission_preserves_phase_errors_outside_foreign_action_authority() {
         );
         drop(frame);
         assert_eq!(state.coordinator.session().version(), before);
-        assert!(state.view().item(FIRST).unwrap().is_selected());
+        assert!(state.view().item(FIRST).unwrap().is_active());
     }
 }
 
@@ -2080,7 +2087,10 @@ fn deferred_veto_and_close_reopen_keep_pane_data_and_the_single_result_slot() {
     ));
     let location = state.coordinator.session().view().item(FIRST).unwrap();
     assert_eq!(location.root(), ROOT);
-    assert_eq!(location.tabs().selected(), Some(FIRST.into()));
+    assert_eq!(
+        location.tabs().expect("item is an inline tab").selected(),
+        Some(FIRST.into())
+    );
     assert_eq!(state.panes.0, "application-owned content");
     state
         .request_command(NativeCommand::OpenItem {
@@ -2432,6 +2442,7 @@ fn configuration_follows_local_selection_and_lock_keeps_selection_available() {
             .item(SECOND)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .selected(),
         Some(SECOND.into())
     );
@@ -2443,8 +2454,8 @@ fn configuration_follows_local_selection_and_lock_keeps_selection_available() {
     assert!(matches!(
         take(&mut state),
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-            DockspaceActionOutcome::Selected { tab, .. }
-        )) if tab == FIRST.into()
+            DockspaceActionOutcome::ItemActivated { item: tab, .. }
+        )) if tab == FIRST
     ));
     state
         .request_command(NativeCommand::OpenItem {

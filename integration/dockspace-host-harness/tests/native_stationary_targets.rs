@@ -511,6 +511,7 @@ fn native_edge_scroll_retries_and_waits_for_each_exact_output_without_motion() {
                 .item(ItemId::new(1))
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             (1..9).map(ItemId::new).collect::<Vec<_>>()

@@ -9,13 +9,15 @@ use super::{
 use crate::geometry::{GeometryError, LogicalPoint, LogicalRect};
 use crate::graph::command::{DockFraction, Edge};
 use crate::ids::{NodeId, RootId, SurfaceId};
-use crate::interaction::targeting::field::{pane_center_basin, root_edge_band};
+use crate::interaction::targeting::field::{
+    MagneticEdgeTargets, pane_center_basin, root_edge_band,
+};
 use crate::interaction::targeting::guide::{
     DropGuideClusterId, DropGuideClusterRecord, DropGuideEdgeSet, DropGuideTargetRecord,
 };
 use crate::interaction::targeting::targets::{
-    DropOcclusionRecord, DropTargetAvailability, DropTargetLocation, DropTargetRecord, DropVisual,
-    SceneLayerKey, SurfaceBackground,
+    DropOcclusionRecord, DropTargetAvailability, DropTargetId, DropTargetLocation,
+    DropTargetRecord, DropVisual, SceneLayerKey, SurfaceBackground,
 };
 use crate::policy::DockPolicySnapshot;
 use crate::presentation::config::DockPresentationConfig;
@@ -383,6 +385,100 @@ fn guide_placement<T>(
     // Placement depends only on immutable layout geometry, never the pointer
     // or active slot. Crossing guide boundaries therefore cannot move buttons.
     Ok(best.map(|(_, geometry)| geometry))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn compile_content_targets(
+    policy: &DockPolicySnapshot,
+    config: &DockPresentationConfig,
+    surface: SurfaceId,
+    root: RootId,
+    node: NodeId,
+    depth: usize,
+    bounds: LogicalRect,
+    content: LogicalRect,
+    layer: SceneLayerKey,
+    fraction: DockFraction,
+    root_central: bool,
+    outer_guides: Option<GuideEdgeGeometry>,
+    ready: &mut PresentationPlan,
+) -> Result<(), SceneCompilationError> {
+    if !rect_has_area(bounds) {
+        return Ok(());
+    }
+    let inner_guide = if let Some(outer_guides) = outer_guides {
+        compile_inner_targets_and_guide(
+            policy,
+            config,
+            outer_guides,
+            surface,
+            root,
+            node,
+            bounds,
+            content,
+            layer,
+            fraction,
+            root_central,
+            ready,
+        )?
+    } else {
+        None
+    };
+    if let Some(inner_guide) = inner_guide {
+        ready.push_drop_guide_cluster(inner_guide.with_depth(depth));
+    } else {
+        compile_inner_targets_without_guide(
+            policy,
+            config,
+            surface,
+            root,
+            node,
+            bounds,
+            content,
+            layer,
+            fraction,
+            root_central,
+            ready,
+        )?;
+    }
+    let center = DropTargetId::Center {
+        surface,
+        root,
+        tabs: node,
+    };
+    let edge_target = |edge| {
+        if root_central {
+            DropTargetId::OuterEdge {
+                surface,
+                root,
+                node,
+                edge,
+            }
+        } else {
+            DropTargetId::InnerEdge {
+                surface,
+                root,
+                node,
+                edge,
+            }
+        }
+    };
+    ready.push_magnetic_pane_field(
+        root,
+        node,
+        layer,
+        depth,
+        content,
+        center,
+        MagneticEdgeTargets::new(
+            edge_target(Edge::Left),
+            edge_target(Edge::Right),
+            edge_target(Edge::Top),
+            edge_target(Edge::Bottom),
+        ),
+        config,
+    )?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

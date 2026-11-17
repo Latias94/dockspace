@@ -12,6 +12,7 @@ pub(super) fn capture(
     ui: &mut Ui,
     anchor: Id,
     entries: &[Id],
+    submenus: &[Id],
     source_enabled: bool,
 ) -> Option<Outcome> {
     if !source_enabled
@@ -36,16 +37,27 @@ pub(super) fn capture(
             .iter()
             .position(|entry| ui.memory(|memory| memory.had_focus_last_frame(*entry)));
     }
-    // Sizing disables the popup widgets, and a touch-opened popup can leave
-    // focus in pane content. Both still allow Escape to dismiss this menu;
-    // navigation and activation require an interactive menu focus scope.
+    // Sizing disables the popup widgets. Framework focus released by Escape
+    // can still belong to this menu's previous scope; application focus cannot.
     let can_navigate = !ui.is_sizing_pass()
         && ui.is_enabled()
         && (cursor.is_some() || focused.is_none() || focused == Some(anchor));
-    if can_navigate && let Some(target) = cursor.and_then(|index| entries.get(index)) {
+    let had_scope_focus = ui.memory(|memory| {
+        memory.had_focus_last_frame(anchor)
+            || entries
+                .iter()
+                .any(|entry| memory.had_focus_last_frame(*entry))
+    });
+    let can_dismiss =
+        cursor.is_some() || focused == Some(anchor) || (focused.is_none() && had_scope_focus);
+    if can_navigate
+        && let Some(target) = cursor
+            .map(|index| entries[index])
+            .or_else(|| (focused == Some(anchor)).then_some(anchor))
+    {
         ui.memory_mut(|memory| {
             memory.set_focus_lock_filter(
-                *target,
+                target,
                 EventFilter {
                     vertical_arrows: true,
                     horizontal_arrows: true,
@@ -96,12 +108,20 @@ pub(super) fn capture(
                     events.push((slot, event.clone()));
                     break;
                 }
+                Key::ArrowRight
+                    if can_navigate
+                        && cursor.is_some_and(|index| submenus.contains(&entries[index])) =>
+                {
+                    outcome = cursor.map(|index| Outcome::Activate(entries[index]));
+                    events.push((slot, event.clone()));
+                    break;
+                }
                 Key::Enter | Key::Space if can_navigate && cursor.is_some() => {
                     outcome = cursor.map(|index| Outcome::Activate(entries[index]));
                     events.push((slot, event.clone()));
                     break;
                 }
-                Key::Escape => {
+                Key::Escape if can_dismiss => {
                     outcome = Some(Outcome::Dismiss);
                     events.push((slot, event.clone()));
                     break;
@@ -136,7 +156,12 @@ pub(super) fn capture(
             ui.close();
         }
         Outcome::Dismiss => {
-            ui.memory_mut(|memory| memory.request_focus(anchor));
+            if focused.is_none()
+                || focused == Some(anchor)
+                || focused.is_some_and(|focused| entries.contains(&focused))
+            {
+                ui.memory_mut(|memory| memory.request_focus(anchor));
+            }
             ui.close();
         }
     }

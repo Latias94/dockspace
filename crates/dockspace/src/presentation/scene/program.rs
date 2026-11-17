@@ -16,6 +16,7 @@ pub(crate) enum SurfaceProgramRootOperation {
     TabBar(TabBarSceneId),
     Tab(TabSceneId),
     Pane(PaneSceneId),
+    Tabs(TabBarSceneId),
     Splitter(SplitterSceneId),
     SplitterJunction(SplitterJunctionId),
     TabStripControl(TabStripControlId),
@@ -49,7 +50,7 @@ pub(crate) enum SurfaceProgramBlock {
 pub(crate) struct ResolvedSurfaceProgramRoot<'a> {
     root: RootId,
     contained: Option<&'a ContainedRecord>,
-    title_item: Option<ItemId>,
+    label: Option<crate::graph::TabLabel<'a>>,
 }
 
 impl<'a> ResolvedSurfaceProgramRoot<'a> {
@@ -61,14 +62,15 @@ impl<'a> ResolvedSurfaceProgramRoot<'a> {
         self.contained
     }
 
-    pub(crate) const fn title_item(self) -> Option<ItemId> {
-        self.title_item
+    pub(crate) const fn label(self) -> Option<crate::graph::TabLabel<'a>> {
+        self.label
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ResolvedSurfaceProgramOperation<'a> {
     Pane(&'a PaneRecord),
+    Tabs(&'a TabsRecord),
     TabBar(&'a TabBarRecord),
     Tab(&'a TabRecord),
     Splitter(&'a SplitterRecord),
@@ -148,6 +150,7 @@ macro_rules! record_rows {
 
 record_rows!(
     PaneRow,
+    TabsRow,
     TabBarRow,
     TabRow,
     SplitterRow,
@@ -171,6 +174,7 @@ struct LinkedSurfaceProgramRoot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LinkedSurfaceProgramOperation {
     Pane(PaneRow),
+    Tabs(TabsRow),
     TabBar(TabBarRow),
     Tab(TabRow),
     Splitter(SplitterRow),
@@ -251,6 +255,19 @@ struct SurfaceProgramRootDraft {
 }
 
 impl SurfaceProgram {
+    pub(super) fn remap_pane_rows(&mut self, rows: &[usize]) {
+        if let SurfaceProgramTape::Linked(instructions) = &mut self.tape {
+            for instruction in instructions.iter_mut() {
+                if let SurfaceProgramInstruction::RootOperation(
+                    LinkedSurfaceProgramOperation::Pane(row),
+                ) = instruction
+                {
+                    row.0 = rows[row.0];
+                }
+            }
+        }
+    }
+
     fn link(&mut self, plan: &PresentationPlan) -> Result<(), SceneBuildError> {
         let invalid = || SceneBuildError::InvalidSurfaceProgram {
             surface: plan.surface,
@@ -679,13 +696,14 @@ impl SurfaceProgram {
 impl SurfaceProgramRootOperation {
     const fn paint_rank(self) -> usize {
         match self {
-            Self::Pane(_) => 0,
+            Self::Tabs(_) => 0,
             Self::TabBar(_) => 1,
             Self::Tab(_) => 2,
-            Self::Splitter(_) | Self::SplitterJunction(_) => 3,
-            Self::TabStripControl(_) => 4,
-            Self::ContainedControls(_) => 5,
-            Self::PresentationMenuAnchor(_) => 6,
+            Self::TabStripControl(_) => 3,
+            Self::Pane(_) => 4,
+            Self::Splitter(_) | Self::SplitterJunction(_) => 5,
+            Self::ContainedControls(_) => 6,
+            Self::PresentationMenuAnchor(_) => 7,
         }
     }
 }
@@ -696,7 +714,7 @@ impl PresentationPlan {
         root: RootId,
         presentation: SurfaceProgramRootPresentation,
     ) -> Result<(), SurfaceProgramBuildError> {
-        self.facts_mut()
+        self.content_mut()
             .surface_program
             .begin_root(root, presentation)
     }
@@ -705,7 +723,7 @@ impl PresentationPlan {
         &mut self,
         operation: SurfaceProgramRootOperation,
     ) -> Result<(), SurfaceProgramBuildError> {
-        self.facts_mut()
+        self.content_mut()
             .surface_program
             .push_root_operation(operation, None)
     }
@@ -713,14 +731,17 @@ impl PresentationPlan {
     pub(crate) fn push_surface_program_pane_operation(
         &mut self,
         id: PaneSceneId,
-        selected: Option<TabKey>,
     ) -> Result<(), SurfaceProgramBuildError> {
-        self.facts_mut().surface_program.push_root_operation(
-            SurfaceProgramRootOperation::Pane(id),
-            selected.map(|_| id.tabs),
-        )?;
-        Arc::make_mut(&mut self.selection).insert(id.tabs, selected);
-        Ok(())
+        let title_tabs = self
+            .content
+            .pane_records
+            .iter()
+            .find(|pane| pane.id() == id)
+            .and_then(|pane| pane.containing_tab_bar())
+            .map(|bar| bar.tabs);
+        self.content_mut()
+            .surface_program
+            .push_root_operation(SurfaceProgramRootOperation::Pane(id), title_tabs)
     }
 
     pub(crate) fn push_surface_program_derived_root_operation(
@@ -728,7 +749,7 @@ impl PresentationPlan {
         root: RootId,
         operation: SurfaceProgramRootOperation,
     ) -> Result<(), SurfaceProgramBuildError> {
-        self.facts_mut()
+        self.content_mut()
             .surface_program
             .push_derived_root_operation(root, operation)
     }
@@ -737,16 +758,17 @@ impl PresentationPlan {
         &mut self,
         root: RootId,
     ) -> Result<(), SurfaceProgramBuildError> {
-        self.facts_mut().surface_program.end_root(root)
+        self.content_mut().surface_program.end_root(root)
     }
 
     pub(crate) fn finish_surface_program(&mut self) -> Result<(), SurfaceProgramBuildError> {
         #[cfg(feature = "motion")]
         if !self.facts.pane_ranks.is_empty() {
-            let mut program = std::mem::take(&mut self.facts_mut().surface_program);
+            let mut program = std::mem::take(&mut self.content_mut().surface_program);
             let root_control_rank = |root| self.root_control_pane_rank(root);
             let result = program.finish_in_pane_order(|root, operation| match operation {
-                SurfaceProgramRootOperation::Pane(id) => (false, self.pane_rank(id.root, id.tabs)),
+                SurfaceProgramRootOperation::Pane(id) => (false, self.content_pane_rank(id)),
+                SurfaceProgramRootOperation::Tabs(id) => (false, self.pane_rank(id.root, id.tabs)),
                 SurfaceProgramRootOperation::TabBar(id) => {
                     (false, self.pane_rank(id.root, id.tabs))
                 }
@@ -764,30 +786,31 @@ impl PresentationPlan {
                         PresentationMenuAnchorHost::TabBar(bar) => {
                             Some((false, self.pane_rank(bar.root, bar.tabs)))
                         }
-                        PresentationMenuAnchorHost::ContainedTitle(_) => None,
+                        PresentationMenuAnchorHost::RootControls
+                        | PresentationMenuAnchorHost::ContainedTitle(_) => None,
                     })
                     .unwrap_or_else(|| root_control_rank(root)),
                 SurfaceProgramRootOperation::Splitter(_)
                 | SurfaceProgramRootOperation::SplitterJunction(_)
                 | SurfaceProgramRootOperation::ContainedControls(_) => root_control_rank(root),
             });
-            self.facts_mut().surface_program = program;
+            self.content_mut().surface_program = program;
             return result;
         }
-        self.facts_mut().surface_program.finish()
+        self.content_mut().surface_program.finish()
     }
 
     /// Consumes the construction identities after canonical record ordering is final.
     pub(crate) fn link_surface_program(&mut self) -> Result<(), SceneBuildError> {
         if matches!(
-            self.facts.surface_program.tape,
+            self.content.surface_program.tape,
             SurfaceProgramTape::Linked(_)
         ) {
             return Ok(());
         }
-        let mut program = std::mem::take(&mut self.facts_mut().surface_program);
+        let mut program = std::mem::take(&mut self.content_mut().surface_program);
         program.link(self)?;
-        self.facts_mut().surface_program = program;
+        self.content_mut().surface_program = program;
         Ok(())
     }
 
@@ -799,9 +822,17 @@ impl PresentationPlan {
         Some(match operation {
             SurfaceProgramRootOperation::Pane(id) if id.root == root.root => {
                 LinkedSurfaceProgramOperation::Pane(PaneRow(
-                    self.facts
+                    self.content
                         .pane_records
                         .binary_search_by_key(&id, PaneRecord::id)
+                        .ok()?,
+                ))
+            }
+            SurfaceProgramRootOperation::Tabs(id) if id.root == root.root => {
+                LinkedSurfaceProgramOperation::Tabs(TabsRow(
+                    self.facts
+                        .tabs_records
+                        .binary_search_by_key(&id, TabsRecord::id)
                         .ok()?,
                 ))
             }
@@ -870,7 +901,7 @@ impl PresentationPlan {
         &'plan self,
         mut visitor: impl FnMut(ResolvedSurfaceProgramStep<'plan>) -> Result<(), E>,
     ) -> Result<(), SurfaceProgramVisitError<E>> {
-        let SurfaceProgramTape::Linked(instructions) = &self.facts.surface_program.tape else {
+        let SurfaceProgramTape::Linked(instructions) = &self.content.surface_program.tape else {
             return Err(SurfaceProgramVisitError::InvalidProgram);
         };
         let invalid = || SurfaceProgramVisitError::InvalidProgram;
@@ -885,10 +916,9 @@ impl PresentationPlan {
                     let root = ResolvedSurfaceProgramRoot {
                         root: root.root,
                         contained,
-                        title_item: root
-                            .title_tabs
-                            .and_then(|tabs| self.selected_in_tabs(tabs))
-                            .and_then(TabKey::item),
+                        label: contained
+                            .and_then(ContainedRecord::label)
+                            .or_else(|| self.root_label(root.root)),
                     };
                     active_root = Some(root);
                     ResolvedSurfaceProgramStep::RootBegin(root)
@@ -962,7 +992,10 @@ impl PresentationPlan {
     ) -> Option<ResolvedSurfaceProgramOperation<'_>> {
         Some(match operation {
             LinkedSurfaceProgramOperation::Pane(row) => {
-                ResolvedSurfaceProgramOperation::Pane(self.facts.pane_records.get(row.0)?)
+                ResolvedSurfaceProgramOperation::Pane(self.content.pane_records.get(row.0)?)
+            }
+            LinkedSurfaceProgramOperation::Tabs(row) => {
+                ResolvedSurfaceProgramOperation::Tabs(self.facts.tabs_records.get(row.0)?)
             }
             LinkedSurfaceProgramOperation::TabBar(row) => {
                 ResolvedSurfaceProgramOperation::TabBar(self.facts.tab_bar_records.get(row.0)?)
@@ -999,7 +1032,7 @@ impl PresentationPlan {
     pub(crate) fn surface_program_menu_open_bars(
         &self,
     ) -> impl Iterator<Item = TabBarSceneId> + '_ {
-        let instructions = match &self.facts.surface_program.tape {
+        let instructions = match &self.content.surface_program.tape {
             SurfaceProgramTape::Linked(instructions) => instructions.as_ref(),
             SurfaceProgramTape::Draft(_) => &[],
         };
@@ -1028,7 +1061,7 @@ impl PresentationPlan {
         let Some(index) = self.surface_program().blocks().iter().position(predicate) else {
             return false;
         };
-        match &mut self.facts_mut().surface_program.tape {
+        match &mut self.content_mut().surface_program.tape {
             SurfaceProgramTape::Draft(blocks) => {
                 blocks.remove(index);
             }
@@ -1081,7 +1114,7 @@ pub(crate) struct SurfaceProgramInspection<'a> {
 #[cfg(test)]
 impl SurfaceProgramInspection<'_> {
     pub(crate) fn blocks(&self) -> Vec<SurfaceProgramBlock> {
-        let instructions = match &self.plan.facts.surface_program.tape {
+        let instructions = match &self.plan.content.surface_program.tape {
             SurfaceProgramTape::Draft(blocks) => return blocks.clone(),
             SurfaceProgramTape::Linked(instructions) => instructions,
         };
@@ -1108,6 +1141,9 @@ impl SurfaceProgramInspection<'_> {
                     SurfaceProgramBlock::RootOperation(match operation {
                         ResolvedSurfaceProgramOperation::Pane(record) => {
                             SurfaceProgramRootOperation::Pane(record.id())
+                        }
+                        ResolvedSurfaceProgramOperation::Tabs(record) => {
+                            SurfaceProgramRootOperation::Tabs(record.id())
                         }
                         ResolvedSurfaceProgramOperation::TabBar(record) => {
                             SurfaceProgramRootOperation::TabBar(*record.id())

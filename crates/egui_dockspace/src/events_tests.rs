@@ -20,6 +20,7 @@ const ROOT: RootId = RootId::new(1);
 const FIRST: ItemId = ItemId::new(1);
 const SECOND: ItemId = ItemId::new(2);
 
+mod composable;
 mod tab_pointer_close;
 
 #[derive(Default)]
@@ -193,7 +194,7 @@ fn ordinary_tab_click_returns_the_committed_selection_once() {
     events.extend(harness.step(vec![button(position, false)]));
     events.extend(harness.settle());
     assert_eq!(selections(&events, SECOND), 1);
-    assert!(harness.dock.view().item(SECOND).unwrap().is_selected());
+    assert!(harness.dock.view().item(SECOND).unwrap().is_active());
     assert!(harness.settle().is_empty());
 }
 
@@ -231,7 +232,7 @@ fn discarded_encoding_passes_still_return_one_selection_event() {
     assert!(harness.notification.layout_change().is_some());
     assert_eq!(harness.passes, 3);
     assert_eq!(selections(&events, SECOND), 1);
-    assert!(harness.dock.view().item(SECOND).unwrap().is_selected());
+    assert!(harness.dock.view().item(SECOND).unwrap().is_active());
     harness.step(vec![button(position, false)]);
     assert!(harness.settle().is_empty());
 }
@@ -248,7 +249,7 @@ fn overflow_menu_selection_uses_the_same_committed_event_contract() {
     events.extend(harness.activate(Role::MenuItem, "Second"));
     events.extend(harness.settle());
     assert_eq!(selections(&events, SECOND), 1);
-    assert!(harness.dock.view().item(SECOND).unwrap().is_selected());
+    assert!(harness.dock.view().item(SECOND).unwrap().is_active());
     assert!(harness.settle().is_empty());
 }
 

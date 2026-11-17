@@ -151,11 +151,11 @@ fn layout_reset_preserves_native_snapshot_settlement_and_retry_watermarks() {
     for attempt in 0..3 {
         let mut frame = native_frame(&mut session, 1);
         frame.select_item_current(SECOND).unwrap();
-        assert!(frame.view().item(SECOND).unwrap().is_selected());
+        assert!(frame.view().item(SECOND).unwrap().is_active());
         let prefix_version = frame.version();
         assert_ne!(prefix_version, before);
         frame.submit_layout_reset(&reset).unwrap();
-        assert!(frame.view().item(FIRST).unwrap().is_selected());
+        assert!(frame.view().item(FIRST).unwrap().is_active());
         assert_eq!(
             *candidate_version.get_or_insert(frame.version()),
             frame.version()
@@ -206,7 +206,7 @@ fn layout_reset_preserves_native_snapshot_settlement_and_retry_watermarks() {
         assert_eq!(session.native_input_recorded_count(), recorded);
         if attempt < 2 {
             assert_eq!(session.version(), before);
-            assert!(session.view().item(FIRST).unwrap().is_selected());
+            assert!(session.view().item(FIRST).unwrap().is_active());
             assert!(session.is_current_native_binding(old));
             assert!(session.native_local_coordinates(old).is_none());
             assert!(session.has_pending_native_input());
@@ -283,7 +283,7 @@ fn native_registration_and_layout_reset_publish_the_original_binding_before_its_
     assert_ne!(successor, old);
     assert!(!session.is_current_native_binding(*old));
     assert!(session.is_current_native_binding(*successor));
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert_eq!(session.native_input_recorded_count(), recorded);
     assert!(!session.has_pending_native_input());
 }
@@ -391,12 +391,12 @@ mod document_restore {
             let mut frame = native_frame(&mut session, 2);
             assert_eq!(frame.external_key_for_item(NEW), None);
             frame.select_item_current(SECOND).unwrap();
-            assert!(frame.view().item(SECOND).unwrap().is_selected());
+            assert!(frame.view().item(SECOND).unwrap().is_active());
             let prefix_version = frame.version();
             assert_ne!(prefix_version, before);
             frame.submit_document_restore(&restore).unwrap();
             assert_eq!(frame.external_key_for_item(NEW), Some("pane:new"));
-            assert!(frame.view().item(NEW).unwrap().is_selected());
+            assert!(frame.view().item(NEW).unwrap().is_active());
             assert!(frame.view().item(SECOND).is_none());
             if attempt == 0 {
                 drop(frame);
@@ -404,7 +404,7 @@ mod document_restore {
                 assert_eq!(session.next_document_generation(), generation);
                 assert_eq!(session.item_id_for_external_key("pane:new"), None);
                 assert!(session.view().item(NEW).is_none());
-                assert!(session.view().item(FIRST).unwrap().is_selected());
+                assert!(session.view().item(FIRST).unwrap().is_active());
                 assert!(session.is_current_native_binding(old));
                 assert!(session.native_local_coordinates(old).is_none());
                 assert!(session.has_pending_native_input());
@@ -441,7 +441,7 @@ mod document_restore {
         assert_eq!(session.document_id(), Some(DOCUMENT));
         assert_eq!(session.item_id_for_external_key("pane:new"), Some(NEW));
         assert_eq!(session.external_key_for_item(NEW), Some("pane:new"));
-        assert!(session.view().item(NEW).unwrap().is_selected());
+        assert!(session.view().item(NEW).unwrap().is_active());
         assert!(!session.is_current_native_binding(old));
         assert!(session.is_current_native_binding(successor));
         assert!(!session.native_binding_can_report_focus(old));

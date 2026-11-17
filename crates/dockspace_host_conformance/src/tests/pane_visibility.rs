@@ -48,6 +48,7 @@ fn publish_visible_surface(host: &mut DeterministicHost) {
                 view.item(item)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .visible_selected()
                     .and_then(|tab| tab.item())
             })
@@ -101,10 +102,7 @@ fn publish_visible_surface(host: &mut DeterministicHost) {
         let mut painted_selection = records
             .panes
             .iter()
-            .map(|pane| {
-                pane.selected()
-                    .expect("an entirely hidden group has no pane")
-            })
+            .map(|pane| pane.item())
             .collect::<Vec<_>>();
         painted_selection.sort_unstable();
         let mut selected = selected;
@@ -121,12 +119,16 @@ fn publish_visible_surface(host: &mut DeterministicHost) {
         assert_eq!(records.contained.len(), usize::from(contained_visible));
         if visible.iter().all(|item| *item != A && *item != B) {
             assert!(records.splitters.is_empty());
-            let remaining = records
-                .panes
+            let remaining = records.panes.iter().find(|pane| pane.item() == C).unwrap();
+            let tabs = records
+                .tab_bars
                 .iter()
-                .find(|pane| pane.selected() == Some(C))
-                .unwrap();
-            assert_eq!(remaining.bounds(), bounds);
+                .find(|bar| bar.selected() == Some(C.into()))
+                .expect("the remaining content retains its real tab bar");
+            assert_eq!(tabs.bounds().min(), bounds.min());
+            assert_eq!(remaining.bounds().min().x(), bounds.min().x());
+            assert_eq!(remaining.bounds().min().y(), tabs.bounds().max().y());
+            assert_eq!(remaining.bounds().max(), bounds.max());
         }
         frame.confirm_surface_program(SURFACE).unwrap();
     });
@@ -166,17 +168,17 @@ fn shared_l08_pane_visibility_preserves_durable_layout_and_current_public_contro
                     frame.select_item_current(item(target)).unwrap();
                 });
                 let [
-                    HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                        tab: selected,
+                    HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::ItemActivated {
+                        item: selected,
                         changed: true,
                     }),
                 ] = report.inputs()
                 else {
                     panic!("selection must commit through the public action: {report:?}");
                 };
-                assert_eq!(selected.item(), Some(item(target)));
+                assert_eq!(*selected, item(target));
                 let selected_view = host.view().item(item(target)).unwrap();
-                assert!(selected_view.is_selected());
+                assert!(selected_view.is_active());
                 SemanticObservation::ItemSelected(alias(selected_view.item()))
             }
             (SemanticSelector::Item(target), SemanticAction::SetVisible(visible)) => {
@@ -237,7 +239,12 @@ fn shared_l08_pane_visibility_preserves_durable_layout_and_current_public_contro
             unsupported => panic!("unsupported visibility scenario step: {unsupported:?}"),
         };
         observations.push(observed);
-        let tabs = host.view().item(A).unwrap().tabs();
+        let tabs = host
+            .view()
+            .item(A)
+            .unwrap()
+            .tabs()
+            .expect("fixture item is an inline tab");
         assert_eq!(tabs.items().collect::<Vec<_>>(), [A, B]);
         assert_eq!(
             tabs.selected().and_then(|tab| tab.item()),
@@ -259,6 +266,7 @@ fn shared_l08_pane_visibility_preserves_durable_layout_and_current_public_contro
                 .item(C)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             [C]
@@ -268,6 +276,7 @@ fn shared_l08_pane_visibility_preserves_durable_layout_and_current_public_contro
                 .item(X)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             [X]
@@ -287,6 +296,6 @@ fn shared_l08_pane_visibility_preserves_durable_layout_and_current_public_contro
         let action = plan.prepare_tab_select(A).unwrap();
         frame.submit_surface_action(action).unwrap();
     });
-    assert!(host.view().item(A).unwrap().is_selected());
+    assert!(host.view().item(A).unwrap().is_active());
     publish_visible_surface(&mut host);
 }

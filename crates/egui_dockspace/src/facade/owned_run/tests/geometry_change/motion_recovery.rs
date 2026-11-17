@@ -107,7 +107,7 @@ fn moving(entry: Entry, discarded_passes: usize) -> (Harness, Sample) {
     assert!(harness.dockspace.session.surface_motion_is_active(SURFACE));
     assert_eq!(moving.splitters, []);
     assert_ne!(harness.panes.bounds[&SECOND], before);
-    assert!(!harness.dockspace.view().item(FIRST).unwrap().is_selected());
+    assert!(!harness.dockspace.view().item(FIRST).unwrap().is_active());
     (harness, moving)
 }
 
@@ -117,7 +117,7 @@ fn press_during_motion_then_cancel(entry: Entry, focus_loss: bool, discarded_pas
     let pressed = sample(&mut harness, 1.06, press(source));
     assert_eq!(pressed.feedback, []);
     assert!(harness.dockspace.has_active_gesture());
-    assert!(harness.dockspace.view().item(FIRST).unwrap().is_selected());
+    assert!(harness.dockspace.view().item(FIRST).unwrap().is_active());
     let version = harness.dockspace.version();
     harness.context.options_mut(|options| {
         options.max_passes = NonZeroUsize::new(discarded_passes + 1).unwrap();
@@ -194,6 +194,7 @@ fn press_during_motion_then_cancel(entry: Entry, focus_loss: bool, discarded_pas
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, THIRD]
@@ -205,6 +206,7 @@ fn press_during_motion_then_cancel(entry: Entry, focus_loss: bool, discarded_pas
             .item(SECOND)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[SECOND]

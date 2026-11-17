@@ -686,12 +686,12 @@ mod tests {
             DockspaceActionResult::from_runtime_report(&report, first)
                 .unwrap()
                 .status(),
-            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(FIRST)));
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated { item: selected_tab, .. }) if *selected_tab == FIRST));
         assert!(matches!(
             DockspaceActionResult::from_runtime_report(&report, second)
                 .unwrap()
                 .status(),
-            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(SECOND)));
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated { item: selected_tab, .. }) if *selected_tab == SECOND));
     }
 
     #[test]

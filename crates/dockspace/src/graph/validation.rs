@@ -25,6 +25,12 @@ pub enum PresentationLocation {
 /// One invariant violation in a workspace candidate.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum WorkspaceValidationError {
+    /// A grid roster, dimension, or shared track value is invalid.
+    #[error("invalid grid {node:?}: {source}")]
+    InvalidGrid {
+        node: NodeId,
+        source: crate::model::DockspaceGridError,
+    },
     /// A root record points at a missing runtime node.
     #[error("root {root} references missing node {node:?}")]
     MissingRootNode {
@@ -65,14 +71,12 @@ pub enum WorkspaceValidationError {
         /// Unreachable runtime node.
         node: NodeId,
     },
-    /// A layout child requires the composable graph implementation.
-    #[error("tabs node {tabs:?} contains unsupported layout tab {tab:?}")]
-    UnsupportedLayoutTab {
-        /// Owning tabs container.
-        tabs: NodeId,
-        /// Rejected direct-child identity.
-        tab: TabKey,
-    },
+    /// A layout tab must refer to a structural container rather than a pane.
+    #[error("tabs node {tabs:?} layout child {child:?} is a bare pane")]
+    LayoutTabIsPane { tabs: NodeId, child: NodeId },
+    /// A selected layout child is invisible while a visible alternative exists.
+    #[error("tabs node {tabs:?} selects invisible child {tab:?}")]
+    HiddenLayoutSelection { tabs: NodeId, tab: TabKey },
     /// A non-central tabs leaf contains no items.
     #[error("non-central tabs node {tabs:?} is empty")]
     EmptyTabs {
@@ -429,6 +433,45 @@ enum Frame {
     Exit(NodeId),
 }
 
+pub(super) fn tab_is_visible_in_data(workspace: &WorkspaceData, tab: TabKey) -> bool {
+    if let Some(item) = tab.item() {
+        return !workspace.hidden_items.contains(&item);
+    }
+    let mut pending: Vec<_> = tab.layout().into_iter().collect();
+    let mut seen = HashSet::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(node) = workspace.node(id) else {
+            continue;
+        };
+        match node {
+            Node::Pane { item } if !workspace.hidden_items.contains(item) => return true,
+            Node::Tabs { items, .. } => {
+                if items
+                    .iter()
+                    .filter_map(|tab| tab.item())
+                    .any(|item| !workspace.hidden_items.contains(&item))
+                {
+                    return true;
+                }
+                if items.is_empty()
+                    && workspace
+                        .roots
+                        .values()
+                        .any(|root| root.central == Some(id))
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        pending.extend(node.child_nodes().map(|(_, child)| child));
+    }
+    false
+}
+
 struct Validator<'workspace> {
     workspace: &'workspace WorkspaceData,
     errors: Vec<WorkspaceValidationError>,
@@ -480,11 +523,10 @@ impl<'workspace> Validator<'workspace> {
         let orphan_set: HashSet<NodeId> = orphans.iter().copied().collect();
         let mut has_orphan_parent = HashSet::new();
         for orphan in orphans.iter().copied() {
-            if let Some(Node::Split { children, .. }) = self.workspace.nodes.get(orphan) {
+            if let Some(node) = self.workspace.nodes.get(orphan) {
                 has_orphan_parent.extend(
-                    children
-                        .iter()
-                        .copied()
+                    node.child_nodes()
+                        .map(|(_, child)| child)
                         .filter(|child| orphan_set.contains(child)),
                 );
             }
@@ -599,14 +641,50 @@ impl<'workspace> Validator<'workspace> {
                 items,
                 selected,
                 mru,
-            } => self.validate_tabs(node_id, items, *selected, mru),
+                ..
+            } => {
+                self.validate_tabs(node_id, items, *selected, mru);
+                stack.extend(node.child_nodes().rev().map(|(_, child)| Frame::Enter {
+                    node: child,
+                    parent: Some(node_id),
+                    parent_axis: None,
+                    owner,
+                }));
+            }
+            Node::Pane { item } => self.record_item(node_id, *item),
+            Node::Grid {
+                shape,
+                children,
+                shares,
+                ..
+            } => {
+                let checked = shape.validate_children(children.len()).and_then(|()| {
+                    shares
+                        .as_ref()
+                        .map_or(Ok(()), |shares| shares.validate_for(*shape, children.len()))
+                });
+                if let Err(source) = checked {
+                    self.errors.push(WorkspaceValidationError::InvalidGrid {
+                        node: node_id,
+                        source,
+                    });
+                }
+                stack.extend(children.iter().rev().copied().map(|child| Frame::Enter {
+                    node: child,
+                    parent: Some(node_id),
+                    parent_axis: None,
+                    owner,
+                }));
+            }
             Node::Split {
                 axis,
                 children,
                 weights,
+                ..
             } => {
                 if let (Some(parent), Some(parent_axis)) = (parent, parent_axis)
                     && parent_axis == *axis
+                    && node.layout_title().is_none()
                 {
                     self.errors.push(WorkspaceValidationError::SameAxisNesting {
                         parent,
@@ -645,32 +723,37 @@ impl<'workspace> Validator<'workspace> {
             self.errors
                 .push(WorkspaceValidationError::InvalidSelection { tabs, selected });
         }
-        if let Some(item) = selected.and_then(TabKey::item)
-            && self.workspace.hidden_items.contains(&item)
+        if let Some(tab) = selected
+            && !tab_is_visible_in_data(self.workspace, tab)
             && items
                 .iter()
-                .filter_map(|tab| tab.item())
-                .any(|item| !self.workspace.hidden_items.contains(&item))
+                .any(|tab| tab_is_visible_in_data(self.workspace, *tab))
         {
-            self.errors
-                .push(WorkspaceValidationError::HiddenSelection { tabs, item });
+            self.errors.push(match tab.item() {
+                Some(item) => WorkspaceValidationError::HiddenSelection { tabs, item },
+                None => WorkspaceValidationError::HiddenLayoutSelection { tabs, tab },
+            });
         }
-
         self.validate_tab_mru(tabs, items, selected, mru);
-
         for tab in items {
-            let Some(item) = tab.item() else {
+            if let Some(item) = tab.item() {
+                self.record_item(tabs, item);
+            } else if let Some(child) = tab.layout()
+                && matches!(self.workspace.node(child), Some(Node::Pane { .. }))
+            {
                 self.errors
-                    .push(WorkspaceValidationError::UnsupportedLayoutTab { tabs, tab: *tab });
-                continue;
-            };
-            if let Some(first_tabs) = self.items.insert(item, tabs) {
-                self.errors.push(WorkspaceValidationError::DuplicateItem {
-                    item,
-                    first_tabs,
-                    duplicate_tabs: tabs,
-                });
+                    .push(WorkspaceValidationError::LayoutTabIsPane { tabs, child });
             }
+        }
+    }
+
+    fn record_item(&mut self, owner: NodeId, item: ItemId) {
+        if let Some(first_tabs) = self.items.insert(item, owner) {
+            self.errors.push(WorkspaceValidationError::DuplicateItem {
+                item,
+                first_tabs,
+                duplicate_tabs: owner,
+            });
         }
     }
 
@@ -942,6 +1025,7 @@ mod tests {
             axis: Axis::Horizontal,
             children: vec![left, left],
             weights: vec![SplitWeight(0.5), SplitWeight(0.5)],
+            layout_title: None,
         });
         builder
             .replace_node(
@@ -950,6 +1034,7 @@ mod tests {
                     axis: Axis::Vertical,
                     children: vec![split, orphan],
                     weights: vec![SplitWeight(0.5), SplitWeight(0.5)],
+                    layout_title: None,
                 },
             )
             .expect("test node exists");
@@ -981,6 +1066,7 @@ mod tests {
             axis: Axis::Horizontal,
             children: vec![left, right],
             weights: vec![SplitWeight(f64::NAN), SplitWeight(0.5)],
+            layout_title: None,
         });
         builder.set_root(RootId::new(1), RootRecord::new(split));
         builder.set_surface(
@@ -1009,6 +1095,7 @@ mod tests {
             axis: Axis::Horizontal,
             children: vec![first, second],
             weights: vec![SplitWeight(0.25), SplitWeight(0.25)],
+            layout_title: None,
         });
         let root_node = builder.insert_node(
             Node::equal_split(Axis::Horizontal, [nested, first]).expect("valid root split"),

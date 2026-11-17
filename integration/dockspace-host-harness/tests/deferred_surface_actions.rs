@@ -117,10 +117,10 @@ fn unpublished_discarded_pass_keeps_its_selection_witness_for_the_next_update() 
     });
     assert_eq!(session.version(), before);
     assert!(session.presented_surface(SURFACE).is_none());
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     let report = submit(&mut session, action);
     assert!(report.workspace_changed(), "{report:?}");
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
 }
 
 #[test]
@@ -138,8 +138,8 @@ fn unrelated_revision_does_not_retarget_or_expire_the_frozen_selection() {
     assert_ne!(old.expected_version(), fresh.expected_version());
     assert!(old.same_intent(&fresh));
     assert!(submit(&mut session, old).workspace_changed());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
-    assert!(session.view().item(OTHER_SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
+    assert!(session.view().item(OTHER_SECOND).unwrap().is_active());
 }
 
 #[test]
@@ -155,8 +155,8 @@ fn foreign_witness_is_a_typed_input_rejection_and_does_not_poison_the_frame() {
         report.inputs().first(),
         Some(HostInputOutcome::StaleRejected { .. })
     ));
-    assert!(destination.view().item(FIRST).unwrap().is_selected());
-    assert!(destination.view().item(OTHER_SECOND).unwrap().is_selected());
+    assert!(destination.view().item(FIRST).unwrap().is_active());
+    assert!(destination.view().item(OTHER_SECOND).unwrap().is_active());
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn replacing_the_epoch_rejects_a_witness_even_when_stable_identities_match() {
     let reset = session.prepare_layout_reset(layout()).unwrap();
     commit(session.begin_layout_reset_frame(&reset).unwrap());
     assert_stale(&submit(&mut session, action));
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
 }
 
 #[test]
@@ -257,19 +257,21 @@ fn same_bar_new_members_do_not_expand_item_selection_or_close_authority() {
                     .item(UNSEEN)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FLOAT_FIRST, UNSEEN]
             );
         } else {
             assert!(report.workspace_changed(), "{report:?}");
-            assert!(session.view().item(FLOAT_SECOND).unwrap().is_selected());
+            assert!(session.view().item(FLOAT_SECOND).unwrap().is_active());
             assert_eq!(
                 session
                     .view()
                     .item(UNSEEN)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FLOAT_FIRST, FLOAT_SECOND, UNSEEN]
@@ -329,7 +331,7 @@ fn unrelated_sibling_bar_changes_do_not_expire_item_actions_in_the_same_root() {
             );
         } else {
             assert!(report.workspace_changed(), "{report:?}");
-            assert!(session.view().item(SECOND).unwrap().is_selected());
+            assert!(session.view().item(SECOND).unwrap().is_active());
         }
         assert_eq!(
             session
@@ -337,6 +339,7 @@ fn unrelated_sibling_bar_changes_do_not_expire_item_actions_in_the_same_root() {
                 .item(UNSEEN)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[FLOAT_FIRST, FLOAT_SECOND, UNSEEN]
@@ -749,10 +752,10 @@ fn unpublished_tab_chrome_retains_its_popup_session_and_rejects_a_successor_popu
             let open = capture_overflow(&mut session, open_menu);
             submit(&mut session, open);
             assert_stale(&submit(&mut session, row));
-            assert!(session.view().item(FIRST).unwrap().is_selected());
+            assert!(session.view().item(FIRST).unwrap().is_active());
         } else {
             assert!(submit(&mut session, row).workspace_changed());
-            assert!(session.view().item(FLOAT_SECOND).unwrap().is_selected());
+            assert!(session.view().item(FLOAT_SECOND).unwrap().is_active());
         }
     }
 }

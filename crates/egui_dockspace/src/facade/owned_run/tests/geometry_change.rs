@@ -332,6 +332,7 @@ fn cancelled_drag_then_resize(
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND]
@@ -343,6 +344,7 @@ fn cancelled_drag_then_resize(
             .item(THIRD)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[THIRD]

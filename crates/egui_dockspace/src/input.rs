@@ -1,5 +1,6 @@
 //! Application-configurable docking gestures and tab/splitter shortcuts.
 
+use dockspace::model::TabGroupDockMode;
 use egui::{Key, KeyboardShortcut, Modifiers};
 
 /// Modifier policy for acquiring docking targets during a drag.
@@ -49,6 +50,12 @@ pub enum SplitterDoubleClick {
 pub struct DockInputConfig {
     /// Modifier policy shared by pointer edges and modifier-only observations.
     pub docking: DockingActivation,
+    /// Modifier chord which preserves a dragged group as one layout tab on a center drop.
+    ///
+    /// Defaults to Alt. Additional modifiers are allowed. `None` keeps ordinary
+    /// group center drops in merge mode. Floating and native tear-off retain
+    /// the original source independently of this center-docking choice.
+    pub group_preserve_layout: Option<Modifiers>,
     /// Shortcut which cancels an active docking gesture; `None` disables it.
     ///
     /// Additional modifiers are allowed, so cancellation remains available
@@ -80,6 +87,7 @@ impl Default for DockInputConfig {
     fn default() -> Self {
         Self {
             docking: DockingActivation::default(),
+            group_preserve_layout: Some(Modifiers::ALT),
             cancel_drag: Some(KeyboardShortcut::new(Modifiers::NONE, Key::Escape)),
             middle_click_closes_tab: true,
             splitter_double_click: Some(SplitterDoubleClick::Preferred),
@@ -90,6 +98,19 @@ impl Default for DockInputConfig {
 }
 
 impl DockInputConfig {
+    /// Resolves observed modifiers to the core's group center-docking mode.
+    #[must_use]
+    pub fn tab_group_dock_mode(&self, modifiers: Modifiers) -> TabGroupDockMode {
+        if self
+            .group_preserve_layout
+            .is_some_and(|required| modifiers_include(modifiers, required))
+        {
+            TabGroupDockMode::PreserveLayout
+        } else {
+            TabGroupDockMode::MergeTabs
+        }
+    }
+
     /// Returns whether the observed modifiers permit acquiring docking targets.
     ///
     /// Every requested modifier must be held; additional modifiers are allowed.
@@ -128,6 +149,47 @@ fn modifiers_include(observed: Modifiers, required: Modifiers) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_preservation_defaults_to_alt_and_can_use_a_chord_or_be_disabled() {
+        let input = DockInputConfig::default();
+        assert_eq!(
+            input.tab_group_dock_mode(Modifiers::NONE),
+            TabGroupDockMode::MergeTabs
+        );
+        assert_eq!(
+            input.tab_group_dock_mode(Modifiers::ALT),
+            TabGroupDockMode::PreserveLayout
+        );
+        assert_eq!(
+            input.tab_group_dock_mode(Modifiers::ALT | Modifiers::CTRL),
+            TabGroupDockMode::PreserveLayout
+        );
+        let input = DockInputConfig {
+            group_preserve_layout: Some(Modifiers::CTRL | Modifiers::SHIFT),
+            ..input
+        };
+        assert_eq!(
+            input.tab_group_dock_mode(Modifiers::ALT),
+            TabGroupDockMode::MergeTabs
+        );
+        assert_eq!(
+            input.tab_group_dock_mode(Modifiers::CTRL),
+            TabGroupDockMode::MergeTabs
+        );
+        assert_eq!(
+            input.tab_group_dock_mode(Modifiers::CTRL | Modifiers::SHIFT | Modifiers::ALT),
+            TabGroupDockMode::PreserveLayout
+        );
+        let input = DockInputConfig {
+            group_preserve_layout: None,
+            ..input
+        };
+        assert_eq!(
+            input.tab_group_dock_mode(Modifiers::ALT | Modifiers::CTRL | Modifiers::SHIFT),
+            TabGroupDockMode::MergeTabs
+        );
+    }
 
     #[test]
     fn default_shift_policy_allows_extra_modifiers_and_keeps_escape_available() {

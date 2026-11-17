@@ -45,14 +45,24 @@ renderer errors directly, and reserve `Unavailable` for content that is actually
 unavailable. A failed resolver installs none of that invocation's answers.
 
 Answer `SurfaceMeasurementRequest::PaneSizing` with validated content-only
-`PaneSizing`, including metadata for inactive visible tabs. The selected visible
-tab supplies the leaf's bounds; hidden items are requested again when shown.
-Core composes chrome, so return content logical points rather than native outer
-bounds. Maximum/fixed sizes may leave background inside a larger host.
+`PaneSizing`, including requested inactive content. Core composes the selected
+branch's constraints, nested headers and shared Grid tracks; hidden items are
+requested again when shown. Return content logical points rather than native
+outer bounds. Maximum/fixed sizes may leave background inside a larger host.
 Preferences act only through explicit `SurfaceSplitterAdjustment::Preferred`;
 normal layout retains user weights. Follow the core guide's
 [pane sizing contract](../../../crates/dockspace/docs/guide.md#pane-sizing)
 for capped resize frontiers and infeasible minima.
+
+Consume independent `Tabs`, `TabBar` and `Pane` program operations. A bare Pane
+has no implicit header; a layout tab can present several real Pane records.
+Use each record's supplied clip and `TabLabel` rather than deriving chrome or
+labels from a representative descendant. Store application content by `ItemId`;
+its immediate `.tabs()` and `.tab_index()` are optional. For composed trees,
+verify that switching an outer tab removes every inactive body's callback and
+receiver while retaining all owned content. Start from
+`examples/shared_grid.rs` in the egui crate and the core composition guide for
+shared boundaries; the adapter renders core geometry rather than solving tracks.
 
 Keep input admission, encoding retries and later updates distinct. A repeated
 encoding pass uses `restart_encoding_pass` on the same candidate without

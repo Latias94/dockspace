@@ -10,7 +10,7 @@ use crate::graph::command::ContainedPosition;
 use crate::ids::{FloatingPresentationId, RootId, SurfaceId};
 use crate::platform::coordinates::{TearOffPlacementProof, ViewportPlacementProof};
 use crate::presentation::scene::{
-    ContainedResizeDirection, SurfaceSceneStamp, TabBarSceneId, TabSceneId,
+    ContainedResizeDirection, PaneSceneId, SurfaceSceneStamp, TabBarSceneId, TabSceneId,
 };
 
 /// Authority attached to a provider observation.
@@ -212,6 +212,8 @@ pub enum CloseSceneTarget {
     Tab(TabSceneId),
     /// Close one item through an independent activation of its visible tab body.
     TabBody(TabSceneId),
+    /// Close one actual visible content placement through a framework menu.
+    Pane(PaneSceneId),
     /// Close every item in one exact contained-root presentation.
     Contained(FloatingPresentationId),
 }

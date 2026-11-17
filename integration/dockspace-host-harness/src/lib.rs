@@ -22,7 +22,7 @@ pub enum OwnedRecord {
     },
     PaneContent {
         visual: DockspaceVisualId,
-        item: Option<ItemId>,
+        item: ItemId,
         bounds: LogicalRect,
         paint: SurfacePaintDisposition,
     },
@@ -63,12 +63,13 @@ impl RecordingRenderer {
                         Operation::Pane(pane) => {
                             sink.records.push(OwnedRecord::PaneContent {
                                 visual: pane.visual_id(),
-                                item: pane.selected(),
+                                item: pane.item(),
                                 bounds: pane.content_bounds(),
                                 paint,
                             });
                             pane.bounds()
                         }
+                        Operation::Tabs(tabs) => tabs.bounds(),
                         Operation::TabBar(bar) => bar.bounds(),
                         Operation::Tab(tab) => {
                             if let Some(receiver) = plan.receiver_for_tab_body(tab) {

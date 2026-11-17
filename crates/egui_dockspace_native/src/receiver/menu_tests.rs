@@ -256,8 +256,8 @@ fn tab_list_menu_rows_route_native_click_and_drag_after_ui_zoom() {
             Some(DockspaceReceiverRole::TabListMenuBlocker),
             "the popup frame must block the underlying pane's drag lane"
         );
-        assert!(session.view().item(SECOND).unwrap().is_selected());
-        assert!(!session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(SECOND).unwrap().is_active());
+        assert!(!session.view().item(FIRST).unwrap().is_active());
 
         let presented = &store.presented[&SURFACE][0];
         for (point, expected) in [
@@ -588,7 +588,7 @@ fn an_application_modal_blocks_native_menu_scroll_without_rejecting_input() {
             Ok::<(), ()>(())
         })
         .unwrap();
-    assert!(frame.view().item(FIRST).unwrap().is_selected());
+    assert!(frame.view().item(FIRST).unwrap().is_active());
     frame
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();

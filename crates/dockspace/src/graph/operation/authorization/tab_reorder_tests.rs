@@ -59,7 +59,9 @@ fn locked_tabs_and_crossing_moves_share_one_rule_for_commands_and_drop_eligibili
             );
             for command in [
                 WorkspaceCommand::Reorder {
-                    source: source.as_tab_source(),
+                    source: source
+                        .as_tab_source()
+                        .expect("fixture owns an inline item tab"),
                     insertion_index,
                 },
                 WorkspaceCommand::Move { payload, target },
@@ -196,7 +198,10 @@ fn frozen_barriers_match_command_rejections_for_every_source_gap_and_rule_subset
                     &workspace,
                     &policy,
                     &WorkspaceCommand::Reorder {
-                        source: source.clone().as_tab_source(),
+                        source: source
+                            .clone()
+                            .as_tab_source()
+                            .expect("fixture owns an inline item tab"),
                         insertion_index: index,
                     },
                 );
@@ -204,4 +209,245 @@ fn frozen_barriers_match_command_rejections_for_every_source_gap_and_rule_subset
             }
         }
     }
+}
+
+fn mixed_fixture(central: bool) -> (Workspace, NodeId, NodeId) {
+    let mut builder = Workspace::builder();
+    let mut tools = Node::tabs([ItemId::new(2), ItemId::new(4)]);
+    tools.set_layout_title(Some(Arc::from("Tools")));
+    let layout = builder.insert_node(tools);
+    let first = TabKey::for_item(ItemId::new(1));
+    let tabs = builder.insert_node(Node::tabs_from_keys(
+        vec![
+            first,
+            TabKey::for_layout(layout),
+            TabKey::for_item(ItemId::new(3)),
+        ],
+        Some(first),
+    ));
+    let record = RootRecord::new(tabs);
+    builder.set_root(
+        ROOT,
+        if central {
+            record.with_central(layout)
+        } else {
+            record
+        },
+    );
+    builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(ROOT));
+    (builder.build().unwrap(), tabs, layout)
+}
+
+fn retained_items_policy() -> DockPolicy {
+    let mut policy = DockPolicy::default();
+    for item in (1..=4).map(ItemId::new) {
+        let mut rule = DockItemRule::new();
+        rule.set_allow_undocking(false);
+        policy.set_item_rule(item, rule);
+    }
+    policy
+}
+
+fn direct_payload(workspace: &Workspace, tabs: NodeId, tab: TabKey) -> MovePayload {
+    match tab.item() {
+        Some(item) => MovePayload::Item(workspace.capture_item_source(ROOT, tabs, item).unwrap()),
+        None => MovePayload::Subtree(
+            workspace
+                .capture_node_source(ROOT, tab.layout().unwrap())
+                .unwrap(),
+        ),
+    }
+}
+
+#[test]
+fn mixed_direct_child_moves_use_original_gaps_without_undocking_or_replacing_layouts() {
+    let cases = [
+        (0, 0, [0, 1, 2]),
+        (0, 1, [0, 1, 2]),
+        (0, 2, [1, 0, 2]),
+        (0, 3, [1, 2, 0]),
+        (1, 0, [1, 0, 2]),
+        (1, 1, [0, 1, 2]),
+        (1, 2, [0, 1, 2]),
+        (1, 3, [0, 2, 1]),
+        (2, 0, [2, 0, 1]),
+        (2, 1, [0, 2, 1]),
+        (2, 2, [0, 1, 2]),
+        (2, 3, [0, 1, 2]),
+    ];
+    for central in [false, true] {
+        let (workspace, tabs, layout) = mixed_fixture(central);
+        let original = workspace.clone();
+        let keys = [
+            TabKey::for_item(ItemId::new(1)),
+            TabKey::for_layout(layout),
+            TabKey::for_item(ItemId::new(3)),
+        ];
+        let policy = retained_items_policy().snapshot(PolicyRevision::default());
+        let target = workspace.capture_tab_target(ROOT, tabs).unwrap();
+        for (moving, gap, order) in cases {
+            let expected = order.map(|index| keys[index]);
+            let command = WorkspaceCommand::Move {
+                payload: direct_payload(&workspace, tabs, keys[moving]),
+                target: DockTarget::TabGap {
+                    target: target.clone(),
+                    index: gap,
+                },
+            };
+            let (candidate, report) = prepare_transaction(&workspace, &policy, &[command])
+                .unwrap()
+                .into_parts();
+            let Some(Node::Tabs { items, .. }) = candidate.node(tabs) else {
+                unreachable!()
+            };
+            assert_eq!(
+                items, &expected,
+                "moving={moving}, gap={gap}, central={central}"
+            );
+            assert_eq!(report.changed(), expected != keys);
+            assert_eq!(candidate.node(layout), workspace.node(layout));
+            assert_eq!(candidate.root(ROOT), workspace.root(ROOT));
+            assert_eq!(candidate.tab_mru(tabs), workspace.tab_mru(tabs));
+            assert_eq!(candidate.item_multiset(), workspace.item_multiset());
+            assert_eq!(candidate.nodes().count(), workspace.nodes().count());
+            candidate.validate().unwrap();
+        }
+        for tab in keys {
+            let command = WorkspaceCommand::Move {
+                payload: direct_payload(&workspace, tabs, tab),
+                target: DockTarget::Center(target.clone()),
+            };
+            let (candidate, report) = prepare_transaction(&workspace, &policy, &[command])
+                .unwrap()
+                .into_parts();
+            assert!(!report.changed());
+            assert_eq!(candidate, workspace);
+        }
+        assert_eq!(workspace, original);
+    }
+}
+
+#[test]
+fn mixed_child_barriers_agree_for_reorder_move_and_frozen_drop_eligibility() {
+    let cases = [
+        (1, 0, 1, false),
+        (1, 3, 3, false),
+        (0, 3, 2, false),
+        (2, 0, 4, false),
+        (1, 1, 2, true),
+        (1, 2, 4, true),
+        (0, 1, 1, true),
+        (2, 2, 3, true),
+        (1, 0, 3, true),
+    ];
+    for central in [false, true] {
+        let (workspace, tabs, layout) = mixed_fixture(central);
+        let original = workspace.clone();
+        let keys = [
+            TabKey::for_item(ItemId::new(1)),
+            TabKey::for_layout(layout),
+            TabKey::for_item(ItemId::new(3)),
+        ];
+        for (moving, gap, blocked, allowed) in cases {
+            let blocked = ItemId::new(blocked);
+            let mut policy = retained_items_policy();
+            let mut rule = DockItemRule::new();
+            rule.set_allow_undocking(false);
+            rule.set_allow_tab_reorder(false);
+            policy.set_item_rule(blocked, rule);
+            let policy = policy.snapshot(PolicyRevision::default());
+            let payload = direct_payload(&workspace, tabs, keys[moving]);
+            let target = DockTarget::TabGap {
+                target: workspace.capture_tab_target(ROOT, tabs).unwrap(),
+                index: gap,
+            };
+            let expected = if allowed {
+                Ok(())
+            } else {
+                Err(CommandError::Policy(PolicyRejection::TabReorderDisabled {
+                    item: blocked,
+                }))
+            };
+            let eligibility =
+                DropCommandEligibility::new_validated(&workspace, &policy, &payload).unwrap();
+            assert_eq!(
+                eligibility.check_target_with(ReferenceAuthority::Live, &target),
+                expected,
+                "moving={moving}, gap={gap}, blocked={blocked}, central={central}"
+            );
+            let commands = [
+                WorkspaceCommand::Reorder {
+                    source: workspace
+                        .capture_tab_source(ROOT, tabs, keys[moving])
+                        .unwrap(),
+                    insertion_index: gap,
+                },
+                WorkspaceCommand::Move { payload, target },
+            ];
+            for command in commands {
+                assert_eq!(
+                    authorize_workspace_command(&workspace, &policy, &command),
+                    expected
+                );
+                match prepare_transaction(&workspace, &policy, &[command]) {
+                    Ok(prepared) => {
+                        assert!(allowed);
+                        assert_eq!(
+                            prepared.candidate().item_multiset(),
+                            workspace.item_multiset()
+                        );
+                        prepared.candidate().validate().unwrap();
+                    }
+                    Err(TransactionError::Command { source, .. }) => {
+                        assert_eq!(Err(source), expected);
+                    }
+                    Err(error) => panic!("unexpected transaction error: {error:?}"),
+                }
+            }
+        }
+        assert_eq!(workspace, original);
+    }
+}
+
+#[test]
+fn same_parent_layout_move_rejects_stale_scope_before_reordering() {
+    let (workspace, tabs, layout) = mixed_fixture(true);
+    let stale = direct_payload(&workspace, tabs, TabKey::for_layout(layout));
+    let stale_target = workspace.capture_tab_target(ROOT, tabs).unwrap();
+    let policy = retained_items_policy().snapshot(PolicyRevision::default());
+    let command = WorkspaceCommand::Reorder {
+        source: workspace
+            .capture_tab_source(ROOT, tabs, TabKey::for_item(ItemId::new(1)))
+            .unwrap(),
+        insertion_index: 3,
+    };
+    let (candidate, _) = prepare_transaction(&workspace, &policy, &[command])
+        .unwrap()
+        .into_parts();
+    let before = candidate.clone();
+    for (payload, target, stale_role) in [
+        (
+            stale,
+            candidate.capture_tab_target(ROOT, tabs).unwrap(),
+            ReferenceRole::Source,
+        ),
+        (
+            direct_payload(&candidate, tabs, TabKey::for_layout(layout)),
+            stale_target,
+            ReferenceRole::Target,
+        ),
+    ] {
+        let command = WorkspaceCommand::Move {
+            payload,
+            target: DockTarget::TabGap { target, index: 3 },
+        };
+        assert!(matches!(
+            prepare_transaction(&candidate, &policy, &[command]),
+            Err(TransactionError::Command {
+                source: CommandError::StaleNode { role, .. },
+                ..
+            }) if role == stale_role
+        ));
+    }
+    assert_eq!(candidate, before);
 }

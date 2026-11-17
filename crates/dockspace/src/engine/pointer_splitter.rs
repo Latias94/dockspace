@@ -14,7 +14,7 @@ impl DockEngine {
             .map(|group| group.common_delta)
     }
 
-    fn prepare_splitter_resize_axis_group(
+    pub(super) fn prepare_splitter_resize_axis_group(
         &self,
         plan: &PresentationPlan,
         target: SplitterResizeTarget,
@@ -47,6 +47,9 @@ impl DockEngine {
             || delta > group.common_delta.maximum
         {
             return None;
+        }
+        if let Some(piecewise) = &group.piecewise {
+            return piecewise.extents(delta);
         }
         let root = match target {
             SplitterResizeTarget::Handle(id) => id.root,
@@ -90,6 +93,14 @@ impl DockEngine {
                     };
                     pending.push((child, child_coefficient));
                 }
+            } else {
+                pending.extend(
+                    self.workspace
+                        .node(node)?
+                        .child_nodes()
+                        .rev()
+                        .map(|(_, child)| (child, coefficient)),
+                );
             }
         }
         Some(extents)
@@ -190,7 +201,7 @@ impl DockEngine {
                     .ok_or(InteractionRejection::SplitterGestureHitUnavailable { surface })?;
                 let source = self
                     .workspace
-                    .capture_node_source(id.root, id.split)
+                    .capture_node_source(id.root, id.node())
                     .map_err(InteractionRejection::ResizeRejected)?;
                 Ok((source, record))
             })
@@ -205,9 +216,11 @@ impl DockEngine {
     ) -> Result<Vec<crate::interaction::FrozenResizeAxisGroup>, InteractionRejection> {
         let groups = prepare_resize_axis_groups(&self.workspace, plan, handles)
             .ok_or(InteractionRejection::SplitterResizeGeometryUnavailable)?;
-        for source in groups.iter().flat_map(|group| group.resized_sources()) {
-            self.check_resize_policy(source, policy)
-                .map_err(InteractionRejection::ResizeRejected)?;
+        for group in &groups {
+            for source in group.resized_sources() {
+                self.check_resize_policy(source, group.axis, policy)
+                    .map_err(InteractionRejection::ResizeRejected)?;
+            }
         }
         Ok(groups)
     }
@@ -262,24 +275,10 @@ impl DockEngine {
                 InteractionRejection::SessionMismatch,
             ));
         }
-        if let Err(rejection) = self.validate_resize_coordinate_authority(&resize) {
-            return Ok(InteractionOutcome::Rejected(rejection));
-        }
-        let updates = match split_resize_updates(&resize, point) {
-            Some(updates) => updates,
-            None => {
-                return Ok(InteractionOutcome::Rejected(
-                    InteractionRejection::SplitterResizeGeometryUnavailable,
-                ));
-            }
+        let updates = match self.resize_updates_at_point(&resize, point, policy) {
+            Ok(updates) => updates,
+            Err(rejection) => return Ok(InteractionOutcome::Rejected(rejection)),
         };
-        if let Err(error) =
-            crate::graph::operation::validate_split_resizes(&self.workspace, policy, &updates)
-        {
-            return Ok(InteractionOutcome::Rejected(
-                InteractionRejection::ResizeRejected(error),
-            ));
-        }
         self.interaction
             .set_resize_updates(session, point, updates.clone())
             .map_err(|source| EngineError::PointerInteractionInvariant {
@@ -364,7 +363,17 @@ impl DockEngine {
                 InteractionRejection::SessionMismatch,
             ));
         }
-        let proposal = self.resize_updates_at_point(&resize, point, policy);
+        let proposal = self
+            .resize_updates_at_point(&resize, point, policy)
+            .or_else(|rejection| match rejection {
+                InteractionRejection::SplitterResizeGeometryUnavailable => {
+                    // The current geometry may cross an infeasible Auto shape.
+                    // Revalidate the last accepted sample before committing the
+                    // preview that remained visible during that move.
+                    self.resize_updates_at_point(&resize, resize.current_pointer, policy)
+                }
+                rejection => Err(rejection),
+            });
         self.interaction
             .take_resize_for_release(session, owner, PointerButton::Primary)
             .map_err(|source| EngineError::PointerInteractionInvariant {
@@ -375,7 +384,7 @@ impl DockEngine {
             Ok(updates) => updates,
             Err(rejection) => return Ok(InteractionOutcome::Rejected(rejection)),
         };
-        let command = WorkspaceCommand::ResizeSplits { splits: updates };
+        let command = WorkspaceCommand::ResizeTracks { tracks: updates };
         let (outcome, changed) =
             match self.apply_journal_workspace_command(cause, &command, policy, events)? {
                 Ok(result) => result,
@@ -406,11 +415,11 @@ impl DockEngine {
         resize: &ActiveResize,
         point: crate::geometry::LogicalPoint,
         policy: &DockPolicySnapshot,
-    ) -> Result<Vec<crate::graph::command::SplitResize>, InteractionRejection> {
+    ) -> Result<Vec<crate::graph::command::TrackResize>, InteractionRejection> {
         self.validate_resize_coordinate_authority(resize)?;
         let updates = split_resize_updates(resize, point)
             .ok_or(InteractionRejection::SplitterResizeGeometryUnavailable)?;
-        crate::graph::operation::validate_split_resizes(&self.workspace, policy, &updates)
+        crate::graph::operation::validate_track_resizes(&self.workspace, policy, &updates)
             .map_err(InteractionRejection::ResizeRejected)?;
         Ok(updates)
     }
@@ -529,12 +538,17 @@ impl DockEngine {
     pub(super) fn check_resize_policy(
         &self,
         split: &NodeSource,
+        requested_axis: Axis,
         policy: &DockPolicySnapshot,
     ) -> Result<(), CommandError> {
         self.validate_node_source(split)?;
         let axis = match self.workspace.node(split.node()) {
-            Some(Node::Split { axis, .. }) => *axis,
-            Some(Node::Tabs { .. }) => {
+            Some(Node::Split { axis, .. }) if *axis == requested_axis => *axis,
+            Some(Node::Grid { .. }) => requested_axis,
+            Some(Node::Split { .. }) => {
+                return Err(CommandError::NodeIsNotSplit { node: split.node() });
+            }
+            Some(Node::Pane { .. } | Node::Tabs { .. }) => {
                 return Err(CommandError::NodeIsNotSplit { node: split.node() });
             }
             None => {
@@ -656,7 +670,7 @@ impl DockEngine {
         };
         let source = match self
             .workspace
-            .capture_node_source(splitter.root, splitter.split)
+            .capture_node_source(splitter.root, splitter.node())
         {
             Ok(source) => source,
             Err(error) => {
@@ -676,7 +690,7 @@ impl DockEngine {
                 InteractionRejection::SplitterResizeGeometryUnavailable,
             ));
         };
-        let command = WorkspaceCommand::ResizeSplits { splits: updates };
+        let command = WorkspaceCommand::ResizeTracks { tracks: updates };
         match self.apply_interaction_command_with_policy(input, policy, &command, events)? {
             CommandApplication::Applied { outcome, changed } => {
                 if changed {
@@ -774,7 +788,7 @@ impl DockEngine {
         for record in handles {
             let source = match self
                 .workspace
-                .capture_node_source(record.id().root, record.id().split)
+                .capture_node_source(record.id().root, record.id().node())
             {
                 Ok(source) => source,
                 Err(error) => {
@@ -816,7 +830,7 @@ impl DockEngine {
                 InteractionRejection::SplitterResizeGeometryUnavailable,
             ));
         };
-        let command = WorkspaceCommand::ResizeSplits { splits: updates };
+        let command = WorkspaceCommand::ResizeTracks { tracks: updates };
         match self.apply_interaction_command_with_policy(input, policy, &command, events)? {
             CommandApplication::Applied { outcome, changed } => {
                 if changed {

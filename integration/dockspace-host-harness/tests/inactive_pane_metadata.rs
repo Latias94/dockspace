@@ -59,7 +59,7 @@ fn missing_inactive_minimum_defers_output_and_never_blocks_accepted_selection() 
         assert!(session.view().item(FIRST).is_some());
         assert!(session.view().item(SECOND).is_some());
         if select_second {
-            assert!(session.view().item(SECOND).unwrap().is_selected());
+            assert!(session.view().item(SECOND).unwrap().is_active());
         }
     }
 }

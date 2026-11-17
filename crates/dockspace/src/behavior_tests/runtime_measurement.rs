@@ -60,6 +60,7 @@ fn product_measurement_seam_hides_manifest_keys_and_builds_a_ready_plan() {
     let mut session = session();
     let mut pane_items = BTreeSet::new();
     let mut tab_items = BTreeSet::new();
+    let mut layout_labels = Vec::new();
     let mut tab_strips = 0;
     let mut dock_bounds = 0;
 
@@ -86,11 +87,21 @@ fn product_measurement_seam_hides_manifest_keys_and_builds_a_ready_plan() {
                 SurfaceMeasurementRequest::TabIntrinsic {
                     visual,
                     bar,
-                    key: item,
+                    key,
+                    label,
                 } => {
                     assert_eq!(visual.kind(), DockspaceVisualKind::Tab);
                     assert_eq!(bar.kind(), DockspaceVisualKind::TabBar);
-                    tab_items.insert(item.item().unwrap());
+                    match label {
+                        crate::model::TabLabel::Item(item) => {
+                            assert_eq!(key.item(), Some(item));
+                            tab_items.insert(item);
+                        }
+                        crate::model::TabLabel::Layout { title } => {
+                            assert!(key.item().is_none());
+                            layout_labels.push(title.to_owned());
+                        }
+                    }
                     SurfaceMeasurementAnswer::TabIntrinsic(96.0)
                 }
                 SurfaceMeasurementRequest::TabStrip { visual, visibility } => {
@@ -109,6 +120,7 @@ fn product_measurement_seam_hides_manifest_keys_and_builds_a_ready_plan() {
     assert_eq!(dock_bounds, 1);
     assert_eq!(pane_items, BTreeSet::from([Some(FIRST), Some(SECOND)]));
     assert_eq!(tab_items, BTreeSet::from([FIRST, SECOND]));
+    assert_eq!(layout_labels, ["Tabs"]);
     assert_eq!(tab_strips, 1);
 
     let mut paint = session.begin_host_frame().expect("paint frame begins");
@@ -121,7 +133,10 @@ fn product_measurement_seam_hides_manifest_keys_and_builds_a_ready_plan() {
         .next()
         .expect("the central tabs leaf has one tab bar")
         .visual_id();
-    assert!(plan.panes().all(|pane| pane.tab_bar_visual_id() == bar));
+    assert!(
+        plan.panes()
+            .all(|pane| pane.tab_bar_visual_id() == Some(bar))
+    );
     assert!(plan.tabs().all(|tab| tab.tab_bar_visual_id() == bar));
 }
 
@@ -182,7 +197,7 @@ fn prepare_surface_with_refreshes_a_ready_surface_and_remeasures_only_after_rest
         assert_eq!(plan.bounds(), target);
     }
     frame.commit().unwrap();
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     let mut inspect = session.begin_host_frame().unwrap();
     assert_eq!(
         inspect
@@ -264,7 +279,7 @@ fn prepare_surface_with_preserves_the_adapter_error_and_rolls_back_partial_measu
     assert!(failed);
     drop(frame);
     assert_eq!(session.version(), before);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
 
     let mut retry = session.begin_host_frame().unwrap();
     assert!(
@@ -321,7 +336,7 @@ fn independent_measurement_error_preserves_ready_geometry_and_can_retry_without_
         .unwrap();
     let report = frame.commit().unwrap();
     assert!(!report.workspace_changed());
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     let mut inspect = session.begin_host_frame().unwrap();
     assert_eq!(
         inspect.paint_plan(SURFACE).unwrap().unwrap().bounds(),

@@ -8,6 +8,9 @@ use super::*;
 use crate::graph::{RootRecord, SurfacePresentation, WorkspaceBuilder};
 use crate::ids::{ItemId, SurfaceId};
 
+#[path = "layout_cost_composable.rs"]
+mod composable;
+
 const ROOT: RootId = RootId::new(1);
 const WIDTHS: [f64; 2] = [16_380.0, 16_444.0];
 const HEIGHT: f64 = 16_380.0;

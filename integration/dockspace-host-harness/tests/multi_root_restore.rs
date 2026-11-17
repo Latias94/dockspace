@@ -425,7 +425,7 @@ fn two_external_roots_swap_atomically_and_children_recover_to_their_own_anchors(
         assert!(idle(&mut host.session).native_admissions().is_empty());
         host.children.push(binding);
         let (output, recording) = paint(&mut host.session, binding);
-        assert!(recording.records.iter().any(|record| matches!(record, OwnedRecord::PaneContent { item: Some(item), .. } if *item == CHILD_ITEMS[index])));
+        assert!(recording.records.iter().any(|record| matches!(record, OwnedRecord::PaneContent { item, .. } if *item == CHILD_ITEMS[index])));
         host.session
             .report_surface_presentation(output, SurfacePresentationResult::Presented)
             .unwrap();
@@ -581,7 +581,7 @@ fn assert_mapping_rejected_without_replacing_the_accepted_prefix(
     assert_eq!(frame.version(), prefix);
     assert!(frame.proposed_native_root_continuations().next().is_none());
     assert!(frame.proposed_native_bindings().next().is_none());
-    assert!(frame.view().item(ROOT_ITEMS[0][1]).unwrap().is_selected());
+    assert!(frame.view().item(ROOT_ITEMS[0][1]).unwrap().is_active());
     assert_eq!(frame.view().surfaces().count(), bindings.len());
     frame.select_item_current(ROOT_ITEMS[1][1]).unwrap();
     let mut report = finish(frame);
@@ -605,14 +605,14 @@ fn assert_mapping_rejected_without_replacing_the_accepted_prefix(
             .view()
             .item(ROOT_ITEMS[0][1])
             .unwrap()
-            .is_selected()
+            .is_active()
     );
     assert!(
         host.session
             .view()
             .item(ROOT_ITEMS[1][1])
             .unwrap()
-            .is_selected()
+            .is_active()
     );
     assert_eq!(host.session.next_document_generation(), generation);
     assert_eq!(host.session.native_input_recorded_count(), recorded);

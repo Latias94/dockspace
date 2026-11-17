@@ -57,7 +57,7 @@ fn tab_cycling_and_accessibility_skip_hidden_tabs_until_restored() {
                 .view()
                 .item(ItemId::new(expected))
                 .unwrap()
-                .is_selected()
+                .is_active()
         );
     }
     let shown = harness
@@ -84,7 +84,7 @@ fn tab_cycling_and_accessibility_skip_hidden_tabs_until_restored() {
             .view()
             .item(ItemId::new(3))
             .unwrap()
-            .is_selected()
+            .is_active()
     );
     assert_eq!(
         harness
@@ -93,7 +93,7 @@ fn tab_cycling_and_accessibility_skip_hidden_tabs_until_restored() {
             .item(ItemId::new(2))
             .unwrap()
             .tab_index(),
-        1
+        Some(1)
     );
 }
 

@@ -107,7 +107,7 @@ fn commit_queued(
     let submission = action.submit(&mut frame.frame, published).unwrap();
     if let Some(item) = local_selection {
         frame.frame.select_item_current(item).unwrap();
-        assert!(frame.frame.view().item(item).unwrap().is_selected());
+        assert!(frame.frame.view().item(item).unwrap().is_active());
     }
     let submitted = submission.finish(&mut frame.frame).unwrap();
     frame
@@ -207,8 +207,15 @@ fn queued_reset_is_stale_after_publication_and_repeated_resets_preserve_semantic
 
         let restored = state.coordinator.session().view().item(THIRD).unwrap();
         assert_eq!(restored.surface(), SURFACE);
-        assert_eq!(restored.tabs().items().collect::<Vec<_>>(), &[FIRST, THIRD]);
-        assert!(restored.is_selected());
+        assert_eq!(
+            restored
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
+            &[FIRST, THIRD]
+        );
+        assert!(restored.is_active());
         assert_eq!(restored.root(), PRESET_ROOT);
         assert_ne!(current, previous);
         assert!(state.coordinator.session().view().item(SECOND).is_none());
@@ -251,7 +258,7 @@ fn queued_reset_is_stale_after_publication_and_repeated_resets_preserve_semantic
         }
     );
     let retained = state.coordinator.session().view().item(FIRST).unwrap();
-    assert!(retained.is_selected());
+    assert!(retained.is_active());
     assert_eq!(retained.root(), PRESET_ROOT);
     assert_eq!(state.panes.0, panes);
     assert!(state.shutdown.is_none());
@@ -262,8 +269,8 @@ fn queued_reset_is_stale_after_publication_and_repeated_resets_preserve_semantic
     assert!(matches!(
         take(&mut state),
         NativeActionStatus::Dock(egui_dockspace::DockspaceActionStatus::Applied(
-            dockspace::model::DockspaceActionOutcome::Selected { tab, .. }
-        )) if tab == THIRD.into()
+            dockspace::model::DockspaceActionOutcome::ItemActivated { item: tab, .. }
+        )) if tab == THIRD
     ));
 }
 
@@ -614,7 +621,7 @@ mod persistence {
                     .view()
                     .item(SECOND)
                     .unwrap()
-                    .is_selected()
+                    .is_active()
             );
             assert!(
                 state
@@ -1337,7 +1344,7 @@ mod persistence {
         assert_eq!(restored.document_id(), Some(DOCUMENT));
         assert_eq!(restored.external_key_for_item(FIRST), Some("pane:first"));
         assert_eq!(restored.external_key_for_item(SECOND), Some("pane:second"));
-        assert!(restored.view().item(FIRST).unwrap().is_selected());
+        assert!(restored.view().item(FIRST).unwrap().is_active());
         assert!(!state.application_actions.is_occupied());
         assert!(state.shutdown.is_none());
         assert_eq!(state.panes.0, panes);
@@ -1459,7 +1466,7 @@ mod persistence {
                 .view()
                 .item(THIRD)
                 .unwrap()
-                .is_selected()
+                .is_active()
         );
         assert!(state.coordinator.session().view().item(SECOND).is_none());
         assert_eq!(state.panes.0, panes);
@@ -1472,7 +1479,7 @@ mod persistence {
         assert_eq!(restored.document_id(), Some(DOCUMENT));
         assert_eq!(restored.external_key_for_item(SECOND), Some("pane:second"));
         assert_eq!(restored.external_key_for_item(THIRD), Some("pane:new"));
-        assert!(restored.view().item(THIRD).unwrap().is_selected());
+        assert!(restored.view().item(THIRD).unwrap().is_active());
     }
 
     #[test]
@@ -1532,8 +1539,8 @@ mod persistence {
         assert!(matches!(
             take(&mut state),
             NativeActionStatus::Dock(egui_dockspace::DockspaceActionStatus::Applied(
-                dockspace::model::DockspaceActionOutcome::Selected { tab, .. }
-            )) if tab == SECOND.into()
+                dockspace::model::DockspaceActionOutcome::ItemActivated { item: tab, .. }
+            )) if tab == SECOND
         ));
         assert_eq!(state.panes.0, panes);
         assert!(state.shutdown.is_none());

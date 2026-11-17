@@ -187,10 +187,14 @@ fn application_closed_catalog_reopens_the_same_item_and_requests_its_pane_focus(
     assert_eq!(reopened.surface(), SURFACE);
     assert_eq!(reopened.root(), ROOT);
     assert_eq!(
-        reopened.tabs().items().collect::<Vec<_>>(),
+        reopened
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
-    assert!(reopened.is_selected());
+    assert!(reopened.is_active());
 
     let recordings = paint_and_present(&mut session);
     assert!(
@@ -200,7 +204,7 @@ fn application_closed_catalog_reopens_the_same_item_and_requests_its_pane_focus(
             .any(|record| matches!(
                 record,
                 OwnedRecord::PaneContent {
-                    item: Some(SECOND),
+                    item: SECOND,
                     paint: SurfacePaintDisposition::Visible,
                     ..
                 }
@@ -258,6 +262,7 @@ fn missing_default_anchor_rejects_open_without_implicit_fallback_or_focus_change
             .item(THIRD)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[THIRD]
@@ -301,17 +306,22 @@ fn opening_an_existing_item_preserves_location_selection_and_pending_or_settled_
         assert_eq!(existing.surface(), SURFACE);
         assert_eq!(existing.root(), ROOT);
         assert_eq!(
-            existing.tabs().items().collect::<Vec<_>>(),
+            existing
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
             &[FIRST, SECOND]
         );
-        assert!(!existing.is_selected());
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(!existing.is_active());
+        assert!(session.view().item(FIRST).unwrap().is_active());
         assert_eq!(
             session
                 .view()
                 .item(THIRD)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[THIRD]

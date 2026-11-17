@@ -723,7 +723,7 @@ fn shared_semantic_layout() -> DockspaceLayout {
     )
     .with_contained(DockspaceContainedLayout::new(
         FLOATING,
-        DockspaceRootLayout::new(FLOATING_ROOT, DockspaceNode::tabs([FOURTH])),
+        DockspaceRootLayout::new(FLOATING_ROOT, DockspaceNode::tabs([FOURTH]).named("Fourth")),
         LogicalRect::new(500.0, 260.0, 240.0, 220.0)
             .expect("the shared contained rectangle is valid"),
     ))])
@@ -766,7 +766,7 @@ fn contained_layout_at(rect: LogicalRect) -> DockspaceLayout {
     )
     .with_contained(DockspaceContainedLayout::new(
         FLOATING,
-        DockspaceRootLayout::new(FLOATING_ROOT, DockspaceNode::tabs([SECOND])),
+        DockspaceRootLayout::new(FLOATING_ROOT, DockspaceNode::tabs([SECOND]).named("Second")),
         rect,
     ))])
     .expect("the contained product layout is valid")
@@ -783,12 +783,15 @@ fn stacked_contained_layout() -> DockspaceLayout {
     )
     .with_contained(DockspaceContainedLayout::new(
         FLOATING,
-        DockspaceRootLayout::new(FLOATING_ROOT, DockspaceNode::tabs([SECOND])),
+        DockspaceRootLayout::new(FLOATING_ROOT, DockspaceNode::tabs([SECOND]).named("Second")),
         rear,
     ))
     .with_contained(DockspaceContainedLayout::new(
         FRONT_FLOATING,
-        DockspaceRootLayout::new(FRONT_FLOATING_ROOT, DockspaceNode::tabs([FOURTH])),
+        DockspaceRootLayout::new(
+            FRONT_FLOATING_ROOT,
+            DockspaceNode::tabs([FOURTH]).named("Fourth"),
+        ),
         front,
     ))])
     .expect("the stacked contained product layout is valid")
@@ -805,12 +808,15 @@ fn fully_occluded_stacked_contained_layout() -> DockspaceLayout {
     )
     .with_contained(DockspaceContainedLayout::new(
         FLOATING,
-        DockspaceRootLayout::new(FLOATING_ROOT, DockspaceNode::tabs([SECOND])),
+        DockspaceRootLayout::new(FLOATING_ROOT, DockspaceNode::tabs([SECOND]).named("Second")),
         rear,
     ))
     .with_contained(DockspaceContainedLayout::new(
         FRONT_FLOATING,
-        DockspaceRootLayout::new(FRONT_FLOATING_ROOT, DockspaceNode::tabs([FOURTH])),
+        DockspaceRootLayout::new(
+            FRONT_FLOATING_ROOT,
+            DockspaceNode::tabs([FOURTH]).named("Fourth"),
+        ),
         front,
     ))])
     .expect("the fully occluded contained product layout is valid")
@@ -1199,7 +1205,7 @@ fn tab_close_semantics_follow_the_exact_close_region_occlusion() {
     )
     .with_contained(DockspaceContainedLayout::new(
         FLOATING,
-        DockspaceRootLayout::new(FLOATING_ROOT, DockspaceNode::tabs([FOURTH])),
+        DockspaceRootLayout::new(FLOATING_ROOT, DockspaceNode::tabs([FOURTH]).named("Fourth")),
         occluder,
     ))])
     .expect("the close-region occlusion layout is valid");
@@ -1920,7 +1926,7 @@ fn default_features_overflow_menu_opens_and_selects_hidden_tab() {
             .view()
             .item(FOURTH)
             .expect("fourth item remains open")
-            .is_selected(),
+            .is_active(),
         "activating a menu row selects the hidden item"
     );
     let _ = (control, row);
@@ -1967,7 +1973,7 @@ fn default_features_overflow_menu_supports_accesskit_and_keyboard() {
             .view()
             .item(FOURTH)
             .expect("fourth item remains open")
-            .is_selected(),
+            .is_active(),
         "keyboard activation selects the focused hidden item"
     );
 }
@@ -3055,10 +3061,10 @@ fn default_features_programmatic_close_reports_stale_and_root_rejection() {
         .expect("selection advances the product revision");
     assert!(matches!(
         selection.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
-            tab: selected_tab,
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated {
+            item: selected_tab,
             changed: true,
-        }) if selected_tab.item() == Some(SECOND)));
+        }) if *selected_tab == SECOND));
     let stale = stale_dockspace
         .submit_prepared_close_request(prepared)
         .expect("the stale close request is reduced");
@@ -3101,10 +3107,10 @@ fn stale_prepared_dock_action_is_inert_in_the_product_executor() {
         .expect("selection advances the product revision");
     assert!(matches!(
         selection.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
-            tab: selected_tab,
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated {
+            item: selected_tab,
             changed: true,
-        }) if selected_tab.item() == Some(SECOND)));
+        }) if *selected_tab == SECOND));
 
     let stale = dockspace
         .submit_prepared_action(prepared)
@@ -3979,7 +3985,7 @@ fn unavailable_pane_focus_binding_terminates_without_guessing_a_target() {
         .expect("a fresh explicit selection publishes a new focus request");
     assert!(matches!(
         selected.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(SECOND)));
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated { item: selected_tab, .. }) if *selected_tab == SECOND));
     let (_, capability) = run_focus_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert_eq!(capability, DockspaceCapability::Supported);
     assert!(
@@ -4011,7 +4017,7 @@ fn discarded_pane_focus_does_not_replay_over_later_application_focus() {
         .expect("the exact pane-focus request precedes the discarded UI passes");
     assert!(matches!(
         selected.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(SECOND)));
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated { item: selected_tab, .. }) if *selected_tab == SECOND));
     assert!(!context.memory(|memory| memory.has_focus(panes.target)));
 
     context
@@ -4038,7 +4044,7 @@ fn discarded_pane_focus_does_not_replay_over_later_application_focus() {
         .expect("a new explicit selection requests focus again");
     assert!(matches!(
         selected.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(SECOND)));
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated { item: selected_tab, .. }) if *selected_tab == SECOND));
     let _ = run_focus_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert!(context.memory(|memory| memory.has_focus(panes.target)));
     let _ = run_focus_frame(&context, &mut dockspace, &mut panes, Vec::new());
@@ -4668,7 +4674,7 @@ fn contained_tab_redocks_through_an_ordinary_pane_basin_without_guide_aiming() {
     assert_eq!(moved.surface(), SURFACE);
     assert_eq!(moved.root(), ROOT);
     assert_eq!(moved.contained(), None);
-    assert!(moved.is_selected());
+    assert!(moved.is_active());
     assert_eq!(context.dragged_id(), None);
 }
 

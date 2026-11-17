@@ -230,6 +230,7 @@ fn release(
                 .item(SECOND)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[FIRST, SECOND]
@@ -410,6 +411,7 @@ fn durable(session: &DockspaceSession) -> (WorkspaceVersion, [Vec<ItemId>; 3], L
                 .item(item)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>()
         }),

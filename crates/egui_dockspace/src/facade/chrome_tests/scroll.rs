@@ -181,7 +181,7 @@ fn accesskit_tab_list_scroll_batch_preserves_steps_order_and_endpoint_clamping()
                         .view()
                         .item(ItemId::new(1))
                         .unwrap()
-                        .is_selected()
+                        .is_active()
                 );
                 batched.run(WIDTH, Vec::new());
                 assert_eq!(
@@ -233,7 +233,7 @@ fn official_tab_strip_horizontal_wheel_scrolls_without_changing_selection() {
             .view()
             .item(ItemId::new(1))
             .unwrap()
-            .is_selected(),
+            .is_active(),
         "browsing the tab strip must keep the current pane selected"
     );
 }
@@ -263,7 +263,7 @@ fn official_tab_list_vertical_wheel_scrolls_without_changing_selection() {
             .view()
             .item(ItemId::new(1))
             .unwrap()
-            .is_selected()
+            .is_active()
     );
 }
 

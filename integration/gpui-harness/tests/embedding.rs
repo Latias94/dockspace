@@ -215,7 +215,7 @@ fn an_application_can_embed_its_own_ids_views_and_owned_titles(cx: &mut TestAppC
         let bounds = visual.debug_bounds(tab).expect("stable item selector");
         visual.simulate_click(bounds.center(), Modifiers::default());
         frames(&mut visual, &dock);
-        assert!(dock.with_view(|view| view.item(selected).unwrap().is_selected()));
+        assert!(dock.with_view(|view| view.item(selected).unwrap().is_active()));
     }
     assert_eq!(views[0].read_with(&visual, |pane, _| pane.clicks), 1);
     assert!(!visual.did_quit());
@@ -466,7 +466,7 @@ fn a_cloned_handle_cannot_mount_the_same_session_in_another_window(cx: &mut Test
     first.simulate_click(button.center(), Modifiers::default());
     frames(&mut first, &dock);
     assert_eq!(views[0].read_with(&first, |pane, _| pane.clicks), 1);
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
 }
 
 #[open_gpui::test]
@@ -513,5 +513,5 @@ fn duplicate_siblings_cannot_withdraw_the_first_mounts_candidate(cx: &mut TestAp
     let tab = visual.debug_bounds("dockspace:tab:509").unwrap();
     visual.simulate_click(tab.center(), Modifiers::default());
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
 }

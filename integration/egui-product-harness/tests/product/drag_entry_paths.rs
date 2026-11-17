@@ -91,7 +91,14 @@ fn nested_central_group_shift_drag_detaches_contents_and_preserves_empty_central
         first.contained().is_some(),
         "dragging a central tab group moves its contents into a floating root"
     );
-    assert_eq!(first.tabs().items().collect::<Vec<_>>(), &[FIRST, SECOND]);
+    assert_eq!(
+        first
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
+        &[FIRST, SECOND]
+    );
     assert_eq!(dockspace.view().item(SECOND).unwrap().root(), first.root());
     assert_eq!(dockspace.view().item(THIRD).unwrap().root(), ROOT);
     assert!(
@@ -113,6 +120,7 @@ fn nested_central_group_shift_drag_detaches_contents_and_preserves_empty_central
 #[derive(Default)]
 struct PartialFloatPanes {
     projection: ProjectionPanes,
+    future_tabs: Vec<egui_dockspace::DropPreviewTab>,
 }
 
 impl PaneView for PartialFloatPanes {
@@ -122,6 +130,11 @@ impl PaneView for PartialFloatPanes {
 
     fn ui(&mut self, item: ItemId, ui: &mut Ui) -> PaneResponse {
         self.projection.ui(item, ui)
+    }
+
+    fn drop_preview_ui(&mut self, ui: &Ui, preview: &egui_dockspace::DropPreview) {
+        self.future_tabs.clone_from(&preview.tabs);
+        preview.paint(ui);
     }
 
     fn sizing(&self, item: ItemId) -> egui_dockspace::PaneSizing {
@@ -136,6 +149,150 @@ impl PaneView for PartialFloatPanes {
             .min_height(height)
             .build()
             .unwrap()
+    }
+}
+
+#[test]
+fn alt_only_change_before_release_replaces_the_painted_group_merge_with_one_layout_tab() {
+    let context = Context::default();
+    context.enable_accesskit();
+    context.all_styles_mut(|style| style.animation_time = 0.0);
+    let node = DockspaceNode::equal_split(
+        DockspaceAxis::Horizontal,
+        [
+            DockspaceNode::tabs([SECOND, THIRD]).named("Documents"),
+            DockspaceNode::central_tabs([FIRST]).named("Tools"),
+        ],
+    )
+    .unwrap();
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(ROOT, node),
+    )])
+    .unwrap();
+    let mut dockspace = Dockspace::builder("modifier-only-group-preview-release", layout)
+        .build()
+        .unwrap();
+    let mut panes = PartialFloatPanes::default();
+    run_pane_frame(&context, &mut dockspace, &mut panes, Vec::new());
+    let stable = run_pane_frame(&context, &mut dockspace, &mut panes, Vec::new());
+    let source_key = dockspace.view().item(SECOND).unwrap().tabs().unwrap().key();
+    let source = group_drag_point(&stable.output, "Second", false);
+    let destination = panes.projection.latest(FIRST).bounds.center();
+    run_pane_frame(
+        &context,
+        &mut dockspace,
+        &mut panes,
+        vec![Event::PointerMoved(source), pointer_button(source, true)],
+    );
+    run_pane_frame(
+        &context,
+        &mut dockspace,
+        &mut panes,
+        vec![Event::PointerMoved(source + vec2(16.0, 12.0))],
+    );
+    let guides = settle_until(6, || {
+        let frame = run_pane_frame(
+            &context,
+            &mut dockspace,
+            &mut panes,
+            vec![Event::PointerMoved(destination)],
+        );
+        let ready =
+            try_node_rect(&frame.output, Role::Label, "Dockspace center drop guide").is_some();
+        (
+            frame,
+            if ready {
+                Vec::new()
+            } else {
+                vec!["the destination group center guide"]
+            },
+        )
+    })
+    .expect("the real group drag exposes its destination guide");
+    let target = node_rect(&guides.output, Role::Label, "Dockspace center drop guide").center();
+    settle_until(6, || {
+        panes.future_tabs.clear();
+        let frame = run_pane_frame(
+            &context,
+            &mut dockspace,
+            &mut panes,
+            vec![Event::PointerMoved(target)],
+        );
+        let incoming = panes
+            .future_tabs
+            .iter()
+            .filter(|tab| tab.is_payload)
+            .filter_map(|tab| tab.item())
+            .collect::<Vec<_>>();
+        (
+            frame,
+            if incoming == [SECOND, THIRD] {
+                Vec::new()
+            } else {
+                vec!["the ordinary two-tab group merge preview"]
+            },
+        )
+    })
+    .expect("default group preview paints its two incoming direct tabs");
+    let version = dockspace.version();
+    panes.future_tabs.clear();
+    let (released, changed, _) = run_pane_frame_with_mutation(
+        &context,
+        &mut dockspace,
+        &mut panes,
+        vec![
+            Event::ModifiersChanged(Modifiers::ALT),
+            Event::PointerButton {
+                pos: target,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::ALT,
+            },
+        ],
+    );
+    assert!(
+        changed,
+        "an ordinary release must apply its current preservation mode using presented target geometry"
+    );
+    assert_ne!(dockspace.version(), version);
+    assert!(!dockspace.has_active_gesture());
+    let _ = accesskit_node(&released.output, Role::Tab, "Documents");
+    let view = dockspace.view();
+    let destination = view.item(FIRST).unwrap().tabs().unwrap();
+    let moved = view.item(SECOND).unwrap().tabs().unwrap();
+    assert_eq!(moved.key(), source_key);
+    assert_ne!(moved.key(), destination.key());
+    assert_eq!(moved.items().collect::<Vec<_>>(), [SECOND, THIRD]);
+    assert_eq!(moved.selected().and_then(|tab| tab.item()), Some(SECOND));
+    assert_eq!(destination.items().collect::<Vec<_>>(), [FIRST]);
+    assert_eq!(destination.tabs().len(), 2);
+    assert_eq!(destination.tabs()[0].item(), Some(FIRST));
+    let selected = destination.selected().unwrap();
+    assert_eq!(selected, destination.tabs()[1]);
+    assert!(selected.is_layout());
+    let egui_dockspace::DockspaceTabView::Layout(layout) = destination.child(selected).unwrap()
+    else {
+        panic!("the release must preserve the source group as one layout tab")
+    };
+    assert_eq!(layout.key(), source_key);
+    assert_eq!(layout.layout_title(), Some("Documents"));
+    let root = view.root(ROOT).unwrap();
+    assert_eq!(root.content().unwrap().layout_title(), Some("Tools"));
+    assert_eq!(root.items().collect::<Vec<_>>(), [FIRST, SECOND, THIRD]);
+    assert_eq!(root.active_items().collect::<Vec<_>>(), [SECOND]);
+    for item in [FIRST, SECOND, THIRD] {
+        let item_view = view.item(item).unwrap();
+        assert_eq!(item_view.root(), ROOT);
+        assert_eq!(item_view.contained(), None);
+        assert_eq!(item_view.is_active(), item == SECOND);
+    }
+    let delivered_version = dockspace.version();
+    for _ in 0..2 {
+        let (_, changed, _) =
+            run_pane_frame_with_mutation(&context, &mut dockspace, &mut panes, Vec::new());
+        assert!(!changed, "presentation cannot replay the released move");
+        assert_eq!(dockspace.version(), delivered_version);
     }
 }
 
@@ -184,7 +341,11 @@ fn assert_partial_contained_tear_off_uses_its_pane_geometry(group: bool) {
     let floating = moved.contained().expect("the partial payload was floated");
     assert_ne!(floating, FLOATING);
     assert_eq!(
-        moved.tabs().items().collect::<Vec<_>>(),
+        moved
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
         if group {
             &[SECOND, THIRD][..]
         } else {

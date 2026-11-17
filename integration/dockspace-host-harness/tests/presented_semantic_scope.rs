@@ -224,6 +224,7 @@ fn prebound_contained_close_cannot_capture_a_member_absent_from_the_presented_ro
                     .item(UNSEEN)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FIRST, SECOND, UNSEEN]
@@ -274,6 +275,7 @@ fn prebound_tab_close_cannot_follow_its_item_into_another_root() {
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[BASE, FIRST]

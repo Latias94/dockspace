@@ -1,14 +1,16 @@
 //! Pane and tab rendering over opaque product paint records.
 
 use dockspace::runtime::{
-    DockspaceVisualId, PanePaintRecord, SurfacePaintDisposition, TabGroupDragRegionKind,
-    TabPaintRecord,
+    DockspaceRuntimeError, DockspaceVisualId, PanePaintRecord, SurfacePaintDisposition,
+    TabGroupDragRegionKind, TabPaintRecord, TabsPaintRecord,
 };
 use egui::accesskit::{Action, Role};
 use egui::{
     Align, CursorIcon, EventFilter, Id, Layout, PointerButton, Sense, StrokeKind, Ui, UiBuilder,
     pos2,
 };
+
+use crate::DockInputConfig;
 
 use super::actions::effective_enabled;
 use super::geometry::{accesskit_bounds, egui_rect, inset_ui_rect};
@@ -30,6 +32,38 @@ impl RootVisualContext {
     }
 }
 
+pub(crate) fn paint_tabs(
+    context: &mut RenderContext<'_, '_, '_>,
+    tabs: TabsPaintRecord<'_>,
+    visual_context: RootVisualContext,
+    paint: SurfacePaintDisposition,
+) {
+    if let Some(receiver) = context.plan.receiver_for_tabs(tabs)
+        && let Some(bounds) = egui_rect(receiver.bounds())
+    {
+        let id = context.ui.make_persistent_id((
+            context.instance_id,
+            "tabs-background",
+            tabs.visual_id(),
+        ));
+        context.interact_receiver(bounds, id, Sense::click(), Some(receiver));
+    }
+    if paint.is_source_gap() {
+        return;
+    }
+    let (Some(bounds), Some(clip)) = (egui_rect(tabs.bounds()), egui_rect(tabs.clip())) else {
+        return;
+    };
+    context
+        .ui
+        .painter_at(context.ui.clip_rect().intersect(clip))
+        .rect_filled(
+            bounds,
+            0.0,
+            visual_context.pane_fill(context.visuals.workspace_fill),
+        );
+}
+
 pub(crate) fn paint_pane(
     context: &mut RenderContext<'_, '_, '_>,
     pane: PanePaintRecord<'_>,
@@ -38,11 +72,15 @@ pub(crate) fn paint_pane(
 ) {
     let pane_fill = visual_context.pane_fill(context.visuals.workspace_fill);
     let paint_omitted = paint.is_source_gap();
-    let Some(bounds) = egui_rect(pane.bounds()) else {
+    let (Some(bounds), Some(clip)) = (egui_rect(pane.bounds()), egui_rect(pane.clip())) else {
         return;
     };
+    let clip = context.ui.clip_rect().intersect(clip);
     if !paint_omitted {
-        context.ui.painter().rect_filled(bounds, 0.0, pane_fill);
+        context
+            .ui
+            .painter_at(clip)
+            .rect_filled(bounds, 0.0, pane_fill);
     }
     let Some(pane_rect) = egui_rect(pane.content_bounds()) else {
         return;
@@ -54,9 +92,7 @@ pub(crate) fn paint_pane(
     let pane_receiver = context.plan.receiver_for_pane(pane);
     let _response =
         context.interact_receiver(pane_rect, pane_id, Sense::click_and_drag(), pane_receiver);
-    let Some(item) = pane.selected() else {
-        return;
-    };
+    let item = pane.item();
     let Some(content_rect) = inset_ui_rect(pane_rect) else {
         return;
     };
@@ -77,7 +113,7 @@ pub(crate) fn paint_pane(
         // accessibility state survive the temporary source gap.
         child.set_opacity(0.0);
     }
-    child.set_clip_rect(context.ui.clip_rect().intersect(pane_rect));
+    child.set_clip_rect(clip.intersect(pane_rect));
     let mut paint_audit = context.paint_audit.take();
     let painter = child.painter().clone();
     // Keep ownership outside the callback so an unwind releases the append
@@ -85,11 +121,7 @@ pub(crate) fn paint_pane(
     let mut child = Some(child);
     let mut paint_contents = || {
         let child_ui = child.as_mut().expect("the pane child is still open");
-        if context
-            .resources
-            .tab(item)
-            .is_some_and(|resource| resource.missing)
-        {
+        if context.resources.is_missing(item) {
             child_ui.centered_and_justified(|ui| {
                 ui.label(format!("Missing pane {}", item.get()));
             });
@@ -327,11 +359,11 @@ fn paint_group_drag_regions(
             },
             enabled.then_some(receiver).flatten(),
         );
-        let description = "Drag to move or dock this tab group. Other tab groups stay in place.";
+        let description = group_drag_description(context.ui.ctx(), context.input);
         context.ui.ctx().accesskit_node_builder(id, |node| {
             node.set_role(Role::GenericContainer);
             node.set_label("Drag tab group");
-            node.set_description(description);
+            node.set_description(description.clone());
             node.set_bounds(accesskit_bounds(bounds));
             if !enabled {
                 node.set_disabled();
@@ -370,16 +402,37 @@ fn paint_group_drag_regions(
     }
 }
 
+fn group_drag_description(context: &egui::Context, input: &DockInputConfig) -> String {
+    let mut description =
+        "Drag to move or dock this tab group. Other tab groups stay in place.".to_owned();
+    match input.group_preserve_layout {
+        Some(modifiers) if modifiers.is_none() => {
+            description.push_str(" Center drops preserve this group as one layout tab.");
+        }
+        binding => {
+            description.push_str(" Center drops merge its direct tabs.");
+            if let Some(modifiers) = binding {
+                description.push_str(&format!(
+                    " Hold {} to keep this group as one layout tab instead.",
+                    context.format_modifiers(modifiers)
+                ));
+            }
+        }
+    }
+    description.push_str(" Open Tab group actions for commands.");
+    description
+}
+
 pub(crate) fn paint_tab_record(
     context: &mut RenderContext<'_, '_, '_>,
     tab: TabPaintRecord<'_>,
     paint: SurfacePaintDisposition,
-) {
+) -> Result<(), DockspaceRuntimeError> {
     let resources = context.resources;
     let Some(resource) = resources.tab(tab.key()) else {
-        return;
+        return Ok(());
     };
-    paint_tab(context, tab, resource, paint);
+    paint_tab(context, tab, resource, paint)
 }
 
 pub(crate) fn paint_tab(
@@ -387,12 +440,12 @@ pub(crate) fn paint_tab(
     tab: TabPaintRecord<'_>,
     resource: &TabPaintResource,
     paint: SurfacePaintDisposition,
-) {
+) -> Result<(), DockspaceRuntimeError> {
     let Some(visible) = egui_rect(tab.visible_bounds()) else {
-        return;
+        return Ok(());
     };
     let Some(drag) = egui_rect(tab.drag_bounds()) else {
-        return;
+        return Ok(());
     };
     let id = tab_id(context.ui, context.instance_id, tab);
     let operable = effective_enabled(context.ui, tab.operable());
@@ -414,7 +467,18 @@ pub(crate) fn paint_tab(
         },
         receiver,
     );
-    let response = response.on_hover_text(resource.title.as_str());
+    let scope_hint = if tab.key().is_layout() {
+        "Actions affect this layout tab and its complete nested layout."
+    } else {
+        "Actions affect this pane tab."
+    };
+    let response = response.on_hover_ui(|ui| {
+        ui.label(&resource.title);
+        ui.weak(scope_hint);
+        if operable {
+            ui.label("Right-click or press Shift+F10 for tab actions.");
+        }
+    });
     let source_gap = paint.is_source_gap();
     if operable && preview_gestures_available && (response.hovered() || source_gap) {
         context.ui.ctx().set_cursor_icon(if source_gap {
@@ -472,6 +536,7 @@ pub(crate) fn paint_tab(
         resource.title.as_str(),
         selected,
         operable,
+        tab.key().is_layout(),
     );
     #[cfg(feature = "native-render-support")]
     publish_native_tab_bounds_diagnostic(context.ui, id, visible, resource.title.as_str());
@@ -480,6 +545,7 @@ pub(crate) fn paint_tab(
         super::tab_close::capture_body_click(context, tab, &response);
         super::tab_close::paint(context, tab, resource, &response, visuals);
     }
+    super::presentation_menu::paint_tab(context, tab, &response, paint)
 }
 
 #[cfg(feature = "native-render-support")]
@@ -558,11 +624,15 @@ fn configure_tab_accessibility(
     title: &str,
     selected: bool,
     operable: bool,
+    layout: bool,
 ) {
     ui.ctx().accesskit_node_builder(id, |node| {
         node.set_role(Role::Tab);
         node.set_bounds(accesskit_bounds(rect));
         node.set_label(title);
+        if layout {
+            node.set_description("Layout tab containing a complete nested layout");
+        }
         if operable {
             node.add_action(Action::Focus);
             node.add_action(Action::Click);
@@ -593,7 +663,7 @@ mod tests {
             let drag = egui::Rect::from_min_max(pos2(28.0, 0.0), pos2(76.0, 28.0));
             let output = context.run_ui(egui::RawInput::default(), |ui| {
                 let id = ui.make_persistent_id("native-tab-diagnostic-test");
-                configure_tab_accessibility(ui, id, drag, "Main", true, true);
+                configure_tab_accessibility(ui, id, drag, "Main", true, true, false);
                 publish_native_tab_bounds_diagnostic(ui, id, full, "Main");
             });
             let nodes = &output

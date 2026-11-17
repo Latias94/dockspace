@@ -364,7 +364,7 @@ mod tests {
             surfaces,
             [Some(original[1]), Some(original[1]), Some(original[2])]
         );
-        assert!(!session.view().item(PLANETS[0].item).unwrap().is_selected());
+        assert!(!session.view().item(PLANETS[0].item).unwrap().is_active());
         assert!(session.view().surface(original[0]).is_none());
 
         let viewports = ["mercury", "venus", "earth"].map(egui::ViewportId::from_hash_of);

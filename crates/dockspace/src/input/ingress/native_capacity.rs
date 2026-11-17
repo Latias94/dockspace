@@ -26,6 +26,7 @@ impl BackendIngressPayload {
             Self::SemanticInput(input) => match input.as_ref() {
                 EngineInput::RegisterViewport { .. }
                 | EngineInput::UpdateNativeDockingEnabled { .. }
+                | EngineInput::UpdateNativeGroupDockMode { .. }
                 | EngineInput::BootstrapChildViewport { .. }
                 | EngineInput::RequestSurfaceClose {
                     request:

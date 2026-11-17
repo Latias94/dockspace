@@ -2,20 +2,17 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
-use super::guides::{
-    GuideEdgeGeometry, compile_inner_targets_and_guide, compile_inner_targets_without_guide,
-};
+use super::guides::{GuideEdgeGeometry, compile_content_targets};
 use super::{
     SceneCompilationError, checked_sum, clip_rect, intersect_rect, rect_contains, rect_has_area,
     tab_availability,
 };
 use crate::geometry::{GeometryError, LogicalPoint, LogicalRect};
-use crate::graph::command::{DockFraction, Edge};
+use crate::graph::command::DockFraction;
 use crate::graph::{Node, Workspace};
 use crate::ids::{NodeId, RootId, SurfaceId};
-use crate::interaction::targeting::field::MagneticEdgeTargets;
 use crate::interaction::targeting::targets::{
-    DropTargetId, DropTargetLocation, DropTargetRecord, DropVisual, SceneLayerKey,
+    DropTargetLocation, DropTargetRecord, DropVisual, SceneLayerKey,
 };
 use crate::policy::{DockPolicySnapshot, TabBarInteraction, TabBarVisibility};
 use crate::presentation::compiler::tab_strip_layout::{
@@ -32,10 +29,10 @@ use crate::presentation::manifest::{
     TabIntrinsicKey, TabStripControlMetrics, TabStripControlPlacement, TabStripKey,
 };
 use crate::presentation::scene::{
-    PaneRecord, PaneSceneId, PresentationMenuAnchorHost, PresentationMenuAnchorRecord,
-    PresentationPlan, SurfaceProgramRootOperation, TabBarRecord, TabBarSceneId, TabGroupDragRecord,
+    PresentationMenuAnchorHost, PresentationMenuAnchorRecord, PresentationPlan,
+    SurfaceProgramRootOperation, TabBarRecord, TabBarSceneId, TabGroupDragRecord,
     TabListMenuGeometryAvailability, TabListMenuRecord, TabListMenuRowRecord, TabRecord,
-    TabSceneId, TabStripControlRecord, TabStripMemberRecord, TabStripMemberVisibility,
+    TabSceneId, TabStripControlRecord, TabStripMemberRecord, TabStripMemberVisibility, TabsRecord,
 };
 use crate::presentation::tab_strip::{
     ActiveTabListMenu, TabStripControlId, TabStripStateKey, TabStripStateStore,
@@ -86,7 +83,7 @@ pub(super) fn select_presentation_menu_tab_bar(
         }
         let items = match workspace.node(tabs) {
             Some(Node::Tabs { .. }) => workspace.visible_tab_keys(tabs),
-            Some(Node::Split { .. }) => return Ok(None),
+            Some(Node::Pane { .. } | Node::Split { .. } | Node::Grid { .. }) => return Ok(None),
             None => {
                 return Err(SceneCompilationError::MissingNode {
                     surface,
@@ -127,6 +124,7 @@ pub(super) fn compile_tabs_leaf(
     tabs: NodeId,
     depth: usize,
     bounds: LogicalRect,
+    content_top: Option<f64>,
     items: &[crate::ids::TabKey],
     persistent_items: &[crate::ids::TabKey],
     selected: Option<crate::ids::TabKey>,
@@ -137,8 +135,9 @@ pub(super) fn compile_tabs_leaf(
     presentation_menu_anchor: bool,
     outer_guides: Option<GuideEdgeGeometry>,
     emit_drop_targets: bool,
+    active_ancestry: Option<usize>,
     ready: &mut PresentationPlan,
-) -> Result<(), SceneCompilationError> {
+) -> Result<LogicalRect, SceneCompilationError> {
     let bar_id = TabBarSceneId { root, tabs };
     let tab_bar_requirement = requirements
         .tab_bar(bar_id)
@@ -149,7 +148,13 @@ pub(super) fn compile_tabs_leaf(
     } else {
         0.0
     };
-    let content_top = (bounds.y() + tab_height).min(bounds.max().y());
+    // A sampled content edge stays fixed when part of its header is clipped.
+    let content_top = content_top
+        .filter(|_| resolved_policy.visibility() == TabBarVisibility::Visible)
+        .map_or_else(
+            || (bounds.y() + tab_height).min(bounds.max().y()),
+            |top| top.clamp(bounds.y(), bounds.max().y()),
+        );
     // Share the original edges: rebuilding a sampled maximum from a span can
     // round the content outside its pane by one ULP.
     let tab_bar = LogicalRect::from_min_max(
@@ -158,9 +163,11 @@ pub(super) fn compile_tabs_leaf(
     )?;
     let content =
         LogicalRect::from_min_max(LogicalPoint::new(bounds.x(), content_top)?, bounds.max())?;
-    let pane_id = PaneSceneId { root, tabs };
-    ready.push_pane_record(PaneRecord::new(pane_id, bounds, content, layer));
-    ready.push_surface_program_pane_operation(pane_id, selected)?;
+    ready.push_tabs_record(
+        TabsRecord::new(bar_id, bounds, content, layer, active_ancestry),
+        selected,
+    );
+    ready.push_surface_program_root_operation(SurfaceProgramRootOperation::Tabs(bar_id))?;
     if rect_has_area(tab_bar) {
         compile_tab_strip(
             policy,
@@ -198,81 +205,24 @@ pub(super) fn compile_tabs_leaf(
             )?;
         }
     }
-    if emit_drop_targets && rect_has_area(bounds) {
-        let inner_guide = if let Some(outer_guides) = outer_guides {
-            compile_inner_targets_and_guide(
-                policy,
-                config,
-                outer_guides,
-                surface,
-                root,
-                tabs,
-                bounds,
-                content,
-                layer,
-                fraction,
-                root_central,
-                ready,
-            )?
-        } else {
-            None
-        };
-        if let Some(inner_guide) = inner_guide {
-            ready.push_drop_guide_cluster(inner_guide);
-        } else {
-            compile_inner_targets_without_guide(
-                policy,
-                config,
-                surface,
-                root,
-                tabs,
-                bounds,
-                content,
-                layer,
-                fraction,
-                root_central,
-                ready,
-            )?;
-        }
-        let center = DropTargetId::Center {
+    if emit_drop_targets {
+        compile_content_targets(
+            policy,
+            config,
             surface,
             root,
             tabs,
-        };
-        let edge_target = |edge| {
-            if root_central {
-                DropTargetId::OuterEdge {
-                    surface,
-                    root,
-                    node: tabs,
-                    edge,
-                }
-            } else {
-                DropTargetId::InnerEdge {
-                    surface,
-                    root,
-                    node: tabs,
-                    edge,
-                }
-            }
-        };
-        ready.push_magnetic_pane_field(
-            root,
-            tabs,
-            layer,
             depth,
+            bounds,
             content,
-            center,
-            MagneticEdgeTargets::new(
-                edge_target(Edge::Left),
-                edge_target(Edge::Right),
-                edge_target(Edge::Top),
-                edge_target(Edge::Bottom),
-            ),
-            config,
+            layer,
+            fraction,
+            root_central,
+            outer_guides,
+            ready,
         )?;
     }
-    Ok(())
+    Ok(content)
 }
 
 #[allow(clippy::too_many_arguments)]

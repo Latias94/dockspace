@@ -184,6 +184,7 @@ pub(crate) fn resolve_presented_drop(
     clippy::too_many_arguments,
     reason = "the resolver binds every authoritative drag fact without an ambient context"
 )]
+#[cfg(test)]
 pub(crate) fn resolve_presented_drop_with_targeting(
     stamp: SurfaceSceneStamp,
     ready: &PresentationPlan,
@@ -197,6 +198,39 @@ pub(crate) fn resolve_presented_drop_with_targeting(
     surface_background_offer: Option<SurfaceBackgroundRootOffer>,
     point: LogicalPoint,
     targeting: DropTargeting,
+) -> Result<DropQuery, DropResolutionError> {
+    resolve_presented_drop_with_group_mode(
+        stamp,
+        ready,
+        source_layout_facts,
+        workspace,
+        workspace_version,
+        workspace_index,
+        policy,
+        session,
+        source,
+        surface_background_offer,
+        point,
+        targeting,
+        crate::model::TabGroupDockMode::MergeTabs,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_presented_drop_with_group_mode(
+    stamp: SurfaceSceneStamp,
+    ready: &PresentationPlan,
+    source_layout_facts: Option<&PresentationLayoutFacts>,
+    workspace: &Workspace,
+    workspace_version: WorkspaceVersion,
+    workspace_index: &WorkspaceIndex,
+    policy: &DockPolicySnapshot,
+    session: DragSessionId,
+    source: MovePayload,
+    surface_background_offer: Option<SurfaceBackgroundRootOffer>,
+    point: LogicalPoint,
+    targeting: DropTargeting,
+    group_mode: crate::model::TabGroupDockMode,
 ) -> Result<DropQuery, DropResolutionError> {
     let surface = stamp.surface();
 
@@ -215,6 +249,7 @@ pub(crate) fn resolve_presented_drop_with_targeting(
         ));
     }
 
+    let center_source = preserved_center_source(&source, group_mode);
     let assessment = DropEligibilityContext::new(
         workspace,
         workspace_version,
@@ -224,6 +259,7 @@ pub(crate) fn resolve_presented_drop_with_targeting(
         source_layout_facts,
         &source,
         surface_background_offer,
+        center_source.as_ref(),
     );
     let suppression = assessment.source_suppression();
     let occluding_layer = occluding_layer(ready, point, suppression);
@@ -274,6 +310,7 @@ pub(crate) fn resolve_presented_drop_with_targeting(
                 occluding_layer,
                 suppression,
                 surface_background_offer,
+                group_mode,
             };
             let (direct, direct_candidate) =
                 resolve_exact_unguided_target(&location, source.clone())?;
@@ -378,7 +415,7 @@ fn source_excludes_magnetic_target(source: &MovePayload, target: DropTargetId) -
         return false;
     };
     match source {
-        MovePayload::Item(source) => source.root() == root && source.tabs() == tabs,
+        MovePayload::Item(source) => source.root() == root && source.owner_node() == tabs,
         MovePayload::Tabs(source) | MovePayload::Subtree(source) => {
             source.root() == root && source.node() == tabs
         }
@@ -446,6 +483,7 @@ fn resolve_presented_unguided_drop(
         source_layout_facts,
         &source,
         surface_background_offer,
+        None,
     );
     let suppression = assessment.source_suppression();
     let occluding_layer = occluding_layer(surface_scene, point, suppression);
@@ -593,6 +631,7 @@ fn select_guide_clusters(
         right
             .layer()
             .cmp(&left.layer())
+            .then_with(|| right.depth().cmp(&left.depth()))
             .then_with(|| left.id().cmp(&right.id()))
     };
 
@@ -782,6 +821,7 @@ fn resolve_exact_unguided_target(
     };
     let candidate = DirectTargetCandidate::new(target.id(), provenance, target.region());
 
+    let center_source = preserved_center_source(&source, location.group_mode);
     let assessment = DropEligibilityContext::new(
         location.workspace,
         location.workspace_version,
@@ -791,6 +831,7 @@ fn resolve_exact_unguided_target(
         location.source_layout_facts,
         &source,
         location.surface_background_offer,
+        center_source.as_ref(),
     );
     match assessment.prepare_winner(target)? {
         PreparedDropWinner::Eligible { mutation, visual } => Ok((
@@ -816,6 +857,18 @@ fn resolve_exact_unguided_target(
     }
 }
 
+fn preserved_center_source(
+    source: &MovePayload,
+    mode: crate::model::TabGroupDockMode,
+) -> Option<MovePayload> {
+    match (source, mode) {
+        (MovePayload::Tabs(source), crate::model::TabGroupDockMode::PreserveLayout) => {
+            Some(MovePayload::Subtree(source.clone()))
+        }
+        _ => None,
+    }
+}
+
 struct DropEligibilityContext<'a> {
     workspace: &'a Workspace,
     workspace_version: WorkspaceVersion,
@@ -826,6 +879,9 @@ struct DropEligibilityContext<'a> {
     source: &'a MovePayload,
     surface_background_offer: Option<SurfaceBackgroundRootOffer>,
     topology: Result<crate::graph::operation::DropCommandEligibility<'a>, CommandError>,
+    center_topology:
+        Option<Result<crate::graph::operation::DropCommandEligibility<'a>, CommandError>>,
+    center_source: Option<&'a MovePayload>,
     complete_root_source: Result<Option<NodeSource>, CommandError>,
 }
 
@@ -839,6 +895,7 @@ impl<'a> DropEligibilityContext<'a> {
         source_layout_facts: Option<&'a PresentationLayoutFacts>,
         source: &'a MovePayload,
         surface_background_offer: Option<SurfaceBackgroundRootOffer>,
+        center_source: Option<&'a MovePayload>,
     ) -> Self {
         let topology = crate::graph::operation::DropCommandEligibility::new_indexed(
             workspace,
@@ -847,6 +904,15 @@ impl<'a> DropEligibilityContext<'a> {
             policy,
             source,
         );
+        let center_topology = center_source.map(|source| {
+            crate::graph::operation::DropCommandEligibility::new_indexed(
+                workspace,
+                workspace_version,
+                workspace_index,
+                policy,
+                source,
+            )
+        });
         let complete_root_source = match &topology {
             Ok(_) => {
                 workspace_index.capture_complete_root_source(workspace, workspace_version, source)
@@ -863,6 +929,8 @@ impl<'a> DropEligibilityContext<'a> {
             source,
             surface_background_offer,
             topology,
+            center_topology,
+            center_source,
             complete_root_source,
         }
     }
@@ -931,7 +999,16 @@ impl<'a> DropEligibilityContext<'a> {
                         return classify_command_error(error);
                     }
                 };
-                match &self.topology {
+                let center = matches!(
+                    destination,
+                    DockTarget::Center(_) | DockTarget::TabGap { .. }
+                );
+                let topology = if center {
+                    self.center_topology.as_ref().unwrap_or(&self.topology)
+                } else {
+                    &self.topology
+                };
+                match topology {
                     Ok(context) => {
                         if let Err(error) = context.check_target_indexed(
                             self.workspace_version,
@@ -944,7 +1021,11 @@ impl<'a> DropEligibilityContext<'a> {
                     Err(error) => return classify_command_error(error.clone()),
                 }
                 WorkspaceCommand::Move {
-                    payload: self.source.clone(),
+                    payload: if center {
+                        self.center_source.unwrap_or(self.source).clone()
+                    } else {
+                        self.source.clone()
+                    },
                     target: destination,
                 }
             }
@@ -1136,6 +1217,7 @@ pub(crate) mod structural_work {
         pub(crate) nodes: usize,
         pub(crate) tab_items: usize,
         pub(crate) split_child_edges: usize,
+        pub(crate) grid_child_edges: usize,
         pub(crate) tab_mru_items: usize,
         pub(crate) roots: usize,
         pub(crate) surfaces: usize,
@@ -1163,12 +1245,16 @@ pub(crate) mod structural_work {
             };
             for node in workspace.nodes.values() {
                 match node {
+                    Node::Pane { .. } => {}
                     Node::Tabs { items, mru, .. } => {
                         volume.tab_items += items.len();
                         volume.tab_mru_items += mru.len();
                     }
                     Node::Split { children, .. } => {
                         volume.split_child_edges += children.len();
+                    }
+                    Node::Grid { children, .. } => {
+                        volume.grid_child_edges += children.len();
                     }
                 }
             }
@@ -1179,6 +1265,7 @@ pub(crate) mod structural_work {
             self.nodes += other.nodes;
             self.tab_items += other.tab_items;
             self.split_child_edges += other.split_child_edges;
+            self.grid_child_edges += other.grid_child_edges;
             self.tab_mru_items += other.tab_mru_items;
             self.roots += other.roots;
             self.surfaces += other.surfaces;
@@ -1263,6 +1350,8 @@ pub(crate) mod structural_work {
         pub(crate) tab_item_copies: usize,
         pub(crate) split_child_copies: usize,
         pub(crate) split_weight_copies: usize,
+        pub(crate) grid_child_copies: usize,
+        pub(crate) grid_share_copies: usize,
         pub(crate) mru_item_copies: usize,
     }
 
@@ -1350,6 +1439,7 @@ pub(crate) mod structural_work {
             let copies = &mut work.workspace_storage;
             copies.node_payload_clones += 1;
             match node {
+                Node::Pane { .. } => {}
                 Node::Tabs { items, mru, .. } => {
                     copies.tab_item_copies += items.len();
                     copies.mru_item_copies += mru.len();
@@ -1359,6 +1449,14 @@ pub(crate) mod structural_work {
                 } => {
                     copies.split_child_copies += children.len();
                     copies.split_weight_copies += weights.len();
+                }
+                Node::Grid {
+                    children, shares, ..
+                } => {
+                    copies.grid_child_copies += children.len();
+                    copies.grid_share_copies += shares
+                        .as_ref()
+                        .map_or(0, |shares| shares.rows().len() + shares.columns().len());
                 }
             }
         });
@@ -1559,6 +1657,7 @@ struct DropLocation<'a> {
     occluding_layer: Option<SceneLayerKey>,
     suppression: DropSourceSuppression,
     surface_background_offer: Option<SurfaceBackgroundRootOffer>,
+    group_mode: crate::model::TabGroupDockMode,
 }
 
 enum PreparedDropTarget {
@@ -2170,3 +2269,6 @@ mod tests;
 
 #[cfg(test)]
 mod contract_tests;
+
+#[cfg(test)]
+mod guide_depth_tests;

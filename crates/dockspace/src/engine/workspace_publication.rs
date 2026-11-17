@@ -480,10 +480,17 @@ impl DockEngine {
         self.publish_workspace(candidate.ok_or(EngineError::MissingCommandOutcome { input })?);
         self.reconcile_viewport_focus_authority();
         if changed {
-            if let WorkspaceCommand::Select { source } = command {
-                self.advance_selection_revision(input, source)?;
-            } else {
-                self.advance_revision(input)?;
+            match command {
+                WorkspaceCommand::Select { source } => {
+                    self.advance_selection_revision(input, source)?
+                }
+                WorkspaceCommand::SelectItem { source } if source.as_tab_source().is_some() => {
+                    let tab = source
+                        .as_tab_source()
+                        .expect("the inline source was checked");
+                    self.advance_selection_revision(input, &tab)?;
+                }
+                _ => self.advance_revision(input)?,
             }
             if !matches!(
                 command,

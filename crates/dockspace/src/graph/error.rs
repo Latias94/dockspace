@@ -67,9 +67,6 @@ pub enum CommandError {
     /// A tabs container does not contain the requested direct child.
     #[error("tabs node {tabs:?} does not contain tab {tab:?}")]
     TabNotInTabs { tabs: NodeId, tab: TabKey },
-    /// This graph slice cannot yet own a layout child inside Tabs.
-    #[error("tabs node {tabs:?} contains unsupported layout tab {tab:?}")]
-    UnsupportedLayoutTab { tabs: NodeId, tab: TabKey },
     /// Opening an item would duplicate application ownership.
     #[error("item {item} is already open")]
     ItemAlreadyOpen { item: ItemId },
@@ -83,17 +80,16 @@ pub enum CommandError {
         index: usize,
         len: usize,
     },
-    /// A subtree payload cannot be merged into a tabs target.
-    #[error("split subtree {node:?} cannot be inserted into a tabs stack")]
-    SplitPayloadIntoTabs { node: NodeId },
     /// A tabs or subtree move contains no application-owned item.
     #[error("move payload rooted at node {node:?} contains no items")]
     EmptyPayload { node: NodeId },
     /// A subtree was targeted at itself or one of its descendants.
     #[error("target node {target:?} is inside moved subtree {source_node:?}")]
     TargetInsidePayload { source_node: NodeId, target: NodeId },
-    /// Moving part of a root would detach its declared central leaf.
-    #[error("moving node {source_node:?} would detach central leaf {central:?} from root {root}")]
+    /// Detaching or closing part of a root would remove its declared central anchor.
+    #[error(
+        "removing node {source_node:?} would detach central anchor {central:?} from root {root}"
+    )]
     CentralNodeWouldDetach {
         root: RootId,
         source_node: NodeId,
@@ -106,12 +102,28 @@ pub enum CommandError {
         children: usize,
         weights: usize,
     },
-    /// A resize command contained no split updates.
-    #[error("split resize batch must contain at least one update")]
-    EmptySplitResizeBatch,
-    /// A resize command named the same split more than once.
-    #[error("split resize batch contains duplicate split {split:?}")]
-    DuplicateSplitResize { split: NodeId },
+    /// A resize command named the same actual owner more than once.
+    #[error("track resize batch contains duplicate owner {node:?}")]
+    DuplicateTrackResize { node: NodeId },
+    /// Track values name the wrong kind of structural owner.
+    #[error("track update does not match owner {node:?}")]
+    TrackOwnerKindMismatch { node: NodeId },
+    /// A resolved resize basis does not describe the current grid's complete roster.
+    #[error("resolved track resize basis does not match grid {node:?}")]
+    GridResizeBasisMismatch { node: NodeId },
+    /// Grid dimensions or shared tracks do not describe a legal durable roster.
+    #[error("invalid grid {node:?}: {source}")]
+    InvalidGrid {
+        node: NodeId,
+        source: crate::model::DockspaceGridError,
+    },
+    /// A supplied scalar track weight is invalid.
+    #[error("owner {node:?} track {index} is invalid: {source}")]
+    InvalidTrackWeight {
+        node: NodeId,
+        index: usize,
+        source: crate::graph::InvalidSplitWeight,
+    },
     /// Caller-supplied resize weights are not normalized.
     #[error("split {split:?} weights must sum to one, got {sum}")]
     SplitWeightsNotNormalized { split: NodeId, sum: f64 },
@@ -269,17 +281,18 @@ impl CommandError {
             | Self::NodeIsNotSplit { .. }
             | Self::ItemNotInTabs { .. }
             | Self::TabNotInTabs { .. }
-            | Self::UnsupportedLayoutTab { .. }
             | Self::ItemAlreadyOpen { .. }
             | Self::ItemHidden { .. }
             | Self::TabIndexOutOfBounds { .. }
-            | Self::SplitPayloadIntoTabs { .. }
             | Self::EmptyPayload { .. }
             | Self::TargetInsidePayload { .. }
             | Self::CentralNodeWouldDetach { .. }
             | Self::SplitWeightCountMismatch { .. }
-            | Self::EmptySplitResizeBatch
-            | Self::DuplicateSplitResize { .. }
+            | Self::DuplicateTrackResize { .. }
+            | Self::TrackOwnerKindMismatch { .. }
+            | Self::GridResizeBasisMismatch { .. }
+            | Self::InvalidGrid { .. }
+            | Self::InvalidTrackWeight { .. }
             | Self::SplitWeightsNotNormalized { .. }
             | Self::RootIdCollision { .. }
             | Self::RetiredRootId { .. }

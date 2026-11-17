@@ -41,11 +41,15 @@ use thiserror::Error;
 
 use crate::engine::transition::WorkspaceVersion;
 use crate::geometry::{GeometryError, LogicalRect};
+#[cfg(test)]
+use crate::graph::Node;
+use crate::graph::Workspace;
 use crate::graph::command::NodeFingerprint;
 use crate::graph::workspace::RootPresentationOwner;
-use crate::graph::{Node, Workspace};
+#[cfg(test)]
+use crate::ids::ItemId;
 use crate::ids::{
-    EngineAuthorityDomainId, FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey,
+    EngineAuthorityDomainId, FloatingPresentationId, NodeId, RootId, SurfaceId, TabKey,
 };
 use crate::interaction::targeting::field::{
     MagneticEdgeTargets, MagneticTargetCandidate, MagneticTargetField,
@@ -78,17 +82,18 @@ use crate::presentation::tab_strip::{
 };
 
 pub(crate) use self::records::{
-    ContainedLayoutOwner, ContainedLayoutProjection, PresentationLayoutFacts, RootLayoutFacts,
+    ContainedLayoutOwner, ContainedLayoutProjection, FrozenTabLabel, PresentationLayoutFacts,
+    RootLayoutFacts,
 };
 pub use self::records::{
     ContainedMinimumMeasurement, ContainedRecord, ContainedResizeDirection, ContainedResizeRecord,
     PaneRecord, PaneSceneId, PresentationMenuAnchorHost, PresentationMenuAnchorRecord,
     SplitterGapPresentation, SplitterGapRecord, SplitterJunctionDirection, SplitterJunctionId,
-    SplitterJunctionRecord, SplitterRecord, SplitterResizeTarget, SplitterSceneId, TabBarRecord,
-    TabBarSceneId, TabGroupDragRecord, TabGroupDragRegionKind, TabGroupDragRegionRecord,
-    TabListMenuBackdropRecord, TabListMenuGeometryAvailability, TabListMenuRecord,
-    TabListMenuRowRecord, TabRecord, TabSceneId, TabStripControlRecord, TabStripMemberRecord,
-    TabStripMemberVisibility,
+    SplitterJunctionRecord, SplitterOwner, SplitterRecord, SplitterResizeTarget, SplitterSceneId,
+    TabBarRecord, TabBarSceneId, TabGroupDragRecord, TabGroupDragRegionKind,
+    TabGroupDragRegionRecord, TabListMenuBackdropRecord, TabListMenuGeometryAvailability,
+    TabListMenuRecord, TabListMenuRowRecord, TabRecord, TabSceneId, TabStripControlRecord,
+    TabStripMemberRecord, TabStripMemberVisibility, TabsRecord,
 };
 pub use crate::interaction::targeting::targets::SceneLayerKey;
 
@@ -217,6 +222,7 @@ pub struct PresentationPlan {
     selection: Arc<slotmap::SparseSecondaryMap<NodeId, Option<TabKey>>>,
     command_basis: BTreeMap<RootId, NodeFingerprint>,
     facts: Arc<SurfaceFacts>,
+    content: Arc<SurfaceContentFacts>,
 }
 
 impl PartialEq for PresentationPlan {
@@ -225,7 +231,8 @@ impl PartialEq for PresentationPlan {
             && self.provenance == other.provenance
             && self.command_basis == other.command_basis
             && self.selection == other.selection
-            && (self.shares_facts(other) || self.facts == other.facts)
+            && (Arc::ptr_eq(&self.facts, &other.facts) || self.facts == other.facts)
+            && (Arc::ptr_eq(&self.content, &other.content) || self.content == other.content)
             && match (&self.layout_facts, &other.layout_facts) {
                 (None, None) => true,
                 (Some(left), Some(right)) => left.same_inputs(right),
@@ -234,16 +241,55 @@ impl PartialEq for PresentationPlan {
     }
 }
 
-/// Geometry and executable associations whose lifetime follows their actual inputs.
+/// One shared selected branch on the active presentation path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ActiveTabChoice {
+    parent: Option<usize>,
+    tabs: NodeId,
+    selected: TabKey,
+}
+impl ActiveTabChoice {
+    pub(crate) const fn tabs(&self) -> NodeId {
+        self.tabs
+    }
+    pub(crate) const fn selected(&self) -> TabKey {
+        self.selected
+    }
+}
+
+pub(crate) struct ActiveTabAncestry<'a> {
+    choices: &'a [ActiveTabChoice],
+    next: Option<usize>,
+}
+impl<'a> Iterator for ActiveTabAncestry<'a> {
+    type Item = &'a ActiveTabChoice;
+    fn next(&mut self) -> Option<Self::Item> {
+        let choice = self.choices.get(self.next?)?;
+        self.next = choice.parent;
+        Some(choice)
+    }
+}
+
+/// Content placements and their linked execution rows, sealed with one plan.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct SurfaceContentFacts {
+    pane_records: Vec<PaneRecord>,
+    active_tab_choices: Vec<ActiveTabChoice>,
+    surface_program: SurfaceProgram,
+}
+
+/// Geometry and semantic records shared across unchanged content selections.
 #[derive(Debug, Clone, PartialEq)]
 struct SurfaceFacts {
     popup: PopupPlaneRequirement,
     bounds: LogicalRect,
     popup_plane_bounds: Option<LogicalRect>,
     contained_projection: Option<ContainedLayoutProjection>,
-    resize_projection: Vec<crate::graph::command::SplitResize>,
+    resize_projection: Vec<crate::graph::command::TrackResize>,
     contained_order: Option<Vec<FloatingPresentationId>>,
-    pane_records: Vec<PaneRecord>,
+    tabs_records: Vec<TabsRecord>,
+    tab_requirements:
+        Arc<BTreeMap<TabBarSceneId, crate::presentation::manifest::TabBarRequirement>>,
     tab_records: Vec<TabRecord>,
     tab_bar_records: Vec<TabBarRecord>,
     tab_strip_control_records: Vec<TabStripControlRecord>,
@@ -260,7 +306,6 @@ struct SurfaceFacts {
     drop_guide_clusters: Vec<DropGuideClusterRecord>,
     drop_targets: Vec<Arc<DropTargetRecord>>,
     magnetic_target_field: MagneticTargetField,
-    surface_program: SurfaceProgram,
     #[cfg(feature = "motion")]
     unavailable_partitions: BTreeSet<RootId>,
     #[cfg(feature = "motion")]
@@ -346,7 +391,8 @@ impl PresentationPlan {
                 contained_projection: None,
                 resize_projection: Vec::new(),
                 contained_order: None,
-                pane_records: Vec::new(),
+                tabs_records: Vec::new(),
+                tab_requirements: Arc::default(),
                 tab_records: Vec::new(),
                 tab_bar_records: Vec::new(),
                 tab_strip_control_records: Vec::new(),
@@ -363,12 +409,12 @@ impl PresentationPlan {
                 drop_guide_clusters: Vec::new(),
                 drop_targets: Vec::new(),
                 magnetic_target_field: MagneticTargetField::default(),
-                surface_program: SurfaceProgram::default(),
                 #[cfg(feature = "motion")]
                 unavailable_partitions: BTreeSet::new(),
                 #[cfg(feature = "motion")]
                 pane_ranks: BTreeMap::new(),
             }),
+            content: Arc::default(),
         }
     }
 
@@ -376,17 +422,16 @@ impl PresentationPlan {
         Arc::make_mut(&mut self.facts)
     }
 
+    fn content_mut(&mut self) -> &mut SurfaceContentFacts {
+        Arc::make_mut(&mut self.content)
+    }
+
     #[cfg(test)]
     pub(crate) fn bind_workspace_selection(&mut self, workspace: &Workspace) {
-        let mut selection =
-            slotmap::SparseSecondaryMap::with_capacity(self.facts.pane_records.len());
-        for pane in &self.facts.pane_records {
-            if let Some(Node::Tabs { .. }) = workspace.node(pane.id().tabs) {
-                selection.insert(
-                    pane.id().tabs,
-                    workspace.visible_tab_selection(pane.id().tabs),
-                );
-            }
+        let mut selection = slotmap::SparseSecondaryMap::new();
+        for tabs in &self.facts.tabs_records {
+            let node = tabs.id().tabs;
+            selection.insert(node, workspace.visible_tab_selection(node));
         }
         self.selection = Arc::new(selection);
     }
@@ -403,20 +448,284 @@ impl PresentationPlan {
         self.selection.get(tabs).copied().flatten()
     }
 
-    /// Returns the selected item from this plan's current semantic binding.
-    #[must_use]
-    pub fn pane_selected(&self, pane: &PaneRecord) -> Option<ItemId> {
-        self.selected_in_tabs(pane.id().tabs).and_then(TabKey::item)
-    }
-
     /// Returns whether this tab is selected in this plan's current semantic binding.
     #[must_use]
     pub fn tab_selected(&self, tab: &TabRecord) -> bool {
         self.selected_in_tabs(tab.id().tabs) == Some(tab.id().tab)
     }
 
+    pub(crate) fn install_tab_requirements(
+        &mut self,
+        requirements: &crate::presentation::manifest::SurfaceRequirements,
+    ) {
+        self.facts_mut().tab_requirements = requirements.shared_tab_bars();
+    }
+
+    /// Returns the exact label frozen with this presentation.
+    #[must_use]
+    pub fn tab_label(&self, tab: TabSceneId) -> Option<crate::graph::TabLabel<'_>> {
+        self.facts
+            .tab_requirements
+            .get(&TabBarSceneId {
+                root: tab.root,
+                tabs: tab.tabs,
+            })?
+            .label(tab.tab)
+    }
+
+    /// Borrows this exact output's own node label without selecting a descendant.
+    pub(crate) fn node_label(
+        &self,
+        root: RootId,
+        node: NodeId,
+    ) -> Option<crate::graph::TabLabel<'_>> {
+        if let Some(label) = self
+            .layout_facts()
+            .and_then(|facts| facts.root(root))
+            .and_then(|facts| facts.node_label(node))
+        {
+            return Some(label);
+        }
+        if self
+            .command_basis(root)
+            .is_some_and(|basis| basis.0.root_node == node)
+        {
+            if let Some(label) = self
+                .facts
+                .contained_records
+                .iter()
+                .find(|record| record.root() == root)
+                .and_then(ContainedRecord::label)
+            {
+                return Some(label);
+            }
+        }
+        // Synthetic local fixtures may retain ownership without renderer layout facts.
+        let record = self
+            .command_basis(root)?
+            .0
+            .nodes
+            .iter()
+            .find(|record| record.id == node)?;
+        match &record.node {
+            crate::graph::command::FingerprintNode::Pane { item, .. } => {
+                Some(crate::graph::TabLabel::Item(*item))
+            }
+            crate::graph::command::FingerprintNode::Tabs { .. } => {
+                Some(crate::graph::TabLabel::Layout { title: "Tabs" })
+            }
+            crate::graph::command::FingerprintNode::Split { .. } => {
+                Some(crate::graph::TabLabel::Layout { title: "Split" })
+            }
+            crate::graph::command::FingerprintNode::Grid { .. } => {
+                Some(crate::graph::TabLabel::Layout { title: "Grid" })
+            }
+        }
+    }
+
+    /// Borrows the frozen root descriptor; a container is never named by a descendant.
+    pub(crate) fn root_label(&self, root: RootId) -> Option<crate::graph::TabLabel<'_>> {
+        if let Some(label) = self
+            .facts
+            .contained_records
+            .iter()
+            .find(|record| record.root() == root)
+            .and_then(ContainedRecord::label)
+        {
+            return Some(label);
+        }
+
+        let node = self
+            .layout_facts()
+            .and_then(|facts| facts.root(root))
+            .and_then(|facts| {
+                facts
+                    .projection()
+                    .nodes
+                    .iter_preorder()
+                    .next()
+                    .map(|(node, _)| *node)
+            })
+            .or_else(|| self.command_basis(root).map(|basis| basis.0.root_node))?;
+        self.node_label(root, node)
+    }
+
+    /// Returns independently compiled active Tabs containers.
+    #[must_use]
+    pub fn tabs_records(&self) -> &[TabsRecord] {
+        &self.facts.tabs_records
+    }
+
+    pub(crate) fn push_tabs_record(&mut self, record: TabsRecord, selected: Option<TabKey>) {
+        Arc::make_mut(&mut self.selection).insert(record.id().tabs, selected);
+        self.facts_mut().tabs_records.push(record);
+    }
+
+    pub(crate) fn push_active_tab_choice(
+        &mut self,
+        parent: Option<usize>,
+        tabs: NodeId,
+        selected: TabKey,
+    ) -> usize {
+        let content = self.content_mut();
+        let row = content.active_tab_choices.len();
+        content.active_tab_choices.push(ActiveTabChoice {
+            parent,
+            tabs,
+            selected,
+        });
+        row
+    }
+
+    pub(crate) fn receiver_active_path_is_current(
+        &self,
+        kind: crate::presentation::hit::PresentationHitRegionKind,
+        workspace: &Workspace,
+    ) -> bool {
+        use crate::presentation::hit::PresentationHitRegionKind as Kind;
+        if let Kind::SplitterJunction(id) = kind {
+            if self
+                .facts
+                .splitter_junction_records
+                .binary_search_by_key(&id, SplitterJunctionRecord::id)
+                .is_err()
+            {
+                return false;
+            }
+            return [
+                SplitterJunctionDirection::North,
+                SplitterJunctionDirection::East,
+                SplitterJunctionDirection::South,
+                SplitterJunctionDirection::West,
+            ]
+            .into_iter()
+            .filter_map(|direction| id.arm(direction))
+            .all(|splitter| {
+                self.receiver_active_path_is_current(Kind::SplitterHandle(splitter), workspace)
+            });
+        }
+        match self.receiver_active_ancestry(kind) {
+            Some(mut path) => path.all(|choice| {
+                workspace.visible_tab_selection(choice.tabs()) == Some(choice.selected())
+            }),
+            None => !matches!(
+                kind,
+                crate::presentation::hit::PresentationHitRegionKind::PaneBody(_)
+                    | crate::presentation::hit::PresentationHitRegionKind::TabsBackground(_)
+                    | crate::presentation::hit::PresentationHitRegionKind::TabBody(_)
+                    | crate::presentation::hit::PresentationHitRegionKind::TabClose(_)
+                    | crate::presentation::hit::PresentationHitRegionKind::TabStripScroll(_)
+                    | crate::presentation::hit::PresentationHitRegionKind::TabGroupDrag { .. }
+                    | crate::presentation::hit::PresentationHitRegionKind::TabStripControl(_)
+                    | crate::presentation::hit::PresentationHitRegionKind::TabListMenuRow { .. }
+                    | crate::presentation::hit::PresentationHitRegionKind::SplitterHandle(_)
+                    | crate::presentation::hit::PresentationHitRegionKind::SplitterJunction(_)
+                    | crate::presentation::hit::PresentationHitRegionKind::DropTarget(_)
+                    | crate::presentation::hit::PresentationHitRegionKind::DropGuideActivation(_)
+                    | crate::presentation::hit::PresentationHitRegionKind::TabListMenuScroll(_)
+                    | crate::presentation::hit::PresentationHitRegionKind::TabListMenuBlocker(_)
+                    | crate::presentation::hit::PresentationHitRegionKind::TabListMenuBackdrop(_)
+            ),
+        }
+    }
+
+    /// Resolves the selected ancestor proof of an exact receiver.
+    pub(crate) fn receiver_active_ancestry(
+        &self,
+        kind: crate::presentation::hit::PresentationHitRegionKind,
+    ) -> Option<ActiveTabAncestry<'_>> {
+        use crate::presentation::hit::PresentationHitRegionKind as Kind;
+        let bar_ancestry = |id: TabBarSceneId| {
+            self.facts
+                .tabs_records
+                .binary_search_by_key(&id, TabsRecord::id)
+                .ok()
+                .map(|row| self.facts.tabs_records[row].active_ancestry())
+        };
+        let node_ancestry = |root, node| {
+            bar_ancestry(TabBarSceneId { root, tabs: node }).or_else(|| {
+                let item = self
+                    .layout_facts()?
+                    .root(root)?
+                    .projection()
+                    .nodes
+                    .pane_item(&node)?;
+                let row = self
+                    .content
+                    .pane_records
+                    .binary_search_by_key(&PaneSceneId { root, item }, PaneRecord::id)
+                    .ok()?;
+                let pane = &self.content.pane_records[row];
+                (pane.owner_node() == node).then_some(pane.active_ancestry())
+            })
+        };
+        let head = match kind {
+            Kind::PaneBody(id) => self
+                .content
+                .pane_records
+                .binary_search_by_key(&id, PaneRecord::id)
+                .ok()
+                .map(|row| self.content.pane_records[row].active_ancestry())?,
+            Kind::TabBody(id) | Kind::TabClose(id) => bar_ancestry(TabBarSceneId {
+                root: id.root,
+                tabs: id.tabs,
+            })?,
+            Kind::TabsBackground(id)
+            | Kind::TabStripScroll(id)
+            | Kind::TabGroupDrag { bar: id, .. } => bar_ancestry(id)?,
+            Kind::TabStripControl(id) => bar_ancestry(id.bar())?,
+            Kind::TabListMenuRow { tab, .. } => bar_ancestry(TabBarSceneId {
+                root: tab.root,
+                tabs: tab.tabs,
+            })?,
+            Kind::TabListMenuScroll(menu)
+            | Kind::TabListMenuBlocker(menu)
+            | Kind::TabListMenuBackdrop(menu) => bar_ancestry(menu.key().bar())?,
+            Kind::DropTarget(id) => {
+                self.drop_target(id)?;
+                match id {
+                    DropTargetId::Center { root, tabs, .. } => node_ancestry(root, tabs)?,
+                    DropTargetId::TabGap { root, tabs, .. } => {
+                        bar_ancestry(TabBarSceneId { root, tabs })?
+                    }
+                    DropTargetId::InnerEdge { root, node, .. } => node_ancestry(root, node)?,
+                    DropTargetId::OuterEdge { .. } | DropTargetId::SurfaceBackground { .. } => None,
+                }
+            }
+            Kind::DropGuideActivation(id) => {
+                self.facts
+                    .drop_guide_clusters
+                    .iter()
+                    .find(|cluster| cluster.id() == id)?;
+                match id {
+                    DropGuideClusterId::Inner { root, node, .. } => node_ancestry(root, node)?,
+                    DropGuideClusterId::Outer { .. } | DropGuideClusterId::Surface { .. } => None,
+                }
+            }
+            Kind::SplitterHandle(id) => self
+                .facts
+                .splitter_records
+                .binary_search_by_key(&id, |record| *record.id())
+                .ok()
+                .map(|row| self.facts.splitter_records[row].active_ancestry())?,
+            Kind::SplitterJunction(id) => {
+                let splitter = id.splitters().into_iter().next()?;
+                self.facts
+                    .splitter_records
+                    .binary_search_by_key(&splitter, |record| *record.id())
+                    .ok()
+                    .map(|row| self.facts.splitter_records[row].active_ancestry())?
+            }
+            _ => None,
+        };
+        Some(ActiveTabAncestry {
+            choices: &self.content.active_tab_choices,
+            next: head,
+        })
+    }
+
     pub(crate) fn shares_facts(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.facts, &other.facts)
+        Arc::ptr_eq(&self.facts, &other.facts) && Arc::ptr_eq(&self.content, &other.content)
     }
 
     /// Rebinds a dependency-checked selection without mutating its sealed facts.
@@ -441,6 +750,43 @@ impl PresentationPlan {
         Arc::make_mut(&mut rebound.selection).insert(bar.tabs, selected);
         rebound.command_basis.insert(bar.root, basis);
         rebound.layout_facts = Some(layout.rebind_measurements(measurements));
+        let old_item = self.selected_in_tabs(bar.tabs).and_then(TabKey::item)?;
+        let new_item = selected.and_then(TabKey::item)?;
+        if old_item != new_item {
+            let pane = self.content.pane_records.iter().position(|pane| {
+                pane.id()
+                    == PaneSceneId {
+                        root: bar.root,
+                        item: old_item,
+                    }
+            })?;
+            let content = rebound.content_mut();
+            let old_ids = content
+                .pane_records
+                .iter()
+                .map(PaneRecord::id)
+                .collect::<Vec<_>>();
+            content.pane_records[pane].rebind_item(new_item);
+            content.pane_records.sort_unstable_by_key(PaneRecord::id);
+            let remap = old_ids
+                .into_iter()
+                .map(|mut id| {
+                    if id.root == bar.root && id.item == old_item {
+                        id.item = new_item;
+                    }
+                    content
+                        .pane_records
+                        .binary_search_by_key(&id, PaneRecord::id)
+                        .ok()
+                })
+                .collect::<Option<Vec<_>>>()?;
+            content.surface_program.remap_pane_rows(&remap);
+            for choice in &mut content.active_tab_choices {
+                if choice.tabs == bar.tabs {
+                    choice.selected = selected?;
+                }
+            }
+        }
         Some(rebound)
     }
 
@@ -492,7 +838,7 @@ impl PresentationPlan {
 
     pub(crate) fn set_resize_projection(
         &mut self,
-        overrides: &[crate::presentation::layout::SplitWeightOverride<'_>],
+        overrides: &[crate::presentation::layout::TrackWeightOverride<'_>],
     ) {
         let surface = self.surface;
         let projection = overrides
@@ -507,17 +853,22 @@ impl PresentationPlan {
                         } => owner == surface,
                     })
             })
-            .map(|entry| {
-                crate::graph::command::SplitResize::new(
-                    entry.source().clone(),
-                    entry.weights().to_vec(),
-                )
+            .map(|entry| match entry.weights() {
+                crate::graph::command::TrackWeights::Split(weights) => {
+                    crate::graph::command::TrackResize::split(
+                        entry.source().clone(),
+                        weights.clone(),
+                    )
+                }
+                crate::graph::command::TrackWeights::Grid(shares) => {
+                    crate::graph::command::TrackResize::grid(entry.source().clone(), shares.clone())
+                }
             })
             .collect();
         self.facts_mut().resize_projection = projection;
     }
 
-    pub(crate) fn resize_projection(&self) -> &[crate::graph::command::SplitResize] {
+    pub(crate) fn resize_projection(&self) -> &[crate::graph::command::TrackResize] {
         &self.facts.resize_projection
     }
 
@@ -589,7 +940,7 @@ impl PresentationPlan {
     }
 
     pub(crate) fn push_pane_record(&mut self, record: PaneRecord) {
-        self.facts_mut().pane_records.push(record);
+        self.content_mut().pane_records.push(record);
     }
 
     pub(crate) fn push_tab_bar_record(&mut self, record: TabBarRecord) {
@@ -601,14 +952,14 @@ impl PresentationPlan {
     }
 
     pub(crate) fn push_tab_list_menu_record(&mut self, record: TabListMenuRecord) {
-        self.facts_mut()
+        self.content_mut()
             .surface_program
             .defer_popup_menu(record.session());
         self.facts_mut().tab_list_menu_records.push(record);
     }
 
     pub(crate) fn push_tab_list_menu_backdrop_record(&mut self, record: TabListMenuBackdropRecord) {
-        self.facts_mut()
+        self.content_mut()
             .surface_program
             .defer_popup_backdrop(record.session());
         self.facts_mut().tab_list_menu_backdrop_records.push(record);
@@ -707,7 +1058,7 @@ impl PresentationPlan {
                 surface: self.surface,
             });
         }
-        self.facts_mut()
+        self.content_mut()
             .surface_program
             .defer_surface_background(background.id());
         self.facts_mut().surface_background = Some(background);
@@ -721,13 +1072,13 @@ impl PresentationPlan {
 
     /// Adds one complete docking-guide cluster before scene submission.
     pub(crate) fn push_drop_guide_cluster(&mut self, cluster: DropGuideClusterRecord) {
-        self.facts_mut().surface_program.defer_guide(&cluster);
+        self.content_mut().surface_program.defer_guide(&cluster);
         self.facts_mut().drop_guide_clusters.push(cluster);
     }
 
     /// Adds one structural drop target before this fact is submitted to a scene.
     pub(crate) fn push_drop_target(&mut self, target: Arc<DropTargetRecord>) {
-        self.facts_mut()
+        self.content_mut()
             .surface_program
             .defer_drop_target(target.id());
         self.facts_mut().drop_targets.push(target);
@@ -773,7 +1124,7 @@ impl PresentationPlan {
     /// Returns core-compiled tabs-leaf and pane-content records.
     #[must_use]
     pub fn pane_records(&self) -> &[PaneRecord] {
-        &self.facts.pane_records
+        &self.content.pane_records
     }
 
     /// Returns core-compiled records for every visible operable tab.

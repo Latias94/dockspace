@@ -5,7 +5,7 @@ use dockspace::close::{
 };
 use dockspace::model::{
     DockAnchor, DockPlacement, DockspaceActionRejection, DockspaceLayout, DockspaceRootView,
-    NativeTearOffSource, PreparedTabsGroup, RootId, SurfaceId,
+    NativeTearOffSource, PreparedTab, PreparedTabsGroup, RootId, SurfaceId, TabKey,
 };
 use dockspace::runtime::{DockspaceClosePlan, NativeSurfaceBinding};
 use eframe::egui;
@@ -308,6 +308,10 @@ impl<P: PaneView> NativeRuntimeState<P> {
         Ok(())
     }
 
+    pub(crate) fn capture_tab(&self, key: TabKey) -> Option<PreparedTab> {
+        self.coordinator.session().capture_tab(key)
+    }
+
     pub(crate) fn capture_tabs_group(
         &self,
         anchor: DockAnchor,
@@ -347,6 +351,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
                 NativeCommand::DockItem { item, placement } => {
                     session.prepare_dock_item(item, placement).into()
                 }
+                NativeCommand::DockTab { tab, placement } => {
+                    session.prepare_dock_tab(tab, placement).into()
+                }
                 NativeCommand::DockTabs { group, placement } => {
                     session.prepare_dock_tabs(group, placement).into()
                 }
@@ -356,6 +363,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
                 NativeCommand::DockRootBack { root } => session.prepare_dock_root_back(root).into(),
                 NativeCommand::FloatItem { item, surface } => {
                     session.prepare_float_item(item, surface).into()
+                }
+                NativeCommand::FloatTab { tab, surface } => {
+                    session.prepare_float_tab(tab, surface).into()
                 }
                 NativeCommand::FloatTabs { group, surface } => {
                     session.prepare_float_tabs(group, surface).into()
@@ -379,6 +389,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
                     .prepare_move_to_new_window(NativeTearOffSource::Root(root), placement)
                     .into(),
                 NativeCommand::CloseItem { item } => session.prepare_close_item(item).into(),
+                NativeCommand::CloseTab { tab } => session.prepare_close_tab(tab).into(),
                 NativeCommand::CloseRoot { root } => session.prepare_close_root(root).into(),
                 NativeCommand::DecideClose {
                     request,
@@ -459,11 +470,15 @@ impl<P: PaneView> NativeRuntimeState<P> {
         };
         let may_retire = self.host_root_may_retire(root);
         let complete_item = |item| root.contains_only_item(item) && may_retire;
+        let complete_tab = |tab: &PreparedTab| root.contains_only_tab(tab) && may_retire;
         let complete_tabs =
             |group: &PreparedTabsGroup| root.contains_only_tabs_group(group) && may_retire;
         let view = self.coordinator.session().view();
         let target = match command {
             NativeCommand::DockItem { item, placement } if complete_item(*item) => {
+                self.placement_surface(*placement)
+            }
+            NativeCommand::DockTab { tab, placement } if complete_tab(tab) => {
                 self.placement_surface(*placement)
             }
             NativeCommand::DockTabs { group, placement } if complete_tabs(group) => {
@@ -474,6 +489,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
                 placement,
             } if *source == root.id() => self.placement_surface(*placement),
             NativeCommand::FloatItem { item, surface } if complete_item(*item) => {
+                view.surface(*surface).map(|surface| surface.id())
+            }
+            NativeCommand::FloatTab { tab, surface } if complete_tab(tab) => {
                 view.surface(*surface).map(|surface| surface.id())
             }
             NativeCommand::FloatTabs { group, surface } if complete_tabs(group) => {
@@ -516,6 +534,11 @@ impl<P: PaneView> NativeRuntimeState<P> {
                 view.root(root)?.central()?;
                 root_surface(root)
             }
+            DockPlacement::Center(DockAnchor::Node(node))
+            | DockPlacement::InnerEdge {
+                anchor: DockAnchor::Node(node),
+                ..
+            } => root_surface(view.node(node)?.root()?.id()),
             DockPlacement::OuterEdge { root, .. } => root_surface(root),
             DockPlacement::Main(surface) => view
                 .surface(surface)
@@ -553,6 +576,11 @@ impl<P: PaneView> NativeRuntimeState<P> {
         let session = self.coordinator.session();
         let target = match command {
             NativeCommand::CloseItem { item } => ClosePlanTarget::Item { item: *item },
+            NativeCommand::CloseTab { tab } => {
+                return self.sole_host_root().is_some_and(|root| {
+                    self.host_root_may_retire(root) && root.contains_only_tab(tab)
+                });
+            }
             NativeCommand::CloseRoot { root } => ClosePlanTarget::Root { root: *root },
             NativeCommand::DecideClose {
                 request,
@@ -598,13 +626,20 @@ impl<P: PaneView> NativeRuntimeState<P> {
             }
             ClosePlanTarget::Tabs {
                 root: target,
-                anchor,
+                group,
             } => {
                 root.id() == target
                     && self.host_root_may_retire(root)
                     && session
-                        .capture_tabs_group(dockspace::model::DockAnchor::Item(anchor))
+                        .capture_tabs_group(dockspace::model::DockAnchor::Node(group))
                         .is_ok_and(|group| root.contains_only_tabs_group(&group))
+            }
+            ClosePlanTarget::Tab { root: target, tab } => {
+                root.id() == target
+                    && self.host_root_may_retire(root)
+                    && session
+                        .capture_tab(tab)
+                        .is_some_and(|tab| root.contains_only_tab(&tab))
             }
             ClosePlanTarget::Surface { .. } => false,
         }

@@ -121,7 +121,20 @@ pub(super) fn compile_contained_record(
         )?,
         minimum_size,
         layer,
-    );
+    )
+    .with_label({
+        let node = workspace
+            .root(root)
+            .ok_or(SceneCompilationError::MissingRoot { surface, root })?
+            .node;
+        crate::presentation::scene::FrozenTabLabel::from_node(workspace.node(node).ok_or(
+            SceneCompilationError::MissingNode {
+                surface,
+                root,
+                node,
+            },
+        )?)
+    });
     let host = PresentationMenuAnchorHost::ContainedTitle(floating);
     let presentation_menu = match presentation_menu {
         Some(bounds) => PresentationMenuAnchorRecord::ready(root, host, bounds, layer),
@@ -157,10 +170,14 @@ fn root_has_content(
                 root,
                 node,
             })? {
+            Node::Pane { .. } => has_items = true,
             Node::Tabs { items, .. } => {
+                pending.extend(items.iter().filter_map(|tab| tab.layout()));
                 has_items |= !items.is_empty();
             }
-            Node::Split { children, .. } => pending.extend(children.iter().copied()),
+            Node::Split { children, .. } | Node::Grid { children, .. } => {
+                pending.extend(children.iter().copied())
+            }
         }
     }
     Ok(has_items)

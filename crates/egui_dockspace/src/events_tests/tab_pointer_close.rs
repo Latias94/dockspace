@@ -65,6 +65,7 @@ fn mixed_button_batches_never_close_the_last_widgets_tab() {
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .selected()
                     .and_then(|tab| tab.item()),
                 Some(primary)
@@ -76,6 +77,7 @@ fn mixed_button_batches_never_close_the_last_widgets_tab() {
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 [FIRST, SECOND]
@@ -124,6 +126,7 @@ fn a_primary_click_elsewhere_cannot_activate_a_middle_clicked_close_icon() {
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             [FIRST, SECOND]
@@ -175,7 +178,7 @@ fn separate_button_clicks_keep_their_own_tab_targets_across_frames() {
                     .view()
                     .item(primary_target)
                     .unwrap()
-                    .is_selected()
+                    .is_active()
             );
         }
     }
@@ -227,6 +230,7 @@ fn overlapping_button_presses_across_frames_cannot_close_another_buttons_capture
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 [FIRST, SECOND]
@@ -263,6 +267,7 @@ fn multiple_auxiliary_releases_and_later_motion_do_not_infer_a_tab_target() {
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 [FIRST, SECOND]
@@ -378,7 +383,7 @@ fn middle_click_on_inactive_tab_requests_close_once_without_selecting_it() {
     let position = harness.panes.tabs[&SECOND].left_center() + egui::vec2(8.0, 0.0);
     let (events, requests) = click(&mut harness, position);
     assert_eq!(selections(&events, SECOND), 0);
-    assert!(harness.dock.view().item(FIRST).unwrap().is_selected());
+    assert!(harness.dock.view().item(FIRST).unwrap().is_active());
     assert!(harness.dock.view().item(SECOND).is_some());
     assert_eq!(requests.len(), 1);
     let plan = &requests[0];
@@ -496,7 +501,7 @@ fn clipped_body_and_close_icon_use_one_close_request_in_both_facades() {
                 crate::ClosePlanTarget::Item { item: SECOND }
             );
             assert_eq!(selections(&events, SECOND), 0);
-            assert!(harness.dock.view().item(FIRST).unwrap().is_selected());
+            assert!(harness.dock.view().item(FIRST).unwrap().is_active());
         }
     }
 }

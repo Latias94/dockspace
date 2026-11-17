@@ -240,7 +240,10 @@ impl NativeSmoke {
                     let pane = view.item(item).unwrap();
                     assert_eq!(pane.root(), MAIN_ROOT);
                     assert_eq!(
-                        pane.tabs().items().collect::<Vec<_>>(),
+                        pane.tabs()
+                            .expect("item is an inline tab")
+                            .items()
+                            .collect::<Vec<_>>(),
                         [OUTLINE, ASSETS, HISTORY, self.order[0], self.order[1]]
                     );
                 }
@@ -307,14 +310,23 @@ impl NativeSmoke {
             let completed = app.dockspace.with_view(|view| {
                 let source = view.item(source).unwrap();
                 let target = view.item(target).unwrap();
-                source.tabs().items().eq(self.expected.iter().copied())
-                    && target.tabs().items().eq(self.expected.iter().copied())
+                source
+                    .tabs()
+                    .expect("item is an inline tab")
+                    .items()
+                    .eq(self.expected.iter().copied())
+                    && target
+                        .tabs()
+                        .expect("item is an inline tab")
+                        .items()
+                        .eq(self.expected.iter().copied())
                     && source.surface() == target.surface()
-                    && source.is_selected()
+                    && source.is_active()
                     && self.remaining.first().is_none_or(|item| {
                         view.item(*item)
                             .unwrap()
                             .tabs()
+                            .expect("item is an inline tab")
                             .items()
                             .eq(self.remaining.iter().copied())
                     })
@@ -346,6 +358,7 @@ impl NativeSmoke {
                     view.item(target)
                         .unwrap()
                         .tabs()
+                        .expect("item is an inline tab")
                         .selected()
                         .and_then(|tab| tab.item())
                 }) else {
@@ -400,6 +413,7 @@ impl NativeSmoke {
             view.item(target)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .selected()
                 .and_then(|tab| tab.item())
         }) else {
@@ -418,11 +432,13 @@ impl NativeSmoke {
                 view.item(target)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 view.item(source)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .filter(|item| *item != source)
                     .collect::<Vec<_>>(),

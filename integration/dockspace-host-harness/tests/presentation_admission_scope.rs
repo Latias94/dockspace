@@ -139,7 +139,7 @@ fn first_pending_output_after_deferred_selection_admits_only_unchanged_receivers
         let mut deferred = commit(frame);
         assert_eq!(deferred.workspace_changed(), change_selection);
         assert!(deferred.take_painted_outputs().is_empty());
-        assert!(session.view().item(selected).unwrap().is_selected());
+        assert!(session.view().item(selected).unwrap().is_active());
         assert!(session.presented_surface(A).is_none());
 
         present(&mut session, first);
@@ -211,7 +211,7 @@ fn output_admission_counts_all_new_streams_before_encoding_and_keeps_input_publi
         }
         let mut report = commit(frame);
         assert!(report.workspace_changed());
-        assert!(session.view().item(SECOND).unwrap().is_selected());
+        assert!(session.view().item(SECOND).unwrap().is_active());
         let outputs = report.take_painted_outputs();
         assert_eq!(outputs.len(), capacity - 1);
         assert!(outputs.iter().any(|output| output.surface() == B));
@@ -232,7 +232,7 @@ fn output_admission_counts_all_new_streams_before_encoding_and_keeps_input_publi
         let mut input_only = commit(frame);
         assert!(input_only.workspace_changed());
         assert!(input_only.take_painted_outputs().is_empty());
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
 
         drop(outputs);
         let retired = commit(session.begin_host_frame().unwrap());
@@ -322,6 +322,7 @@ fn assert_docked(session: &DockspaceSession, report: &HostFrameReport) {
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         session
@@ -329,6 +330,7 @@ fn assert_docked(session: &DockspaceSession, report: &HostFrameReport) {
             .item(TARGET)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>()
     );

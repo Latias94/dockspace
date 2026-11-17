@@ -438,9 +438,7 @@ fn paint(session: &mut DockspaceSession, binding: NativeSurfaceBinding) -> Paint
             .records
             .iter()
             .filter_map(|record| match record {
-                OwnedRecord::PaneContent {
-                    item: Some(item), ..
-                } => Some(*item),
+                OwnedRecord::PaneContent { item, .. } => Some(*item),
                 _ => None,
             })
             .collect::<Vec<_>>();

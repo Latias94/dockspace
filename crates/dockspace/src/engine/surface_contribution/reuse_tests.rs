@@ -273,19 +273,20 @@ fn changed_selection_retains_sealed_facts_but_rebinds_current_semantics_and_outp
     let PreparedSurfacePaintCandidate::Ready(candidate) = contribution.paint_candidate() else {
         panic!("a fully measured local selection must be Ready");
     };
-    assert!(candidate.plan().shares_facts(original.plan()));
+    assert!(!candidate.plan().shares_facts(original.plan()));
     assert_eq!(
-        candidate
-            .plan()
-            .pane_selected(&candidate.plan().pane_records()[0]),
+        candidate.plan().pane_records()[0].bounds(),
+        original.plan().pane_records()[0].bounds()
+    );
+    assert_eq!(
+        candidate.plan().tab_records(),
+        original.plan().tab_records()
+    );
+    assert_eq!(
+        Some(candidate.plan().pane_records()[0].item()),
         Some(SECOND)
     );
-    assert_eq!(
-        original
-            .plan()
-            .pane_selected(&original.plan().pane_records()[0]),
-        Some(ITEM)
-    );
+    assert_eq!(Some(original.plan().pane_records()[0].item()), Some(ITEM));
     assert!(
         candidate
             .plan()
@@ -298,24 +299,50 @@ fn changed_selection_retains_sealed_facts_but_rebinds_current_semantics_and_outp
         .plan()
         .visit_surface_program(|step| {
             if let crate::presentation::scene::ResolvedSurfaceProgramStep::RootBegin(root) = step {
-                title = root.title_item();
+                title = Some(matches!(
+                    root.label(),
+                    Some(crate::graph::TabLabel::Layout { title: "Tabs" })
+                ));
             }
             Ok::<(), ()>(())
         })
         .unwrap();
-    assert_eq!(title, Some(SECOND));
+    assert_eq!(title, Some(true));
     frame.push_surface_contribution(contribution).unwrap();
     host.finish(frame, &mut engine);
     let current = engine.scene().ready_candidate(SURFACE).unwrap();
     assert_ne!(current.output_ticket(), original.output_ticket());
-    assert!(current.plan().shares_facts(original.plan()));
-    assert!(std::ptr::eq(
-        current.paint_program().unwrap(),
-        original.paint_program().unwrap()
-    ));
+    assert!(!current.plan().shares_facts(original.plan()));
     assert_eq!(
-        current.hit_manifest().regions().as_ptr(),
-        original.hit_manifest().regions().as_ptr()
+        current.plan().pane_records()[0].bounds(),
+        original.plan().pane_records()[0].bounds()
+    );
+    assert_eq!(current.plan().tab_records(), original.plan().tab_records());
+    assert_eq!(
+        current.hit_manifest().regions().len(),
+        original.hit_manifest().regions().len()
+    );
+    assert!(
+        current
+            .hit_manifest()
+            .region_for_kind(PresentationHitRegionKind::PaneBody(
+                crate::presentation::scene::PaneSceneId {
+                    root: ROOT,
+                    item: SECOND
+                },
+            ))
+            .is_some()
+    );
+    assert!(
+        current
+            .hit_manifest()
+            .region_for_kind(PresentationHitRegionKind::PaneBody(
+                crate::presentation::scene::PaneSceneId {
+                    root: ROOT,
+                    item: ITEM
+                },
+            ))
+            .is_none()
     );
     assert_eq!(current.hit_manifest().output(), current.output_ticket());
     assert_eq!(
@@ -377,7 +404,10 @@ fn item_measurements(
     }
     for key in requirements.pane_sizings() {
         measurements
-            .insert_pane_sizing(key, Measurement::Measured((minimum(key.selected())).into()))
+            .insert_pane_sizing(
+                key,
+                Measurement::Measured((minimum(Some(key.item()))).into()),
+            )
             .unwrap();
     }
     for key in requirements.tab_intrinsics() {
@@ -478,12 +508,7 @@ fn unchanged_answers_rebuild_when_selected_items_have_different_actual_minima() 
     assert_eq!(surface_compilation_count(), 1);
     let current = engine.scene().ready_candidate(SURFACE).unwrap();
     assert!(!current.plan().shares_facts(original.plan()));
-    assert_eq!(
-        current
-            .plan()
-            .pane_selected(&current.plan().pane_records()[0]),
-        Some(SECOND)
-    );
+    assert_eq!(Some(current.plan().pane_records()[0].item()), Some(SECOND));
     let layout = current.plan().layout_facts().unwrap();
     let current_minimum = layout.root(ROOT).unwrap().projection().nodes[&tabs]
         .constraints
@@ -664,12 +689,7 @@ fn local_selection_rebuilds_when_another_items_measurements_change() {
         assert_eq!(surface_compilation_count(), 1, "{changed:?}");
         let current = engine.scene().ready_candidate(SURFACE).unwrap();
         assert!(!current.plan().shares_facts(original.plan()), "{changed:?}");
-        assert_eq!(
-            current
-                .plan()
-                .pane_selected(&current.plan().pane_records()[0]),
-            Some(SECOND)
-        );
+        assert_eq!(Some(current.plan().pane_records()[0].item()), Some(SECOND));
         assert_eq!(
             engine.workspace().tab_mru(tabs),
             Some([SECOND.into(), ITEM.into(), OTHER.into()].as_slice())
@@ -710,11 +730,10 @@ fn local_selection_rebuilds_when_another_items_measurements_change() {
             }
             ChangedAnswer::Minimum => {
                 assert_eq!(
-                    layout.root(ROOT).unwrap().pane_sizing(PaneSizingKey::new(
-                        ROOT,
-                        tabs,
-                        Some(OTHER)
-                    )),
+                    layout
+                        .root(ROOT)
+                        .unwrap()
+                        .pane_sizing(PaneSizingKey::new(ROOT, OTHER)),
                     Some(LogicalSize::new(180.0, 120.0).unwrap().into()),
                 );
             }
@@ -838,7 +857,38 @@ fn retained_facts_use_current_drop_policy_without_reauthorizing_old_output() {
     publish_measurement_answers(&mut engine, &mut host, answers);
     assert_eq!(surface_compilation_count(), 0);
     let current = engine.scene().ready_candidate(SURFACE).unwrap();
-    assert!(current.plan().shares_facts(original.plan()));
+    assert!(!current.plan().shares_facts(original.plan()));
+    assert_eq!(
+        current.plan().pane_records()[0].bounds(),
+        original.plan().pane_records()[0].bounds()
+    );
+    assert_eq!(current.plan().tab_records(), original.plan().tab_records());
+    assert!(
+        current
+            .hit_manifest()
+            .region_for_kind(
+                crate::presentation::hit::PresentationHitRegionKind::PaneBody(
+                    crate::presentation::scene::PaneSceneId {
+                        root: ROOT,
+                        item: SECOND
+                    },
+                ),
+            )
+            .is_some()
+    );
+    assert!(
+        current
+            .hit_manifest()
+            .region_for_kind(
+                crate::presentation::hit::PresentationHitRegionKind::PaneBody(
+                    crate::presentation::scene::PaneSceneId {
+                        root: ROOT,
+                        item: ITEM
+                    },
+                ),
+            )
+            .is_none()
+    );
     assert_eq!(original.plan().selected_in_tabs(tabs), Some(ITEM.into()));
     assert_eq!(current.plan().selected_in_tabs(tabs), Some(SECOND.into()));
     assert_ne!(current.output_ticket(), original.output_ticket());

@@ -29,7 +29,8 @@ fn selection(workspace: &Workspace, item: u64) -> WorkspaceCommand {
             .capture_item_source_by_id(ItemId::new(item))
             .unwrap()
             .unwrap()
-            .as_tab_source(),
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     }
 }
 
@@ -97,9 +98,9 @@ fn stale_wrong_root_missing_and_recycled_sources_keep_general_rejections() {
     let mut missing_root = source.clone();
     missing_root.root = RootId::new(99);
     let mut arena = snapshot.storage().nodes.clone();
-    arena.remove(source.tabs());
+    arena.remove(source.owner_node());
     let recycled = arena.insert(Node::tabs([ItemId::new(99)]));
-    assert_ne!(recycled, source.tabs());
+    assert_ne!(recycled, source.owner_node());
     let mut recycled_source = source.clone();
     recycled_source.tabs = recycled;
     for (base, source) in [
@@ -119,17 +120,17 @@ fn stale_wrong_root_missing_and_recycled_sources_keep_general_rejections() {
     let tabs = replacement
         .workspace
         .nodes
-        .remove(retired_source.tabs())
+        .remove(retired_source.owner_node())
         .unwrap();
     let recycled = replacement.workspace.nodes.insert((*tabs).clone());
-    assert_ne!(recycled, retired_source.tabs());
+    assert_ne!(recycled, retired_source.owner_node());
     let root = replacement.draft().root(MAIN).unwrap().node;
     let Node::Split { children, .. } = replacement.workspace.nodes.get_mut(root).unwrap() else {
         unreachable!()
     };
     *children
         .iter_mut()
-        .find(|child| **child == retired_source.tabs())
+        .find(|child| **child == retired_source.owner_node())
         .unwrap() = recycled;
     let replacement = WorkspaceSnapshot::validated(replacement.build().unwrap()).unwrap();
     let commands = [WorkspaceCommand::Select {
@@ -171,7 +172,8 @@ fn raw_corruption_must_cross_builder_checks_before_snapshot_ownership() {
         .capture_item_source_by_id(ItemId::new(6))
         .unwrap()
         .unwrap()
-        .tabs();
+        .tabs()
+        .unwrap();
     let mut builder = original.as_ref().clone().into_builder();
     builder.set_tab_mru(other, []).unwrap();
     assert!(builder.build().is_err());

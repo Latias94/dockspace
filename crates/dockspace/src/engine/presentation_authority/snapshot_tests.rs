@@ -141,7 +141,9 @@ fn snapshot_source_version_and_same_version_mutation_keep_live_fallback() {
         .unwrap();
     crate::graph::transaction::WorkspaceTransaction::from_commands([
         crate::graph::command::WorkspaceCommand::Select {
-            source: source.as_tab_source(),
+            source: source
+                .as_tab_source()
+                .expect("fixture item is an inline tab"),
         },
     ])
     .apply(&mut changed, &candidate.policy)

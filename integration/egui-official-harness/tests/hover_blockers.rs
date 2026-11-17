@@ -201,6 +201,7 @@ impl Fixture {
             .item(SOURCE)
             .expect("the source survives")
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>()
     }

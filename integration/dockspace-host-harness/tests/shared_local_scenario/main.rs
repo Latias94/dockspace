@@ -203,6 +203,7 @@ fn shared_l08_executes_through_presented_public_prepared_actions() {
             .item(SECOND)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .selected()
             .and_then(|tab| tab.item());
         let before_weights = weights(&session);
@@ -218,6 +219,7 @@ fn shared_l08_executes_through_presented_public_prepared_actions() {
                     .item(item(target))
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .selected()
                     .and_then(|tab| tab.item());
                 assert_ne!(selected, before_selected);

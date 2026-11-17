@@ -236,6 +236,10 @@ impl DockEngine {
         self.version = WorkspaceVersion::new(self.version.epoch(), revision);
         self.reconcile_close_scopes();
         let eligible = source.tab().item().is_some()
+            && self
+                .workspace
+                .root_structure(source.root())
+                .is_some_and(|structure| !structure.has_composition())
             && self.viewport.native_create_sagas().next().is_none()
             && self.surface_recovery.is_empty()
             && self.bound_surface_recoveries.is_empty()
@@ -768,7 +772,9 @@ impl DockEngine {
                             TabStripStateKey::new(surface, bar),
                             workspace.visible_tab_keys(bar.tabs),
                         )),
-                        Some(Node::Split { .. }) | None => None,
+                        Some(Node::Pane { .. } | Node::Split { .. } | Node::Grid { .. }) | None => {
+                            None
+                        }
                     }
                 })
             })
@@ -966,25 +972,23 @@ impl DockEngine {
                 let affected = before_updates
                     .iter()
                     .chain(current_updates)
-                    .map(|update| (update.split().root(), update.split().node()))
+                    .map(|update| (update.source().root(), update.source().node()))
                     .collect::<BTreeSet<_>>();
                 affected.into_iter().all(|(root, split)| {
-                    let expected = current_updates
-                        .iter()
-                        .find(|update| {
-                            update.split().root() == root && update.split().node() == split
-                        })
-                        .map(SplitResize::weights)
-                        .or_else(|| match self.workspace.node(split) {
-                            Some(Node::Split { weights, .. }) => Some(weights.as_slice()),
-                            Some(Node::Tabs { .. }) | None => None,
-                        });
-                    expected.is_some_and(|expected| {
-                        plan.splitter_records().iter().any(|record| {
-                            let id = record.id();
-                            id.root == root && id.split == split && record.weights() == expected
-                        })
-                    })
+                    let current = current_updates.iter().find(|update| {
+                        update.source().root() == root && update.source().node() == split
+                    });
+                    match current {
+                        Some(expected) => plan
+                            .resize_projection()
+                            .iter()
+                            .any(|actual| actual == expected),
+                        None => {
+                            !plan.resize_projection().iter().any(|update| {
+                                update.source().root() == root && update.source().node() == split
+                            }) && self.presented_root_structure_is_current(plan, root)
+                        }
+                    }
                 })
             }
             PreparedSurfaceContributionState::Unavailable(_) => true,

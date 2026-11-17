@@ -5,6 +5,7 @@
 //! a fully validated candidate.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
@@ -17,6 +18,7 @@ use crate::graph::{
     SurfacePresentation, Workspace, WorkspaceBuildError, WorkspaceBuilder,
 };
 use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
+use crate::model::{DockspaceGridError, DockspaceGridShape, DockspaceGridShares};
 
 #[cfg(test)]
 mod visibility_tests;
@@ -52,6 +54,11 @@ pub struct SnapshotNodeRecord {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SnapshotNode {
+    /// A bare real application pane without tabs chrome.
+    Pane {
+        /// Stable real application item identity.
+        item: u64,
+    },
     /// Ordered dockable items sharing one content rectangle.
     Tabs {
         /// Stable item identities in tab order.
@@ -61,6 +68,9 @@ pub enum SnapshotNode {
         selected: Option<SnapshotTabKey>,
         /// Complete direct-child permutation in most-recent-first order.
         mru: Vec<SnapshotTabKey>,
+        /// Optional explicit title for this structural container.
+        #[serde(deserialize_with = "deserialize_required_option")]
+        layout_title: Option<String>,
     },
     /// Ordered N-ary split children.
     Split {
@@ -70,7 +80,48 @@ pub enum SnapshotNode {
         children: Vec<u64>,
         /// Exact normalized shares from the runtime model.
         weights: Vec<f64>,
+        /// Optional explicit title for this structural container.
+        #[serde(deserialize_with = "deserialize_required_option")]
+        layout_title: Option<String>,
     },
+    /// A real row-major grid with shared row and column tracks.
+    Grid {
+        /// Explicit dimensions or the durable Auto declaration.
+        shape: SnapshotGridShape,
+        /// Snapshot-local identities of every real child node.
+        children: Vec<u64>,
+        /// Complete stored axes, or explicit null for equal default shares.
+        #[serde(deserialize_with = "deserialize_required_option")]
+        shares: Option<SnapshotGridShares>,
+        /// Optional title, encoded as an explicit required nullable field.
+        #[serde(deserialize_with = "deserialize_required_option")]
+        layout_title: Option<String>,
+    },
+}
+
+/// Persisted viewport-independent grid dimensions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SnapshotGridShape {
+    /// Explicit positive dimensions checked before platform-size conversion.
+    Fixed {
+        /// Persisted positive row count.
+        rows: u64,
+        /// Persisted positive column count.
+        columns: u64,
+    },
+    /// Dimensions will be resolved from the offered rectangle.
+    Auto,
+}
+
+/// Exact independently normalized row and column shares from the graph.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotGridShares {
+    /// Top-to-bottom normalized row shares.
+    pub rows: Vec<f64>,
+    /// Left-to-right normalized column shares.
+    pub columns: Vec<f64>,
 }
 
 /// One direct child using a stable content ID or a snapshot-local layout ID.
@@ -215,6 +266,19 @@ pub enum SnapshotCaptureError {
 /// Failure to restore a workspace snapshot.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum SnapshotRestoreError {
+    /// A fixed dimension is zero or cannot be represented by this platform.
+    #[error("node {node} has invalid grid {axis:?} dimension {value}")]
+    InvalidGridDimension {
+        node: u64,
+        axis: SnapshotAxis,
+        value: u64,
+    },
+    /// The grid roster, shape, or persistent shared tracks are invalid.
+    #[error("node {node} has invalid grid values: {source}")]
+    InvalidGrid {
+        node: u64,
+        source: DockspaceGridError,
+    },
     /// Two records declare the same identity.
     #[error("duplicate {kind:?} snapshot identity {id}")]
     DuplicateIdentity {
@@ -474,11 +538,14 @@ fn capture_node(
     node_ids: &HashMap<NodeId, u64>,
 ) -> Result<SnapshotNodeRecord, SnapshotCaptureError> {
     let node = match node {
+        Node::Pane { item } => SnapshotNode::Pane { item: item.get() },
         Node::Tabs {
             items,
             selected,
             mru,
+            layout_title,
         } => SnapshotNode::Tabs {
+            layout_title: layout_title.as_ref().map(ToString::to_string),
             items: items
                 .iter()
                 .copied()
@@ -497,13 +564,38 @@ fn capture_node(
             axis,
             children,
             weights,
+            layout_title,
         } => SnapshotNode::Split {
+            layout_title: layout_title.as_ref().map(ToString::to_string),
             axis: (*axis).into(),
             children: children
                 .iter()
                 .map(|child| captured_id(node_ids, *child))
                 .collect::<Result<Vec<_>, _>>()?,
             weights: weights.iter().map(|weight| weight.get()).collect(),
+        },
+        Node::Grid {
+            shape,
+            children,
+            shares,
+            layout_title,
+        } => SnapshotNode::Grid {
+            shape: match shape {
+                DockspaceGridShape::Fixed { rows, columns } => SnapshotGridShape::Fixed {
+                    rows: rows.get() as u64,
+                    columns: columns.get() as u64,
+                },
+                DockspaceGridShape::Auto => SnapshotGridShape::Auto,
+            },
+            children: children
+                .iter()
+                .map(|child| captured_id(node_ids, *child))
+                .collect::<Result<_, _>>()?,
+            shares: shares.as_ref().map(|shares| SnapshotGridShares {
+                rows: shares.rows().collect(),
+                columns: shares.columns().collect(),
+            }),
+            layout_title: layout_title.as_ref().map(ToString::to_string),
         },
     };
     Ok(SnapshotNodeRecord {
@@ -546,11 +638,12 @@ fn preflight_references_and_scalars(
             .nodes
             .iter()
             .flat_map(|record| match &record.node {
-                SnapshotNode::Tabs { items, .. } => items.as_slice(),
-                SnapshotNode::Split { .. } => &[],
+                SnapshotNode::Pane { item } => vec![*item],
+                SnapshotNode::Tabs { items, .. } => {
+                    items.iter().filter_map(|tab| tab.item()).collect()
+                }
+                SnapshotNode::Split { .. } | SnapshotNode::Grid { .. } => Vec::new(),
             })
-            .copied()
-            .filter_map(SnapshotTabKey::item)
             .collect();
         let mut hidden_items = HashSet::with_capacity(snapshot.hidden_items.len());
         for &item in &snapshot.hidden_items {
@@ -567,10 +660,28 @@ fn preflight_references_and_scalars(
         }
     }
     for record in &snapshot.nodes {
+        if let SnapshotNode::Grid {
+            shape,
+            children,
+            shares,
+            ..
+        } = &record.node
+        {
+            for &child in children {
+                require_reference(
+                    &index.nodes,
+                    SnapshotReferenceOwner::Node(record.id),
+                    SnapshotEntityKind::Node,
+                    child,
+                )?;
+            }
+            restore_grid_values(record.id, *shape, shares.as_ref(), children.len())?;
+        }
         if let SnapshotNode::Tabs {
             items,
             selected,
             mru,
+            ..
         } = &record.node
         {
             for tab in items.iter().chain(selected.iter()).chain(mru.iter()) {
@@ -658,10 +769,14 @@ fn validate_registered_items(
 ) -> Result<(), SnapshotRestoreError> {
     let mut items = BTreeSet::new();
     for record in &snapshot.nodes {
+        if let SnapshotNode::Pane { item } = record.node {
+            items.insert(item);
+        }
         if let SnapshotNode::Tabs {
             items: tab_items,
             selected,
             mru,
+            ..
         } = &record.node
         {
             items.extend(tab_items.iter().copied().filter_map(SnapshotTabKey::item));
@@ -722,11 +837,14 @@ fn restore_node(
     runtime_nodes: &HashMap<u64, NodeId>,
 ) -> Result<Node, SnapshotRestoreError> {
     match &record.node {
+        SnapshotNode::Pane { item } => Ok(Node::pane(ItemId::new(*item))),
         SnapshotNode::Tabs {
             items,
             selected,
             mru,
+            layout_title,
         } => Ok(Node::Tabs {
+            layout_title: layout_title.as_deref().map(Arc::from),
             items: items
                 .iter()
                 .copied()
@@ -751,6 +869,7 @@ fn restore_node(
             axis,
             children,
             weights,
+            layout_title,
         } => {
             let children = children
                 .iter()
@@ -781,9 +900,89 @@ fn restore_node(
                 axis: (*axis).into(),
                 children,
                 weights,
+                layout_title: layout_title.as_deref().map(Arc::from),
+            })
+        }
+        SnapshotNode::Grid {
+            shape,
+            children,
+            shares,
+            layout_title,
+        } => {
+            let (shape, shares) =
+                restore_grid_values(record.id, *shape, shares.as_ref(), children.len())?;
+            let children = children
+                .iter()
+                .copied()
+                .map(|child| {
+                    runtime_node(
+                        runtime_nodes,
+                        SnapshotReferenceOwner::Node(record.id),
+                        child,
+                    )
+                })
+                .collect::<Result<_, _>>()?;
+            Ok(Node::Grid {
+                shape,
+                children,
+                shares,
+                layout_title: layout_title.as_deref().map(Arc::from),
             })
         }
     }
+}
+
+fn restore_grid_values(
+    node: u64,
+    shape: SnapshotGridShape,
+    shares: Option<&SnapshotGridShares>,
+    children: usize,
+) -> Result<(DockspaceGridShape, Option<DockspaceGridShares>), SnapshotRestoreError> {
+    let dimension = |value: u64, axis| {
+        usize::try_from(value)
+            .ok()
+            .and_then(std::num::NonZeroUsize::new)
+            .ok_or(SnapshotRestoreError::InvalidGridDimension { node, axis, value })
+    };
+    let shape = match shape {
+        SnapshotGridShape::Fixed { rows, columns } => DockspaceGridShape::Fixed {
+            rows: dimension(rows, SnapshotAxis::Vertical)?,
+            columns: dimension(columns, SnapshotAxis::Horizontal)?,
+        },
+        SnapshotGridShape::Auto => DockspaceGridShape::Auto,
+    };
+    let invalid = |source| SnapshotRestoreError::InvalidGrid { node, source };
+    shape.validate_children(children).map_err(invalid)?;
+    let shares = shares
+        .map(|shares| {
+            let weights = |values: &[f64], rows: bool| {
+                values
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        SplitWeight::new(value).map_err(|source| {
+                            let source =
+                                crate::graph::InvalidSplitWeights::Invalid { index, source };
+                            if rows {
+                                DockspaceGridError::InvalidRowShares { source }
+                            } else {
+                                DockspaceGridError::InvalidColumnShares { source }
+                            }
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            };
+            let shares = DockspaceGridShares::from_normalized(
+                weights(&shares.rows, true)?,
+                weights(&shares.columns, false)?,
+            )?;
+            shares.validate_for(shape, children)?;
+            Ok::<_, DockspaceGridError>(shares)
+        })
+        .transpose()
+        .map_err(invalid)?;
+    Ok((shape, shares))
 }
 
 fn populate_roots(

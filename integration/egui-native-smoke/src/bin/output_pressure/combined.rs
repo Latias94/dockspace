@@ -310,7 +310,13 @@ impl CombinedPressure {
                     .surface(ROOT_SURFACE)
                     .is_some_and(|surface| surface.contained_count() == 0)
                 && view.item(MAIN_ITEM).is_some_and(|item| {
-                    item.root() == MAIN_ROOT && item.tabs().items().collect::<Vec<_>>() == expected
+                    item.root() == MAIN_ROOT
+                        && item
+                            .tabs()
+                            .expect("item is an inline tab")
+                            .items()
+                            .collect::<Vec<_>>()
+                            == expected
                 })
         }) {
             return Err(

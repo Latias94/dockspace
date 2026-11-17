@@ -291,7 +291,7 @@ fn deep_public_declaration_compiles_a_complete_measured_scene() {
                                 pane.content_bounds().height()
                                     >= leaf_height - config.tab_bar_height()
                             );
-                            if pane.selected() == Some(SECOND) {
+                            if pane.item() == SECOND {
                                 central_bounds = Some(pane.bounds());
                             }
                         }
@@ -312,7 +312,7 @@ fn deep_public_declaration_compiles_a_complete_measured_scene() {
             assert_eq!(splitter_count, DEPTH);
             let central = central_bounds.unwrap();
             assert_eq!(central.width(), leaf_width);
-            assert_eq!(central.height(), leaf_height);
+            assert_eq!(central.height(), leaf_height - config.tab_bar_height());
             assert_eq!(minimum.unwrap().width(), outer.width());
             assert_eq!(minimum.unwrap().height(), outer.height());
             frame.confirm_surface_painted(receipt).unwrap();

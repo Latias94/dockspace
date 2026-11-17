@@ -150,8 +150,8 @@ fn inactive_tab_tap_waits_within_slop_and_selects_once_on_early_contact_end() {
     assert!(pressed.inputs().is_empty());
     assert!(!pressed.workspace_changed());
     assert_eq!(session.version(), before);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
-    assert!(!session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
+    assert!(!session.view().item(SECOND).unwrap().is_active());
     assert!(session.has_active_gesture());
     let request = session.pointer_continuation().unwrap();
     assert_eq!(request.pointer(), POINTER);
@@ -181,7 +181,7 @@ fn inactive_tab_tap_waits_within_slop_and_selects_once_on_early_contact_end() {
     assert!(session.has_active_gesture());
     let (_, receiver, focus) = paint(&mut session);
     assert_eq!(focus, focus_before);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
 
     let input = touch_input(&session, &receiver, END, moved, Some(200));
     let mut frame = session.begin_host_frame().unwrap();
@@ -198,7 +198,7 @@ fn inactive_tab_tap_waits_within_slop_and_selects_once_on_early_contact_end() {
         )]
     );
     assert!(released.workspace_changed());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert!(!session.has_active_gesture());
     assert!(session.pointer_continuation().is_none());
     let (_, receiver, focus_after) = paint(&mut session);
@@ -211,7 +211,7 @@ fn inactive_tab_tap_waits_within_slop_and_selects_once_on_early_contact_end() {
         assert!(duplicate.inputs().is_empty());
         assert!(!duplicate.workspace_changed());
         assert_eq!(session.version(), selected);
-        assert!(session.view().item(SECOND).unwrap().is_selected());
+        assert!(session.view().item(SECOND).unwrap().is_active());
         assert!(!session.has_active_gesture());
         assert!(session.pointer_continuation().is_none());
     }
@@ -247,8 +247,8 @@ fn stationary_long_press_arms_once_and_requests_one_menu_after_dropped_frame_ret
                 abandoned.submit_host_pointer(input).unwrap();
                 drop(abandoned);
                 assert_eq!(session.version(), before);
-                assert!(session.view().item(FIRST).unwrap().is_selected());
-                assert!(!session.view().item(SECOND).unwrap().is_selected());
+                assert!(session.view().item(FIRST).unwrap().is_active());
+                assert!(!session.view().item(SECOND).unwrap().is_active());
                 assert!(session.has_active_gesture());
                 assert_eq!(session.pointer_continuation(), Some(request));
             }
@@ -271,8 +271,8 @@ fn stationary_long_press_arms_once_and_requests_one_menu_after_dropped_frame_ret
             assert!(!report.workspace_changed());
             assert_eq!(session.version(), before);
             assert!(session.has_active_gesture());
-            assert!(session.view().item(FIRST).unwrap().is_selected());
-            assert!(!session.view().item(SECOND).unwrap().is_selected());
+            assert!(session.view().item(FIRST).unwrap().is_active());
+            assert!(!session.view().item(SECOND).unwrap().is_active());
         }
 
         let (_, receiver, focus) = paint(&mut session);
@@ -296,8 +296,8 @@ fn stationary_long_press_arms_once_and_requests_one_menu_after_dropped_frame_ret
         assert_eq!(menu.position(), point);
         assert!(!released.workspace_changed());
         assert_eq!(session.version(), before);
-        assert!(session.view().item(FIRST).unwrap().is_selected());
-        assert!(!session.view().item(SECOND).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
+        assert!(!session.view().item(SECOND).unwrap().is_active());
         assert!(!session.has_active_gesture());
         assert!(session.pointer_continuation().is_none());
 
@@ -359,7 +359,7 @@ fn touch_movement_yields_to_content_and_untimed_touch_can_still_tap() {
                     }
                 )]
             );
-            assert!(session.view().item(SECOND).unwrap().is_selected());
+            assert!(session.view().item(SECOND).unwrap().is_active());
             assert!(!session.has_active_gesture());
             assert!(session.pointer_continuation().is_none());
             continue;
@@ -387,8 +387,8 @@ fn touch_movement_yields_to_content_and_untimed_touch_can_still_tap() {
         );
         assert!(!yielded.workspace_changed());
         assert_eq!(session.version(), before);
-        assert!(session.view().item(FIRST).unwrap().is_selected());
-        assert!(!session.view().item(SECOND).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
+        assert!(!session.view().item(SECOND).unwrap().is_active());
         assert!(!session.has_active_gesture());
         assert!(session.pointer_continuation().is_none());
         let (_, receiver, focus) = paint(&mut session);
@@ -422,8 +422,8 @@ fn touch_movement_yields_to_content_and_untimed_touch_can_still_tap() {
         assert!(tail.inputs().is_empty());
         assert!(!tail.workspace_changed());
         assert_eq!(session.version(), before);
-        assert!(session.view().item(FIRST).unwrap().is_selected());
-        assert!(!session.view().item(SECOND).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
+        assert!(!session.view().item(SECOND).unwrap().is_active());
         assert!(!session.has_active_gesture());
         assert!(session.pointer_continuation().is_none());
         assert_eq!(session.view().item(SECOND).unwrap().surface(), SURFACE);
@@ -433,6 +433,7 @@ fn touch_movement_yields_to_content_and_untimed_touch_can_still_tap() {
                 .item(SECOND)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[FIRST, SECOND]
@@ -761,8 +762,14 @@ fn armed_touch_first_move_and_contact_end_batch_commits_source_activation_once()
             (
                 item.root(),
                 item.contained(),
-                item.tabs().items().collect::<Vec<_>>(),
-                item.tabs().selected().and_then(|tab| tab.item()),
+                item.tabs()
+                    .expect("item is an inline tab")
+                    .items()
+                    .collect::<Vec<_>>(),
+                item.tabs()
+                    .expect("item is an inline tab")
+                    .selected()
+                    .and_then(|tab| tab.item()),
             )
         });
         let contained = session
@@ -849,7 +856,7 @@ fn armed_touch_first_move_and_contact_end_batch_commits_source_activation_once()
         };
         let before = session.version();
         let initial_durable = durable(&session);
-        assert!(!session.view().item(SECOND).unwrap().is_selected());
+        assert!(!session.view().item(SECOND).unwrap().is_active());
         assert_eq!(
             initial_durable
                 .1
@@ -976,18 +983,29 @@ fn armed_touch_first_move_and_contact_end_batch_commits_source_activation_once()
             assert_eq!(durable(&session), accepted);
             assert_eq!(session.version(), accepted_version);
         }
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
         assert_eq!(session.view().contained(front).unwrap().rect(), front_rect);
         if rear_title {
+            let view = session.view();
+            let target = view.item(third).unwrap().tabs().unwrap();
+            assert_eq!(target.items().collect::<Vec<_>>(), [third]);
+            assert_eq!(target.tabs().len(), 2);
+            let Some(dockspace::model::DockspaceTabView::Layout(layout)) = target.children().nth(1)
+            else {
+                panic!("a contained root must remain one complete layout tab");
+            };
+            assert_eq!(target.selected(), Some(target.tabs()[1]));
+            assert_eq!(layout.items().collect::<Vec<_>>(), [fourth, fifth]);
             assert_eq!(
-                session
-                    .view()
-                    .item(third)
-                    .unwrap()
-                    .tabs()
-                    .items()
-                    .collect::<Vec<_>>(),
-                &[third, fourth, fifth]
+                layout.tabs().unwrap().items().collect::<Vec<_>>(),
+                [fourth, fifth]
+            );
+            assert!(view.item(fourth).unwrap().is_active());
+            assert!(!view.item(fifth).unwrap().is_active());
+            assert!(!view.item(third).unwrap().is_active());
+            assert_eq!(
+                view.root(ROOT).unwrap().items().collect::<Vec<_>>(),
+                [FIRST, SECOND, third, fourth, fifth]
             );
             for item in [fourth, fifth] {
                 assert_eq!(session.view().item(item).unwrap().root(), ROOT);
@@ -1000,11 +1018,12 @@ fn armed_touch_first_move_and_contact_end_batch_commits_source_activation_once()
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FIRST, SECOND]
             );
-            assert!(!session.view().item(SECOND).unwrap().is_selected());
+            assert!(!session.view().item(SECOND).unwrap().is_active());
         } else {
             assert_eq!(
                 session
@@ -1012,6 +1031,7 @@ fn armed_touch_first_move_and_contact_end_batch_commits_source_activation_once()
                     .item(third)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[third, SECOND]
@@ -1022,6 +1042,7 @@ fn armed_touch_first_move_and_contact_end_batch_commits_source_activation_once()
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FIRST]

@@ -169,6 +169,7 @@ fn stale_hover_after_migration(preserve_root: bool) {
             .item(FOURTH)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FOURTH, FIFTH]
@@ -255,5 +256,5 @@ fn stale_hover_after_migration(preserve_root: bool) {
     assert_eq!(session.version(), version_before_wake);
     assert!(session.pointer_continuation().is_none());
     assert!(session.has_active_gesture());
-    assert!(!session.view().item(FOURTH).unwrap().is_selected());
+    assert!(!session.view().item(FOURTH).unwrap().is_active());
 }

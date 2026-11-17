@@ -706,6 +706,25 @@ impl NativeCoordinator {
         self.input = input;
     }
 
+    pub(crate) fn refresh_group_dock_mode(&mut self) -> Result<(), NativeRuntimeError> {
+        let Some((window, modifiers)) = self.pointer_translator.observed_modifiers() else {
+            return Ok(());
+        };
+        if self
+            .session
+            .native_surface_bindings_for_window(window)
+            .next()
+            .is_some()
+        {
+            self.session.report_native_group_dock_mode(
+                window,
+                self.input
+                    .tab_group_dock_mode(crate::pointer_event::egui_modifiers(modifiers)),
+            )?;
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) const fn lifecycle_progress(&self) -> NativeLifecycleProgress {
         self.lifecycle_progress
@@ -1750,6 +1769,19 @@ impl NativeCoordinator {
             bridge.release_pointer_translation_capacity(&self.pointer_translator);
         }
         if NativeWindowEventClass::classify(record.event()) != NativeWindowEventClass::Pointer {
+            if matches!(
+                record.event(),
+                winit::event::WindowEvent::ModifiersChanged(_)
+            ) && record.binding().is_some()
+                && self
+                    .session
+                    .prepare_native_pointer_capacity()?
+                    .is_some_and(|capacity| capacity < 2)
+            {
+                // One callback retains both directives before acknowledging its raw owner.
+                self.bridge.defer_for_core_input_capacity();
+                return Ok(None);
+            }
             self.reduce_non_pointer_event(&record)?;
             // The raw owner must retain payload accounting until this clone
             // releases its shared callback facts, including after Destroyed.
@@ -1853,10 +1885,14 @@ impl NativeCoordinator {
         };
         match record.event() {
             winit::event::WindowEvent::ModifiersChanged(modifiers) => {
+                let observed = crate::pointer_event::egui_modifiers(modifiers.state());
                 self.session.report_native_docking_enabled(
                     binding.window(),
-                    self.input
-                        .docking_enabled(crate::pointer_event::egui_modifiers(modifiers.state())),
+                    self.input.docking_enabled(observed),
+                )?;
+                self.session.report_native_group_dock_mode(
+                    binding.window(),
+                    self.input.tab_group_dock_mode(observed),
                 )?;
                 self.pointer_translator
                     .observe_modifiers(binding.window(), modifiers.state());

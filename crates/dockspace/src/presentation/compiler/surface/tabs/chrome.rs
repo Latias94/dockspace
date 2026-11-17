@@ -57,7 +57,7 @@ pub(in crate::presentation::compiler) fn tab_strip_optional_chrome_layout(
         trailing_reserved_bounds: None,
         presentation_menu_bounds: None,
         group_menu_bounds: None,
-        viewport: LogicalRect::new(bar.x(), bar.y(), bar.width(), bar.height())?,
+        viewport: bar,
         controls: None,
     })
 }

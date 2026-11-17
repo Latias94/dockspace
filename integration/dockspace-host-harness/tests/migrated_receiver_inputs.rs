@@ -267,13 +267,13 @@ fn scroll_on_a_migrated_receiver_does_not_poison_an_independent_action() {
     frame.select_item_current(A_SECOND).unwrap();
     let report = finish(frame);
     assert!(report.workspace_changed());
-    assert!(fixture.session.view().item(A_SECOND).unwrap().is_selected());
+    assert!(fixture.session.view().item(A_SECOND).unwrap().is_active());
     assert_target_on_a(&fixture.session);
     assert_no_context_menu(&report);
     assert!(report.inputs().iter().any(|outcome| matches!(
         outcome,
-        HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-            tab: selected_tab,
+        HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::ItemActivated {
+            item: selected_tab,
             changed: true,
-        }) if selected_tab.item() == Some(A_SECOND))));
+        }) if *selected_tab == A_SECOND)));
 }

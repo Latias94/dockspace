@@ -991,6 +991,7 @@ fn overload_cancel_preserves_delivered_drag_release_and_its_successor_output() {
                 .item(ITEM)
                 .unwrap()
                 .tabs()
+                .expect("fixture item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[ItemId::new(3), ITEM]
@@ -1001,6 +1002,7 @@ fn overload_cancel_preserves_delivered_drag_release_and_its_successor_output() {
                 .item(SECOND_ITEM)
                 .unwrap()
                 .tabs()
+                .expect("fixture item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[SECOND_ITEM]

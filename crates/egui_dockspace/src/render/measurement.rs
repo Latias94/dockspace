@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use dockspace::geometry::PaneSizing;
-use dockspace::model::{ItemId, SurfaceId, TabKey};
+use dockspace::model::{ItemId, SurfaceId, TabKey, TabLabel};
 use dockspace::policy::TabBarVisibility;
 use dockspace::runtime::{
     DockspaceHostFrame, DockspaceRuntimeError, DockspaceVisualId, SurfaceMeasurementAnswer,
@@ -53,14 +53,33 @@ impl PaintResources {
         panes: &dyn PaneView,
     ) -> Result<(), DockspaceRuntimeError> {
         plan.visit_tab_resources(|_, key| {
-            self.get_or_shape(key, ui, panes);
+            if let Some(label) = plan.tab_label(key) {
+                self.get_or_shape(key, label, ui, panes);
+            }
         })?;
+        plan.visit_surface_program(|step| {
+            if let dockspace::runtime::SurfacePaintProgramStep::Operation {
+                operation: dockspace::runtime::SurfacePaintProgramOperation::Pane(pane),
+                ..
+            } = step
+            {
+                self.get_or_shape(pane.item().into(), TabLabel::Item(pane.item()), ui, panes);
+            }
+            Ok::<(), DockspaceRuntimeError>(())
+        })
+        .map_err(|error| error.into_runtime_error())?;
         Ok(())
     }
 
-    fn get_or_shape(&mut self, key: TabKey, ui: &Ui, panes: &dyn PaneView) -> &TabPaintResource {
+    fn get_or_shape(
+        &mut self,
+        key: TabKey,
+        label: TabLabel<'_>,
+        ui: &Ui,
+        panes: &dyn PaneView,
+    ) -> &TabPaintResource {
         self.tabs.entry(key).or_insert_with(|| {
-            let resource = shape_tab(ui, panes, key);
+            let resource = shape_tab(ui, panes, label);
             if resource.missing
                 && let Some(item) = key.item()
             {
@@ -92,6 +111,10 @@ impl PaintResources {
 
     pub(crate) fn missing_items(&self) -> impl Iterator<Item = ItemId> + '_ {
         self.missing.iter().copied()
+    }
+
+    pub(crate) fn is_missing(&self, item: ItemId) -> bool {
+        self.missing.contains(&item)
     }
 
     pub(crate) fn tab(&self, key: impl Into<TabKey>) -> Option<&TabPaintResource> {
@@ -203,13 +226,14 @@ impl<'a> SurfaceMeasurementContext<'a> {
                 visual: _,
                 bar,
                 key,
+                label,
             } => {
                 let uncached;
                 let resource = if let Some(resources) = resources {
-                    resources.get_or_shape(key, ui, panes)
+                    resources.get_or_shape(key, label, ui, panes)
                 } else {
                     // Independent native measurement has no same-pass paint owner.
-                    uncached = shape_tab(ui, panes, key);
+                    uncached = shape_tab(ui, panes, label);
                     &uncached
                 };
                 if resource.missing
@@ -338,16 +362,18 @@ pub(crate) fn prepare_surface<'frame>(
     ))
 }
 
-fn shape_tab(ui: &Ui, panes: &dyn PaneView, key: TabKey) -> TabPaintResource {
-    let item = key.item();
-    let title = item.and_then(|item| panes.title(item));
-    let missing = item.is_some() && title.is_none();
-    let widget_text = title.unwrap_or_else(|| {
-        item.map_or_else(
-            || "Layout".into(),
-            |item| format!("Missing pane {}", item.get()).into(),
-        )
-    });
+fn shape_tab(ui: &Ui, panes: &dyn PaneView, label: TabLabel<'_>) -> TabPaintResource {
+    let (item, widget_text, missing) = match label {
+        TabLabel::Item(item) => match panes.title(item) {
+            Some(title) => (Some(item), title, false),
+            None => (
+                Some(item),
+                format!("Missing pane {}", item.get()).into(),
+                true,
+            ),
+        },
+        TabLabel::Layout { title } => (None, title.into(), false),
+    };
     let title = widget_text.text().to_owned();
     let galley = widget_text.into_galley(
         ui,

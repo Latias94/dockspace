@@ -7,7 +7,7 @@ use std::sync::{Arc, Weak};
 use slotmap::SparseSecondaryMap;
 
 use super::root_structure::RootStructure;
-use super::{Node, Workspace, WorkspaceData};
+use super::{Workspace, WorkspaceData};
 use crate::graph::workspace::{ParentLink, RootPresentationOwner};
 use crate::ids::{NodeId, RootId};
 
@@ -285,11 +285,11 @@ impl Workspace {
         let Some(placement) = self.placement(parent) else {
             return;
         };
-        let Some(Node::Split { children, .. }) = self.storage.nodes.get(parent) else {
+        let Some(node) = self.storage.nodes.get(parent) else {
             return;
         };
-        let children = children.clone();
-        for (index, child) in children.into_iter().enumerate() {
+        let children: Vec<_> = node.child_nodes().collect();
+        for (index, child) in children {
             self.place_node(placement.root, child, Some(ParentLink { parent, index }));
         }
     }
@@ -303,8 +303,8 @@ impl Workspace {
         let mut pending = vec![(node, parent)];
         while let Some((node, parent)) = pending.pop() {
             self.place_node(root, node, parent);
-            if let Some(Node::Split { children, .. }) = self.storage.nodes.get(node) {
-                pending.extend(children.iter().copied().enumerate().map(|(index, child)| {
+            if let Some(value) = self.storage.nodes.get(node) {
+                pending.extend(value.child_nodes().map(|(index, child)| {
                     (
                         child,
                         Some(ParentLink {
@@ -321,8 +321,8 @@ impl Workspace {
         let mut pending = vec![node];
         while let Some(node) = pending.pop() {
             self.forget_placement(node);
-            if let Some(Node::Split { children, .. }) = self.storage.nodes.get(node) {
-                pending.extend(children.iter().copied());
+            if let Some(value) = self.storage.nodes.get(node) {
+                pending.extend(value.child_nodes().map(|(_, child)| child));
             }
         }
     }
@@ -446,7 +446,7 @@ mod tests {
     };
     use crate::graph::error::{CommandError, ReferenceRole};
     use crate::graph::transaction::WorkspaceTransaction;
-    use crate::graph::{Axis, RootRecord, SurfacePresentation};
+    use crate::graph::{Axis, Node, RootRecord, SurfacePresentation};
     use crate::ids::{ItemId, SurfaceId, TabKey};
     use crate::policy::{DockPolicy, PolicyRevision};
 
@@ -478,7 +478,8 @@ mod tests {
             source: workspace
                 .capture_item_source(root, tabs[0], ItemId::new(2))
                 .unwrap()
-                .as_tab_source(),
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         };
         apply_shared(&mut workspace, command);
         let command = WorkspaceCommand::Move {

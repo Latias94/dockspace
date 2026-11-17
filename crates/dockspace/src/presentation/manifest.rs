@@ -186,46 +186,28 @@ impl PopupPlaneBoundsKey {
     }
 }
 
-/// Exact key for one pane item's complete content sizing in a tabs leaf.
-///
-/// Every item is measured, not only the selected item. This lets core project
-/// a drag candidate in which any visible tab becomes the selected item of a
-/// newly created leaf without inventing sizing metadata. An empty leaf
-/// is represented by `selected == None`.
+/// Exact sizing identity of one real application item owned by a root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PaneSizingKey {
     root: RootId,
-    tabs: NodeId,
-    selected: Option<ItemId>,
+    item: ItemId,
 }
 
 impl PaneSizingKey {
-    /// Creates a pane-sizing key from core-owned structural identity.
+    /// Creates an exact real-content measurement key.
     #[must_use]
-    pub const fn new(root: RootId, tabs: NodeId, selected: Option<ItemId>) -> Self {
-        Self {
-            root,
-            tabs,
-            selected,
-        }
+    pub const fn new(root: RootId, item: ItemId) -> Self {
+        Self { root, item }
     }
-
     /// Returns the owning root.
     #[must_use]
     pub const fn root(self) -> RootId {
         self.root
     }
-
-    /// Returns the tabs leaf whose content is constrained.
+    /// Returns the real application content being measured.
     #[must_use]
-    pub const fn tabs(self) -> NodeId {
-        self.tabs
-    }
-
-    /// Returns the pane item being measured, or `None` for an empty leaf.
-    #[must_use]
-    pub const fn selected(self) -> Option<ItemId> {
-        self.selected
+    pub const fn item(self) -> ItemId {
+        self.item
     }
 }
 
@@ -691,6 +673,7 @@ pub struct TabBarRequirement {
     id: TabBarSceneId,
     policy: TabBarPolicy,
     close_capabilities: BTreeMap<TabKey, CloseCapability>,
+    labels: BTreeMap<TabKey, crate::presentation::scene::FrozenTabLabel>,
 }
 
 impl TabBarRequirement {
@@ -703,6 +686,30 @@ impl TabBarRequirement {
             id,
             policy,
             close_capabilities,
+            labels: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn with_layout_labels(
+        mut self,
+        labels: BTreeMap<TabKey, crate::presentation::scene::FrozenTabLabel>,
+    ) -> Self {
+        self.labels = labels;
+        self
+    }
+
+    /// Returns a frozen direct-member or prospective whole-group label.
+    #[must_use]
+    pub fn label(&self, key: TabKey) -> Option<crate::graph::TabLabel<'_>> {
+        match key.item() {
+            Some(item) => self
+                .close_capabilities
+                .contains_key(&key)
+                .then_some(crate::graph::TabLabel::Item(item)),
+            None => self
+                .labels
+                .get(&key)
+                .map(crate::presentation::scene::FrozenTabLabel::as_label),
         }
     }
 
@@ -1206,6 +1213,20 @@ impl SurfaceRequirements {
     ///
     /// # Errors
     ///
+    /// Returns a frozen label for one direct tab or prospective whole-group measurement.
+    #[must_use]
+    pub fn tab_label(&self, tab: TabSceneId) -> Option<crate::graph::TabLabel<'_>> {
+        self.tab_bar(TabBarSceneId {
+            root: tab.root,
+            tabs: tab.tabs,
+        })?
+        .label(tab.tab)
+    }
+
+    pub(crate) fn shared_tab_bars(&self) -> Arc<BTreeMap<TabBarSceneId, TabBarRequirement>> {
+        Arc::clone(&self.tab_bars)
+    }
+
     /// Returns the first stable ticket or exact-set mismatch.
     pub fn validate<'a>(
         &'a self,
@@ -1276,6 +1297,18 @@ impl SurfaceMeasurements {
             && self.pane_sizings == other.pane_sizings
             && self.tab_intrinsics == other.tab_intrinsics
             && self.tab_strips == other.tab_strips
+    }
+
+    pub(crate) fn tab_intrinsic_for_tab(&self, tab: TabKey) -> Option<TabIntrinsic> {
+        self.tab_intrinsics.iter().find_map(|(key, value)| {
+            if key.tab().tab != tab {
+                return None;
+            }
+            match value {
+                Measurement::Measured(value) => Some(*value),
+                _ => None,
+            }
+        })
     }
 
     pub(crate) fn measured_tab_intrinsic(&self, key: TabIntrinsicKey) -> Option<TabIntrinsic> {
@@ -2069,7 +2102,7 @@ mod tests {
                 SurfaceRequirementRevision::new(8),
                 surface,
             ),
-            PaneSizingKey::new(root, tabs, tab.tab.item()),
+            PaneSizingKey::new(root, tab.tab.item().unwrap()),
             TabIntrinsicKey::new(surface, tab),
             TabStripKey::new(surface, TabBarSceneId { root, tabs }),
         )
@@ -2227,7 +2260,9 @@ mod tests {
             .unwrap();
         crate::graph::transaction::WorkspaceTransaction::from_commands([
             crate::graph::command::WorkspaceCommand::Select {
-                source: source.as_tab_source(),
+                source: source
+                    .as_tab_source()
+                    .expect("the fixture item belongs directly to Tabs"),
             },
         ])
         .apply(&mut changed, &policy)
@@ -2524,7 +2559,7 @@ mod tests {
             .unwrap()
             .snapshot();
         let (_, pane, _, _) = keys();
-        let unexpected = PaneSizingKey::new(RootId::new(99), pane.tabs(), None);
+        let unexpected = PaneSizingKey::new(RootId::new(99), pane.item());
         contribution
             .insert_pane_sizing(
                 unexpected,
@@ -2594,7 +2629,7 @@ mod tests {
         let mut contribution = measured_contribution(&requirements);
         Arc::make_mut(&mut contribution.pane_sizings).clear();
         let (_, pane, _, _) = keys();
-        let unexpected = PaneSizingKey::new(RootId::new(99), pane.tabs(), None);
+        let unexpected = PaneSizingKey::new(RootId::new(99), pane.item());
         Arc::make_mut(&mut contribution.pane_sizings).insert(
             unexpected,
             Measurement::Unavailable(MeasurementUnavailableReason::Deferred),
@@ -2611,7 +2646,7 @@ mod tests {
         let requirements = requirements();
         let mut contribution = measured_contribution(&requirements);
         let (_, pane, _, _) = keys();
-        let unexpected = PaneSizingKey::new(RootId::new(99), pane.tabs(), None);
+        let unexpected = PaneSizingKey::new(RootId::new(99), pane.item());
         Arc::make_mut(&mut contribution.pane_sizings).insert(
             unexpected,
             Measurement::Unavailable(MeasurementUnavailableReason::Deferred),

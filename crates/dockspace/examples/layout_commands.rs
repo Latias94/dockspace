@@ -40,6 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .item(EDITOR)
             .unwrap()
             .tabs()
+            .expect("the example declares an explicit tabs group")
             .selected()
             .and_then(|tab| tab.item()),
         Some(PREVIEW)
@@ -55,6 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .item(EDITOR)
             .unwrap()
             .tabs()
+            .expect("the example declares an explicit tabs group")
             .items()
             .collect::<Vec<_>>(),
         [EDITOR, PREVIEW, INSPECTOR],
@@ -70,6 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .item(OUTLINE)
             .unwrap()
             .tabs()
+            .expect("the example declares an explicit tabs group")
             .items()
             .collect::<Vec<_>>(),
         [OUTLINE, INSPECTOR],
@@ -87,6 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .item(OUTLINE)
             .unwrap()
             .tabs()
+            .expect("the example declares an explicit tabs group")
             .selected()
             .and_then(|tab| tab.item()),
         Some(INSPECTOR)
@@ -104,6 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .item(OUTLINE)
             .unwrap()
             .tabs()
+            .expect("the example declares an explicit tabs group")
             .visible_items()
             .collect::<Vec<_>>(),
         [OUTLINE],
@@ -117,11 +122,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .item(OUTLINE)
             .unwrap()
             .tabs()
+            .expect("the example declares an explicit tabs group")
             .items()
             .collect::<Vec<_>>(),
         [OUTLINE, INSPECTOR],
     );
-    assert!(session.view().item(OUTLINE).unwrap().is_selected());
+    assert!(session.view().item(OUTLINE).unwrap().is_active());
     println!("Inspector was hidden and restored in place without stealing selection.");
     Ok(())
 }

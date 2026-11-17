@@ -665,12 +665,12 @@ fn programmatic_selection_activates_an_existing_native_window_before_pane_focus(
     assert!(matches!(
         transition.reduced_inputs()[0].outcome(),
         InputOutcome::ProductActionProcessed {
-            outcome: crate::model::DockspaceActionOutcome::Selected {
-                tab,
+            outcome: crate::model::DockspaceActionOutcome::ItemActivated {
+                item,
                 changed: false,
             },
             version,
-        } if tab.item() == Some(ItemId::new(2)) && *version == expected
+        } if *item == ItemId::new(2) && *version == expected
     ));
     let effect = transition
         .platform_effects()
@@ -1438,7 +1438,9 @@ fn physical_focus_return_preserves_history_until_an_explicit_pane_activation() {
         EngineInput::WorkspaceCommand {
             expected,
             command: WorkspaceCommand::Select {
-                source: source.as_tab_source(),
+                source: source
+                    .as_tab_source()
+                    .expect("fixture item is an inline tab"),
             },
         },
     )
@@ -1604,7 +1606,9 @@ fn joined_focus_restore_fixture(
         .record_semantic_input(EngineInput::WorkspaceCommand {
             expected: fixture.engine.version(),
             command: WorkspaceCommand::Select {
-                source: source.as_tab_source(),
+                source: source
+                    .as_tab_source()
+                    .expect("fixture item is an inline tab"),
             },
         })
         .expect("selection must use the joined recorder");

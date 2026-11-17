@@ -935,12 +935,7 @@ fn capture_receipt_journey(run: &mut Run, delayed_ordinary: bool, placement: Sou
     core.commit(captured_at);
     core.native.finish_stationary_observation();
     assert!(
-        core.native
-            .session
-            .view()
-            .item(FIRST)
-            .unwrap()
-            .is_selected(),
+        core.native.session.view().item(FIRST).unwrap().is_active(),
         "first fresh acquisition must restart the interval before selecting a target"
     );
     let acquired = core.native.session.native_pointer_continuation().unwrap();
@@ -950,15 +945,7 @@ fn capture_receipt_journey(run: &mut Run, delayed_ordinary: bool, placement: Sou
         acquisition_time - Duration::from_millis(1_010)
     );
     assert!(acquired.capture_acquired_event().is_none());
-    assert!(
-        !core
-            .native
-            .session
-            .view()
-            .item(SECOND)
-            .unwrap()
-            .is_selected()
-    );
+    assert!(!core.native.session.view().item(SECOND).unwrap().is_active());
     let mut budget = core.budget();
     assert!(
         core.native

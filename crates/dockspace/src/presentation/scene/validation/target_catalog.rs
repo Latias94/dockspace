@@ -391,12 +391,16 @@ mod tests {
             Some(SceneBuildError::DuplicateDropTarget { id: owners[1].id() })
         );
         let pane = PaneRecord::new(
-            PaneSceneId { root: ROOT, tabs },
+            PaneSceneId {
+                root: ROOT,
+                item: crate::ids::ItemId::new(1),
+            },
+            tabs,
             bounds(),
             bounds(),
             SceneLayerKey::surface_base(),
         );
-        plan.facts_mut().pane_records = vec![pane, pane];
+        plan.content_mut().pane_records = vec![pane, pane];
         assert_eq!(
             validate(&workspace, plan),
             Err(SceneBuildError::DuplicatePane { id: pane.id() })

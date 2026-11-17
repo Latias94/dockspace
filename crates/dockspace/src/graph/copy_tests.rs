@@ -56,7 +56,8 @@ fn semantic_edits_share_root_records_and_discarded_root_wrapping_is_isolated() {
         source: workspace
             .capture_item_source(A, tabs[0], ItemId::new(2))
             .unwrap()
-            .as_tab_source(),
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     };
     apply_shared(&mut workspace, command);
     let command = movement(&workspace, tabs);
@@ -193,7 +194,9 @@ fn center_move_copies_only_two_complete_tabs_payloads_and_unique_followup_copies
         &mut candidate,
         &policy,
         &WorkspaceCommand::Select {
-            source: source.as_tab_source(),
+            source: source
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     )
     .unwrap();
@@ -335,6 +338,7 @@ fn a_complete_tabs_replacement_keeps_explicit_history_and_returns_the_previous_h
             TabKey::for_item(ItemId::new(3)),
             TabKey::for_item(ItemId::new(1)),
         ],
+        layout_title: None,
     });
     builder.set_root(A, RootRecord::new(tabs));
     builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(A));
@@ -355,6 +359,7 @@ fn a_complete_tabs_replacement_keeps_explicit_history_and_returns_the_previous_h
                     TabKey::for_item(ItemId::new(6)),
                     TabKey::for_item(ItemId::new(4)),
                 ],
+                layout_title: None,
             },
         )
         .unwrap();
@@ -407,7 +412,9 @@ fn visual_reorder_copies_owned_history_without_changing_its_order() {
         .unwrap();
     structural_work::reset();
     let report = WorkspaceTransaction::from_commands([WorkspaceCommand::Reorder {
-        source: source.as_tab_source(),
+        source: source
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
         insertion_index: 0,
     }])
     .apply(&mut workspace, &DockPolicySnapshot::default())

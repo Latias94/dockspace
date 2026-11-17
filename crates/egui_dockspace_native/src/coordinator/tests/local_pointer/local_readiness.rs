@@ -350,7 +350,7 @@ fn local_readiness_does_not_authorize_desktop_handoff_or_native_activation() {
         .unwrap();
     selection.frame.select_item_current(SECOND).unwrap();
     let mut selected = finish(selection);
-    assert!(native.session.view().item(SECOND).unwrap().is_selected());
+    assert!(native.session.view().item(SECOND).unwrap().is_active());
     assert!(selected.take_native_effects().is_empty());
 
     // The same provider can activate the same window once it independently

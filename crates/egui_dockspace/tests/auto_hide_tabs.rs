@@ -199,6 +199,6 @@ fn a_single_tab_can_be_revealed_and_roster_changes_restore_automatic_visibility(
                 .iter()
                 .any(|node| node.label() == Some("Show the tab bar"))
         );
-        assert!(harness.dock.view().item(FIRST).unwrap().is_selected());
+        assert!(harness.dock.view().item(FIRST).unwrap().is_active());
     }
 }

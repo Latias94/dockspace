@@ -4,8 +4,8 @@ use dockspace::close::{
     CloseDecision, CloseDecisionToken, CloseRequestId, DeferredCloseDecision, DeferredCloseToken,
 };
 use dockspace::model::{
-    DockPlacement, ItemId, NativeTearOffSource, NativeWindowPlacement, PreparedTabsGroup, RootId,
-    SurfaceId,
+    DockPlacement, ItemId, NativeTearOffSource, NativeWindowPlacement, PreparedTab,
+    PreparedTabsGroup, RootId, SurfaceId,
 };
 use dockspace::policy::DockPolicy;
 
@@ -14,8 +14,8 @@ use crate::NativeActionRequestError;
 /// An unaccepted command together with its admission failure.
 ///
 /// No action was queued. Use [`Self::into_command`] to retain the original
-/// value for a later retry without cloning its policy or captured tabs group.
-/// Retrying does not refresh a captured group's session or version.
+/// value for a later retry without cloning its policy or captured tab or group.
+/// Retrying preserves every capture's original session and version.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[error("{reason}")]
 pub struct NativeCommandRequestError {
@@ -53,8 +53,8 @@ impl NativeCommandRequestError {
 /// Commands are ordinary values that menus and command palettes may
 /// retain. Admission prepares them against the current session under its lock;
 /// a stored command is not a prepared action or presentation authority.
-/// A captured tabs group retains its original session and version when stored
-/// or cloned; admission never resolves its former anchor again.
+/// A captured tab or tabs group retains its original session and version when
+/// stored or cloned; admission never resolves its former source again.
 /// Rejected admission returns this value in [`NativeCommandRequestError`].
 /// Consume [`NativeDockspaceApp::take_action_status`](crate::NativeDockspaceApp::take_action_status)
 /// before submitting another command. Pane state always stays in the application.
@@ -72,12 +72,12 @@ impl NativeCommandRequestError {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum NativeCommand {
-    /// Select an open pane and request its focus through the core.
+    /// Activate an open item through every containing Tabs choice and request its focus.
     ///
     /// An eligible native window is explicitly activated, including when its pane
-    /// is already selected. Native and pane focus still require host observations.
+    /// is already active. Native and pane focus still require host observations.
     SelectItem {
-        /// Pane to select.
+        /// Application content to activate, including a standalone Pane.
         item: ItemId,
     },
     /// Show or hide an open pane while retaining its layout and native ownership.
@@ -102,6 +102,16 @@ pub enum NativeCommand {
         /// Pane to move.
         item: ItemId,
         /// Destination in the current workspace.
+        placement: DockPlacement,
+    },
+    /// Move one captured direct tab to an explicit docking placement.
+    ///
+    /// A layout tab carries its complete Pane/Tabs/Split/Grid subtree, including
+    /// hidden and inactive content. Its original session and version are retained.
+    DockTab {
+        /// Exact direct child to move.
+        tab: PreparedTab,
+        /// Destination in the captured workspace version.
         placement: DockPlacement,
     },
     /// Move one previously captured tabs group as an atomic payload.
@@ -136,6 +146,16 @@ pub enum NativeCommand {
         /// Existing surface that will contain the floating window.
         surface: SurfaceId,
     },
+    /// Float one captured direct tab inside an existing logical surface.
+    ///
+    /// A layout tab preserves its complete subtree. The core derives placement
+    /// and retains native source ownership until the exact target presentation.
+    FloatTab {
+        /// Exact direct child, retaining its captured session and version.
+        tab: PreparedTab,
+        /// Existing surface that will contain the floating content.
+        surface: SurfaceId,
+    },
     /// Float one previously captured tabs group inside an existing surface.
     ///
     /// The complete group moves once, preserving its order and selection. A
@@ -147,9 +167,9 @@ pub enum NativeCommand {
         /// Existing surface that will contain the floating group.
         surface: SurfaceId,
     },
-    /// Float a complete layout, including every split and tabs group, inside an existing surface.
+    /// Float a complete Pane/Tabs/Split/Grid layout inside an existing surface.
     ///
-    /// Preserves the root identity, split proportions, central leaf and tab selections.
+    /// Preserves root identity, layout titles, track shares, central Tabs and selections.
     /// This creates contained content, not an OS window. Native source ownership
     /// remains until the target's exact presentation permits the existing transfer.
     FloatRoot {
@@ -171,11 +191,11 @@ pub enum NativeCommand {
         /// Any pane in the contained group.
         item: ItemId,
     },
-    /// Begin moving one item, captured tabs group or complete root to a managed OS window.
+    /// Begin moving an item, captured tab, tabs group or complete root to a managed OS window.
     ///
     /// Source ownership remains until the child's exact first-live presentation.
     MoveToNewWindow {
-        /// Content to transfer; captured groups retain their original authority.
+        /// Content to transfer; captured tabs and groups retain their original authority.
         source: NativeTearOffSource,
         /// Requested desktop-physical outer bounds.
         placement: NativeWindowPlacement,
@@ -185,7 +205,7 @@ pub enum NativeCommand {
     /// Missing source geometry or work-area facts produces a core-owned action
     /// rejection. The command never invents a desktop origin or moves content early.
     MoveToNewWindowDefault {
-        /// Content to transfer; captured groups retain their original authority.
+        /// Content to transfer; captured tabs and groups retain their original authority.
         source: NativeTearOffSource,
     },
     /// Begin moving a complete root to a newly managed OS window.
@@ -201,6 +221,14 @@ pub enum NativeCommand {
     CloseItem {
         /// Pane for the core-owned close plan.
         item: ItemId,
+    },
+    /// Request an atomic close plan for one captured tab and all its real descendants.
+    ///
+    /// Hidden and inactive descendants participate in the core's approval workflow.
+    /// The application must answer the returned decision tokens before content closes.
+    CloseTab {
+        /// Exact direct child to close, retaining its captured session and version.
+        tab: PreparedTab,
     },
     /// Request an atomic close plan for every pane in a complete root.
     CloseRoot {

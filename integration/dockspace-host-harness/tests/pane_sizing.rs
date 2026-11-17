@@ -50,9 +50,8 @@ fn measure(
             operation: Operation::Pane(pane),
             ..
         } = step
-            && let Some(item) = pane.selected()
         {
-            panes.push((item, pane.content_bounds()));
+            panes.push((pane.item(), pane.content_bounds()));
         }
         Ok::<(), ()>(())
     })

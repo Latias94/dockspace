@@ -71,7 +71,7 @@ fn high_level_drag_across_tabs_and_a_multipass_drop_delivers_one_payload() {
         ] {
             harness.frame(events);
             assert_eq!(harness.dockspace.version(), version);
-            assert!(harness.dockspace.view().item(ASSETS).unwrap().is_selected());
+            assert!(harness.dockspace.view().item(ASSETS).unwrap().is_active());
             assert!(!harness.dockspace.has_active_gesture());
             harness.assert_layout();
         }
@@ -365,7 +365,7 @@ fn pane_data_drag_delivers_once_without_docking_and_then_allows_a_new_tab_press(
             let source = harness.panes.source.unwrap().center();
             let destination = harness.panes.destination.unwrap().center();
             assert!(destination.x - source.x > 200.0);
-            assert!(harness.dockspace.view().item(ASSETS).unwrap().is_selected());
+            assert!(harness.dockspace.view().item(ASSETS).unwrap().is_active());
 
             for events in [
                 vec![Event::PointerMoved(source)],
@@ -400,7 +400,7 @@ fn pane_data_drag_delivers_once_without_docking_and_then_allows_a_new_tab_press(
             }
             assert!(!egui::DragAndDrop::has_any_payload(&harness.context));
             assert!(!harness.dockspace.has_active_gesture());
-            assert!(harness.dockspace.view().item(ASSETS).unwrap().is_selected());
+            assert!(harness.dockspace.view().item(ASSETS).unwrap().is_active());
 
             let settings = harness.panes.settings_tab.unwrap().center();
             for events in [
@@ -411,15 +411,8 @@ fn pane_data_drag_delivers_once_without_docking_and_then_allows_a_new_tab_press(
             ] {
                 harness.frame(events);
             }
-            assert!(
-                harness
-                    .dockspace
-                    .view()
-                    .item(SETTINGS)
-                    .unwrap()
-                    .is_selected()
-            );
-            assert!(!harness.dockspace.view().item(ASSETS).unwrap().is_selected());
+            assert!(harness.dockspace.view().item(SETTINGS).unwrap().is_active());
+            assert!(!harness.dockspace.view().item(ASSETS).unwrap().is_active());
             assert_ne!(harness.dockspace.version(), version);
             assert!(!harness.dockspace.has_active_gesture());
             assert_eq!(harness.panes.drag_starts, 1);

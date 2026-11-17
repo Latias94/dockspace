@@ -244,7 +244,7 @@ impl NativeExampleApp {
         for (item, title, loaded) in inventory {
             let location = self.dockspace.with_view(|view| {
                 view.item(item)
-                    .map(|pane| (pane.root(), pane.is_selected(), pane.is_visible()))
+                    .map(|pane| (pane.root(), pane.is_active(), pane.is_visible()))
             });
             let state = match location {
                 Some((_, _, false)) => "hidden",
@@ -584,12 +584,7 @@ fn main_dock_placement(
 }
 
 fn first_dock_anchor(node: DockspaceNodeView<'_>, exclude: Option<ItemId>) -> Option<ItemId> {
-    if let Some(tabs) = node.tabs() {
-        return tabs.items().find(|item| Some(*item) != exclude);
-    }
-    node.split()?
-        .children()
-        .find_map(|child| first_dock_anchor(child, exclude))
+    node.items().find(|item| Some(*item) != exclude)
 }
 
 pub(super) fn describe_status(status: &NativeActionStatus, panes: &ExamplePanes) -> String {
@@ -601,6 +596,9 @@ pub(super) fn describe_status(status: &NativeActionStatus, panes: &ExamplePanes)
             )
         }
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(outcome)) => match outcome {
+            DockspaceActionOutcome::ItemActivated { item, .. } => {
+                format!("Activated {}.", title(*item))
+            }
             DockspaceActionOutcome::Selected { tab, .. } => match tab.item() {
                 Some(item) => format!("Selected {}.", title(item)),
                 None => "Selected layout.".to_owned(),
@@ -625,11 +623,27 @@ pub(super) fn describe_status(status: &NativeActionStatus, panes: &ExamplePanes)
                     format!("{} is already at that docking position.", title(*item))
                 }
             }
+            DockspaceActionOutcome::TabDocked { tab, changed, .. } => {
+                let label = tab.item().map_or("The layout tab", title);
+                if *changed {
+                    format!("Docked {label}; its content is retained.")
+                } else {
+                    format!("{label} is already at that docking position.")
+                }
+            }
             DockspaceActionOutcome::Floated { item, changed, .. } => {
                 if *changed {
                     format!("{} is floating; its content is retained.", title(*item))
                 } else {
                     format!("{} is already floating at that position.", title(*item))
+                }
+            }
+            DockspaceActionOutcome::TabFloated { tab, changed, .. } => {
+                let label = tab.item().map_or("The layout tab", title);
+                if *changed {
+                    format!("{label} is floating; its content is retained.")
+                } else {
+                    format!("{label} is already floating at that position.")
                 }
             }
             DockspaceActionOutcome::ContainedRaised { changed, .. } => {

@@ -426,6 +426,7 @@ fn order(session: &DockspaceSession) -> Vec<ItemId> {
         .item(FIRST)
         .unwrap()
         .tabs()
+        .expect("item is an inline tab")
         .items()
         .collect::<Vec<_>>()
 }
@@ -605,6 +606,7 @@ fn size_only_reorder_retries_the_release_frame_and_settles_its_output_without_re
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             [SECOND, THIRD, FIRST]
@@ -858,7 +860,7 @@ fn identical_geometry_cannot_lend_capabilities_to_another_window_or_session() {
         })
         .unwrap();
     assert!(!finish(frame).workspace_changed());
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert!(!session.has_active_gesture());
     session
         .record_native_pointer(edge(
@@ -1200,8 +1202,8 @@ fn inactive_tab_selection_preserves_its_actual_output_until_the_successor_is_pre
     );
     let target_point = original.insertion(FIRST, true);
     let target = sample(cap, binding, geometry(), target_point);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
-    assert!(!session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
+    assert!(!session.view().item(SECOND).unwrap().is_active());
     session
         .record_native_pointer_batch([
             located(binding, Event::ButtonPressed(Button::Primary), source),
@@ -1233,7 +1235,7 @@ fn inactive_tab_selection_preserves_its_actual_output_until_the_successor_is_pre
         "selection preserves the actual output and its semantically current hover target"
     );
     assert!(report.manipulation_feedback().is_empty());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert_eq!(order(&session), [FIRST, SECOND, THIRD]);
     assert!(session.has_active_gesture());
     assert_eq!(session.presented_surface(A), Some(presented));
@@ -1296,7 +1298,7 @@ fn inactive_tab_selection_preserves_its_actual_output_until_the_successor_is_pre
     assert!(!settled.workspace_changed());
     assert_eq!(session.version(), committed);
     assert_eq!(order(&session), [SECOND, FIRST, THIRD]);
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert_clean_idle(&mut session);
 }
 
@@ -1367,7 +1369,7 @@ fn the_next_gesture_on_the_same_native_pointer_can_choose_the_desktop_lane() {
     let report = finish(frame);
     assert!(report.workspace_changed());
     assert_ne!(session.version(), before);
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert_eq!(order(&session), [SECOND, THIRD, FIRST]);
     assert_eq!(session.native_input_recorded_count(), recorded + 2);
     assert_eq!(session.native_local_coordinates(binding), Some(cap));

@@ -26,6 +26,12 @@ pub(crate) enum PreparedContentClose {
         expected_items: BTreeMap<ItemId, usize>,
         requirements: Vec<CloseItemRequirement>,
     },
+    Tab {
+        source: TabSource,
+        items: Vec<ItemId>,
+        expected_items: BTreeMap<ItemId, usize>,
+        requirements: Vec<CloseItemRequirement>,
+    },
 }
 
 /// Core-private frozen payload for closing one complete surface's content.
@@ -85,6 +91,135 @@ impl PreparedSurfaceContentClose {
 pub(crate) struct PreparedContentCloseCommit {
     pub(crate) candidate: Workspace,
     pub(crate) outcome: CloseCommitOutcome,
+}
+
+/// Checks one exact layout-tab close before approval capture or graph mutation.
+/// A protected central anchor belongs to its root and cannot be closed as a tab.
+pub(crate) fn validate_layout_tab_close(
+    workspace: &Workspace,
+    source: &TabSource,
+) -> Result<NodeId, CommandError> {
+    validate_tab_source(workspace, source)?;
+    let node = source.tab().layout().ok_or(CommandError::Invariant {
+        stage: "validate layout-tab close for a direct content tab",
+    })?;
+    if workspace.layout_tab_contains_central(source.root(), source.tab()) {
+        let central = workspace
+            .root(source.root())
+            .and_then(|record| record.central)
+            .ok_or(CommandError::Invariant {
+                stage: "locate protected layout-tab central anchor",
+            })?;
+        return Err(CommandError::CentralNodeWouldDetach {
+            root: source.root(),
+            source_node: node,
+            central,
+        });
+    }
+    Ok(node)
+}
+
+/// Drains an entire tabs scope while retaining only a protected central path.
+/// Complete descendant subtrees are destroyed without transient empty track owners.
+fn clear_tabs_content(
+    workspace: &mut Workspace,
+    root: RootId,
+    tabs: NodeId,
+) -> Result<(), CommandError> {
+    let central = workspace
+        .root(root)
+        .and_then(|record| record.central)
+        .filter(|central| workspace.subtree_contains(tabs, *central));
+    let path = if let Some(central) = central {
+        let path = workspace
+            .path_to_node(root, central)
+            .ok_or(CommandError::Invariant {
+                stage: "locate close-tabs protected central path",
+            })?;
+        let start = path
+            .iter()
+            .position(|node| *node == tabs)
+            .ok_or(CommandError::Invariant {
+                stage: "locate tabs scope on protected central path",
+            })?;
+        path[start..].to_vec()
+    } else {
+        vec![tabs]
+    };
+    workspace.begin_root_edit(root);
+    for (index, node) in path.iter().copied().enumerate() {
+        let next = path.get(index + 1).copied();
+        let current = workspace.node(node).ok_or(CommandError::MissingNode {
+            role: ReferenceRole::Source,
+            node,
+        })?;
+        let removed: Vec<_> = current
+            .child_nodes()
+            .map(|(_, child)| child)
+            .filter(|child| Some(*child) != next)
+            .collect();
+        let replacement = match current {
+            Node::Tabs { layout_title, .. } => {
+                let selected = next.map(TabKey::for_layout);
+                let mut replacement =
+                    Node::tabs_from_keys(selected.into_iter().collect(), selected);
+                replacement.set_layout_title(layout_title.clone());
+                replacement
+            }
+            Node::Split {
+                axis, layout_title, ..
+            } => Node::Split {
+                axis: *axis,
+                children: vec![next.ok_or(CommandError::Invariant {
+                    stage: "retain split child on protected central path",
+                })?],
+                weights: vec![SplitWeight::new(1.0).map_err(|_| CommandError::Invariant {
+                    stage: "retain central path split share",
+                })?],
+                layout_title: layout_title.clone(),
+            },
+            Node::Grid {
+                shape,
+                layout_title,
+                ..
+            } => Node::Grid {
+                shape: match shape {
+                    crate::model::DockspaceGridShape::Fixed { .. } => {
+                        crate::model::DockspaceGridShape::Fixed {
+                            rows: std::num::NonZeroUsize::MIN,
+                            columns: std::num::NonZeroUsize::MIN,
+                        }
+                    }
+                    crate::model::DockspaceGridShape::Auto => {
+                        crate::model::DockspaceGridShape::Auto
+                    }
+                },
+                children: vec![next.ok_or(CommandError::Invariant {
+                    stage: "retain grid child on protected central path",
+                })?],
+                shares: None,
+                layout_title: layout_title.clone(),
+            },
+            Node::Pane { .. } => {
+                return Err(CommandError::Invariant {
+                    stage: "close-tabs central path contains a bare pane",
+                });
+            }
+        };
+        workspace
+            .storage
+            .nodes
+            .replace(node, replacement)
+            .ok_or(CommandError::MissingNode {
+                role: ReferenceRole::Source,
+                node,
+            })?;
+        workspace.refresh_child_placements(node);
+        for child in removed {
+            remove_subtree_nodes(workspace, child)?;
+        }
+    }
+    Ok(())
 }
 
 /// Prepares one approved complete-surface content close against an isolated workspace candidate.
@@ -265,7 +400,8 @@ pub(crate) fn prepare_content_close(
     let expected_items = match prepared {
         PreparedContentClose::Item { expected_items, .. }
         | PreparedContentClose::Root { expected_items, .. }
-        | PreparedContentClose::Tabs { expected_items, .. } => expected_items,
+        | PreparedContentClose::Tabs { expected_items, .. }
+        | PreparedContentClose::Tab { expected_items, .. } => expected_items,
     };
     let actual_items = workspace.item_multiset();
     if &actual_items != expected_items {
@@ -286,7 +422,7 @@ pub(crate) fn prepare_content_close(
             validate_item_source(&candidate, source).map_err(close_command_error)?;
             let root = source.root();
             let item = source.item();
-            let successor = match candidate.node(source.tabs()) {
+            let successor = match candidate.node(source.owner_node()) {
                 Some(Node::Tabs {
                     items, selected, ..
                 }) if *selected == Some(TabKey::for_item(item)) => items
@@ -301,11 +437,11 @@ pub(crate) fn prepare_content_close(
                     }),
                 _ => None,
             };
-            remove_item(&mut candidate, source.tabs(), item).map_err(close_command_error)?;
+            remove_item(&mut candidate, source.owner_node(), item).map_err(close_command_error)?;
             Arc::make_mut(&mut candidate.storage.hidden_items).remove(&item);
             if let Some(successor) = successor {
                 candidate
-                    .set_visible_tab_selection(source.tabs(), successor)
+                    .set_visible_tab_selection(source.owner_node(), successor)
                     .map_err(close_command_error)?;
             }
             cleanup_empty_source_root(&mut candidate, root).map_err(close_command_error)?;
@@ -325,19 +461,15 @@ pub(crate) fn prepare_content_close(
             }
             validate_node_source(&candidate, source).map_err(close_command_error)?;
             let root = source.root();
-            let actual = match candidate.node(source.node()) {
-                Some(Node::Tabs { items, .. }) => items,
-                _ => return Err(close_invariant("validate frozen close-tabs node")),
-            };
-            if actual.len() != items.len()
-                || !actual
-                    .iter()
-                    .all(|tab| tab.item().is_some_and(|item| items.contains(&item)))
-            {
+            if !matches!(candidate.node(source.node()), Some(Node::Tabs { .. })) {
+                return Err(close_invariant("validate frozen close-tabs node"));
+            }
+            let actual = candidate.collect_items_in_subtree(source.node());
+            if actual.len() != items.len() || !actual.iter().all(|item| items.contains(item)) {
                 return Err(close_invariant("validate frozen close-tabs membership"));
             }
+            clear_tabs_content(&mut candidate, root, source.node()).map_err(close_command_error)?;
             for item in items {
-                remove_item(&mut candidate, source.node(), *item).map_err(close_command_error)?;
                 Arc::make_mut(&mut candidate.storage.hidden_items).remove(item);
             }
             cleanup_empty_source_root(&mut candidate, root).map_err(close_command_error)?;
@@ -346,6 +478,34 @@ pub(crate) fn prepare_content_close(
                 .map_err(close_command_error)?;
             CloseCommitOutcome::TabsClosed {
                 root,
+                items: items.clone(),
+            }
+        }
+        PreparedContentClose::Tab {
+            source,
+            items,
+            requirements,
+            ..
+        } => {
+            let node =
+                validate_layout_tab_close(&candidate, source).map_err(close_command_error)?;
+            let actual = candidate.collect_items_in_subtree(node);
+            if actual.len() != items.len() || !actual.iter().all(|item| items.contains(item)) {
+                return Err(close_invariant("validate frozen layout-tab membership"));
+            }
+            for requirement in requirements {
+                validate_close_requirement(policy, *requirement)?;
+            }
+            let root = source.root();
+            detach_node(&mut candidate, root, node).map_err(close_command_error)?;
+            remove_subtree_nodes(&mut candidate, node).map_err(close_command_error)?;
+            cleanup_empty_source_root(&mut candidate, root).map_err(close_command_error)?;
+            candidate
+                .complete_root_change(root)
+                .map_err(close_command_error)?;
+            CloseCommitOutcome::TabClosed {
+                root,
+                tab: source.tab(),
                 items: items.clone(),
             }
         }
@@ -389,7 +549,8 @@ pub(crate) fn prepare_content_close(
             expected_after.remove(item);
         }
         CloseCommitOutcome::RootClosed { items, .. }
-        | CloseCommitOutcome::TabsClosed { items, .. } => {
+        | CloseCommitOutcome::TabsClosed { items, .. }
+        | CloseCommitOutcome::TabClosed { items, .. } => {
             for item in items {
                 if expected_after.remove(item).is_none() {
                     return Err(TransactionError::Command {

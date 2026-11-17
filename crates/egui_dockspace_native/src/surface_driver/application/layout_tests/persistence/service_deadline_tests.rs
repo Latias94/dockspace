@@ -433,7 +433,12 @@ fn accepted_release(
             assert!(!state.coordinator.session().has_pending_presentation());
             let view = state.coordinator.session().view();
             assert_eq!(
-                view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>(),
+                view.item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .expect("item is an inline tab")
+                    .items()
+                    .collect::<Vec<_>>(),
                 [SECOND, FIRST]
             );
             assert_eq!(view.item(FIRST).unwrap().surface(), SOURCE);
@@ -733,7 +738,12 @@ fn elapsed_service_refill_preserves_release_close_and_ready_bootstrap_owners() {
             assert_eq!(view.item(item).unwrap().surface(), SOURCE);
         }
         assert_eq!(
-            view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>(),
+            view.item(FIRST)
+                .unwrap()
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
             [SECOND, FIRST]
         );
         assert_eq!(view.item(WAITING_ITEM).unwrap().surface(), WAITING);
@@ -773,7 +783,12 @@ fn elapsed_service_refill_preserves_release_close_and_ready_bootstrap_owners() {
     );
     let view = state.coordinator.session().view();
     assert_eq!(
-        view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>(),
+        view.item(FIRST)
+            .unwrap()
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
         [SECOND, FIRST]
     );
     assert_eq!(bridge.input_backlog_for_test(), (0, None));

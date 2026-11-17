@@ -330,11 +330,11 @@ fn stationary_hover_selects_at_its_deadline_across_repainted_outputs_and_keeps_d
             .pointer_continuation()
             .expect("the real drag arms a hover deadline");
         assert_eq!(wake.deadline(), std::time::Duration::from_millis(1150));
-        assert!(!dockspace.view().item(FOURTH).unwrap().is_selected());
+        assert!(!dockspace.view().item(FOURTH).unwrap().is_active());
         for time in [1.1, 1.149] {
             timed_frame(&context, &mut dockspace, &mut panes, time, Vec::new());
             assert_eq!(dockspace.session.pointer_continuation(), Some(wake));
-            assert!(!dockspace.view().item(FOURTH).unwrap().is_selected());
+            assert!(!dockspace.view().item(FOURTH).unwrap().is_active());
         }
         {
             use dockspace::runtime::{
@@ -365,7 +365,7 @@ fn stationary_hover_selects_at_its_deadline_across_repainted_outputs_and_keeps_d
                 .unwrap();
             unknown_clock.commit().unwrap();
             assert_eq!(dockspace.session.pointer_continuation(), Some(wake));
-            assert!(!dockspace.view().item(FOURTH).unwrap().is_selected());
+            assert!(!dockspace.view().item(FOURTH).unwrap().is_active());
         }
         let due_events = match due_mode {
             "idle" => Vec::new(),
@@ -391,6 +391,7 @@ fn stationary_hover_selects_at_its_deadline_across_repainted_outputs_and_keeps_d
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>()
                     .contains(&FOURTH)
@@ -404,6 +405,7 @@ fn stationary_hover_selects_at_its_deadline_across_repainted_outputs_and_keeps_d
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>()
                     .contains(&FOURTH)
@@ -412,7 +414,7 @@ fn stationary_hover_selects_at_its_deadline_across_repainted_outputs_and_keeps_d
             assert!(dockspace.session.pointer_continuation().is_none());
             continue;
         }
-        assert!(dockspace.view().item(FOURTH).unwrap().is_selected());
+        assert!(dockspace.view().item(FOURTH).unwrap().is_active());
         assert!(dockspace.session.has_active_gesture());
         assert!(dockspace.session.pointer_continuation().is_none());
         let version = dockspace.version();
@@ -439,6 +441,7 @@ fn stationary_hover_selects_at_its_deadline_across_repainted_outputs_and_keeps_d
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>()
                 .contains(&FOURTH)
@@ -452,6 +455,7 @@ fn stationary_hover_selects_at_its_deadline_across_repainted_outputs_and_keeps_d
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>()
                 .contains(&FOURTH)

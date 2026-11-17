@@ -546,11 +546,14 @@ fn constraint_reader_preserves_depth_first_errors_and_override_precedence() {
             None
         },
         metrics,
-        &[SplitWeightOverride::new(&source, &[])],
+        &[TrackWeightOverride::new(
+            &source,
+            &TrackWeights::Split(Vec::new()),
+        )],
     );
     assert!(matches!(
         actual,
-        Err(LayoutError::SplitWeightOverrideLengthMismatch { .. })
+        Err(LayoutError::TrackWeightOverrideLengthMismatch { .. })
     ));
     assert!(queries.is_empty());
 
@@ -884,7 +887,8 @@ fn minimum_measurement_errors_precede_override_validation_for_cold_and_warm_topo
     let (workspace, leaves) = fixture(&mut 37, false);
     let root_node = workspace.root(ROOT).unwrap().node;
     let source = workspace.capture_node_source(ROOT, root_node).unwrap();
-    let overrides = [SplitWeightOverride::new(&source, &[])];
+    let weights = TrackWeights::Split(Vec::new());
+    let overrides = [TrackWeightOverride::new(&source, &weights)];
     let metrics = LayoutMetrics::new(1.0).unwrap();
     let bounds = LogicalRect::new(0.0, 0.0, 512.0, 512.0).unwrap();
     let minimums = leaves
@@ -926,7 +930,7 @@ fn minimum_measurement_errors_precede_override_validation_for_cold_and_warm_topo
     );
     assert!(matches!(
         public,
-        Err(LayoutError::SplitWeightOverrideLengthMismatch { .. })
+        Err(LayoutError::TrackWeightOverrideLengthMismatch { .. })
     ));
     assert_eq!(
         reference::project(

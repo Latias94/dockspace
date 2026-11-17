@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::*;
 use crate::engine::transition::WorkspaceVersion;
 use crate::geometry::LogicalSize;
-use crate::graph::{ContainedFloating, RootRecord, SurfacePresentation};
+use crate::graph::{Axis, ContainedFloating, RootRecord, SurfacePresentation};
 use crate::ids::{EngineAuthorityDomainId, WorkspaceEpoch, WorkspaceRevision};
 use crate::interaction::targeting::guide::DropGuideTargetRecord;
 use crate::interaction::targeting::targets::{
@@ -64,6 +64,105 @@ fn a_surface_binding_only_stores_its_own_pane_selections() {
     assert_eq!(rebound_fixture.selection.len(), 1);
     assert!(rebound_fixture.selection.capacity() < 128);
     assert_eq!(rebound_fixture, *plan);
+}
+
+#[test]
+fn selection_rebinding_shares_static_records_and_preserves_old_content_facts() {
+    use crate::behavior_tests::support::{MeasurementProfile, measurements};
+    use crate::engine::{DockEngine, PreparedSurfacePaintCandidate};
+    use crate::policy::DockPolicy;
+
+    let surface = SurfaceId::new(1);
+    let root = RootId::new(1);
+    let first = ItemId::new(1);
+    let second = ItemId::new(2);
+    let mut builder = Workspace::builder();
+    let leaves = (0..8)
+        .map(|ordinal| {
+            builder.insert_node(Node::tabs([
+                ItemId::new(ordinal * 2 + 1),
+                ItemId::new(ordinal * 2 + 2),
+            ]))
+        })
+        .collect::<Vec<_>>();
+    let split = builder.insert_node(Node::equal_split(Axis::Horizontal, leaves.clone()).unwrap());
+    builder.set_root(root, RootRecord::new(split));
+    builder.set_surface(surface, SurfacePresentation::with_main(root));
+    let engine = DockEngine::new(builder.build().unwrap(), DockPolicy::default()).unwrap();
+    let token = engine.begin_surface_contribution(surface).unwrap();
+    let contribution = engine
+        .prepare_surface_contribution(
+            token,
+            measurements(&engine, surface, bounds(), MeasurementProfile::default()),
+        )
+        .unwrap();
+    let PreparedSurfacePaintCandidate::Ready(candidate) = contribution.paint_candidate() else {
+        panic!("the split fixture has complete measurements");
+    };
+    let original = candidate.plan();
+    let bar = TabBarSceneId {
+        root,
+        tabs: leaves[0],
+    };
+    let rebind = |item| {
+        original
+            .rebind_selection(
+                original.measurement_ticket().unwrap(),
+                bar,
+                Some(TabKey::for_item(item)),
+                original.command_basis(root).unwrap().clone(),
+                original
+                    .layout_facts()
+                    .unwrap()
+                    .measurements()
+                    .as_ref()
+                    .clone(),
+            )
+            .unwrap()
+    };
+    let unchanged = rebind(first);
+    assert!(unchanged.shares_facts(original));
+    assert_eq!(unchanged, *original);
+
+    let rebound = rebind(second);
+    assert!(Arc::ptr_eq(&original.facts, &rebound.facts));
+    assert!(!Arc::ptr_eq(&original.content, &rebound.content));
+    assert!(!original.shares_facts(&rebound));
+    assert_ne!(*original, rebound);
+    assert_eq!(original.pane_records()[0].item(), first);
+    assert_eq!(rebound.pane_records()[0].item(), second);
+    assert_eq!(original.selected_in_tabs(bar.tabs), Some(first.into()));
+    assert_eq!(rebound.selected_in_tabs(bar.tabs), Some(second.into()));
+    assert!(std::ptr::eq(original.tab_records(), rebound.tab_records()));
+    assert!(std::ptr::eq(
+        original.tab_bar_records(),
+        rebound.tab_bar_records()
+    ));
+    let pane_items = |plan: &PresentationPlan| {
+        let mut items = Vec::new();
+        plan.visit_surface_program(|step| {
+            if let ResolvedSurfaceProgramStep::Operation {
+                operation: ResolvedSurfaceProgramOperation::Pane(pane),
+                ..
+            } = step
+            {
+                items.push(pane.item());
+            }
+            Ok::<(), ()>(())
+        })
+        .unwrap();
+        items
+    };
+    let old_items = pane_items(original);
+    let mut expected = old_items.clone();
+    expected[0] = second;
+    assert_eq!(pane_items(&rebound), expected);
+    assert_eq!(pane_items(original), old_items);
+    let mut changed_geometry = rebound.clone();
+    changed_geometry.facts_mut().bounds = LogicalRect::new(0.0, 0.0, 900.0, 600.0).unwrap();
+    assert!(Arc::ptr_eq(&changed_geometry.content, &rebound.content));
+    assert!(!changed_geometry.shares_facts(&rebound));
+    assert_ne!(changed_geometry, rebound);
 }
 
 #[test]

@@ -56,6 +56,7 @@ fn direct_tab_snapshot_keys_are_tagged_and_reject_the_old_numeric_shape() {
         items,
         selected,
         mru,
+        ..
     } = &mut record.node
     else {
         unreachable!()
@@ -66,7 +67,7 @@ fn direct_tab_snapshot_keys_are_tagged_and_reject_the_old_numeric_shape() {
     assert!(matches!(
         layout.build_candidate(|_| true),
         Err(SnapshotRestoreError::InvalidWorkspace(errors))
-            if errors.errors().iter().any(|error| matches!(error, WorkspaceValidationError::UnsupportedLayoutTab { .. }))
+            if errors.errors().iter().any(|error| matches!(error, WorkspaceValidationError::Cycle { .. }))
     ));
 }
 
@@ -88,7 +89,11 @@ fn json_round_trip_retains_hidden_members_and_queries_the_registry_once_per_owne
         (1..=4).map(ItemId::new).collect::<Vec<_>>()
     );
     assert_eq!(WorkspaceSnapshot::capture(&restored).unwrap(), snapshot);
-    let (_, tabs, _) = restored.locate_item_by_id(ItemId::new(4)).unwrap();
+    let tabs = restored
+        .locate_item_by_id(ItemId::new(4))
+        .unwrap()
+        .tabs()
+        .unwrap();
     assert!(restored.item_is_hidden(ItemId::new(4)));
     assert_eq!(restored.visible_tab_selection(tabs), None);
     assert!(
@@ -134,7 +139,11 @@ fn hidden_selection_with_visible_siblings_is_rejected_and_all_hidden_selection_r
     snapshot.hidden_items.push(3);
     let restored = snapshot.build_candidate(|_| true).unwrap();
     for item in 1..=4 {
-        let (_, tabs, _) = restored.locate_item_by_id(ItemId::new(item)).unwrap();
+        let tabs = restored
+            .locate_item_by_id(ItemId::new(item))
+            .unwrap()
+            .tabs()
+            .unwrap();
         assert!(restored.item_is_hidden(ItemId::new(item)));
         assert_eq!(restored.visible_tab_selection(tabs), None);
     }

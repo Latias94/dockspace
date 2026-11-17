@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fmt};
+use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use thiserror::Error;
 
@@ -7,9 +7,9 @@ use crate::graph::{
     Axis, ContainedFloating, Node, RootRecord, SplitWeight, SurfacePresentation, Workspace,
     WorkspaceBuilder,
 };
-use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
+use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
 
-use super::DockspaceView;
+use super::{DockspaceGridError, DockspaceGridShape, DockspaceGridShares, DockspaceView};
 
 /// Product-facing direction of a docking split.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -53,29 +53,38 @@ pub enum RootAllocation {
     Weighted,
     /// Let the declared central branch absorb or yield constraint deltas first.
     ///
-    /// Requires a central tabs leaf. Other children share any remaining delta
+    /// Requires a central Tabs anchor. Other children share any remaining delta
     /// after that branch reaches its size constraint.
     PreferCentral,
 }
 
-/// Recursive product declaration of one tabs or split node.
-///
-/// Runtime node identities are allocated only when the complete [`DockspaceLayout`] is built.
+/// Recursive product declaration of a pane, tabs container, split, or shared-track grid.
 /// Compilation, cloning, and destruction use heap traversal rather than recursive calls.
 pub struct DockspaceNode {
     kind: DockspaceNodeKind,
     central: bool,
+    layout_title: Option<Arc<str>>,
 }
 
 enum DockspaceNodeKind {
+    Pane(ItemId),
     Tabs {
         items: Vec<ItemId>,
         selected: Option<ItemId>,
+    },
+    ComposedTabs {
+        children: Vec<DockspaceNode>,
+        selected: Option<usize>,
     },
     Split {
         axis: DockspaceAxis,
         children: Vec<DockspaceNode>,
         weights: Vec<SplitWeight>,
+    },
+    Grid {
+        shape: DockspaceGridShape,
+        children: Vec<DockspaceNode>,
+        shares: Option<DockspaceGridShares>,
     },
 }
 
@@ -83,8 +92,15 @@ impl fmt::Debug for DockspaceNode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut node = formatter.debug_struct("DockspaceNode");
         match &self.kind {
+            DockspaceNodeKind::Pane(item) => {
+                node.field("item", item);
+            }
             DockspaceNodeKind::Tabs { items, selected } => {
                 node.field("items", items).field("selected", selected);
+            }
+            DockspaceNodeKind::ComposedTabs { children, selected } => {
+                node.field("child_count", &children.len())
+                    .field("selected_index", selected);
             }
             DockspaceNodeKind::Split {
                 axis,
@@ -95,63 +111,80 @@ impl fmt::Debug for DockspaceNode {
                     .field("child_count", &children.len())
                     .field("weights", weights);
             }
+            DockspaceNodeKind::Grid {
+                shape,
+                children,
+                shares,
+            } => {
+                node.field("shape", shape)
+                    .field("child_count", &children.len())
+                    .field("shares", shares);
+            }
         }
-        node.field("central", &self.central).finish_non_exhaustive()
+        node.field("central", &self.central)
+            .field("layout_title", &self.layout_title)
+            .finish_non_exhaustive()
     }
 }
 
 impl Clone for DockspaceNode {
     fn clone(&self) -> Self {
-        enum Frame<'node> {
-            Enter(&'node DockspaceNode),
-            FinishSplit {
-                axis: DockspaceAxis,
-                weights: &'node [SplitWeight],
-                child_base: usize,
-                central: bool,
-            },
+        enum Frame<'a> {
+            Enter(&'a DockspaceNode),
+            Finish(&'a DockspaceNode, usize),
         }
-
         let mut pending = vec![Frame::Enter(self)];
         let mut completed = Vec::new();
         while let Some(frame) = pending.pop() {
             match frame {
                 Frame::Enter(node) => match &node.kind {
+                    DockspaceNodeKind::ComposedTabs { children, .. }
+                    | DockspaceNodeKind::Split { children, .. }
+                    | DockspaceNodeKind::Grid { children, .. } => {
+                        pending.push(Frame::Finish(node, completed.len()));
+                        pending.extend(children.iter().rev().map(Frame::Enter));
+                    }
+                    DockspaceNodeKind::Pane(item) => completed.push(Self {
+                        kind: DockspaceNodeKind::Pane(*item),
+                        central: node.central,
+                        layout_title: node.layout_title.clone(),
+                    }),
                     DockspaceNodeKind::Tabs { items, selected } => completed.push(Self {
                         kind: DockspaceNodeKind::Tabs {
                             items: items.clone(),
                             selected: *selected,
                         },
                         central: node.central,
+                        layout_title: node.layout_title.clone(),
                     }),
-                    DockspaceNodeKind::Split {
-                        axis,
-                        children,
-                        weights,
-                    } => {
-                        pending.push(Frame::FinishSplit {
-                            axis: *axis,
-                            weights,
-                            child_base: completed.len(),
-                            central: node.central,
-                        });
-                        pending.extend(children.iter().rev().map(Frame::Enter));
-                    }
                 },
-                Frame::FinishSplit {
-                    axis,
-                    weights,
-                    child_base,
-                    central,
-                } => {
-                    let children = completed.split_off(child_base);
-                    completed.push(Self {
-                        kind: DockspaceNodeKind::Split {
-                            axis,
+                Frame::Finish(node, base) => {
+                    let children = completed.split_off(base);
+                    let kind = match &node.kind {
+                        DockspaceNodeKind::ComposedTabs { selected, .. } => {
+                            DockspaceNodeKind::ComposedTabs {
+                                children,
+                                selected: *selected,
+                            }
+                        }
+                        DockspaceNodeKind::Split { axis, weights, .. } => {
+                            DockspaceNodeKind::Split {
+                                axis: *axis,
+                                children,
+                                weights: weights.clone(),
+                            }
+                        }
+                        DockspaceNodeKind::Grid { shape, shares, .. } => DockspaceNodeKind::Grid {
+                            shape: *shape,
+                            shares: shares.clone(),
                             children,
-                            weights: weights.to_vec(),
                         },
-                        central,
+                        _ => unreachable!("only recursive declarations have finish frames"),
+                    };
+                    completed.push(Self {
+                        kind,
+                        central: node.central,
+                        layout_title: node.layout_title.clone(),
                     });
                 }
             }
@@ -162,13 +195,18 @@ impl Clone for DockspaceNode {
 
 impl Drop for DockspaceNode {
     fn drop(&mut self) {
-        let DockspaceNodeKind::Split { children, .. } = &mut self.kind else {
-            return;
+        let children = match &mut self.kind {
+            DockspaceNodeKind::ComposedTabs { children, .. }
+            | DockspaceNodeKind::Split { children, .. }
+            | DockspaceNodeKind::Grid { children, .. } => children,
+            _ => return,
         };
         let mut pending = std::mem::take(children);
         while let Some(mut node) = pending.pop() {
-            if let DockspaceNodeKind::Split { children, .. } = &mut node.kind {
-                // Empty each node before its destructor runs, including error cleanup.
+            if let DockspaceNodeKind::ComposedTabs { children, .. }
+            | DockspaceNodeKind::Split { children, .. }
+            | DockspaceNodeKind::Grid { children, .. } = &mut node.kind
+            {
                 pending.append(children);
             }
         }
@@ -176,7 +214,7 @@ impl Drop for DockspaceNode {
 }
 
 impl DockspaceNode {
-    fn into_parts(mut self) -> (DockspaceNodeKind, bool) {
+    fn into_parts(mut self) -> (DockspaceNodeKind, bool, Option<Arc<str>>) {
         let kind = std::mem::replace(
             &mut self.kind,
             DockspaceNodeKind::Tabs {
@@ -184,40 +222,53 @@ impl DockspaceNode {
                 selected: None,
             },
         );
-        (kind, self.central)
+        (kind, self.central, self.layout_title.take())
     }
 
-    /// Creates a tabs leaf and selects its first item, if present.
+    /// Creates real content without an implicit tabs container.
+    #[must_use]
+    pub const fn pane(item: ItemId) -> Self {
+        Self {
+            kind: DockspaceNodeKind::Pane(item),
+            central: false,
+            layout_title: None,
+        }
+    }
+
+    /// Names a structural subtree when it is presented as a layout tab.
+    /// Pane titles remain supplied by the application's content view.
+    #[must_use]
+    pub fn named(mut self, title: impl Into<Arc<str>>) -> Self {
+        if !matches!(self.kind, DockspaceNodeKind::Pane(_)) {
+            self.layout_title = Some(title.into());
+        }
+        self
+    }
+
+    /// Creates compact tabs containing real application items.
     #[must_use]
     pub fn tabs(items: impl IntoIterator<Item = ItemId>) -> Self {
         Self::tabs_inner(items, false)
     }
 
-    /// Creates the root's central docking anchor.
-    ///
-    /// This leaf may be empty and survives when the main root's last item leaves.
-    /// Space redistribution is configured independently by
-    /// [`DockspaceRootLayout::allocation`].
+    /// Creates the root's retained central tabs anchor.
     #[must_use]
     pub fn central_tabs(items: impl IntoIterator<Item = ItemId>) -> Self {
         Self::tabs_inner(items, true)
     }
 
     fn tabs_inner(items: impl IntoIterator<Item = ItemId>, central: bool) -> Self {
-        let items: Vec<ItemId> = items.into_iter().collect();
+        let items: Vec<_> = items.into_iter().collect();
         let selected = items.first().copied();
         Self {
             kind: DockspaceNodeKind::Tabs { items, selected },
             central,
+            layout_title: None,
         }
     }
 
-    /// Creates a tabs leaf with an explicit selected item.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DockspaceLayoutError::InvalidSelection`] when a populated leaf has no selection,
-    /// an empty leaf has a selection, or the selected item is absent from the leaf.
+    /// Creates compact tabs with an explicit selected item.
+    /// Returns an error when the selection does not match the roster.
     pub fn tabs_with_selection(
         items: impl IntoIterator<Item = ItemId>,
         selected: Option<ItemId>,
@@ -225,12 +276,7 @@ impl DockspaceNode {
         Self::tabs_with_selection_inner(items, selected, false)
     }
 
-    /// Creates a central tabs leaf with an explicit selected item.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DockspaceLayoutError::InvalidSelection`] when a populated leaf has no selection,
-    /// an empty leaf has a selection, or the selected item is absent from the leaf.
+    /// Creates central compact tabs with an explicit selected item.
     pub fn central_tabs_with_selection(
         items: impl IntoIterator<Item = ItemId>,
         selected: Option<ItemId>,
@@ -243,35 +289,79 @@ impl DockspaceNode {
         selected: Option<ItemId>,
         central: bool,
     ) -> Result<Self, DockspaceLayoutError> {
-        let items: Vec<ItemId> = items.into_iter().collect();
-        let selection_is_valid = match (items.is_empty(), selected) {
+        let items: Vec<_> = items.into_iter().collect();
+        if !match (items.is_empty(), selected) {
             (true, None) => true,
-            (false, Some(selected)) => items.contains(&selected),
+            (false, Some(item)) => items.contains(&item),
             _ => false,
-        };
-        if !selection_is_valid {
+        } {
             return Err(DockspaceLayoutError::InvalidSelection { selected });
         }
         Ok(Self {
             kind: DockspaceNodeKind::Tabs { items, selected },
             central,
+            layout_title: None,
         })
     }
 
-    /// Creates a weighted N-ary split.
-    ///
-    /// Each tuple contains a child and its positive relative weight. Weights are normalized before
-    /// being stored.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DockspaceLayoutError::SplitTooFewChildren`] for fewer than two children and
-    /// [`DockspaceLayoutError::InvalidSplitWeights`] when the weights cannot be normalized.
+    /// Creates tabs whose direct children may be panes or complete layouts.
+    /// Direct panes are stored inline; structural children retain their boundary.
+    #[must_use]
+    pub fn composed_tabs(children: impl IntoIterator<Item = Self>) -> Self {
+        let children: Vec<_> = children.into_iter().collect();
+        let selected = (!children.is_empty()).then_some(0);
+        Self {
+            kind: DockspaceNodeKind::ComposedTabs { children, selected },
+            central: false,
+            layout_title: None,
+        }
+    }
+
+    /// Creates composed tabs with an explicit direct-child selection index.
+    /// Returns an error for an absent or out-of-bounds selection.
+    pub fn composed_tabs_with_selection(
+        children: impl IntoIterator<Item = Self>,
+        selected: Option<usize>,
+    ) -> Result<Self, DockspaceLayoutError> {
+        let children: Vec<_> = children.into_iter().collect();
+        if !match (children.is_empty(), selected) {
+            (true, None) => true,
+            (false, Some(index)) => index < children.len(),
+            _ => false,
+        } {
+            return Err(DockspaceLayoutError::InvalidChildSelection { selected });
+        }
+        Ok(Self {
+            kind: DockspaceNodeKind::ComposedTabs { children, selected },
+            central: false,
+            layout_title: None,
+        })
+    }
+
+    /// Creates a retained central tabs anchor with pane or layout children.
+    #[must_use]
+    pub fn central_composed_tabs(children: impl IntoIterator<Item = Self>) -> Self {
+        let mut node = Self::composed_tabs(children);
+        node.central = true;
+        node
+    }
+
+    /// Creates a central composed anchor with an explicit direct-child index.
+    pub fn central_composed_tabs_with_selection(
+        children: impl IntoIterator<Item = Self>,
+        selected: Option<usize>,
+    ) -> Result<Self, DockspaceLayoutError> {
+        let mut node = Self::composed_tabs_with_selection(children, selected)?;
+        node.central = true;
+        Ok(node)
+    }
+
+    /// Creates a weighted N-ary split and normalizes positive relative weights.
     pub fn split(
         axis: DockspaceAxis,
         children: impl IntoIterator<Item = (Self, f64)>,
     ) -> Result<Self, DockspaceLayoutError> {
-        let (children, weights): (Vec<Self>, Vec<f64>) = children.into_iter().unzip();
+        let (children, weights): (Vec<_>, Vec<_>) = children.into_iter().unzip();
         if children.len() < 2 {
             return Err(DockspaceLayoutError::SplitTooFewChildren {
                 children: children.len(),
@@ -286,20 +376,63 @@ impl DockspaceNode {
                 weights,
             },
             central: false,
+            layout_title: None,
         })
     }
 
     /// Creates an equal-share N-ary split.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DockspaceLayoutError::SplitTooFewChildren`] when fewer than two children are
-    /// supplied.
     pub fn equal_split(
         axis: DockspaceAxis,
         children: impl IntoIterator<Item = Self>,
     ) -> Result<Self, DockspaceLayoutError> {
         Self::split(axis, children.into_iter().map(|child| (child, 1.0)))
+    }
+
+    /// Creates a row-major grid with equal shared tracks for its resolved dimensions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DockspaceLayoutError::InvalidGrid`] for an empty roster, overflowing
+    /// fixed capacity, excess children, or a fixed track without a durable child slot.
+    pub fn grid(
+        shape: DockspaceGridShape,
+        children: impl IntoIterator<Item = Self>,
+    ) -> Result<Self, DockspaceLayoutError> {
+        let children: Vec<_> = children.into_iter().collect();
+        shape.validate_children(children.len())?;
+        Ok(Self {
+            kind: DockspaceNodeKind::Grid {
+                shape,
+                children,
+                shares: None,
+            },
+            central: false,
+            layout_title: None,
+        })
+    }
+
+    /// Creates a row-major grid carrying both independently normalized track axes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DockspaceLayoutError::InvalidGrid`] when the roster or share counts
+    /// disagree with fixed dimensions, or the stored Auto dimensions cannot hold the roster.
+    pub fn grid_with_shares(
+        shape: DockspaceGridShape,
+        children: impl IntoIterator<Item = Self>,
+        shares: DockspaceGridShares,
+    ) -> Result<Self, DockspaceLayoutError> {
+        let children: Vec<_> = children.into_iter().collect();
+        shares.validate_for(shape, children.len())?;
+        Ok(Self {
+            kind: DockspaceNodeKind::Grid {
+                shape,
+                children,
+                shares: Some(shares),
+            },
+            central: false,
+            layout_title: None,
+        })
     }
 }
 
@@ -491,8 +624,11 @@ impl DockspaceLayout {
 }
 
 /// Failure to compile a product layout declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Error)]
 pub enum DockspaceLayoutError {
+    /// The declared grid roster, dimensions, or shared tracks are invalid.
+    #[error(transparent)]
+    InvalidGrid(#[from] DockspaceGridError),
     /// A logical surface identity was declared more than once.
     #[error("surface {surface} is declared more than once")]
     DuplicateSurface {
@@ -511,7 +647,7 @@ pub enum DockspaceLayoutError {
         /// Repeated stable contained-floating identity.
         floating: FloatingPresentationId,
     },
-    /// One item appears in more than one tabs leaf.
+    /// One real item is owned by more than one layout location.
     #[error("item {item} is declared more than once")]
     DuplicateItem {
         /// Repeated stable item identity.
@@ -529,11 +665,17 @@ pub enum DockspaceLayoutError {
         /// Unknown hidden identity.
         item: ItemId,
     },
-    /// A tabs leaf has no valid selected item.
+    /// A compact Tabs declaration has no valid selected item.
     #[error("tabs selection {selected:?} is not valid for its item roster")]
     InvalidSelection {
         /// Rejected selected item.
         selected: Option<ItemId>,
+    },
+    /// A composed tabs selection does not identify a direct child.
+    #[error("composed tabs child selection {selected:?} is invalid")]
+    InvalidChildSelection {
+        /// Rejected direct-child index.
+        selected: Option<usize>,
     },
     /// An N-ary split has fewer than two children.
     #[error("a split requires at least two children, got {children}")]
@@ -544,14 +686,14 @@ pub enum DockspaceLayoutError {
     /// Split weights are non-finite, non-positive, or cannot be normalized.
     #[error("split weights must be finite, positive, and normalizable")]
     InvalidSplitWeights,
-    /// More than one tabs leaf was marked as the root's central region.
-    #[error("root {root} declares more than one central tabs leaf")]
+    /// More than one Tabs container was marked as the root's central region.
+    #[error("root {root} declares more than one central Tabs anchor")]
     MultipleCentralRegions {
         /// Root containing the conflicting declarations.
         root: RootId,
     },
     /// Central-first redistribution was requested without a central tabs anchor.
-    #[error("root {root} prefers central allocation but has no central tabs leaf")]
+    #[error("root {root} prefers central allocation but has no central Tabs anchor")]
     CentralAllocationWithoutAnchor {
         /// Root with an incomplete allocation declaration.
         root: RootId,
@@ -655,22 +797,54 @@ impl LayoutCompiler {
         central: &mut Option<NodeId>,
     ) -> Result<NodeId, DockspaceLayoutError> {
         enum Frame {
-            Enter(DockspaceNode),
+            Enter {
+                node: DockspaceNode,
+                inline: bool,
+            },
+            FinishTabs {
+                selected: Option<usize>,
+                base: usize,
+                central: bool,
+                title: Option<Arc<str>>,
+            },
             FinishSplit {
                 axis: DockspaceAxis,
                 weights: Vec<SplitWeight>,
-                child_base: usize,
+                base: usize,
                 central: bool,
+                title: Option<Arc<str>>,
+            },
+            FinishGrid {
+                shape: DockspaceGridShape,
+                shares: Option<DockspaceGridShares>,
+                base: usize,
+                title: Option<Arc<str>>,
             },
         }
-
-        let mut pending = vec![Frame::Enter(node)];
+        enum Child {
+            Inline(ItemId),
+            Layout(NodeId),
+        }
+        let mut pending = vec![Frame::Enter {
+            node,
+            inline: false,
+        }];
         let mut completed = Vec::new();
         while let Some(frame) = pending.pop() {
-            let (compiled, is_central) = match frame {
-                Frame::Enter(node) => {
-                    let (kind, is_central) = node.into_parts();
+            let (mut value, is_central, title) = match frame {
+                Frame::Enter { node, inline } => {
+                    let (kind, is_central, title) = node.into_parts();
                     match kind {
+                        DockspaceNodeKind::Pane(item) => {
+                            if !self.items.insert(item) {
+                                return Err(DockspaceLayoutError::DuplicateItem { item });
+                            }
+                            if inline {
+                                completed.push(Child::Inline(item));
+                                continue;
+                            }
+                            (Node::pane(item), false, None)
+                        }
                         DockspaceNodeKind::Tabs { items, selected } => {
                             for item in &items {
                                 if !self.items.insert(*item) {
@@ -680,10 +854,25 @@ impl LayoutCompiler {
                                 }
                             }
                             (
-                                self.builder
-                                    .insert_node(Node::tabs_with_selection(items, selected)),
+                                Node::tabs_with_selection(items, selected),
                                 is_central,
+                                title,
                             )
+                        }
+                        DockspaceNodeKind::ComposedTabs { children, selected } => {
+                            pending.push(Frame::FinishTabs {
+                                selected,
+                                base: completed.len(),
+                                central: is_central,
+                                title,
+                            });
+                            pending.extend(
+                                children
+                                    .into_iter()
+                                    .rev()
+                                    .map(|node| Frame::Enter { node, inline: true }),
+                            );
+                            continue;
                         }
                         DockspaceNodeKind::Split {
                             axis,
@@ -693,37 +882,114 @@ impl LayoutCompiler {
                             pending.push(Frame::FinishSplit {
                                 axis,
                                 weights,
-                                child_base: completed.len(),
+                                base: completed.len(),
                                 central: is_central,
+                                title,
                             });
-                            pending.extend(children.into_iter().rev().map(Frame::Enter));
+                            pending.extend(children.into_iter().rev().map(|node| Frame::Enter {
+                                node,
+                                inline: false,
+                            }));
+                            continue;
+                        }
+                        DockspaceNodeKind::Grid {
+                            shape,
+                            children,
+                            shares,
+                        } => {
+                            pending.push(Frame::FinishGrid {
+                                shape,
+                                shares,
+                                base: completed.len(),
+                                title,
+                            });
+                            pending.extend(children.into_iter().rev().map(|node| Frame::Enter {
+                                node,
+                                inline: false,
+                            }));
                             continue;
                         }
                     }
                 }
+                Frame::FinishTabs {
+                    selected,
+                    base,
+                    central,
+                    title,
+                } => {
+                    let items: Vec<_> = completed
+                        .split_off(base)
+                        .into_iter()
+                        .map(|child| match child {
+                            Child::Inline(item) => TabKey::for_item(item),
+                            Child::Layout(node) => TabKey::for_layout(node),
+                        })
+                        .collect();
+                    let selected = selected.and_then(|index| items.get(index).copied());
+                    (Node::tabs_from_keys(items, selected), central, title)
+                }
                 Frame::FinishSplit {
                     axis,
                     weights,
-                    child_base,
+                    base,
                     central,
+                    title,
                 } => {
-                    let children = completed.split_off(child_base);
+                    let children = completed
+                        .split_off(base)
+                        .into_iter()
+                        .map(|child| match child {
+                            Child::Layout(node) => node,
+                            Child::Inline(_) => unreachable!("split children are allocated"),
+                        })
+                        .collect();
                     (
-                        self.builder.insert_node(Node::Split {
+                        Node::Split {
                             axis: axis.into(),
                             children,
                             weights,
-                        }),
+                            layout_title: None,
+                        },
                         central,
+                        title,
+                    )
+                }
+                Frame::FinishGrid {
+                    shape,
+                    shares,
+                    base,
+                    title,
+                } => {
+                    let children = completed
+                        .split_off(base)
+                        .into_iter()
+                        .map(|child| match child {
+                            Child::Layout(node) => node,
+                            Child::Inline(_) => unreachable!("grid children are allocated"),
+                        })
+                        .collect();
+                    (
+                        Node::Grid {
+                            shape,
+                            children,
+                            shares,
+                            layout_title: None,
+                        },
+                        false,
+                        title,
                     )
                 }
             };
-
+            value.set_layout_title(title);
+            let compiled = self.builder.insert_node(value);
             if is_central && central.replace(compiled).is_some() {
                 return Err(DockspaceLayoutError::MultipleCentralRegions { root });
             }
-            completed.push(compiled);
+            completed.push(Child::Layout(compiled));
         }
-        completed.pop().ok_or(DockspaceLayoutError::InvalidTopology)
+        match completed.pop() {
+            Some(Child::Layout(node)) => Ok(node),
+            _ => Err(DockspaceLayoutError::InvalidTopology),
+        }
     }
 }

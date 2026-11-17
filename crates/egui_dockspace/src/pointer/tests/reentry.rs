@@ -50,7 +50,7 @@ fn float_and_redock(context: &Context, dockspace: &mut Dockspace) {
 }
 
 fn redock(context: &Context, dockspace: &mut Dockspace, floating: &FullOutput) {
-    let source = semantic_point(floating, Role::TitleBar, "First");
+    let source = semantic_point(floating, Role::TitleBar, "Tabs");
     frame(
         context,
         dockspace,
@@ -82,16 +82,24 @@ fn redock(context: &Context, dockspace: &mut Dockspace, floating: &FullOutput) {
     );
     assert!(!dockspace.has_active_gesture());
     assert!(dockspace.view().item(FIRST).unwrap().contained().is_none());
+    let view = dockspace.view();
+    let source = view.item(FIRST).unwrap().tabs().unwrap();
+    let destination = view.item(SECOND).unwrap().tabs().unwrap();
+    assert_ne!(source.key(), destination.key());
+    assert_eq!(source.items().collect::<Vec<_>>(), [FIRST]);
     assert_eq!(
-        dockspace
-            .view()
-            .item(FIRST)
-            .unwrap()
-            .tabs()
-            .items()
-            .collect::<Vec<_>>(),
-        &[SECOND, FIRST]
+        destination.tabs().first().and_then(|tab| tab.item()),
+        Some(SECOND)
     );
+    let layout = *destination
+        .tabs()
+        .get(1)
+        .expect("a whole-root center drop retains its complete layout as one tab");
+    let Some(crate::DockspaceTabView::Layout(layout_view)) = destination.child(layout) else {
+        panic!("the moved floating root remains a layout tab");
+    };
+    assert_eq!(layout_view.tabs().unwrap().key(), source.key());
+    assert_eq!(destination.selected(), Some(layout));
 }
 
 #[test]

@@ -4,6 +4,7 @@
 
 
 - [Host integration](#engine-host-integration)
+- [Composable layouts](#composable-layouts)
 - [Logical surfaces](#incremental-logical-surfaces) and [nested splits](#nested-split-resizing)
 - [Pane visibility](#pane-visibility)
 - [Pane sizing](#pane-sizing)
@@ -27,7 +28,8 @@ The application interface is deliberately item- and surface-centric. Internal
 node identities, raw reducer inputs, provider bookkeeping, and backend state
 machines remain private. Renderer hosts use the typed `runtime` facade and its
 opaque output handles; the raw engine and protocol modules are not a supported
-integration surface.
+integration surface. Structural queries expose opaque session-local `NodeKey`
+values for exact container targeting; these are not persistent layout IDs.
 
 Hosts can consume the ordered surface program immediately or compile it into
 owned display lists or retained UI updates. Both use the same output identity
@@ -54,6 +56,89 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+## Composable layouts
+
+`DockspaceNode` declares one ownership tree. Every application `ItemId` occurs
+once, whether it is bare content or a direct member of a tabs container.
+
+| Node | Declaration | Behavior |
+| --- | --- | --- |
+| Pane | `pane(item)` | Real content without an implicit tab bar |
+| Tabs | `tabs(items)` or `composed_tabs(children)` | One selected direct child, which may be an item or a complete layout |
+| Split | `split(axis, weighted_children)` or `equal_split(axis, children)` | Ordered children with independent weighted extents along one axis |
+| Grid | `grid(shape, children)` or `grid_with_shares(shape, children, shares)` | Real children in row-major order sharing every row and column track |
+
+Ordinary `tabs(items)` stores its items directly. `composed_tabs` keeps structural
+children as complete layout tabs and stores direct Pane children inline. A
+singleton Tabs remains a container; bar visibility follows policy. Bare Pane
+children in a Split or Grid remain bare.
+
+```rust
+use dockspace::model::{DockspaceAxis, DockspaceLayoutError, DockspaceNode, ItemId};
+
+fn tools(a: ItemId, b: ItemId, c: ItemId, d: ItemId)
+    -> Result<DockspaceNode, DockspaceLayoutError>
+{
+    Ok(DockspaceNode::composed_tabs([
+        DockspaceNode::pane(c),
+        DockspaceNode::equal_split(
+            DockspaceAxis::Horizontal,
+            [DockspaceNode::tabs([a, b]), DockspaceNode::pane(d)],
+        )?.named("Tools"),
+    ]))
+}
+```
+
+The first direct child is selected by default. Use
+`composed_tabs_with_selection(children, Some(index))` for another initial child.
+In this example, selecting C displays C; selecting Tools displays A and D, and
+selecting B changes the inner Tabs while retaining the Tools tab and title.
+`.named(title)` labels a container when it appears as a layout tab. Missing or
+empty titles use its container kind, such as `Split` or `Grid`; labels never
+follow a selected descendant's title.
+
+`select_item_current(item)` activates every containing layout tab atomically;
+its committed result is `DockspaceActionOutcome::ItemActivated`. Hidden items reject activation.
+Use `item.is_active()` for visibility through all selected ancestors;
+`item.tabs()` and `item.tab_index()` return `None` for a bare Pane. Root and node
+`items()` visit all owned content in visual preorder, including hidden and
+inactive branches. Root and surface `active_items()` visit only active content.
+`tabs.children()` distinguishes direct `Item` and `Layout` children, while
+`tabs.selected()` returns their exact `TabKey`.
+
+The surface program provides separate Tabs chrome and real Pane content records;
+only active content receives pane callbacks. Measure `TabIntrinsic` using its
+borrowed `TabLabel`: an Item needs the application's title, while a Layout carries
+its own title. Prospective layout-label measurements do not create visible tabs.
+
+For a fixed grid, supply nonzero dimensions:
+
+```rust
+use std::num::NonZeroUsize;
+use dockspace::model::{DockspaceGridShape, DockspaceLayoutError, DockspaceNode, ItemId};
+
+fn grid(items: [ItemId; 4]) -> Result<DockspaceNode, DockspaceLayoutError> {
+    let two = NonZeroUsize::new(2).unwrap();
+    DockspaceNode::grid(
+        DockspaceGridShape::Fixed { rows: two, columns: two },
+        items.map(DockspaceNode::pane),
+    )
+}
+```
+
+Fixed grids allow unused tail cells but require every declared track to own a
+child slot. Hidden children keep their slots. `Auto` resolves dimensions from
+the owned child count and offered bounds. `DockspaceGridShares::new(rows, columns)`
+normalizes the two axes independently; stored Auto shares apply when both track
+counts match the resolved shape. A column adjustment affects every row, and a
+row adjustment affects every column. Explicit singleton Grids remain Grids.
+
+Bare Pane nodes, Grids and nested layout tabs currently settle the entire
+affected surface to its exact target geometry, including ordinary roots sharing
+that surface. Surfaces containing only flat Tabs/Split layouts retain animated
+transitions. Live dividers follow input directly in both cases; custom motion
+settings do not grant input to geometry that has not been presented.
 
 ## Engine host integration
 
@@ -102,11 +187,15 @@ actions, pending close decisions, pure rendering and unpublished frames do not
 dirty the layout. Hosts own notification delivery and storage; core retains no
 notification history.
 
-To move a complete tabs leaf, capture it once with
+To move a complete tabs container, capture it once with
 `session.capture_tabs_group(DockAnchor::Item(item))`, then use
 `prepare_dock_tabs` or `prepare_float_tabs`. The resulting action uses one atomic
-payload and retains tab order and selection. Capture freezes session and
-workspace authority; preparing or submitting later does not refresh a stale
+payload and retains tab order and selection. `DockAnchor::Node(tabs.key())`
+addresses a group containing only layout children. Center docking defaults to
+merging a group's direct children; use `prepare_dock_tabs_with_mode` with
+`TabGroupDockMode::PreserveLayout` to insert the complete container as one layout
+tab. An individual layout tab also retains its subtree when moved. Capture
+freezes session and workspace authority; preparing or submitting later does not refresh a stale
 group or look its old anchor up again. `DockspaceHostFrame` supplies the
 corresponding `dock_tabs_current` and `float_tabs_current` conveniences.
 
@@ -257,8 +346,9 @@ the measurement callback. For uniform or minimum-only hosts,
 
 The configured minimum pane size is a baseline floor, capped by an application's
 explicit maximum. A small fixed tool viewport can therefore be smaller than the
-style baseline. Only the selected visible tab determines its leaf's bounds;
-inactive visible tabs still supply full metadata for exact future moves. Hidden
+style baseline. A Tabs container composes the active child's bounds; nested
+containers contribute their own chrome once, and bare Panes add none.
+Inactive visible content still supplies full metadata for exact future moves. Hidden
 items supply fresh metadata when shown. Measurements do not become snapshot
 state; restore asks the application again.
 
@@ -287,10 +377,25 @@ solver. Relative steps,
 endpoints, junction adjustments and sequences with multiple steps retain their
 original geometry-bound displacement contract.
 
+`DockPresentationConfig::resize_propagation()` selects adjacent or outward
+capacity transfer. The default `ResizePropagation::Adjacent` stops at the
+incident pair's constraints. `Outward` consumes the nearest eligible siblings
+before farther ones. Shared Grid boundaries apply that adjustment across every
+incident cell. Pointer, keyboard, accessibility and explicit restoration use the
+same evaluator, including cap-contact changes. A junction commits both axes
+atomically, and policy must permit every affected owner.
+
+Auto Grid can reflow during an ancestor resize. A directly dragged Grid must
+retain its captured dimensions and cell map. Invalid geometry retains the last
+accepted preview; release revalidates that sample before committing it. Source,
+policy or coordinate revocation still cancels delivery. Numeric ranges are
+available only when their frozen endpoints can be proved; they do not search
+extra space made possible by a new Auto shape. Ordered keyboard sequences check
+each step and reverse from the last geometrically accepted position.
+
 An upper bound may leave background in a larger host. That background is not a
 pane hit target; root docking guides remain available. Infeasible minima retain
-the configured `Clip`/`Compress` behavior. A resize that would cross a capped
-frame's unsupported contact change is unavailable; complete frontiers and
+the configured `Clip`/`Compress` behavior. An unprovable resize is unavailable;
 unrelated axes remain usable. Native outer-window bounds remain host facts and
 may exceed a capped content viewport. See the
 [sizing decision](../../../docs/adr/0007-pane-sizing-and-explicit-preferences.md)
@@ -326,18 +431,20 @@ candidate. Read the exact committed result through
 `DockspaceLayout::with_hidden_items` sets the initial hidden roster; hidden IDs
 must already belong to the layout and cannot be repeated.
 
-Hiding retains the complete logical tree, tab order, split proportions and root
-ownership. Visible siblings occupy the released space. A splitter between them
-adjusts only their combined share; hidden children keep their own weights for
-restoration. Entirely hidden contained groups have no frame or input regions,
+Hiding retains the complete logical tree, tab order, track shares and root
+ownership. Visible Split siblings occupy the released space; Grid children keep
+their durable cells. A splitter between visible Split siblings adjusts only
+their combined share; hidden children keep their own weights for restoration.
+Entirely hidden contained groups have no frame or input regions,
 but retain their identity and bounds. An entirely hidden native surface keeps
 its window binding: pane visibility does not issue an OS hide or close request.
 
-The product view deliberately exposes both forms. `tabs.items()` and
-`tabs.selected()` describe logical membership and selection, including the valid
-logical selection retained when every member is hidden. `tabs.visible_items()`
-and `tabs.visible_selected()` describe the visible subset; the latter returns
-`None` when every member is hidden. `item.is_visible()` is independent of
+The product view exposes direct membership through `tabs.tabs()` and
+`tabs.children()`, including hidden members. `tabs.items()` visits only directly
+owned real content. `tabs.selected()` retains a valid logical child when every
+member is hidden. `tabs.visible_tabs()` and `tabs.visible_selected()` describe the
+eligible direct children; the latter returns `None` when every member is hidden.
+`tabs.visible_items()` visits eligible direct items. `item.is_visible()` is independent of
 selection, clipping, minimization and OS-window visibility. Owned logical
 checkpoints and persistent documents retain hidden items.
 
@@ -1149,8 +1256,11 @@ cleanup, input-restore and retirement work owned by the host.
 
 ## Application Close Decisions
 
-A tab close requests that item; `Close Tab Group` requests one captured tabs
-leaf; a contained-window close or `Close Layout` requests the complete root.
+A content-tab close requests its item; a layout-tab close requests every real
+descendant, including hidden and inactive content. `Close Tab Group` requests
+one captured tabs container; a contained-window close or `Close Layout` requests
+the complete root. A layout tab containing the protected central anchor cannot
+be closed. Group closure may drain its content while retaining that anchor.
 A close request never docks the root back or deletes
 content before application approval. The independent public consumer in
 `integration/dockspace-host-harness/tests/close_commands.rs` shows the complete
@@ -1189,9 +1299,10 @@ To request group closure programmatically, pass a `PreparedTabsGroup` to
 preserves the capture's original session and version. Once admitted, approval
 depends on that group's membership, owner, close permissions and workspace
 lifetime; unrelated changes or reordering within the group do not revoke it.
-`ClosePlanTarget::Tabs` identifies the group using its root and captured member
-anchor. `DockspaceCloseOutcome::TabsClosed` reports the original decision roster
-after one atomic commit, while retaining sibling groups.
+`ClosePlanTarget::Tabs { root, group }` identifies the exact group with its opaque
+`NodeKey`; `ClosePlanTarget::Tab { root, tab }` identifies one layout-tab scope.
+`DockspaceCloseOutcome::TabsClosed` or `TabClosed` reports the complete decision
+roster after one atomic commit, while retaining siblings outside that scope.
 
 Dock Back is an independent prepared root command,
 `DockspaceSession::prepare_dock_root_back`. It preserves application content and
@@ -1359,6 +1470,15 @@ atomic document. Workspace, external keys and surface preferences are ordinary
 strict objects without independent version envelopes. Nullable fields must be
 present, using `null` for intentional absence; missing, duplicate and unknown
 fields reject.
+
+Version 1 records bare Panes, typed Item/Layout tab children, container titles,
+and Grid shapes and shared tracks. Snapshot-local references connect real
+containers; they do not serialize session-local `NodeKey` values. Restore checks
+ownership, dimensions, selections and normalized shares before asking the
+application to recognize real items. This pre-release schema replaces the older
+numeric-tab form in place; regenerate those older documents before restoring
+them. There is no compatibility reader.
+
 An unsupported outer version returns `DockspacePersistenceErrorKind::UnsupportedVersion`
 before payload decoding or application-key recognition.
 Native binding, provider, window token, recovery

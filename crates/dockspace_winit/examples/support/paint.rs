@@ -8,9 +8,9 @@ use dockspace::runtime::{
     ContainedPaintRecord, DockspaceDragPreview, DockspaceDropDirection, DockspaceDropEligibility,
     DockspaceHostFrame, DockspacePreviewVisual, PanePaintRecord,
     SurfaceMeasurementAnswer as Answer, SurfaceMeasurementRequest as Request, SurfacePaintPlan,
-    SurfacePaintProgramOperation as Operation, SurfacePaintProgramRoot,
-    SurfacePaintProgramStep as Step, SurfacePaintProgramVisitError, SurfaceProgramExecutionReceipt,
-    TabListMenuPaintRecord, TabStripControlKind, TabStripMetrics,
+    SurfacePaintProgramOperation as Operation, SurfacePaintProgramStep as Step,
+    SurfacePaintProgramVisitError, SurfaceProgramExecutionReceipt, TabListMenuPaintRecord,
+    TabStripControlKind, TabStripMetrics,
 };
 use font8x8::{BASIC_FONTS, UnicodeFonts};
 
@@ -36,8 +36,8 @@ pub(super) fn measure(
         Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
             Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => Answer::Bounds(bounds),
             Request::PaneSizing { .. } => Answer::PaneSizing((minimum).into()),
-            Request::TabIntrinsic { key, .. } => {
-                Answer::TabIntrinsic(tab_title(key).len() as f64 * 8.0)
+            Request::TabIntrinsic { label, .. } => {
+                Answer::TabIntrinsic(tab_title(label).len() as f64 * 8.0)
             }
             Request::TabStrip { .. } => Answer::TabStrip(strip),
         })
@@ -45,8 +45,11 @@ pub(super) fn measure(
     Ok(())
 }
 
-fn tab_title(key: TabKey) -> &'static str {
-    key.item().map_or("Layout", title)
+fn tab_title(label: dockspace::model::TabLabel<'_>) -> &str {
+    match label {
+        dockspace::model::TabLabel::Item(item) => title(item),
+        dockspace::model::TabLabel::Layout { title } => title,
+    }
 }
 
 pub(super) fn title(item: ItemId) -> &'static str {
@@ -87,13 +90,13 @@ pub(super) fn render(
                 }
             }
             Step::Operation {
-                root,
                 operation,
                 paint: disposition,
+                ..
             } => {
                 // Source gaps retain their program identity without emitting pixels.
                 if !disposition.is_source_gap() {
-                    paint_operation(&mut paint, root, operation);
+                    paint_operation(&mut paint, operation);
                 }
             }
             Step::PopupBackdrop(backdrop) => paint.tint(rect(backdrop.bounds()), 0, 36),
@@ -135,9 +138,7 @@ pub(super) fn render(
                     );
                     paint.tint(bounds, BLUE, 44);
                     paint.border(bounds, BLUE);
-                    if let Some(item) = source.ghost_item() {
-                        paint.label(inset(bounds, 6.0), bounds, title(item), TEXT);
-                    }
+                    paint.label(inset(bounds, 6.0), bounds, tab_title(source.label()), TEXT);
                 }
             }
             // These steps delimit the output or publish non-visual input/feedback facts.
@@ -150,13 +151,10 @@ pub(super) fn render(
     })
 }
 
-fn paint_operation(
-    paint: &mut Pixels<'_>,
-    root: SurfacePaintProgramRoot<'_>,
-    operation: Operation<'_>,
-) {
+fn paint_operation(paint: &mut Pixels<'_>, operation: Operation<'_>) {
     match operation {
         Operation::Pane(pane) => paint_pane(paint, pane),
+        Operation::Tabs(tabs) => paint.fill(rect(tabs.bounds()), PANEL),
         Operation::TabBar(bar) => {
             let bounds = rect(bar.bounds());
             paint.fill(bounds, BAR);
@@ -189,7 +187,7 @@ fn paint_operation(
             paint.label(
                 rect(tab.text_layout_bounds()),
                 intersect(visible, rect(tab.text_bounds())),
-                tab_title(tab.key()),
+                tab_title(tab.label()),
                 TEXT,
             );
             if let Some(close) = tab.close_visual_bounds() {
@@ -219,8 +217,11 @@ fn paint_operation(
                 if control.enabled() { TEXT } else { MUTED },
             );
         }
-        Operation::ContainedControls(frame) => paint_contained(paint, frame, root.title_item()),
+        Operation::ContainedControls(frame) => paint_contained(paint, frame),
         Operation::PresentationMenuAnchor(anchor) => {
+            if let Some(reserved) = anchor.reserved_bounds() {
+                paint.fill(rect(reserved), BAR);
+            }
             let bounds = rect(anchor.bounds());
             paint.fill(bounds, BAR);
             paint.icon(
@@ -236,32 +237,25 @@ fn paint_operation(
 fn paint_pane(paint: &mut Pixels<'_>, pane: PanePaintRecord<'_>) {
     paint.fill(rect(pane.bounds()), PANEL);
     let bounds = intersect(rect(pane.content_bounds()), rect(pane.bounds()));
-    let color = pane.selected().map_or(MUTED, accent);
+    let item = pane.item();
+    let color = accent(item);
     paint.fill_clipped(
         [bounds[0], bounds[1], bounds[0] + 3.0, bounds[3]],
         bounds,
         color,
     );
     let content = inset(bounds, 16.0);
+    paint.text_at(content[0], content[1], bounds, title(item), color);
     paint.text_at(
         content[0],
-        content[1],
-        bounds,
-        pane.selected().map_or("Empty docking area", title),
-        color,
+        content[1] + 28.0,
+        content,
+        pane_content(item),
+        TEXT,
     );
-    if let Some(item) = pane.selected() {
-        paint.text_at(
-            content[0],
-            content[1] + 28.0,
-            content,
-            pane_content(item),
-            TEXT,
-        );
-    }
 }
 
-fn paint_contained(paint: &mut Pixels<'_>, frame: ContainedPaintRecord<'_>, item: Option<ItemId>) {
+fn paint_contained(paint: &mut Pixels<'_>, frame: ContainedPaintRecord<'_>) {
     let outer = rect(frame.outer_bounds());
     let title_bounds = rect(frame.title_bounds());
     paint.fill(
@@ -276,7 +270,7 @@ fn paint_contained(paint: &mut Pixels<'_>, frame: ContainedPaintRecord<'_>, item
     paint.label(
         inset(drag_bounds, 7.0),
         drag_bounds,
-        item.map_or("Floating panes", title),
+        tab_title(frame.label()),
         TEXT,
     );
     if let Some(close) = frame.close_bounds() {
@@ -311,7 +305,7 @@ fn paint_menu(paint: &mut Pixels<'_>, menu: TabListMenuPaintRecord<'_>) {
         paint.label(
             inset(row_bounds, 6.0),
             intersect(row_bounds, viewport),
-            tab_title(row.key()),
+            tab_title(row.label()),
             TEXT,
         );
     }
@@ -370,7 +364,7 @@ fn paint_preview(
                     paint.label(
                         rect(layout),
                         intersect(clip, rect(text_clip)),
-                        tab_title(tab.key()),
+                        tab_title(tab.label()),
                         TEXT,
                     );
                 }

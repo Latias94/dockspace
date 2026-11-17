@@ -338,7 +338,7 @@ fn selects_popup_row(lane: Lane) {
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
     drop(candidate);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
 
     let report = finish(
         session
@@ -346,7 +346,7 @@ fn selects_popup_row(lane: Lane) {
             .unwrap(),
     );
     assert!(report.workspace_changed());
-    assert!(session.view().item(THIRD).unwrap().is_selected());
+    assert!(session.view().item(THIRD).unwrap().is_active());
     assert!(!report.native_input_pending());
 }
 
@@ -380,7 +380,7 @@ fn unpresented_popup_rows_do_not_authorize_native_input() {
             )
             .workspace_changed()
         );
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
         present(&mut session, output);
     }
 }
@@ -430,7 +430,7 @@ fn popup_rows_outside_the_physical_placement_clip_do_not_authorize_native_input(
         );
         assert_eq!(queries.get(), 0);
         assert!(!report.workspace_changed());
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
     }
 }
 
@@ -456,7 +456,7 @@ fn closed_popup_artifacts_cannot_restore_native_receivers_outside_dock_bounds() 
                 .unwrap(),
         );
         assert!(!report.workspace_changed());
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
     }
 }
 
@@ -494,6 +494,6 @@ fn active_popup_blank_space_is_a_backdrop_and_closed_popup_space_has_no_native_r
         );
         assert_eq!(queries.get(), 0);
         assert!(!report.workspace_changed());
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
     }
 }

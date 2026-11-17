@@ -162,33 +162,7 @@ impl DockEngine {
         policy: &DockPolicySnapshot,
         interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<InteractionOutcome, EngineError> {
-        let current_target = match close.target {
-            ClosePlanTarget::Item { item } => ContentCloseTarget::Item(item),
-            ClosePlanTarget::Root { root } => ContentCloseTarget::Root(root),
-            ClosePlanTarget::Tabs { root, anchor } => ContentCloseTarget::Tabs { root, anchor },
-            ClosePlanTarget::Surface { .. } => {
-                return Err(EngineError::ReductionCauseInvariant {
-                    detail: "journal content click froze a surface close target",
-                });
-            }
-        };
-        let current = match self.capture_content_close(current_target, policy) {
-            Ok(current) => current,
-            Err(_) => {
-                return Ok(Self::record_terminal_click_cancellation(
-                    cause,
-                    self.version,
-                    pressed,
-                    InteractionCancelReason::SourceVanished,
-                    interaction_events,
-                ));
-            }
-        };
-        if current.target != close.target
-            || current.requirements != close.requirements
-            || current.prepared != close.prepared
-            || prepare_content_close(&self.workspace, policy, &close.prepared).is_err()
-        {
+        if prepare_content_close(&self.workspace, policy, &close.prepared).is_err() {
             return Ok(Self::record_terminal_click_cancellation(
                 cause,
                 self.version,
@@ -539,7 +513,7 @@ impl DockEngine {
         policy: &DockPolicySnapshot,
         target: CloseSceneTarget,
     ) -> Result<FrozenCloseClick, InteractionRejection> {
-        let (close_bounds, layer, content_target) = Self::scene_close_region(plan, target)?;
+        let (close_bounds, layer, content_target) = self.scene_close_region(plan, target)?;
         if !close_bounds.contains(point) {
             return Err(InteractionRejection::CloseActivationHitMismatch { target });
         }

@@ -607,7 +607,7 @@ impl SmokeApp {
                             pane.surface(),
                             pane.root(),
                             pane.contained(),
-                            pane.is_selected(),
+                            pane.is_active(),
                         )
                     })
                 });

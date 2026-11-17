@@ -14,7 +14,7 @@ fn moving_session() -> DockspaceSession {
     assert!(!moving.partition);
     assert!(session.surface_motion_is_active(SURFACE));
     present(&mut session, output);
-    assert!(!session.view().item(A).unwrap().is_selected());
+    assert!(!session.view().item(A).unwrap().is_active());
     session
 }
 
@@ -58,7 +58,7 @@ fn selecting_a_tab_mid_motion_keeps_a_complete_final_docking_partition() {
         .unwrap();
     assert!(frame.commit().unwrap().workspace_changed());
     let (_, output) = paint(&mut session, motion(1_060));
-    assert!(session.view().item(A).unwrap().is_selected());
+    assert!(session.view().item(A).unwrap().is_active());
     present(&mut session, output);
     assert_final_partition(&mut session);
 }
@@ -97,7 +97,7 @@ fn cancelling_a_tab_press_mid_motion_restores_a_complete_docking_partition() {
         .unwrap();
     frame.commit().unwrap();
     assert!(session.has_active_gesture());
-    assert!(session.view().item(A).unwrap().is_selected());
+    assert!(session.view().item(A).unwrap().is_active());
     let (_, output) = paint(&mut session, motion(1_060));
     present(&mut session, output);
 

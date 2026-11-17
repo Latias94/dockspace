@@ -1,8 +1,6 @@
 use super::*;
 use crate::ids::TabKey;
 
-const SECOND_TAB: TabKey = TabKey::for_item(SECOND);
-
 fn split_session(source_is_central: bool) -> DockspaceSession {
     let source = if source_is_central {
         DockspaceNode::central_tabs_with_selection([FIRST, SECOND], Some(SECOND))
@@ -99,13 +97,26 @@ fn docking_a_partial_group_across_surfaces_preserves_the_remaining_central_area(
         );
         let moved = session.view().item(SECOND).unwrap();
         assert_eq!(moved.surface(), ROOTLESS_SURFACE);
-        assert_eq!(moved.tabs().selected(), Some(TabKey::for_item(SECOND)));
+        assert_eq!(
+            moved
+                .tabs()
+                .expect("fixture item belongs to a tabs container")
+                .selected(),
+            Some(TabKey::for_item(SECOND))
+        );
         let expected_items = if install_main {
             vec![FIRST, SECOND]
         } else {
             vec![target_item, FIRST, SECOND]
         };
-        assert_eq!(moved.tabs().items().collect::<Vec<_>>(), expected_items);
+        assert_eq!(
+            moved
+                .tabs()
+                .expect("fixture item belongs to a tabs container")
+                .items()
+                .collect::<Vec<_>>(),
+            expected_items
+        );
         let central = session.view().root(MAIN_ROOT).unwrap().central().unwrap();
         assert_eq!(
             central.tabs().unwrap().items().collect::<Vec<_>>(),
@@ -164,6 +175,7 @@ fn preparing_or_submitting_a_group_again_never_refreshes_its_captured_version() 
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("fixture item belongs to a tabs container")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FLOATING, FIRST]
@@ -203,8 +215,8 @@ fn group_actions_keep_the_capturing_session_authority() {
             assert!(matches!(
                 report.inputs(),
                 [HostInputOutcome::ProductActionApplied(
-                    DockspaceActionOutcome::Selected {
-                        tab: SECOND_TAB,
+                    DockspaceActionOutcome::ItemActivated {
+                        item: SECOND,
                         changed: true,
                     }
                 )]
@@ -215,6 +227,7 @@ fn group_actions_keep_the_capturing_session_authority() {
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("fixture item belongs to a tabs container")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FIRST, SECOND]
@@ -252,8 +265,21 @@ fn floating_one_group_keeps_siblings_and_the_original_central_leaf() {
         let moved = session.view().item(SECOND).unwrap();
         assert_eq!(moved.root(), root);
         assert_eq!(moved.contained(), Some(floating));
-        assert_eq!(moved.tabs().items().collect::<Vec<_>>(), &[FIRST, SECOND]);
-        assert_eq!(moved.tabs().selected(), Some(TabKey::for_item(SECOND)));
+        assert_eq!(
+            moved
+                .tabs()
+                .expect("fixture item belongs to a tabs container")
+                .items()
+                .collect::<Vec<_>>(),
+            &[FIRST, SECOND]
+        );
+        assert_eq!(
+            moved
+                .tabs()
+                .expect("fixture item belongs to a tabs container")
+                .selected(),
+            Some(TabKey::for_item(SECOND))
+        );
         let central = session.view().root(MAIN_ROOT).unwrap().central().unwrap();
         assert_eq!(
             central.tabs().unwrap().items().collect::<Vec<_>>(),
@@ -269,6 +295,7 @@ fn floating_one_group_keeps_siblings_and_the_original_central_leaf() {
                 .item(FLOATING)
                 .unwrap()
                 .tabs()
+                .expect("fixture item belongs to a tabs container")
                 .items()
                 .collect::<Vec<_>>(),
             &[FLOATING, NEW_ITEM]
@@ -305,7 +332,13 @@ fn floating_and_restoring_a_complete_group_preserves_its_root_identity() {
         })] if items == &[FIRST, SECOND]
     ));
     assert_eq!(
-        session.view().item(SECOND).unwrap().tabs().selected(),
+        session
+            .view()
+            .item(SECOND)
+            .unwrap()
+            .tabs()
+            .expect("fixture item belongs to a tabs container")
+            .selected(),
         Some(TabKey::for_item(SECOND))
     );
 
@@ -338,7 +371,13 @@ fn floating_and_restoring_a_complete_group_preserves_its_root_identity() {
         MAIN_ROOT
     );
     assert_eq!(
-        session.view().item(SECOND).unwrap().tabs().selected(),
+        session
+            .view()
+            .item(SECOND)
+            .unwrap()
+            .tabs()
+            .expect("fixture item belongs to a tabs container")
+            .selected(),
         Some(TabKey::for_item(SECOND))
     );
     assert!(session.view().item(SECOND).unwrap().contained().is_none());
@@ -417,6 +456,7 @@ fn complete_native_group_actions_wait_for_the_exact_target_presentation() {
                     .item(NATIVE_SECOND)
                     .unwrap()
                     .tabs()
+                    .expect("fixture item belongs to a tabs container")
                     .items()
                     .collect::<Vec<_>>(),
                 &[NATIVE_FIRST, NATIVE_SECOND]
@@ -437,6 +477,7 @@ fn complete_native_group_actions_wait_for_the_exact_target_presentation() {
                     .item(NATIVE_SECOND)
                     .unwrap()
                     .tabs()
+                    .expect("fixture item belongs to a tabs container")
                     .items()
                     .collect::<Vec<_>>(),
                 &[TARGET_FIRST, NATIVE_FIRST, NATIVE_SECOND, TARGET_SECOND]
@@ -452,6 +493,7 @@ fn complete_native_group_actions_wait_for_the_exact_target_presentation() {
                 .item(NATIVE_SECOND)
                 .unwrap()
                 .tabs()
+                .expect("fixture item belongs to a tabs container")
                 .selected(),
             Some(TabKey::for_item(NATIVE_SECOND))
         );

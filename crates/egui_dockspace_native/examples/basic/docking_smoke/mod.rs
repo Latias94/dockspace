@@ -342,8 +342,11 @@ impl MergeSmoke {
                     (
                         id,
                         item.root(),
-                        item.tabs().items().collect::<Vec<_>>(),
-                        item.is_selected(),
+                        item.tabs()
+                            .expect("item is an inline tab")
+                            .items()
+                            .collect::<Vec<_>>(),
+                        item.is_active(),
                     )
                 })
             }),
@@ -353,7 +356,7 @@ impl MergeSmoke {
             && !app.dockspace.current_output_is_retained();
         let target_selected = app
             .dockspace
-            .with_view(|view| view.item(self.target).unwrap().is_selected());
+            .with_view(|view| view.item(self.target).unwrap().is_active());
         let target_title = app
             .dockspace
             .with_panes(|panes| panes.panes[&self.target].title);
@@ -402,11 +405,13 @@ impl MergeSmoke {
                     view.item(self.target)
                         .unwrap()
                         .tabs()
+                        .expect("item is an inline tab")
                         .items()
                         .collect::<Vec<_>>(),
                     view.item(self.source)
                         .unwrap()
                         .tabs()
+                        .expect("item is an inline tab")
                         .items()
                         .collect::<Vec<_>>(),
                 )
@@ -493,19 +498,22 @@ impl MergeSmoke {
             let target = view.item(self.target).unwrap();
             source
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .eq(self.expected_target.iter().copied())
                 && target
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .eq(self.expected_target.iter().copied())
                 && source.root() == target.root()
                 && source.contained() == target.contained()
-                && source.is_selected()
+                && source.is_active()
                 && self.remaining_source.first().is_none_or(|item| {
                     view.item(*item)
                         .unwrap()
                         .tabs()
+                        .expect("item is an inline tab")
                         .items()
                         .eq(self.remaining_source.iter().copied())
                 })

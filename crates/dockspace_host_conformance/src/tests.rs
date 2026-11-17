@@ -130,7 +130,8 @@ fn program_records<'frame>(plan: SurfacePaintPlan<'frame>) -> ProgramRecords<'fr
                 SurfacePaintProgramOperation::ContainedControls(contained) => {
                     records.contained.push(contained)
                 }
-                SurfacePaintProgramOperation::TabStripControl(_)
+                SurfacePaintProgramOperation::Tabs(_)
+                | SurfacePaintProgramOperation::TabStripControl(_)
                 | SurfacePaintProgramOperation::PresentationMenuAnchor(_) => {}
             },
             SurfacePaintProgramStep::DropGuide {
@@ -519,7 +520,7 @@ fn magnetic_semantic_layout() -> DockspaceLayout {
 }
 
 fn tabs_containing(view: DockspaceView<'_>, item: ItemId) -> Option<DockspaceTabsView<'_>> {
-    view.item(item).map(|item| item.tabs())
+    view.item(item).and_then(|item| item.tabs())
 }
 
 fn node_contains_item(node: DockspaceNodeView<'_>, item: ItemId) -> bool {
@@ -577,7 +578,7 @@ fn item_snapshot(
     Option<ItemId>,
 ) {
     let item_view = view.item(item).expect("the fixture item remains open");
-    let tabs = item_view.tabs();
+    let tabs = item_view.tabs().expect("fixture item is an inline tab");
     (
         item_view.surface(),
         item_view.root(),
@@ -655,7 +656,7 @@ impl MagneticJourneyFixture {
                     operation: SurfacePaintProgramOperation::Pane(pane),
                     ..
                 } = step
-                    && pane.selected() == Some(A)
+                    && pane.item() == A
                 {
                     target_bounds = Some(pane.content_bounds());
                 }
@@ -924,7 +925,7 @@ impl MagneticJourneyFixture {
         assert_eq!(moved.surface(), SURFACE);
         assert_eq!(moved.root(), ROOT);
         assert_eq!(moved.contained(), None);
-        assert!(moved.is_selected());
+        assert!(moved.is_active());
         let content = self
             .host
             .view()
@@ -935,13 +936,27 @@ impl MagneticJourneyFixture {
         assert_eq!(split_relation, expected_magnetic_split(basin));
         match basin {
             MagneticDockBasin::Center => {
-                assert_eq!(moved.tabs().items().collect::<Vec<_>>(), &[A, B]);
+                assert_eq!(
+                    moved
+                        .tabs()
+                        .expect("item is an inline tab")
+                        .items()
+                        .collect::<Vec<_>>(),
+                    &[A, B]
+                );
             }
             MagneticDockBasin::North
             | MagneticDockBasin::South
             | MagneticDockBasin::East
             | MagneticDockBasin::West => {
-                assert_eq!(moved.tabs().items().collect::<Vec<_>>(), &[B]);
+                assert_eq!(
+                    moved
+                        .tabs()
+                        .expect("item is an inline tab")
+                        .items()
+                        .collect::<Vec<_>>(),
+                    &[B]
+                );
                 assert_eq!(
                     tabs_containing(self.host.view(), A)
                         .unwrap()
@@ -1103,11 +1118,11 @@ fn shared_local_interaction_scenario_maps_to_core_host_semantics() {
                 assert!(matches!(
                     report.inputs(),
                     [HostInputOutcome::ProductActionApplied(
-                        DockspaceActionOutcome::Selected {
-                            tab: selected,
+                        DockspaceActionOutcome::ItemActivated {
+                            item: selected,
                             changed: true,
                         }
-                    )] if selected.item() == Some(item)
+                    )] if *selected == item
                 ));
                 assert_eq!(alias, ItemAlias::Secondary);
                 observations.push(step.expected());
@@ -1254,11 +1269,11 @@ fn private_multi_surface_fixture_commits_and_aborts_complete_rosters_atomically(
     assert!(matches!(
         committed.inputs(),
         [HostInputOutcome::ProductActionApplied(
-            DockspaceActionOutcome::Selected {
-                tab: selected_tab,
+            DockspaceActionOutcome::ItemActivated {
+                item: selected_tab,
                 changed: true,
             }
-        )] if selected_tab.item() == Some(B)));
+        )] if *selected_tab == B));
     assert_eq!(
         committed
             .surface_commits()
@@ -2768,8 +2783,8 @@ fn host_report_preserves_application_and_pointer_close_order() {
     });
     let first_plan = match application_first.inputs() {
         [
-            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                tab,
+            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::ItemActivated {
+                item: tab,
                 changed: false,
             }),
             HostInputOutcome::CloseRequested {
@@ -2777,7 +2792,7 @@ fn host_report_preserves_application_and_pointer_close_order() {
                 reused: false,
                 origin: HostCloseRequestOrigin::Interaction,
             },
-        ] if tab.item() == Some(A) => plan.clone(),
+        ] if *tab == A => plan.clone(),
         outcomes => panic!("application then pointer order changed: {outcomes:?}"),
     };
     let first_item = first_plan
@@ -2809,11 +2824,11 @@ fn host_report_preserves_application_and_pointer_close_order() {
                 reused: false,
                 origin: HostCloseRequestOrigin::Interaction,
             },
-            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                tab,
+            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::ItemActivated {
+                item: tab,
                 changed: false,
             }),
-        ] if tab.item() == Some(A) => plan.clone(),
+        ] if *tab == A => plan.clone(),
         outcomes => panic!("pointer then application order changed: {outcomes:?}"),
     };
     let second_item = second_plan
@@ -2889,10 +2904,7 @@ fn runtime_paint_plan_exposes_complete_stable_renderer_geometry() {
         assert_eq!(panes.len(), 2);
         assert!(panes.iter().all(|pane| pane.root() == ROOT));
         assert_eq!(
-            panes
-                .iter()
-                .filter_map(|pane| pane.selected())
-                .collect::<Vec<_>>(),
+            panes.iter().map(|pane| pane.item()).collect::<Vec<_>>(),
             [A, B]
         );
         first_visuals.extend(panes.iter().map(|pane| pane.visual_id()));
@@ -3314,11 +3326,11 @@ fn ogc_02_merge_and_close_select_the_visual_successor_atomically() {
     assert!(matches!(
         select.inputs(),
         [HostInputOutcome::ProductActionApplied(
-            DockspaceActionOutcome::Selected {
-                tab: selected_tab,
+            DockspaceActionOutcome::ItemActivated {
+                item: selected_tab,
                 changed: true,
             }
-        )] if selected_tab.item() == Some(B)));
+        )] if *selected_tab == B));
     assert_eq!(
         tabs_containing(host.view(), B)
             .and_then(DockspaceTabsView::selected)

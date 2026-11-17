@@ -1,6 +1,6 @@
 # Complete pane sizing and explicit preference restoration
 
-Status: implemented. Decision date: 2026-11-16.
+Status: implemented. Decision date: 2026-11-16. Extended: 2026-11-17.
 
 ## Context
 
@@ -38,8 +38,10 @@ let inspector = PaneSizing::builder()
     .build()?;
 ```
 
-These values describe the content viewport in logical points. Core adds tab
-chrome exactly once. The configured minimum pane size remains a baseline floor;
+These values describe a real item's content viewport in logical points. A bare
+Pane has no tab chrome. Each visible containing Tabs adds its own bar exactly
+once, including when its selected child is another layout. The configured
+minimum pane size remains a baseline floor;
 an explicit upper bound caps that floor. Thus an application may intentionally
 declare a fixed extent smaller than the style baseline without creating an
 inverted interval. Any preferred extent displaced by the baseline is clamped
@@ -64,12 +66,14 @@ flowchart LR
 
 ### Selection and lifetime
 
-Every visible item, including inactive tabs, supplies complete sizing metadata.
-The selected visible item supplies its leaf's current declaration. Inactive
-declarations support future layouts; they are not intersected with the selected
-item. Hidden items are omitted until shown again. Selection reuse compares the
-complete effective declaration, and retained source/target facts preserve it
-when projecting a candidate move.
+Every eligible real item, including content in inactive layout tabs, supplies
+complete sizing metadata keyed by its actual root and item identity. The selected
+direct child supplies a Tabs container's current declaration; a selected layout
+recursively composes its active descendants. Inactive declarations support future
+layouts and have no current content callback, paint record or hit region. They
+are not intersected with the selected child. Hidden items are omitted until shown
+again. Selection reuse compares the complete effective declaration, and retained
+source/target facts preserve it when projecting a candidate move.
 
 Measurements remain transient. Snapshots retain layout and user weights, not
 application sizing callbacks or stale measurements. Restoring a workspace asks
@@ -109,11 +113,19 @@ an exact presented splitter, using the existing frozen frontier, limit solver,
 prepared-action authority and atomic weight commit.
 
 For adjacent children, one preference requests that child's absolute extent.
-Two preferences divide the pair's current combined extent in their ratio. A
+Two preferences request the actual incident pair's size ratio. A
 subtree combines declared preferences with current extents for children lacking
 one; an entirely unhinted subtree stays unhinted. No hints fall back to equal
 extents. Hard bounds and the complete touching frontier constrain the result.
 Junction axes require all incident pairs to agree on one displacement.
+
+The common linear case computes the displacement directly. When a cap changes
+which track consumes motion, restoration samples the already-frozen piecewise
+geometry and finds the absolute displacement giving that real pair's ratio.
+It does not assume the two incident extents keep a constant sum after outward
+propagation reaches another track. A single-hint plateau keeps the nearest
+displacement already attaining that extent. Zero preferences use equalization;
+subnormal hints and sub-ULP displacements follow the same finite numeric rules.
 
 The egui adapter exposes configurable double-click behavior: disabled, equalize,
 or restore preferred sizes. The default restores preferences with equalization
@@ -128,28 +140,30 @@ does not provide. Native-window outer bounds remain host facts: a capped pane
 does not authorize resizing its host window. A larger contained/native frame may
 therefore contain background around its capped content.
 
-The frozen resize solver describes a linear touching frontier. An affected axis
-whose capped frame no longer reaches its moving slot edge has a contact change
-that this witness cannot represent. Such a resize is unavailable, without
-acquiring capture or publishing partial geometry. Complete frontiers and other
-axes remain eligible. Supporting motion through that contact change requires a
-separate piecewise-frontier design; silently relaxing geometry validation is
-not sufficient.
+Resize admission retains the inexpensive linear frontier when its contacts stay
+unchanged. Grid, outward propagation and cap contacts use one frozen piecewise
+track evaluator shared by pointer, keyboard, accessibility, prepared adjustments,
+range queries and explicit restoration. It reads the presented slots, frames,
+active descendants and track bounds; it does not invoke an adapter solver or
+maintain another viewport or authority registry. `Adjacent` propagation consumes
+only the nearest track's capacity; `Outward` continues through neighboring tracks
+in order. Every affected owner is authorized and a junction commits one atomic
+batch, with a Grid's two changed axes merged into one owner update.
 
-Published handle availability uses bottom-up edge contacts from that exact root
-projection. A perpendicular split may retain unused space, but overflow or
-compressed separators still invalidate the frozen witness. Handle publication
-and action preparation apply those same geometric requirements; a visible line
-must not advertise an input receiver for a resize the candidate cannot prepare.
+Published availability checks feasible active geometry bottom-up. Actual tracks
+and separators must cover the owner's frame; overflow and compressed separators
+remain unavailable. Background between a capped frame and its larger slot does
+not make an unrelated axis infeasible. A Tabs layout contributes only its active
+child to this check. Exact frozen limits and currentness are still required
+before input admission.
 
 For example, a 300-point-wide column may contain a top pane capped at 120 points
-and an uncapped bottom pane. The outside divider is unavailable because the top
-pane does not reach the moving column edge. Hiding that pane restores a complete
-frontier without changing stored weights. Resizing through the 180-point slack
-would need a breakpoint where the capped pane begins to shrink. Even a partial
-implementation that stops at that breakpoint must preserve batch/separate-action
-equivalence, preferred restoration, junction limits and pointer reversals. Keep
-the existing restriction until that complete interaction has a shared design.
+and an uncapped bottom pane. Its outside divider can move while the top frame
+remains 120 points wide; once the offered width reaches 120, that frame begins to
+shrink with the slot. Reversing to the press position samples the original frozen
+geometry rather than accumulating previous projections. A perpendicular capped
+stack may similarly leave background without disabling a complete horizontal
+frontier. Infeasible active content remains unavailable on either axis.
 
 ## Alternatives considered
 
@@ -198,7 +212,7 @@ alone is insufficient.
 | Risk | Mitigation |
 | --- | --- |
 | A maximum is lost in a fast path or future move | Carry one typed declaration in the existing exact roster and facts; compare complete measurements for reuse. |
-| Cross-axis caps invalidate a frozen edge assumption | Retain slot/frame geometry and reject only affected unsupported contact changes before capture. |
+| Cross-axis caps invalidate a linear edge assumption | Retain the fast path when valid; use the shared frozen piecewise evaluator through cap contacts and distinguish external slot slack from an incomplete actual partition. |
 | Preferences undo manual sizing or become hidden persistent state | Consume them only in an explicit prepared action; persist the resulting ordinary weights. |
 | Native actual bounds are replaced by invented cap-compliant bounds | Preserve observed host placement; constrain core presentation within it. |
 | Infinite sentinels or chrome addition overflow | Use optional maxima and validated finite composition, with numeric overflow regression. |

@@ -21,6 +21,7 @@ fn draft_split(axis: Axis, children: Vec<NodeId>, weights: Vec<f64>) -> Node {
         axis,
         children,
         weights: weights.into_iter().map(weight).collect(),
+        layout_title: None,
     }
 }
 
@@ -222,6 +223,7 @@ fn invalid_graphs_return_structured_errors_without_partial_rewrites() {
         axis: Axis::Horizontal,
         children: vec![leaf],
         weights: Vec::new(),
+        layout_title: None,
     });
     present_main(&mut mismatch_builder, RootRecord::new(split));
 

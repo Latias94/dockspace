@@ -14,8 +14,10 @@ use dockspace::model::{
 };
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
-    HostWindowToken, NativePointerRoster, NativeReceiverAnswer, SurfacePresentationResult,
-    SurfaceUnavailableReason,
+    DockspaceTouchEvent, HostInputOutcome, HostPointerInput, HostPointerRoute, HostWindowToken,
+    NativePointerRoster, NativeReceiverAnswer, PointerDeviceKind, PointerEventMetadata,
+    SurfacePointerButton, SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId,
+    SurfacePointerReceiverFacts, SurfacePresentationResult, SurfaceUnavailableReason,
 };
 use eframe::egui;
 use egui::accesskit::{Action, ActionRequest, NodeId, Role, TreeId};
@@ -264,7 +266,7 @@ fn queued_event_survives_a_real_hook_panic(tokens: &[NativeOutputToken]) {
     }));
     assert!(result.is_err());
     assert_eq!(fixture.session.version(), version);
-    assert!(fixture.session.view().item(FIRST).unwrap().is_selected());
+    assert!(fixture.session.view().item(FIRST).unwrap().is_active());
     assert!(queue.has_retained_action_work());
     let (actions, acknowledgement) = queue.peek_deferred_actions(tokens[2], SURFACE);
     assert_eq!(
@@ -277,7 +279,7 @@ fn queued_event_survives_a_real_hook_panic(tokens: &[NativeOutputToken]) {
         .1
         .drop_without_applying_deltas();
     queue.acknowledge(acknowledgement);
-    assert!(fixture.session.view().item(SECOND).unwrap().is_selected());
+    assert!(fixture.session.view().item(SECOND).unwrap().is_active());
     assert!(!queue.has_retained_action_work());
 }
 
@@ -441,6 +443,157 @@ fn publication_retires_removed_surfaces_and_preserves_unpresented_owners(
     assert!(
         queue.has_retained_action_work(),
         "first-live presentation is not owner retirement"
+    );
+}
+
+fn touch_menu_survives_aborted_outputs_and_retires_only_its_exact_publication(
+    tokens: &[NativeOutputToken],
+) {
+    let mut fixture = Fixture::new(SURFACE, layout(SURFACE, 3));
+    fixture.session.enable_host_pointer().unwrap();
+    fixture
+        .render(Vec::new(), Vec::new())
+        .1
+        .drop_without_applying_deltas();
+    let descriptor = fixture
+        .session
+        .begin_host_frame()
+        .unwrap()
+        .paint_plan(SURFACE)
+        .unwrap()
+        .unwrap()
+        .tab_receiver(SECOND)
+        .unwrap();
+    let receiver = fixture
+        .session
+        .bind_presented_receiver(&descriptor)
+        .unwrap();
+    let point = receiver.center();
+    let mut request = None;
+    for at in [0, 350, 360] {
+        let event = match at {
+            0 => SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary),
+            350 => fixture.session.pointer_continuation().unwrap().event(),
+            _ => SurfacePointerEvent::ContactEnded(SurfacePointerButton::Primary),
+        };
+        let route =
+            HostPointerRoute::new(fixture.session.presented_surface(SURFACE).unwrap(), point);
+        let input = HostPointerInput::new(
+            SurfacePointerId::new(7),
+            event,
+            route,
+            route,
+            SurfacePointerCapture::ProviderEndpoint,
+            SurfacePointerReceiverFacts::delivery(&receiver),
+        )
+        .with_metadata(PointerEventMetadata::new(
+            PointerDeviceKind::Touch,
+            Duration::from_millis(at),
+        ));
+        let mut frame = fixture.session.begin_host_frame().unwrap();
+        frame.submit_host_pointer(input).unwrap();
+        frame
+            .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+            .unwrap();
+        let report = frame.commit().unwrap();
+        for outcome in report.inputs() {
+            if let HostInputOutcome::Touch(DockspaceTouchEvent::ContextMenuRequested(menu)) =
+                outcome
+            {
+                request = Some(*menu);
+            }
+        }
+    }
+    let request = request.expect("a real armed contact produces the exact typed-tab request");
+    assert_eq!(request.tab(), Some(SECOND.into()));
+    fixture
+        .session
+        .enable_managed_native_host(NativePointerRoster::Unknown)
+        .unwrap();
+    fixture
+        .session
+        .register_native_root(SURFACE, HostWindowToken::new(1))
+        .unwrap();
+    let mut frame = fixture
+        .session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let report = frame.commit().unwrap();
+    let owner = report.native_bindings()[0];
+    let version = fixture.session.version();
+    assert_eq!(request.version(), version);
+    let mut queue = NativePassActions::default();
+    queue.capture_touch_menu(request, owner);
+    fixture
+        .context
+        .run_ui(input(Vec::new()), |ui| {
+            queue.stage_touch_menu(tokens[0], None, version, ui, Id::unique(INSTANCE), SURFACE);
+        })
+        .drop_without_applying_deltas();
+    queue.acknowledge_touch_menu(tokens[0]);
+    assert!(
+        queue.has_retained_local_actions(),
+        "a foreign output cannot acknowledge the menu"
+    );
+    fixture
+        .context
+        .run_ui(input(Vec::new()), |ui| {
+            queue.stage_touch_menu(
+                tokens[0],
+                Some(owner),
+                version,
+                ui,
+                Id::unique(INSTANCE),
+                SURFACE,
+            );
+        })
+        .drop_without_applying_deltas();
+    queue.abandon(tokens[0]).unwrap();
+    assert!(
+        queue.has_retained_local_actions(),
+        "abandonment retains the display request"
+    );
+    fixture
+        .context
+        .run_ui(input(Vec::new()), |ui| {
+            queue.stage_touch_menu(
+                tokens[1],
+                Some(owner),
+                version,
+                ui,
+                Id::unique(INSTANCE),
+                SURFACE,
+            );
+        })
+        .drop_without_applying_deltas();
+    queue.acknowledge_touch_menu(tokens[0]);
+    assert!(queue.has_retained_action_work());
+    queue.acknowledge_touch_menu(tokens[1]);
+    assert!(!queue.has_retained_action_work());
+    queue.capture_touch_menu(request, owner);
+    let action = fixture.session.prepare_select_item(SECOND);
+    let mut frame = fixture
+        .session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame.submit_prepared_action(action).unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    frame.commit().unwrap();
+    queue.retire_touch_menu(&fixture.session);
+    assert!(
+        !queue.has_retained_action_work(),
+        "a committed layout change retires the request"
+    );
+    queue.capture_touch_menu(request, owner);
+    queue.abandon_all_outputs_into(|_| panic!("no output cleanup failed"));
+    assert!(
+        !queue.has_retained_action_work(),
+        "a display intent cannot prevent native teardown"
     );
 }
 
@@ -610,6 +763,9 @@ impl eframe::App for Driver {
             independent_tokens_and_origins_each_reach_core(&self.tokens);
             capacity_and_conflicts_do_not_damage_accepted_events(&self.tokens);
             publication_retires_removed_surfaces_and_preserves_unpresented_owners(&self.tokens);
+            touch_menu_survives_aborted_outputs_and_retires_only_its_exact_publication(
+                &self.tokens,
+            );
             actual_repeat_preserves_scrollbar_response_identity(token);
             exact_surface_roster_survives_discard_and_abandon(&self.tokens);
             self.completed.store(true, Ordering::SeqCst);

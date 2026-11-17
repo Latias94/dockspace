@@ -1175,6 +1175,7 @@ impl DockEngine {
                     | InputOutcome::InteractionProcessed { .. }
                     | InputOutcome::WorkspaceValidated { .. }
                     | InputOutcome::PlatformProviderRejected { .. }
+                    | InputOutcome::GroupDockModeUpdated { .. }
                     | InputOutcome::DockingEnabledUpdated { .. }
                     | InputOutcome::StaleRejected { .. } => &[],
                 }
@@ -1501,10 +1502,45 @@ impl DockEngine {
                 events,
                 interaction_events,
             ),
+            EngineInput::DockTab {
+                expected,
+                tab,
+                placement,
+            } => self.reduce_product_action(
+                input.sequence,
+                cause,
+                focus_causal,
+                *expected,
+                ProductAction::DockTab {
+                    tab: tab.clone(),
+                    placement: *placement,
+                },
+                tick_start.policy,
+                events,
+                interaction_events,
+            ),
+            EngineInput::FloatTab {
+                expected,
+                tab,
+                surface,
+            } => self.reduce_product_action(
+                input.sequence,
+                cause,
+                focus_causal,
+                *expected,
+                ProductAction::FloatTab {
+                    tab: tab.clone(),
+                    surface: *surface,
+                },
+                tick_start.policy,
+                events,
+                interaction_events,
+            ),
             EngineInput::DockTabs {
                 expected,
                 group,
                 placement,
+                mode,
             } => self.reduce_product_action(
                 input.sequence,
                 cause,
@@ -1513,6 +1549,7 @@ impl DockEngine {
                 ProductAction::DockTabs {
                     group: group.clone(),
                     placement: *placement,
+                    mode: *mode,
                 },
                 tick_start.policy,
                 events,
@@ -1632,7 +1669,7 @@ impl DockEngine {
                 .reduce_content_close_request(
                     input.sequence,
                     *expected,
-                    *target,
+                    target.clone(),
                     tick_start.policy,
                 ),
             EngineInput::RequestSceneClose {
@@ -1881,6 +1918,28 @@ impl DockEngine {
                 *provider,
                 *pointer,
                 *enabled,
+                interaction_events,
+            ),
+            EngineInput::UpdatePointerGroupDockMode {
+                provider,
+                pointer,
+                mode,
+            } => self.reduce_pointer_group_dock_mode(
+                cause,
+                *provider,
+                *pointer,
+                *mode,
+                interaction_events,
+            ),
+            EngineInput::UpdateNativeGroupDockMode {
+                provider,
+                binding,
+                mode,
+            } => self.reduce_native_group_dock_mode(
+                cause,
+                *provider,
+                *binding,
+                *mode,
                 interaction_events,
             ),
             EngineInput::UpdateNativeDockingEnabled {

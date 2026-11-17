@@ -47,6 +47,16 @@ fn workbench_frame_at(
         &mut restore,
     )
     .unwrap();
+    if let Some(response) = &response {
+        for feedback in response.manipulation_feedback() {
+            if matches!(
+                feedback.status(),
+                egui_dockspace::DockspaceManipulationStatus::Rejected(_)
+            ) {
+                eprintln!("workbench input rejected at {time}: {feedback:?}");
+            }
+        }
+    }
     let (mut output, receipt) = output.into_parts();
     output.textures_delta.clear();
     receipt.report(SurfacePresentationResult::Presented);
@@ -216,6 +226,7 @@ fn an_animated_editor_tab_can_start_another_docking_gesture() {
                 .item(EDITOR)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[target, EDITOR],
@@ -303,10 +314,26 @@ fn inspector_docks_through_stationary_guides_and_its_tab_can_float_again() {
         let inspector = dock.view().item(INSPECTOR).unwrap();
         assert_eq!(inspector.root(), MAIN_ROOT);
         assert!(inspector.contained().is_none());
+        let source_tabs = inspector
+            .tabs()
+            .expect("Inspector keeps its original inline owner");
+        let destination_tabs = dock.view().item(OUTLINE).unwrap().tabs().unwrap();
+        assert_eq!(source_tabs.items().collect::<Vec<_>>(), [INSPECTOR]);
         assert_eq!(
-            inspector.tabs().items().collect::<Vec<_>>(),
-            &[OUTLINE, INSPECTOR]
+            destination_tabs.tabs().first().and_then(|tab| tab.item()),
+            Some(OUTLINE)
         );
+        let layout = *destination_tabs
+            .tabs()
+            .get(1)
+            .expect("the complete root becomes one layout tab");
+        let Some(egui_dockspace::DockspaceTabView::Layout(layout_view)) =
+            destination_tabs.child(layout)
+        else {
+            panic!("the Inspector root retains its independent layout scope");
+        };
+        assert_eq!(layout_view.tabs().unwrap().key(), source_tabs.key());
+        assert_eq!(destination_tabs.selected(), Some(layout));
 
         let source = semantic_rect(&docked, Role::Tab, "Inspector").center();
         let pointer = {
@@ -340,6 +367,10 @@ fn inspector_docks_through_stationary_guides_and_its_tab_can_float_again() {
             &mut panes,
             vec![Event::PointerMoved(source + egui::vec2(16.0, 8.0))],
         );
+        assert!(
+            dock.has_active_gesture(),
+            "the redocked Inspector header must acquire its real drag: custom_tabs={custom_tabs}, force_float={force_float}, animation_time={animation_time}, source={source:?}"
+        );
         for _ in 0..2 {
             let _ = workbench_frame(
                 &context,
@@ -355,7 +386,11 @@ fn inspector_docks_through_stationary_guides_and_its_tab_can_float_again() {
             vec![Event::PointerMoved(pointer), drag_button(pointer, false)],
         );
         let inspector = dock.view().item(INSPECTOR).unwrap();
-        assert!(inspector.contained().is_some());
+        assert!(
+            inspector.contained().is_some(),
+            "the redocked Inspector must float again: custom_tabs={custom_tabs}, force_float={force_float}, animation_time={animation_time}, source={source:?}, target={pointer:?}, active_gesture={}",
+            dock.has_active_gesture(),
+        );
         assert_ne!(inspector.root(), MAIN_ROOT);
         assert_eq!(dock.view().item(OUTLINE).unwrap().root(), MAIN_ROOT);
         assert_eq!(dock.view().surface(SURFACE).unwrap().contained_count(), 1);

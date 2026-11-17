@@ -119,7 +119,7 @@ impl egui::plugin::Plugin for OutputHook {
                     .view()
                     .item(FIRST)
                     .unwrap()
-                    .is_selected()
+                    .is_active()
             );
             assert!(state.owned_update.is_some());
             probe.hooks += 1;
@@ -209,7 +209,7 @@ impl NativeOutputPassFinalizer for Finalizer {
                         .view()
                         .item(if probe.style_change { FIRST } else { SECOND })
                         .unwrap()
-                        .is_selected()
+                        .is_active()
                 );
                 assert!(
                     state
@@ -499,7 +499,7 @@ impl eframe::App for DriverApp {
                     .view()
                     .item(FIRST)
                     .unwrap()
-                    .is_selected()
+                    .is_active()
             );
             assert_eq!(
                 state.service_native_events(ui.ctx()).unwrap(),

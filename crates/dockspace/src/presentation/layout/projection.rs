@@ -7,6 +7,7 @@ use std::slice;
 use std::sync::Arc;
 
 use super::{Axis, Constraints, LogicalRect, NodeId, RootNodeKind, RootStructure};
+use crate::ids::ItemId;
 
 /// Complete geometry and composed constraints for one reachable node.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -30,14 +31,45 @@ pub struct NodeResult {
 /// workspace arena's slot count. Lookup compares the complete generational ID.
 #[derive(Clone)]
 pub struct NodeMap<T> {
-    topology: Arc<RootStructure>,
-    values: Vec<T>,
+    pub(super) topology: Arc<RootStructure>,
+    pub(super) values: Vec<T>,
 }
 
 impl<T> NodeMap<T> {
     pub(super) fn from_values(topology: Arc<RootStructure>, values: Vec<T>) -> Self {
         debug_assert_eq!(values.len(), topology.nodes.len());
         Self { topology, values }
+    }
+
+    pub(crate) fn try_map_values<U, E>(
+        &self,
+        mut map: impl FnMut(NodeId, &T) -> Result<U, E>,
+    ) -> Result<NodeMap<U>, E> {
+        let values = self
+            .topology
+            .nodes
+            .iter()
+            .zip(&self.values)
+            .map(|(node, value)| map(node.id, value))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(NodeMap::from_values(Arc::clone(&self.topology), values))
+    }
+
+    pub(crate) fn topology_has_composition(&self) -> bool {
+        self.topology.has_composition()
+    }
+
+    pub(crate) fn shares_structure(&self, topology: &Arc<RootStructure>) -> bool {
+        Arc::ptr_eq(&self.topology, topology)
+    }
+
+    /// Returns the real content identity frozen in a bare Pane node.
+    pub(crate) fn pane_item(&self, node: &NodeId) -> Option<ItemId> {
+        let row = self.topology.row(node)?;
+        match &self.topology.nodes[row].kind {
+            RootNodeKind::Pane { item } => Some(*item),
+            _ => None,
+        }
     }
 
     /// Borrows a measured row from this projection's owned buffer.
@@ -401,4 +433,14 @@ pub struct LayoutProjection {
     pub nodes: NodeMap<NodeResult>,
     /// Complete split-specific geometry and allocation outcomes.
     pub splits: SplitMap,
+    /// Shared rows and columns for actual Grid owners.
+    pub grids: super::GridMap,
+    pub(super) auto_reflow: Option<Arc<super::FrozenRootLayout>>,
+}
+
+impl LayoutProjection {
+    /// Borrows the exact numeric compiler inputs retained only for Auto roots.
+    pub(crate) fn auto_reflow(&self) -> Option<&Arc<super::FrozenRootLayout>> {
+        self.auto_reflow.as_ref()
+    }
 }

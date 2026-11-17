@@ -41,7 +41,7 @@ impl DropSourceSuppression {
             return Self::from_complete_root(workspace, root).unwrap_or_default();
         }
         let (root, node) = match payload {
-            MovePayload::Item(source) => (source.root(), source.tabs()),
+            MovePayload::Item(source) => (source.root(), source.owner_node()),
             MovePayload::Tabs(source) | MovePayload::Subtree(source) => {
                 (source.root(), source.node())
             }

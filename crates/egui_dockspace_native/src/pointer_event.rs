@@ -67,6 +67,10 @@ impl NativePointerTranslator {
         self.observed_modifiers = Some((binding, modifiers));
     }
 
+    pub(crate) const fn observed_modifiers(&self) -> Option<(NativeWindowBinding, ModifiersState)> {
+        self.observed_modifiers
+    }
+
     /// Charges completed callback work to the fixture's existing nanosecond clock.
     /// Clock reads remain pure, and cloned retry candidates share the same source.
     #[cfg(test)]
@@ -149,8 +153,10 @@ impl NativePointerTranslator {
             if let Some(binding) = record.binding() {
                 self.observe_modifiers(binding.window(), modifiers);
             }
-            metadata =
-                metadata.with_docking_enabled(config.docking_enabled(egui_modifiers(modifiers)));
+            let modifiers = egui_modifiers(modifiers);
+            metadata = metadata
+                .with_docking_enabled(config.docking_enabled(modifiers))
+                .with_group_dock_mode(config.tab_group_dock_mode(modifiers));
         } else if starts_primary_press {
             // This is an initial gesture policy, not reconstructed event facts.
             // Unknown moves and releases retain core intent.
@@ -165,6 +171,10 @@ impl NativePointerTranslator {
             // Core already enables docking for a new gesture without a directive.
             if !config.docking_enabled(egui_modifiers(observed)) {
                 metadata = metadata.with_docking_enabled(false);
+            }
+            let mode = config.tab_group_dock_mode(egui_modifiers(observed));
+            if mode == dockspace::model::TabGroupDockMode::PreserveLayout {
+                metadata = metadata.with_group_dock_mode(mode);
             }
         }
         match translation {

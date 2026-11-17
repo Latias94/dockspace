@@ -642,7 +642,7 @@ fn publish_resize_scene(
         .plan()
         .splitter_records()
         .iter()
-        .find(|record| record.id().split == split)
+        .find(|record| record.id().node() == split)
         .expect("splitter is painted");
     let press = LogicalPoint::new(
         record.draw_bounds().x() + record.draw_bounds().width() * 0.5,

@@ -136,8 +136,12 @@ impl Expected {
             assert_eq!(location.root(), ROOT);
             assert_eq!(location.surface(), SURFACE);
             assert_eq!(location.is_hidden(), hidden);
-            assert_eq!(location.is_selected(), selected);
-            let members = location.tabs().items().collect::<Vec<_>>();
+            assert_eq!(location.is_active(), selected);
+            let members = location
+                .tabs()
+                .expect("fixture item belongs to a tabs container")
+                .items()
+                .collect::<Vec<_>>();
             assert_eq!(
                 members,
                 if item == SECOND {
@@ -152,12 +156,9 @@ impl Expected {
             assert_eq!(panes.len(), 2);
             let first = panes
                 .iter()
-                .find(|pane| pane.selected() == Some(self.selected))
+                .find(|pane| pane.item() == self.selected)
                 .unwrap();
-            let second = panes
-                .iter()
-                .find(|pane| pane.selected() == Some(SECOND))
-                .unwrap();
+            let second = panes.iter().find(|pane| pane.item() == SECOND).unwrap();
             assert_close(first.bounds().x(), 0.0);
             assert_close(first.content_bounds().width(), self.first_width());
             assert_close(second.bounds().x(), self.first_width() + 1.0);
@@ -294,7 +295,7 @@ fn journey(actions: &[Action]) {
 }
 
 #[test]
-fn hiding_and_remeasuring_a_capped_descendant_restores_only_valid_contacts() {
+fn hiding_and_remeasuring_a_capped_descendant_preserves_piecewise_contacts() {
     let column = DockspaceNode::equal_split(
         DockspaceAxis::Vertical,
         [DockspaceNode::tabs([FIRST]), DockspaceNode::tabs([THIRD])],
@@ -331,7 +332,7 @@ fn hiding_and_remeasuring_a_capped_descendant_restores_only_valid_contacts() {
             assert_eq!(plan.receiver_for_splitter(splitter).is_some(), operable);
         });
     };
-    assert_outer(&mut session, 300.0, false);
+    assert_outer(&mut session, 300.0, true);
     let weights = all_split_weights(&session);
     let mut hide = session.begin_host_frame().unwrap();
     hide.set_item_visibility_current(FIRST, false).unwrap();
@@ -346,7 +347,7 @@ fn hiding_and_remeasuring_a_capped_descendant_restores_only_valid_contacts() {
     );
     assert_outer(&mut session, 200.0, true);
 
-    for (maximum, operable) in [(400.0, true), (120.0, false), (400.0, true)] {
+    for maximum in [400.0, 120.0, 400.0] {
         hints[0].1 = width_sizing(Some(100.0), Some(maximum));
         let weights = all_split_weights(&session);
         let mut show = session.begin_host_frame().unwrap();
@@ -354,12 +355,9 @@ fn hiding_and_remeasuring_a_capped_descendant_restores_only_valid_contacts() {
         measure(&mut show, &hints);
         show.commit().unwrap();
         assert_eq!(all_split_weights(&session), weights);
-        assert_outer(&mut session, 200.0, operable);
+        assert_outer(&mut session, 200.0, true);
         inspect_surface(&mut session, |plan| {
-            let first = plan
-                .panes()
-                .find(|pane| pane.selected() == Some(FIRST))
-                .unwrap();
+            let first = plan.panes().find(|pane| pane.item() == FIRST).unwrap();
             assert_close(first.content_bounds().width(), 200.0_f64.min(maximum));
         });
     }

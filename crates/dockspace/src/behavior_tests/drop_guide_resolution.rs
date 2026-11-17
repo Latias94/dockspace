@@ -3,10 +3,13 @@ use super::support;
 use dockspace::engine::DockEngine;
 use dockspace::geometry::{LogicalPoint, LogicalRect};
 use dockspace::graph::command::{Edge, MovePayload};
+use dockspace::graph::transaction::WorkspaceTransaction;
 use dockspace::graph::{
     Axis, ContainedFloating, Node, RootRecord, SurfacePresentation, Workspace, WorkspaceBuilder,
 };
-use dockspace::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, WorkspaceEpoch};
+use dockspace::ids::{
+    FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey, WorkspaceEpoch,
+};
 use dockspace::interaction::targeting::guide::{
     DropGuideClusterRecord, DropGuideScope, DropGuideSlot, DropGuideTargetRecord,
 };
@@ -679,7 +682,7 @@ fn adjacent_guide_hit_regions_are_half_open_at_the_shared_edge() {
 }
 
 #[test]
-fn payload_specific_prevalidation_marks_center_without_hiding_other_guides() {
+fn split_subtree_center_is_eligible_and_preserves_its_actual_layout_boundary() {
     let fixture = fixture();
     let scene = painted_scene_set(&fixture);
     let plan = target_plan(&scene);
@@ -706,10 +709,7 @@ fn payload_specific_prevalidation_marks_center_without_hiding_other_guides() {
         .find(|target| target.slot() == DropGuideSlot::Center)
         .expect("inner cluster has center");
 
-    assert!(matches!(
-        center.eligibility(),
-        DropGuideEligibility::Rejected(DropRejectionReason::Prevalidation(_))
-    ));
+    assert!(center.eligibility().is_eligible());
     assert!(
         cluster
             .targets()
@@ -717,6 +717,57 @@ fn payload_specific_prevalidation_marks_center_without_hiding_other_guides() {
             .filter(|target| target.slot() != DropGuideSlot::Center)
             .all(|target| target.eligibility().is_eligible())
     );
+
+    let resolved = query(
+        &fixture,
+        &scene,
+        &DockPolicy::default(),
+        subtree_payload(&fixture),
+        guide_point(
+            plan,
+            TARGET_ROOT,
+            DropGuideScope::Inner(fixture.target_tabs),
+            DropGuideSlot::Center,
+        ),
+    );
+    let DropResolution::Resolved(resolved) = resolved.resolution() else {
+        panic!("the eligible subtree center must resolve: {resolved:?}");
+    };
+    assert!(matches!(
+        resolved.target_id(),
+        DropTargetId::Center { root: TARGET_ROOT, tabs, .. } if tabs == fixture.target_tabs
+    ));
+    let mut candidate = fixture.workspace.clone();
+    WorkspaceTransaction::from_commands([resolved.command().clone()])
+        .apply(
+            &mut candidate,
+            &DockPolicy::default().snapshot(Default::default()),
+        )
+        .unwrap();
+    let layout_tab = TabKey::for_layout(fixture.source_root_node);
+    let Node::Tabs {
+        items, selected, ..
+    } = candidate.node(fixture.target_tabs).unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(items, &[TabKey::for_item(ItemId::new(10)), layout_tab]);
+    assert_eq!(*selected, Some(layout_tab));
+    assert!(candidate.root(SOURCE_ROOT).is_none());
+    assert_eq!(
+        candidate.node_root(fixture.source_root_node),
+        Some(TARGET_ROOT)
+    );
+    assert!(matches!(
+        candidate.node(fixture.source_root_node),
+        Some(Node::Split { .. })
+    ));
+    assert_eq!(
+        candidate.collect_items_in_subtree(fixture.source_root_node),
+        [ItemId::new(1), ItemId::new(2)]
+    );
+    assert_eq!(candidate.item_multiset(), fixture.workspace.item_multiset());
+    candidate.validate().unwrap();
 }
 
 #[test]

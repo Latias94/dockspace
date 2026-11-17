@@ -163,6 +163,12 @@ impl HostFrameReport {
                         changed: *changed,
                     })
                 }
+                InputOutcome::GroupDockModeUpdated { mode, changed } => {
+                    Some(HostInputOutcome::GroupDockModeUpdated {
+                        mode: *mode,
+                        changed: *changed,
+                    })
+                }
                 InputOutcome::NativeInputDeviceRemoval => {
                     Some(HostInputOutcome::NativeInputDeviceRemoval)
                 }
@@ -205,7 +211,7 @@ impl HostFrameReport {
                 }
                 InputOutcome::ContentCloseRejected { target, reason, .. } => {
                     Some(HostInputOutcome::CloseRejected(
-                        DockspaceCloseRequestRejection::from_core(*target, reason),
+                        DockspaceCloseRequestRejection::from_core(target, reason),
                     ))
                 }
                 InputOutcome::CloseDecisionProcessed {
@@ -541,6 +547,13 @@ fn map_close_application(
         Ok(CloseCommitOutcome::TabsClosed { root, items }) => {
             Ok(DockspaceCloseOutcome::TabsClosed {
                 root: *root,
+                items: items.clone(),
+            })
+        }
+        Ok(CloseCommitOutcome::TabClosed { root, tab, items }) => {
+            Ok(DockspaceCloseOutcome::TabClosed {
+                root: *root,
+                tab: *tab,
                 items: items.clone(),
             })
         }

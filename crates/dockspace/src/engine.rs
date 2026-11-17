@@ -116,6 +116,7 @@ use self::reducer::{
     HostBackendIngressCursor, HostPointerProtocolSegment, PreparedHostPointerProtocol,
     SequencedInput,
 };
+pub(crate) use self::splitter_geometry::FrozenPiecewiseAxis;
 use self::splitter_geometry::{
     prepare_resize_axis_groups, resize_axis_group_adjustment_updates, split_resize_updates,
 };
@@ -149,7 +150,7 @@ use crate::engine::surface_recovery::{
 use crate::geometry::{LogicalPoint, LogicalRect, LogicalSize};
 use crate::graph::command::{
     CloseCommitOutcome, CommandOutcome, ContainedPosition, ContentCloseTarget, MovePayload,
-    NodeFingerprint, NodeSource, RootContent, RootPresentationTarget, SplitResize,
+    NodeFingerprint, NodeSource, RootContent, RootPresentationTarget, TrackResize,
     WorkspaceCommand,
 };
 use crate::graph::error::{CommandError, ReferenceRole, TransactionError};
@@ -199,7 +200,6 @@ use crate::input::receiver::{
 };
 use crate::interaction::targeting::resolver::{
     DropAffordance, DropResolution, DropResolutionError, DropTargeting, PreparedDropMutation,
-    resolve_presented_drop_with_targeting,
 };
 use crate::interaction::{
     ActiveContainedTransform, ActiveResize, ClickSessionId, ClickStart, ContainedDragIntent,

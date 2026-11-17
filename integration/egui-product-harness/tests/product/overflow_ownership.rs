@@ -82,7 +82,7 @@ fn check_overflow_scroll_transition(pointer: bool) {
         (settled, missing)
     })
     .unwrap();
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
     assert!(!has_control(&scrolled.output, Role::Button, "Close First"));
 
     let stale = run_frame(
@@ -92,7 +92,7 @@ fn check_overflow_scroll_transition(pointer: bool) {
         vec![accesskit_action(old_close, Action::Click)],
     );
     assert!(stale.close_requests.is_empty());
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
     let held = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert!(held.close_requests.is_empty());
     assert!(
@@ -127,7 +127,7 @@ fn check_overflow_scroll_transition(pointer: bool) {
     assert!(selected.close_requests.is_empty());
     let revealed = settle_until(8, || {
         let frame = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
-        let missing = if dockspace.view().item(SECOND).unwrap().is_selected()
+        let missing = if dockspace.view().item(SECOND).unwrap().is_active()
             && has_control(&frame.output, Role::Button, "Close Second")
             && !has_control(&frame.output, Role::Menu, "Open tabs")
         {
@@ -152,7 +152,7 @@ fn check_overflow_scroll_transition(pointer: bool) {
     })
     .unwrap();
     assert!(returned.close_requests.is_empty());
-    assert!(dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(dockspace.view().item(SECOND).unwrap().is_active());
     assert_eq!(tab_items(&dockspace), [FIRST, SECOND, THIRD, FOURTH]);
     assert_eq!(surface_ids(&dockspace), [SURFACE]);
 }

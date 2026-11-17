@@ -1,7 +1,6 @@
 //! Semantic admission of receivers from the output still visible to the host.
 
 use super::*;
-use crate::graph::SplitWeight;
 use crate::ids::NodeId;
 
 impl DockEngine {
@@ -14,41 +13,42 @@ impl DockEngine {
             })
     }
 
-    fn current_presented_split_weights(
+    pub(super) fn presented_track_weights_are_current(
         &self,
         root: RootId,
         node: NodeId,
-    ) -> Option<&[SplitWeight]> {
-        self.interaction
-            .active_resize_view()
-            .and_then(|resize| {
-                resize
-                    .updates()
-                    .iter()
-                    .find(|update| update.split().root() == root && update.split().node() == node)
-            })
-            .map(SplitResize::weights)
-            .or_else(|| match self.workspace.node(node) {
-                Some(Node::Split { weights, .. }) => Some(weights.as_slice()),
-                Some(Node::Tabs { .. }) | None => None,
-            })
-    }
-
-    fn presented_split_weights_are_current(
-        &self,
-        root: RootId,
-        node: NodeId,
-        weights: &[SplitWeight],
+        expected: &crate::graph::command::TrackWeights,
     ) -> bool {
-        self.current_presented_split_weights(root, node) == Some(weights)
+        if let Some(update) = self.interaction.active_resize_view().and_then(|resize| {
+            resize
+                .updates()
+                .iter()
+                .find(|update| update.source().root() == root && update.source().node() == node)
+        }) {
+            return update.weights() == expected;
+        }
+        match (self.workspace.node(node), expected) {
+            (
+                Some(Node::Split { weights, .. }),
+                crate::graph::command::TrackWeights::Split(expected),
+            ) => weights == expected,
+            (
+                Some(Node::Grid {
+                    shares: Some(shares),
+                    ..
+                }),
+                crate::graph::command::TrackWeights::Grid(expected),
+            ) => shares == expected,
+            _ => false,
+        }
     }
 
     pub(crate) fn presented_transient_geometry_is_current(&self, plan: &PresentationPlan) -> bool {
         self.presented_contained_geometry_is_current(plan)
             && plan.resize_projection().iter().all(|update| {
-                self.presented_split_weights_are_current(
-                    update.split().root(),
-                    update.split().node(),
+                self.presented_track_weights_are_current(
+                    update.source().root(),
+                    update.source().node(),
                     update.weights(),
                 )
             })
@@ -88,27 +88,59 @@ impl DockEngine {
                 .root_fingerprint(root)
                 .is_ok_and(|current| frozen.presentation_topology_eq(&current))
                 && frozen.0.nodes.iter().all(|node| {
-                    let crate::graph::command::FingerprintNode::Split { weight_bits, .. } =
-                        &node.node
-                    else {
-                        return true;
-                    };
                     if let Some(update) = plan.resize_projection().iter().find(|update| {
-                        update.split().root() == root && update.split().node() == node.id
+                        update.source().root() == root && update.source().node() == node.id
                     }) {
-                        return self.presented_split_weights_are_current(
+                        return self.presented_track_weights_are_current(
                             root,
                             node.id,
                             update.weights(),
                         );
                     }
-                    let expected = self.current_presented_split_weights(root, node.id);
-                    expected.is_some_and(|weights| {
-                        weights
-                            .iter()
-                            .map(|weight| weight.get().to_bits())
-                            .eq(weight_bits.iter().copied())
-                    })
+                    let active = self.interaction.active_resize_view().and_then(|resize| {
+                        resize.updates().iter().find(|update| {
+                            update.source().root() == root && update.source().node() == node.id
+                        })
+                    });
+                    match &node.node {
+                        crate::graph::command::FingerprintNode::Split { weight_bits, .. } => {
+                            let weights =
+                                active
+                                    .and_then(TrackResize::split_weights)
+                                    .or_else(|| match self.workspace.node(node.id) {
+                                        Some(Node::Split { weights, .. }) => {
+                                            Some(weights.as_slice())
+                                        }
+                                        _ => None,
+                                    });
+                            weights.is_some_and(|weights| {
+                                weights
+                                    .iter()
+                                    .map(|weight| weight.get().to_bits())
+                                    .eq(weight_bits.iter().copied())
+                            })
+                        }
+                        crate::graph::command::FingerprintNode::Grid { share_bits, .. } => {
+                            let shares = active.and_then(TrackResize::grid_shares).or_else(|| {
+                                match self.workspace.node(node.id) {
+                                    Some(Node::Grid { shares, .. }) => shares.as_ref(),
+                                    _ => None,
+                                }
+                            });
+                            match (share_bits, shares) {
+                                (None, None) => true,
+                                (Some((rows, columns)), Some(shares)) => {
+                                    shares.rows().map(f64::to_bits).eq(rows.iter().copied())
+                                        && shares
+                                            .columns()
+                                            .map(f64::to_bits)
+                                            .eq(columns.iter().copied())
+                                }
+                                _ => false,
+                            }
+                        }
+                        _ => true,
+                    }
                 })
         })
     }
@@ -155,7 +187,9 @@ impl DockEngine {
         plan: &PresentationPlan,
         region: PresentationHitRegionId,
     ) -> bool {
-        if !self.presented_layering_is_current(plan) {
+        if !self.presented_layering_is_current(plan)
+            || !plan.receiver_active_path_is_current(region.kind(), &self.workspace)
+        {
             return false;
         }
         let tab_is_current = |tab: crate::presentation::scene::TabSceneId| {
@@ -187,7 +221,8 @@ impl DockEngine {
             PresentationHitRegionKind::TabBody(tab)
             | PresentationHitRegionKind::TabClose(tab)
             | PresentationHitRegionKind::TabListMenuRow { tab, .. } => tab_is_current(tab),
-            PresentationHitRegionKind::TabGroupDrag { bar, .. }
+            PresentationHitRegionKind::TabsBackground(bar)
+            | PresentationHitRegionKind::TabGroupDrag { bar, .. }
             | PresentationHitRegionKind::TabStripScroll(bar) => bar_is_current(bar),
             PresentationHitRegionKind::PaneBody(pane) => {
                 self.presented_root_owner_is_current(plan, pane.root)
@@ -196,8 +231,13 @@ impl DockEngine {
                         .iter()
                         .find(|record| record.id() == pane)
                         .is_some_and(|record| {
-                            matches!(self.workspace.node(pane.tabs),
-                            Some(Node::Tabs { selected, .. }) if selected.and_then(TabKey::item) == plan.pane_selected(record))
+                            self.workspace.item_is_active(pane.item)
+                                && self.workspace.locate_item_by_id(pane.item).is_some_and(
+                                    |location| {
+                                        location.root == pane.root
+                                            && location.owner_node() == record.owner_node()
+                                    },
+                                )
                         })
             }
             PresentationHitRegionKind::SplitterHandle(splitter) => {
@@ -208,6 +248,10 @@ impl DockEngine {
             PresentationHitRegionKind::SplitterJunction(junction) => {
                 junction.splitters().iter().all(|splitter| {
                     plan.partition_available(splitter.root)
+                        && plan.receiver_active_path_is_current(
+                            PresentationHitRegionKind::SplitterHandle(*splitter),
+                            &self.workspace,
+                        )
                         && self.presented_root_owner_is_current(plan, splitter.root)
                         && self.presented_root_structure_is_current(plan, splitter.root)
                 })
@@ -221,29 +265,35 @@ impl DockEngine {
                         && self.presented_root_structure_is_current(plan, record.root())
                 })
             }
-            PresentationHitRegionKind::DropGuideActivation(cluster) => {
-                cluster.root().map_or_else(
-                    || self.workspace.surface(cluster.surface_id())
-                        .is_some_and(|presentation| presentation.main_root.is_none()),
-                    |root| self.presented_root_structure_is_current(plan, root),
-                )
-            }
+            PresentationHitRegionKind::DropGuideActivation(cluster) => cluster.root().map_or_else(
+                || {
+                    self.workspace
+                        .surface(cluster.surface_id())
+                        .is_some_and(|presentation| presentation.main_root.is_none())
+                },
+                |root| self.presented_root_structure_is_current(plan, root),
+            ),
             PresentationHitRegionKind::DropTarget(target) => match target {
-                crate::interaction::targeting::targets::DropTargetId::SurfaceBackground { surface } => self
+                crate::interaction::targeting::targets::DropTargetId::SurfaceBackground {
+                    surface,
+                } => self
                     .workspace
                     .surface(surface)
                     .is_some_and(|presentation| presentation.main_root.is_none()),
                 crate::interaction::targeting::targets::DropTargetId::TabGap { root, .. }
                 | crate::interaction::targeting::targets::DropTargetId::Center { root, .. }
-                | crate::interaction::targeting::targets::DropTargetId::InnerEdge { root, .. }
-                | crate::interaction::targeting::targets::DropTargetId::OuterEdge { root, .. } => {
-                    self.presented_root_structure_is_current(plan, root)
+                | crate::interaction::targeting::targets::DropTargetId::InnerEdge {
+                    root, ..
                 }
+                | crate::interaction::targeting::targets::DropTargetId::OuterEdge {
+                    root, ..
+                } => self.presented_root_structure_is_current(plan, root),
             },
             PresentationHitRegionKind::TabStripControl(TabStripControlId::RevealTabBar(bar)) => {
                 self.presented_root_owner_is_current(plan, bar.root)
                     && self.workspace.visible_tab_keys(bar.tabs).len() == 1
-                    && self.workspace.visible_tab_selection(bar.tabs) == plan.selected_in_tabs(bar.tabs)
+                    && self.workspace.visible_tab_selection(bar.tabs)
+                        == plan.selected_in_tabs(bar.tabs)
             }
             PresentationHitRegionKind::TabStripControl(control) => bar_is_current(control.bar()),
             PresentationHitRegionKind::TabListMenuScroll(_)

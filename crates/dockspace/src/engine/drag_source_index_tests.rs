@@ -141,11 +141,17 @@ fn indexed_drag_source_preparation_matches_live_payload_rejections() {
             ..item.clone()
         }),
         MovePayload::Item(crate::graph::command::ItemSource {
-            tabs: NodeId::null(),
+            place: crate::graph::workspace::ItemPlace::InlineTab {
+                tabs: NodeId::null(),
+                index: 0,
+            },
             ..item.clone()
         }),
         MovePayload::Item(crate::graph::command::ItemSource {
-            tabs: fixture.other_tabs,
+            place: crate::graph::workspace::ItemPlace::InlineTab {
+                tabs: fixture.other_tabs,
+                index: 0,
+            },
             ..item.clone()
         }),
         MovePayload::Item(crate::graph::command::ItemSource {
@@ -153,7 +159,10 @@ fn indexed_drag_source_preparation_matches_live_payload_rejections() {
             ..item.clone()
         }),
         MovePayload::Item(crate::graph::command::ItemSource {
-            tabs: fixture.split,
+            place: crate::graph::workspace::ItemPlace::InlineTab {
+                tabs: fixture.split,
+                index: 0,
+            },
             ..item
         }),
         MovePayload::Tabs(subtree),
@@ -319,7 +328,9 @@ fn published_workspace_before_revision_uses_live_drag_source_validation() {
         .capture_item_source(fixture.root, fixture.tabs, ItemId::new(2))
         .unwrap();
     crate::graph::transaction::WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source: source.as_tab_source(),
+        source: source
+            .as_tab_source()
+            .expect("fixture item is an inline tab"),
     }])
     .apply(&mut candidate, &engine.policy)
     .unwrap();

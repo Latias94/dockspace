@@ -351,8 +351,15 @@ mod x11 {
                         assert_eq!(root_tabs(view), Some([TabKey::for_item(FIRST)].as_slice()));
                         assert_eq!(second.surface(), SURFACE);
                         assert_ne!(second.root(), ROOT);
-                        assert_eq!(second.tabs().items().collect::<Vec<_>>(), &[SECOND]);
-                        assert!(second.is_selected());
+                        assert_eq!(
+                            second
+                                .tabs()
+                                .expect("item is an inline tab")
+                                .items()
+                                .collect::<Vec<_>>(),
+                            &[SECOND]
+                        );
+                        assert!(second.is_active());
                         assert_eq!(view.surfaces().count(), 1);
                         assert_eq!(view.surface(SURFACE)?.contained_count(), 1);
                         Some((floating, view.contained(floating)?.rect()))
@@ -384,7 +391,7 @@ mod x11 {
                                 second.surface() == SURFACE
                                     && second.root() == ROOT
                                     && second.contained().is_none()
-                                    && second.is_selected()
+                                    && second.is_active()
                             })
                     });
                     if self.stable(redocked && settled && painted && self.driver_done) {

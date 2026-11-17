@@ -38,6 +38,11 @@ mod region_order;
 mod touch;
 
 #[cfg(test)]
+pub(crate) fn touch_compilation_count() -> usize {
+    touch::compilation_count()
+}
+
+#[cfg(test)]
 mod row_tests;
 
 /// Stable semantic identity of one core-compiled hit region.
@@ -70,6 +75,8 @@ impl PresentationHitRegionId {
 pub enum PresentationHitRegionKind {
     /// Selected pane content acts as the fallback receiver below docking chrome.
     PaneBody(PaneSceneId),
+    /// Empty Tabs container background, independent of application content.
+    TabsBackground(TabBarSceneId),
     /// Select or begin dragging one visible tab.
     TabBody(TabSceneId),
     /// Request closing one visible tab.
@@ -212,6 +219,7 @@ pub struct PresentationHitStackKey {
     #[cfg(feature = "motion")]
     pane_rank: (bool, usize),
     precedence: PresentationHitPrecedence,
+    guide_depth: usize,
 }
 
 impl PresentationHitStackKey {
@@ -227,6 +235,7 @@ impl PresentationHitStackKey {
             #[cfg(feature = "motion")]
             pane_rank: (false, 0),
             precedence,
+            guide_depth: 0,
         }
     }
 
@@ -242,7 +251,13 @@ impl PresentationHitStackKey {
             #[cfg(feature = "motion")]
             pane_rank: (false, 0),
             precedence,
+            guide_depth: 0,
         }
+    }
+
+    const fn with_guide_depth(mut self, depth: usize) -> Self {
+        self.guide_depth = depth;
+        self
     }
 
     /// Returns the semantic plane compared before structural workspace layers.
@@ -310,6 +325,7 @@ impl DropSourceSuppression {
             }
             PresentationHitRegionKind::DropTarget(target) => self.excludes_target(target),
             PresentationHitRegionKind::PaneBody(_)
+            | PresentationHitRegionKind::TabsBackground(_)
             | PresentationHitRegionKind::TabBody(_)
             | PresentationHitRegionKind::TabClose(_)
             | PresentationHitRegionKind::TabStripControl(_)
@@ -583,7 +599,7 @@ fn emit_regions(
                 #[cfg(feature = "motion")]
                 push_ranked_operation_regions(plan, regions, surface, operation);
                 #[cfg(not(feature = "motion"))]
-                push_operation_regions(regions, surface, operation);
+                push_operation_regions(plan, regions, surface, operation);
             }
             ResolvedSurfaceProgramStep::PopupBackdrop(backdrop) => {
                 push_popup_backdrop_region(regions, surface, backdrop);
@@ -618,8 +634,9 @@ fn push_ranked_operation_regions(
     operation: ResolvedSurfaceProgramOperation<'_>,
 ) {
     let pane_rank = match operation {
-        ResolvedSurfaceProgramOperation::Pane(pane) => {
-            (false, plan.pane_rank(pane.id().root, pane.id().tabs))
+        ResolvedSurfaceProgramOperation::Pane(pane) => (false, plan.content_pane_rank(pane.id())),
+        ResolvedSurfaceProgramOperation::Tabs(tabs) => {
+            (false, plan.pane_rank(tabs.id().root, tabs.id().tabs))
         }
         ResolvedSurfaceProgramOperation::Tab(tab) => {
             (false, plan.pane_rank(tab.id().root, tab.id().tabs))
@@ -633,7 +650,8 @@ fn push_ranked_operation_regions(
         }
         ResolvedSurfaceProgramOperation::PresentationMenuAnchor(anchor) => match anchor.host() {
             PresentationMenuAnchorHost::TabBar(bar) => (false, plan.pane_rank(bar.root, bar.tabs)),
-            PresentationMenuAnchorHost::ContainedTitle(_) => {
+            PresentationMenuAnchorHost::RootControls
+            | PresentationMenuAnchorHost::ContainedTitle(_) => {
                 plan.root_control_pane_rank(anchor.root())
             }
         },
@@ -654,6 +672,7 @@ fn push_ranked_operation_regions(
         }
     };
     push_operation_regions(
+        plan,
         &mut |mut region| {
             region.stack.pane_rank = if matches!(
                 region.id().kind(),
@@ -707,11 +726,33 @@ fn compact_region_rows(
 }
 
 fn push_operation_regions(
+    plan: &PresentationPlan,
     regions: &mut impl FnMut(PresentationHitRegion),
     surface: SurfaceId,
     operation: ResolvedSurfaceProgramOperation<'_>,
 ) {
     match operation {
+        ResolvedSurfaceProgramOperation::Tabs(tabs) => {
+            if plan.selected_in_tabs(tabs.id().tabs).is_none() {
+                push_region_if_hittable(
+                    regions,
+                    PresentationHitRegion::new(
+                        PresentationHitRegionId::new(
+                            surface,
+                            PresentationHitRegionKind::TabsBackground(tabs.id()),
+                        ),
+                        HitRegion::new(tabs.content_bounds()),
+                        PresentationPointerLanes::CLICK_AND_DRAG,
+                        PresentationHitStackKey::new(
+                            PresentationPlane::Workspace,
+                            tabs.layer(),
+                            PresentationHitPrecedence::PaneBody,
+                        ),
+                        PresentationHitBehavior::FallbackBlocker,
+                    ),
+                );
+            }
+        }
         ResolvedSurfaceProgramOperation::Pane(pane) => {
             push_region_if_hittable(
                 regions,
@@ -720,7 +761,7 @@ fn push_operation_regions(
                         surface,
                         PresentationHitRegionKind::PaneBody(pane.id()),
                     ),
-                    HitRegion::new(pane.content_bounds()),
+                    HitRegion::new(pane.clip()),
                     PresentationPointerLanes::CLICK_AND_DRAG,
                     PresentationHitStackKey::new(
                         PresentationPlane::Workspace,
@@ -1096,7 +1137,8 @@ fn push_guide_regions(
                     PresentationPlane::Workspace,
                     cluster.layer(),
                     precedence,
-                ),
+                )
+                .with_guide_depth(cluster.depth()),
                 PresentationHitBehavior::ExclusiveReceiver,
             ),
         );
@@ -1510,6 +1552,10 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "hit/nested_guide_tests.rs"]
+mod nested_guide_tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(

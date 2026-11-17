@@ -25,7 +25,17 @@ impl PresentationPlan {
         {
             self.facts
                 .pane_ranks
-                .get(&PaneSceneId { root, tabs })
+                .iter()
+                .find(|(id, _)| {
+                    id.root == root
+                        && self.content.pane_records.iter().any(|pane| {
+                            pane.id() == **id
+                                && pane
+                                    .containing_tab_bar()
+                                    .is_some_and(|bar| bar.tabs == tabs)
+                        })
+                })
+                .map(|(_, rank)| rank)
                 .copied()
                 .unwrap_or(0)
         }
@@ -34,6 +44,11 @@ impl PresentationPlan {
             let _ = (root, tabs);
             0
         }
+    }
+
+    #[cfg(feature = "motion")]
+    pub(crate) fn content_pane_rank(&self, id: PaneSceneId) -> usize {
+        self.facts.pane_ranks.get(&id).copied().unwrap_or(0)
     }
 
     #[cfg(feature = "motion")]
@@ -56,15 +71,22 @@ impl PresentationPlan {
         ranks: &BTreeMap<PaneSceneId, usize>,
     ) -> Self {
         let mut sampled = self.clone();
-        let facts = sampled.facts_mut();
+        let facts = Arc::make_mut(&mut sampled.facts);
+        let content = Arc::make_mut(&mut sampled.content);
         facts.unavailable_partitions = moving_roots;
         facts.pane_ranks.clone_from(ranks);
-        facts.pane_records.clear();
+        content.pane_records.clear();
+        facts.tabs_records.clear();
+        content.active_tab_choices.clear();
         facts.tab_records.clear();
         facts.tab_bar_records.clear();
         facts.tab_strip_control_records.clear();
         facts.presentation_menu_anchor_records.retain(|anchor| {
-            matches!(anchor.host(), PresentationMenuAnchorHost::ContainedTitle(_))
+            matches!(
+                anchor.host(),
+                PresentationMenuAnchorHost::RootControls
+                    | PresentationMenuAnchorHost::ContainedTitle(_)
+            )
         });
         let unavailable_partitions = &facts.unavailable_partitions;
         facts.drop_targets.retain(|target| {
@@ -82,25 +104,25 @@ impl PresentationPlan {
         facts
             .magnetic_target_field
             .retain_roots(|root| !unavailable_partitions.contains(&root));
-        facts.surface_program = SurfaceProgram::default();
+        content.surface_program = SurfaceProgram::default();
         if let Some(background) = &facts.surface_background {
-            facts
+            content
                 .surface_program
                 .defer_surface_background(background.id());
         }
         for target in &facts.drop_targets {
-            facts.surface_program.defer_drop_target(target.id());
+            content.surface_program.defer_drop_target(target.id());
         }
         for cluster in &facts.drop_guide_clusters {
-            facts.surface_program.defer_guide(cluster);
+            content.surface_program.defer_guide(cluster);
         }
         for backdrop in &facts.tab_list_menu_backdrop_records {
-            facts
+            content
                 .surface_program
                 .defer_popup_backdrop(backdrop.session());
         }
         for menu in &facts.tab_list_menu_records {
-            facts.surface_program.defer_popup_menu(menu.session());
+            content.surface_program.defer_popup_menu(menu.session());
         }
         sampled
     }
@@ -110,8 +132,8 @@ impl PresentationPlan {
     pub(crate) fn finish_presentation_sample(&mut self) -> Result<(), SceneBuildError> {
         let surface = self.surface;
         let bounds = self.bounds();
-        let facts = self.facts_mut();
-        for pane in &facts.pane_records {
+        let content = self.content_mut();
+        for pane in &content.pane_records {
             if !contains(bounds, pane.bounds()) || !contains(pane.bounds(), pane.content_bounds()) {
                 return Err(SceneBuildError::InvalidPaneRecord {
                     surface,
@@ -119,7 +141,9 @@ impl PresentationPlan {
                 });
             }
         }
-        facts.pane_records.sort_unstable_by_key(PaneRecord::id);
+        content.pane_records.sort_unstable_by_key(PaneRecord::id);
+        let facts = self.facts_mut();
+        facts.tabs_records.sort_unstable_by_key(TabsRecord::id);
         facts
             .tab_records
             .sort_unstable_by_key(|record| *record.id());

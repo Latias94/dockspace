@@ -198,7 +198,7 @@ fn focused_group(context: &RenderContext<'_, '_, '_>, pass: FocusPass) -> Option
                 operation, paint, ..
             } if !paint.is_source_gap() => {
                 let candidate = match operation {
-                    Operation::Pane(pane) => pane.selected().and_then(|item| {
+                    Operation::Pane(pane) => {
                         let bounds = match pass {
                             FocusPass::Current => egui_rect(pane.content_bounds()),
                             FocusPass::Previous => {
@@ -216,12 +216,13 @@ fn focused_group(context: &RenderContext<'_, '_, '_>, pass: FocusPass) -> Option
                                 })
                             }
                         };
-                        (context.panes.focus_state(item, context.ui.ctx())
+                        (context.panes.focus_state(pane.item(), context.ui.ctx())
                             == PaneFocusState::Focused
                             && bounds
                                 .is_some_and(|bounds| bounds.contains_rect(widget.interact_rect)))
                         .then(|| pane.tab_bar_visual_id())
-                    }),
+                        .flatten()
+                    }
                     Operation::Tab(tab)
                         if focused
                             == super::tabs::tab_id_for_visual(

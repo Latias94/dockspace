@@ -94,23 +94,16 @@ pub(super) fn validate_tab_source(
         ReferenceRole::Source,
     )?;
     match workspace.node(source.tabs()) {
-        Some(Node::Tabs { items, .. }) if items.contains(&source.tab()) => {
-            if source.tab().is_layout() {
-                Err(CommandError::UnsupportedLayoutTab {
-                    tabs: source.tabs(),
-                    tab: source.tab(),
-                })
-            } else {
-                Ok(())
-            }
-        }
+        Some(Node::Tabs { items, .. }) if items.contains(&source.tab()) => Ok(()),
         Some(Node::Tabs { .. }) => Err(CommandError::TabNotInTabs {
             tabs: source.tabs(),
             tab: source.tab(),
         }),
-        Some(Node::Split { .. }) => Err(CommandError::NodeIsNotTabs {
-            node: source.tabs(),
-        }),
+        Some(Node::Pane { .. } | Node::Split { .. } | Node::Grid { .. }) => {
+            Err(CommandError::NodeIsNotTabs {
+                node: source.tabs(),
+            })
+        }
         None => Err(CommandError::MissingNode {
             role: ReferenceRole::Source,
             node: source.tabs(),
@@ -133,26 +126,19 @@ fn validate_item_source_with(
     references.verify_reference(
         workspace,
         source.root(),
-        source.tabs(),
+        source.owner_node(),
         source.reference(),
         ReferenceRole::Source,
     )?;
-    match workspace.storage.nodes.get(source.tabs()) {
-        Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(source.item())) => {
-            Ok(())
-        }
-        Some(Node::Tabs { .. }) => Err(CommandError::ItemNotInTabs {
-            tabs: source.tabs(),
+    let actual =
+        workspace.capture_item_source(source.root(), source.owner_node(), source.item())?;
+    if actual.place() != source.place() {
+        return Err(CommandError::ItemNotInTabs {
+            tabs: source.owner_node(),
             item: source.item(),
-        }),
-        Some(Node::Split { .. }) => Err(CommandError::NodeIsNotTabs {
-            node: source.tabs(),
-        }),
-        None => Err(CommandError::MissingNode {
-            role: ReferenceRole::Source,
-            node: source.tabs(),
-        }),
+        });
     }
+    Ok(())
 }
 
 pub(super) fn validate_node_source(
@@ -316,27 +302,17 @@ fn validate_tab_target(
             stage: "rederive frozen tabs target facts",
         });
     }
-    match workspace.storage.nodes.get(target.tabs()) {
-        Some(Node::Tabs { items, .. }) => {
-            if let Some(index) = insertion_index
-                && index > items.len()
-            {
-                return Err(CommandError::TabIndexOutOfBounds {
-                    tabs: target.tabs(),
-                    index,
-                    len: items.len(),
-                });
-            }
-            Ok(())
-        }
-        Some(Node::Split { .. }) => Err(CommandError::NodeIsNotTabs {
-            node: target.tabs(),
-        }),
-        None => Err(CommandError::MissingNode {
-            role: ReferenceRole::Target,
-            node: target.tabs(),
-        }),
+    let len = tabs_len(workspace, target.tabs())?;
+    if let Some(index) = insertion_index
+        && index > len
+    {
+        return Err(CommandError::TabIndexOutOfBounds {
+            tabs: target.tabs(),
+            index,
+            len,
+        });
     }
+    Ok(())
 }
 
 pub(super) fn validate_root_content(

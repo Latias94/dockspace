@@ -42,7 +42,8 @@ fn select_command(
         source: workspace
             .capture_item_source(RootId::new(root), tabs, ItemId::new(item))
             .expect("test item source must be capturable")
-            .as_tab_source(),
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     }
 }
 

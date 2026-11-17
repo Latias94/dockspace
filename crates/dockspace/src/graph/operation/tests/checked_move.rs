@@ -91,7 +91,9 @@ fn selection_before_move_rechecks_every_target_against_staged_state() {
         let mut fixture = fixture();
         let commands = [
             WorkspaceCommand::Select {
-                source: item_source(&fixture, 1, 1, true).as_tab_source(),
+                source: item_source(&fixture, 1, 1, true)
+                    .as_tab_source()
+                    .expect("fixture owns an inline item tab"),
             },
             WorkspaceCommand::Move {
                 payload: MovePayload::Item(item_source(&fixture, 0, 0, true)),
@@ -124,7 +126,9 @@ fn selection_before_move_rechecks_all_payload_kinds() {
         };
         let commands = [
             WorkspaceCommand::Select {
-                source: item_source(&fixture, 0, 0, true).as_tab_source(),
+                source: item_source(&fixture, 0, 0, true)
+                    .as_tab_source()
+                    .expect("fixture owns an inline item tab"),
             },
             WorkspaceCommand::Move {
                 payload,
@@ -157,7 +161,9 @@ fn current_same_root_source_does_not_accept_an_older_target_snapshot() {
     let stale_target = target(&fixture, 0, 0);
     let selection = item_source(&fixture, 0, 1, true);
     WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source: selection.as_tab_source(),
+        source: selection
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     }])
     .apply(&mut fixture.workspace, &DockPolicySnapshot::default())
     .unwrap();
@@ -422,7 +428,9 @@ fn exact_main_move_recovery_bypasses_policy_but_rechecks_its_target() {
             .capture_item_source(root(1), target_tabs, ItemId::new(6))
             .unwrap();
         WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-            source: selection.as_tab_source(),
+            source: selection
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         }])
         .apply(&mut stale, &DockPolicySnapshot::default())
         .unwrap();

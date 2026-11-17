@@ -88,7 +88,9 @@ fn split_weights(snapshot: &mut WorkspaceSnapshot) -> &mut Vec<f64> {
         .iter_mut()
         .find_map(|record| match &mut record.node {
             SnapshotNode::Split { weights, .. } => Some(weights),
-            SnapshotNode::Tabs { .. } => None,
+            SnapshotNode::Pane { .. } | SnapshotNode::Tabs { .. } | SnapshotNode::Grid { .. } => {
+                None
+            }
         })
         .expect("sample must contain a split")
 }
@@ -109,8 +111,12 @@ fn tab_state(
                 items,
                 selected,
                 mru,
+                ..
             } if items.contains(&SnapshotTabKey::Item(contains)) => Some((items, selected, mru)),
-            SnapshotNode::Tabs { .. } | SnapshotNode::Split { .. } => None,
+            SnapshotNode::Pane { .. }
+            | SnapshotNode::Tabs { .. }
+            | SnapshotNode::Split { .. }
+            | SnapshotNode::Grid { .. } => None,
         })
         .expect("sample must contain requested tabs")
 }
@@ -831,6 +837,7 @@ fn cycle_shared_node_and_orphan_corruption_reach_strict_validation() {
             items: vec![SnapshotTabKey::Item(99)],
             selected: Some(SnapshotTabKey::Item(99)),
             mru: vec![SnapshotTabKey::Item(99)],
+            layout_title: None,
         },
     });
     let SnapshotRestoreError::InvalidWorkspace(errors) = candidate_error(&orphan) else {
@@ -944,6 +951,7 @@ fn deep_chain_restore_is_iterative() {
             items: vec![SnapshotTabKey::Item(1)],
             selected: Some(SnapshotTabKey::Item(1)),
             mru: vec![SnapshotTabKey::Item(1)],
+            layout_title: None,
         },
     }];
     let mut subtree = 0;
@@ -956,6 +964,7 @@ fn deep_chain_restore_is_iterative() {
                 items: vec![SnapshotTabKey::Item(level + 2)],
                 selected: Some(SnapshotTabKey::Item(level + 2)),
                 mru: vec![SnapshotTabKey::Item(level + 2)],
+                layout_title: None,
             },
         });
         nodes.push(SnapshotNodeRecord {
@@ -968,6 +977,7 @@ fn deep_chain_restore_is_iterative() {
                 },
                 children: vec![subtree, sibling],
                 weights: vec![0.5, 0.5],
+                layout_title: None,
             },
         });
         subtree = split;

@@ -262,10 +262,14 @@ impl Semantics {
         let mut actual = workspace
             .nodes()
             .filter_map(|(node, value)| match value {
+                Node::Pane { .. } => {
+                    panic!("flat model operations must preserve explicit tabs containers")
+                }
                 Node::Tabs {
                     items,
                     selected,
                     mru,
+                    ..
                 } => Some(Group {
                     central: workspace
                         .root(ROOT)
@@ -280,6 +284,9 @@ impl Semantics {
                     mru: (mru.clone()).into_iter().filter_map(TabKey::item).collect(),
                 }),
                 Node::Split { .. } => None,
+                Node::Grid { .. } => {
+                    panic!("flat group model actions must preserve explicit tabs/split ownership")
+                }
             })
             .collect::<Vec<_>>();
         actual.sort();

@@ -199,7 +199,7 @@ proptest! {
             source: engine
                 .workspace()
                 .capture_item_source(ROOT, tabs, ItemId::new(2))
-                .expect("second item is capturable").as_tab_source(),
+                .expect("second item is capturable").as_tab_source().expect("fixture owns an inline item tab"),
         };
 
         let mut failed = host.begin(&engine);

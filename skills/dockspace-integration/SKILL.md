@@ -28,7 +28,7 @@ for navigation only when a dependency revision has not been selected.
 
 | Application need | Integration | Read next |
 | --- | --- | --- |
-| egui tabs, splits and contained floating groups in one OS window | `egui_dockspace`; use a complete-output host for drag docking | [egui](references/egui.md) |
+| egui panes, nested layout tabs, splits, grids and contained floating groups | `egui_dockspace`; use a complete-output host for drag docking | [egui](references/egui.md) |
 | A different immediate or retained UI framework | `dockspace::runtime::DockspaceSession` | [Custom host](references/custom-host.md) |
 | Shared winit input/repaint helpers or optional native window integration | `dockspace_winit` alongside the application's UI and renderer | [Custom host](references/custom-host.md), [Multiview](references/multiview.md) |
 | Native resources using a framework's own platform implementation | `dockspace::runtime::NativeWindows<K, T>` plus core native hosting | [Multiview](references/multiview.md) |
@@ -45,9 +45,14 @@ the requested backend before selecting the multiview path.
 - Use `DockPolicy` for docking and close permissions, presentation configuration
   for geometry and timing, and adapter hooks for appearance. Let core resolve
   docking targets, candidate layouts and semantic outcomes.
-- Keep operation scopes explicit: an item moves one pane, Tabs moves a group's
-  contents, and root/layout commands preserve the complete split tree. Titles,
-  grips and menus should identify the scope they actually manipulate.
+- Keep operation scopes explicit: an item moves real content, a captured
+  `PreparedTab` moves one direct item or layout tab, a Tabs merge moves direct
+  children, and root/subtree operations preserve the complete layout. Capture
+  one tab with `capture_tab(TabKey)`; a descendant's `ItemId` does not stand for
+  its enclosing layout. Titles, grips and menus should identify their scope.
+- Treat `NodeKey` as a session-local container query, and external item keys as
+  persistent application identity. Use `root.items()` for complete ownership,
+  including hidden/inactive descendants, and `active_items()` for presentation.
 - Treat accepted input, committed actions and actually presented output as
   separate stages. Follow the selected host's receipt and result APIs.
 - Keep UI callbacks synchronous. Run saving and other I/O through

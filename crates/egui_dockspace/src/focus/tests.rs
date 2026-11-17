@@ -314,6 +314,7 @@ fn hidden_logical_selection_cannot_claim_or_retain_pane_focus() {
             .item(EDITOR)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .selected()
             .and_then(|tab| tab.item()),
         Some(EDITOR)

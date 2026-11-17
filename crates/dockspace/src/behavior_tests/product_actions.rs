@@ -18,9 +18,6 @@ use crate::runtime::{
     UniformSurfaceMetrics,
 };
 
-const SECOND_TAB: TabKey = TabKey::for_item(SECOND);
-const TARGET_SECOND_TAB: TabKey = TabKey::for_item(TARGET_SECOND);
-
 mod focus;
 mod tabs_group;
 
@@ -347,8 +344,8 @@ fn product_actions_select_open_and_dock_without_runtime_node_ids() {
     assert_eq!(
         report.inputs(),
         &[HostInputOutcome::ProductActionApplied(
-            DockspaceActionOutcome::Selected {
-                tab: SECOND_TAB,
+            DockspaceActionOutcome::ItemActivated {
+                item: SECOND,
                 changed: true,
             },
         )]
@@ -490,8 +487,8 @@ fn docking_a_complete_root_preserves_group_order_and_selection() {
     assert_eq!(moved.surface(), MAIN_SURFACE);
     assert_eq!(moved.root(), MAIN_ROOT);
     assert_eq!(moved.contained(), None);
-    assert_eq!(moved.tab_index(), 3);
-    assert!(moved.is_selected());
+    assert_eq!(moved.tab_index(), Some(3));
+    assert!(moved.is_active());
     assert!(session.view().root(SOURCE_ROOT).is_none());
     assert!(session.view().surface(SOURCE_SURFACE).is_none());
 }
@@ -530,8 +527,8 @@ fn prepared_root_docking_rejects_a_newer_workspace_revision() {
     assert!(matches!(
         report.inputs(),
         [
-            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                tab: SECOND_TAB,
+            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::ItemActivated {
+                item: SECOND,
                 changed: true,
             }),
             HostInputOutcome::StaleRejected { .. },
@@ -592,8 +589,8 @@ fn prepared_move_root_to_new_window_rejects_a_newer_workspace_revision() {
     assert_eq!(
         report.inputs(),
         &[
-            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                tab: SECOND_TAB,
+            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::ItemActivated {
+                item: SECOND,
                 changed: true,
             }),
             HostInputOutcome::StaleRejected {
@@ -851,7 +848,7 @@ fn docked_contained_round_trip_preserves_items_selection_focus_and_placement_lin
         session
             .view()
             .item(SECOND)
-            .is_some_and(|item| { item.contained().is_none() && item.is_selected() })
+            .is_some_and(|item| { item.contained().is_none() && item.is_active() })
     );
     present_surfaces(&mut session, &[MAIN_SURFACE]);
     assert_pending_pane_focus(&mut session, MAIN_SURFACE, SECOND);
@@ -1181,7 +1178,7 @@ fn live_native_root_to_contained_preserves_multi_item_product_state_until_exact_
         session
             .view()
             .item(NATIVE_SECOND)
-            .is_some_and(|item| item.is_selected())
+            .is_some_and(|item| item.is_active())
     );
 
     let mut settled =
@@ -1260,7 +1257,7 @@ fn live_native_root_to_contained_preserves_multi_item_product_state_until_exact_
         session
             .view()
             .item(NATIVE_SECOND)
-            .is_some_and(|item| item.is_selected())
+            .is_some_and(|item| item.is_active())
     );
     assert!(session.view().surface(NATIVE_SOURCE_SURFACE).is_none());
     assert!(session.recognizes_native_binding(child_binding));
@@ -1401,10 +1398,14 @@ fn changed_presentation_configuration_cancels_pending_native_rehome_only_on_comm
                 assert_eq!(source.root(), NATIVE_SOURCE_ROOT);
                 assert_eq!(source.contained(), None);
                 assert_eq!(
-                    source.tabs().items().collect::<Vec<_>>(),
+                    source
+                        .tabs()
+                        .expect("fixture item belongs to a tabs container")
+                        .items()
+                        .collect::<Vec<_>>(),
                     &[NATIVE_FIRST, NATIVE_SECOND]
                 );
-                assert_eq!(source.is_selected(), item == NATIVE_SECOND);
+                assert_eq!(source.is_active(), item == NATIVE_SECOND);
             }
         } else {
             drop(frame);
@@ -1507,8 +1508,8 @@ fn live_native_root_rejects_stale_and_unknown_routes_without_starting_a_transfer
     assert!(matches!(
         stale_report.inputs(),
         [
-            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                tab: TARGET_SECOND_TAB,
+            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::ItemActivated {
+                item: TARGET_SECOND,
                 changed: true,
             }),
             HostInputOutcome::StaleRejected { .. },
@@ -1671,8 +1672,8 @@ fn prepared_product_actions_reject_a_newer_same_frame_candidate() {
     assert_eq!(
         report.inputs(),
         &[
-            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                tab: SECOND_TAB,
+            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::ItemActivated {
+                item: SECOND,
                 changed: true,
             }),
             HostInputOutcome::StaleRejected {
@@ -1705,8 +1706,8 @@ fn prepared_product_actions_are_bound_to_the_preparing_session() {
     assert_eq!(
         report.inputs(),
         &[HostInputOutcome::ProductActionApplied(
-            DockspaceActionOutcome::Selected {
-                tab: SECOND_TAB,
+            DockspaceActionOutcome::ItemActivated {
+                item: SECOND,
                 changed: true,
             },
         )]
@@ -2364,8 +2365,8 @@ fn product_close_requests_are_revision_and_session_bound() {
     assert!(matches!(
         report.inputs(),
         [
-            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                tab: SECOND_TAB,
+            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::ItemActivated {
+                item: SECOND,
                 changed: true,
             }),
             HostInputOutcome::StaleRejected {
@@ -2460,8 +2461,8 @@ fn terminal_configuration_commits_after_semantic_actions() {
     assert_eq!(
         report.inputs(),
         &[
-            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                tab: SECOND_TAB,
+            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::ItemActivated {
+                item: SECOND,
                 changed: true,
             }),
             HostInputOutcome::PolicyReplaced {

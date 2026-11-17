@@ -52,9 +52,7 @@ pub(super) fn inspect(plan: SurfacePaintPlan<'_>) -> AppResult<Snapshot> {
                     }
                 }
                 Operation::Pane(pane) => {
-                    if let Some(item) = pane.selected() {
-                        snapshot.panes.insert(item, pane.content_bounds());
-                    }
+                    snapshot.panes.insert(pane.item(), pane.content_bounds());
                 }
                 Operation::Splitter(splitter)
                     if root.contained().is_none()
@@ -185,6 +183,7 @@ impl Smoke {
                                 .item(ItemId::new(2))
                                 .ok_or("item 2 disappeared")?
                                 .tabs()
+                                .expect("item is an inline tab")
                                 .items()
                                 .collect::<Vec<_>>()
                                 == [ItemId::new(1), ItemId::new(2)],
@@ -197,6 +196,7 @@ impl Smoke {
                             .item(ItemId::new(2))
                             .ok_or("item 2 disappeared")?
                             .tabs()
+                            .expect("item is an inline tab")
                             .items()
                             .collect::<Vec<_>>()
                             == [ItemId::new(3), ItemId::new(2)],
@@ -248,7 +248,7 @@ impl Smoke {
                     session
                         .view()
                         .item(ItemId::new(2))
-                        .is_some_and(|item| item.is_selected()),
+                        .is_some_and(|item| item.is_active()),
                     "tab click did not select Outline",
                 )?;
                 let point = center(snapshot.splitter.ok_or("main splitter is absent")?)?;
@@ -459,7 +459,7 @@ mod tests {
                 session
                     .view()
                     .item(ItemId::new(1))
-                    .is_some_and(|item| item.is_selected()),
+                    .is_some_and(|item| item.is_active()),
                 "mapping gap selected the old Outline tab",
             )?;
         }
@@ -479,7 +479,7 @@ mod tests {
             session
                 .view()
                 .item(ItemId::new(2))
-                .is_some_and(|item| item.is_selected()),
+                .is_some_and(|item| item.is_active()),
             "fresh mapped click did not select Outline",
         )?;
         require(

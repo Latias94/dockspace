@@ -1,14 +1,13 @@
 //! Core-owned renderer decoration for one active drag source.
 
-use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::geometry::LogicalRect;
 use crate::graph::command::{FingerprintNode, MovePayload, NodeFingerprint, NodeSource};
-use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
+use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
 use crate::interaction::{ActiveDragView, DragPhase, DragSessionId};
 use crate::presentation::scene::{
-    ContainedLayoutOwner, PaneSceneId, PresentationPlan, SurfaceSceneSet, TabSceneId,
+    ContainedLayoutOwner, PaneSceneId, PresentationPlan, SurfaceSceneSet, TabBarSceneId, TabSceneId,
 };
 
 use super::{DockspaceVisualId, VisualIdentity};
@@ -39,7 +38,8 @@ pub struct DockspaceDragDecoration<'frame> {
     projected_root_bounds: Option<LogicalRect>,
     source_is_projected: bool,
     item: Option<ItemId>,
-    ghost_item: Option<ItemId>,
+    label: crate::graph::TabLabel<'frame>,
+    label_key: TabKey,
     source: DragDecorationSource<'frame>,
 }
 
@@ -53,7 +53,7 @@ impl fmt::Debug for DockspaceDragDecoration<'_> {
             .field("source_bounds", &self.source_bounds)
             .field("source_is_projected", &self.source_is_projected)
             .field("item", &self.item)
-            .field("ghost_item", &self.ghost_item)
+            .field("label", &self.label)
             .finish_non_exhaustive()
     }
 }
@@ -64,6 +64,7 @@ impl fmt::Debug for DockspaceDragDecoration<'_> {
 enum DragSourceVisual {
     Tab(TabSceneId),
     Pane(PaneSceneId),
+    Tabs(TabBarSceneId),
     Contained(FloatingPresentationId),
     Subtree { root: RootId, node: NodeId },
 }
@@ -71,7 +72,10 @@ enum DragSourceVisual {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum DragDecorationSource<'frame> {
     Item(TabSceneId),
-    TabGroup(PaneSceneId),
+    TabGroup {
+        bar: TabBarSceneId,
+        fingerprint: &'frame NodeFingerprint,
+    },
     Subtree {
         root: crate::ids::RootId,
         node: NodeId,
@@ -80,7 +84,7 @@ enum DragDecorationSource<'frame> {
     },
 }
 
-impl DockspaceDragDecoration<'_> {
+impl<'frame> DockspaceDragDecoration<'frame> {
     /// Returns the surface which still presents the drag source.
     #[must_use]
     pub const fn source_surface(self) -> SurfaceId {
@@ -99,6 +103,7 @@ impl DockspaceDragDecoration<'_> {
         DockspaceVisualId(match self.source_visual {
             DragSourceVisual::Tab(tab) => VisualIdentity::Tab(tab),
             DragSourceVisual::Pane(pane) => VisualIdentity::Pane(pane),
+            DragSourceVisual::Tabs(bar) => VisualIdentity::Tabs(bar),
             DragSourceVisual::Contained(floating) => VisualIdentity::Contained(floating),
             DragSourceVisual::Subtree { root, node } => VisualIdentity::DragSource { root, node },
         })
@@ -130,10 +135,16 @@ impl DockspaceDragDecoration<'_> {
         self.item
     }
 
-    /// Returns an item whose title may label a non-interactive pointer ghost.
+    /// Returns the source's own frozen label, independent of descendant selection.
     #[must_use]
-    pub const fn ghost_item(self) -> Option<ItemId> {
-        self.ghost_item
+    pub const fn label(self) -> crate::graph::TabLabel<'frame> {
+        self.label
+    }
+
+    /// Returns the exact content or layout key used for label resources.
+    #[must_use]
+    pub const fn key(self) -> TabKey {
+        self.label_key
     }
 
     /// Returns whether the active source decoration omits one opaque visual.
@@ -152,7 +163,9 @@ impl DockspaceDragDecoration<'_> {
             DragDecorationSource::Item(tab) => {
                 matches!(visual.0, VisualIdentity::Tab(candidate) if candidate == tab)
             }
-            DragDecorationSource::TabGroup(pane) => visual_belongs_to_tabs_leaf(visual, pane),
+            DragDecorationSource::TabGroup { bar, fingerprint } => {
+                visual_belongs_to_subtree(visual, bar.root, bar.tabs, fingerprint, false)
+            }
             DragDecorationSource::Subtree {
                 root,
                 node,
@@ -184,9 +197,35 @@ pub(super) fn resolve<'frame>(
     })?;
     match payload {
         MovePayload::Item(source) => {
+            let Some(tabs) = source.tabs() else {
+                let pane = plan.pane_records().iter().find(|pane| {
+                    pane.id()
+                        == PaneSceneId {
+                            root: source.root(),
+                            item: source.item(),
+                        }
+                })?;
+                return Some(DockspaceDragDecoration {
+                    source_surface,
+                    kind: DockspaceDragSourceKind::Item,
+                    source_visual: DragSourceVisual::Pane(pane.id()),
+                    source_bounds: pane.bounds(),
+                    projected_root_bounds: None,
+                    source_is_projected: false,
+                    item: Some(source.item()),
+                    label: crate::graph::TabLabel::Item(source.item()),
+                    label_key: TabKey::for_item(source.item()),
+                    source: DragDecorationSource::Subtree {
+                        root: source.root(),
+                        node: source.owner_node(),
+                        fingerprint: plan.command_basis(source.root())?,
+                        complete_root: false,
+                    },
+                });
+            };
             let bar = plan.tab_bar_records().iter().find(|record| {
                 let id = record.id();
-                id.root == source.root() && id.tabs == source.tabs()
+                id.root == source.root() && id.tabs == tabs
             })?;
             // Strip members retain exact source geometry even after scrolling clips its paint.
             let member = bar
@@ -203,12 +242,13 @@ pub(super) fn resolve<'frame>(
                 projected_root_bounds: projection,
                 source_is_projected: projection.is_some(),
                 item: Some(source.item()),
-                ghost_item: Some(source.item()),
+                label: crate::graph::TabLabel::Item(source.item()),
+                label_key: TabKey::for_item(source.item()),
                 source: DragDecorationSource::Item(tab),
             })
         }
         MovePayload::Tabs(source) => {
-            let pane = plan.pane_records().iter().find(|record| {
+            let pane = plan.tabs_records().iter().find(|record| {
                 let id = record.id();
                 id.root == source.root() && id.tabs == source.node()
             })?;
@@ -218,13 +258,17 @@ pub(super) fn resolve<'frame>(
             Some(DockspaceDragDecoration {
                 source_surface,
                 kind: DockspaceDragSourceKind::TabGroup,
-                source_visual: DragSourceVisual::Pane(pane.id()),
+                source_visual: DragSourceVisual::Tabs(pane.id()),
                 source_bounds: pane.bounds(),
                 projected_root_bounds: projection,
                 source_is_projected: projection.is_some(),
                 item: None,
-                ghost_item: plan.pane_selected(pane),
-                source: DragDecorationSource::TabGroup(pane.id()),
+                label: plan.node_label(source.root(), source.node())?,
+                label_key: TabKey::for_layout(source.node()),
+                source: DragDecorationSource::TabGroup {
+                    bar: pane.id(),
+                    fingerprint: plan.command_basis(source.root())?,
+                },
             })
         }
         MovePayload::Subtree(source) => resolve_subtree(
@@ -268,7 +312,11 @@ fn resolve_subtree<'frame>(
         fingerprint: plan.command_basis(source.root())?,
         complete_root,
     };
-    let ghost_item = subtree_ghost_item(plan, source);
+    let label = plan.node_label(source.root(), source.node())?;
+    let label_key = match label {
+        crate::graph::TabLabel::Item(item) => TabKey::for_item(item),
+        crate::graph::TabLabel::Layout { .. } => TabKey::for_layout(source.node()),
+    };
     if complete_root
         && let Some(contained) = plan
             .contained_records()
@@ -284,7 +332,8 @@ fn resolve_subtree<'frame>(
             projected_root_bounds: projection.or(pointer_projection),
             source_is_projected: projection.is_some(),
             item: None,
-            ghost_item,
+            label,
+            label_key,
             source: source_identity,
         });
     }
@@ -304,42 +353,10 @@ fn resolve_subtree<'frame>(
         projected_root_bounds: None,
         source_is_projected: false,
         item: None,
-        ghost_item,
+        label,
+        label_key,
         source: source_identity,
     })
-}
-
-fn visual_belongs_to_tabs_leaf(visual: DockspaceVisualId, pane: PaneSceneId) -> bool {
-    match visual.0 {
-        VisualIdentity::Pane(candidate) => candidate == pane,
-        VisualIdentity::Tab(candidate) => {
-            candidate.root == pane.root && candidate.tabs == pane.tabs
-        }
-        VisualIdentity::TabBar(candidate) => {
-            candidate.root == pane.root && candidate.tabs == pane.tabs
-        }
-        VisualIdentity::TabGroupDragRegion { bar, .. } => {
-            bar.root == pane.root && bar.tabs == pane.tabs
-        }
-        VisualIdentity::TabStripControl(control) => {
-            let bar = control.bar();
-            bar.root == pane.root && bar.tabs == pane.tabs
-        }
-        VisualIdentity::TabListMenu(session)
-        | VisualIdentity::TabListMenuRow { session, .. }
-        | VisualIdentity::TabListMenuBackdrop { session, .. } => {
-            let bar = session.key().bar();
-            bar.root == pane.root && bar.tabs == pane.tabs
-        }
-        VisualIdentity::PresentationMenuAnchor(_) => false,
-        VisualIdentity::DragSource { .. }
-        | VisualIdentity::Splitter(_)
-        | VisualIdentity::SplitterJunction(_)
-        | VisualIdentity::Contained(_)
-        | VisualIdentity::DropGuide(_)
-        | VisualIdentity::DropTarget(_)
-        | VisualIdentity::Receiver(_) => false,
-    }
 }
 
 fn visual_belongs_to_subtree(
@@ -352,13 +369,13 @@ fn visual_belongs_to_subtree(
     match visual.0 {
         VisualIdentity::Pane(candidate) => {
             candidate.root == root
-                && (complete_root || subtree_contains_node(fingerprint, source, candidate.tabs))
+                && (complete_root || subtree_contains_item(fingerprint, source, candidate.item))
         }
         VisualIdentity::Tab(candidate) => {
             candidate.root == root
                 && (complete_root || subtree_contains_node(fingerprint, source, candidate.tabs))
         }
-        VisualIdentity::TabBar(candidate) => {
+        VisualIdentity::Tabs(candidate) | VisualIdentity::TabBar(candidate) => {
             candidate.root == root
                 && (complete_root || subtree_contains_node(fingerprint, source, candidate.tabs))
         }
@@ -381,15 +398,14 @@ fn visual_belongs_to_subtree(
         VisualIdentity::PresentationMenuAnchor(candidate) => candidate == root && complete_root,
         VisualIdentity::Splitter(splitter) => {
             splitter.root == root
-                && (complete_root || subtree_contains_node(fingerprint, source, splitter.split))
+                && (complete_root || subtree_contains_node(fingerprint, source, splitter.node()))
         }
         VisualIdentity::SplitterJunction(junction) => {
             junction.root() == root
                 && (complete_root
-                    || junction
-                        .splitters()
-                        .into_iter()
-                        .all(|splitter| subtree_contains_node(fingerprint, source, splitter.split)))
+                    || junction.splitters().into_iter().all(|splitter| {
+                        subtree_contains_node(fingerprint, source, splitter.node())
+                    }))
         }
         VisualIdentity::DragSource {
             root: candidate,
@@ -417,72 +433,51 @@ fn subtree_contains_node(fingerprint: &NodeFingerprint, source: NodeId, target: 
         return false;
     };
     match &record.node {
-        FingerprintNode::Tabs { .. } => false,
-        FingerprintNode::Split { children, .. } => children
+        FingerprintNode::Pane { .. } => false,
+        FingerprintNode::Tabs { items, .. } => items
             .iter()
-            .copied()
+            .filter_map(|tab| tab.layout())
             .any(|child| subtree_contains_node(fingerprint, child, target)),
+        FingerprintNode::Split { children, .. } | FingerprintNode::Grid { children, .. } => {
+            children
+                .iter()
+                .copied()
+                .any(|child| subtree_contains_node(fingerprint, child, target))
+        }
     }
 }
 
-fn subtree_ghost_item(plan: &PresentationPlan, source: &NodeSource) -> Option<ItemId> {
-    let tabs = subtree_tabs(plan.command_basis(source.root())?, source.node())?;
-    plan.pane_records()
+fn subtree_contains_item(fingerprint: &NodeFingerprint, source: NodeId, item: ItemId) -> bool {
+    let Some(record) = fingerprint
+        .0
+        .nodes
         .iter()
-        .find(|record| {
-            let id = record.id();
-            id.root == source.root() && tabs.contains(&id.tabs)
-        })
-        .and_then(|record| plan.pane_selected(record))
+        .find(|record| record.id == source)
+    else {
+        return false;
+    };
+    match &record.node {
+        FingerprintNode::Pane { item: child, .. } => *child == item,
+        FingerprintNode::Tabs { items, .. } => items.iter().any(|tab| {
+            tab.item() == Some(item)
+                || tab
+                    .layout()
+                    .is_some_and(|child| subtree_contains_item(fingerprint, child, item))
+        }),
+        FingerprintNode::Split { children, .. } | FingerprintNode::Grid { children, .. } => {
+            children
+                .iter()
+                .any(|child| subtree_contains_item(fingerprint, *child, item))
+        }
+    }
 }
 
 fn subtree_bounds(plan: &PresentationPlan, source: &NodeSource) -> Option<LogicalRect> {
-    let tabs = subtree_tabs(plan.command_basis(source.root())?, source.node())?;
-    let mut panes = tabs.into_iter().map(|tabs| {
-        plan.pane_records()
-            .iter()
-            .find(|record| {
-                let id = record.id();
-                id.root == source.root() && id.tabs == tabs
-            })
-            .map(|record| record.bounds())
-    });
-    let mut bounds = panes.next()??;
-    for pane in panes {
-        bounds = union_rect(bounds, pane?)?;
-    }
-    Some(bounds)
-}
-
-fn subtree_tabs(fingerprint: &NodeFingerprint, source: NodeId) -> Option<BTreeSet<NodeId>> {
-    let mut pending = vec![source];
-    let mut visited = BTreeSet::new();
-    let mut tabs = BTreeSet::new();
-    while let Some(node) = pending.pop() {
-        if !visited.insert(node) {
-            continue;
-        }
-        let record = fingerprint
-            .0
-            .nodes
-            .iter()
-            .find(|record| record.id == node)?;
-        match &record.node {
-            FingerprintNode::Tabs { .. } => {
-                tabs.insert(node);
-            }
-            FingerprintNode::Split { children, .. } => {
-                pending.extend(children.iter().copied());
-            }
-        }
-    }
-    (!tabs.is_empty()).then_some(tabs)
-}
-
-fn union_rect(left: LogicalRect, right: LogicalRect) -> Option<LogicalRect> {
-    let min_x = left.x().min(right.x());
-    let min_y = left.y().min(right.y());
-    let max_x = left.max().x().max(right.max().x());
-    let max_y = left.max().y().max(right.max().y());
-    LogicalRect::new(min_x, min_y, max_x - min_x, max_y - min_y).ok()
+    plan.layout_facts()?
+        .root(source.root())?
+        .projection()
+        .nodes
+        .get(&source.node())
+        .filter(|node| node.visible)
+        .map(|node| node.rect)
 }

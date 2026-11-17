@@ -31,18 +31,11 @@ fn assert_items(native: &NativeCoordinator) {
                 .contained()
                 .map(|contained| contained.root().unwrap()),
         ) {
-            let mut pending = vec![root.content().unwrap()];
-            while let Some(node) = pending.pop() {
-                if let Some(tabs) = node.tabs() {
-                    for item in tabs.items() {
-                        items.push(item);
-                        let location = view.item(item).unwrap();
-                        assert_eq!(location.surface(), surface.id());
-                        assert_eq!(location.root(), root.id());
-                    }
-                } else {
-                    pending.extend(node.split().unwrap().children());
-                }
+            for item in root.items() {
+                items.push(item);
+                let location = view.item(item).unwrap();
+                assert_eq!(location.surface(), surface.id());
+                assert_eq!(location.root(), root.id());
             }
         }
     }

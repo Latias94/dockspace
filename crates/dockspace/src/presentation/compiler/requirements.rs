@@ -148,25 +148,23 @@ fn derive_root_requirements(
                 root,
                 node,
             })? {
-            Node::Tabs {
-                items, selected, ..
-            } => {
+            Node::Pane { item } => {
+                if !workspace.item_is_hidden(*item) {
+                    pane_sizings.insert(PaneSizingKey::new(root, *item));
+                }
+            }
+            Node::Tabs { items, .. } => {
                 if !workspace.node_has_visible_content(node) {
                     continue;
                 }
                 let visible_items = workspace.visible_tab_keys(node);
-                if items.is_empty() {
-                    debug_assert!(selected.is_none());
-                    pane_sizings.insert(PaneSizingKey::new(root, node, None));
-                } else {
-                    pane_sizings.extend(
-                        visible_items
-                            .iter()
-                            .copied()
-                            .filter_map(crate::ids::TabKey::item)
-                            .map(|item| PaneSizingKey::new(root, node, Some(item))),
-                    );
-                }
+                pane_sizings.extend(
+                    visible_items
+                        .iter()
+                        .filter_map(|tab| tab.item())
+                        .map(|item| PaneSizingKey::new(root, item)),
+                );
+                pending.extend(items.iter().rev().filter_map(|tab| tab.layout()));
                 let target = workspace_index
                     .capture_tab_target(workspace, workspace_version, root, node)
                     .map_err(
@@ -189,6 +187,44 @@ fn derive_root_requirements(
                 let target_rule = Some(target.rule());
                 let id = TabBarSceneId { root, tabs: node };
                 let tab_bar_policy = policy.tab_bar_declaration(surface, target_rule);
+                // A contained title can move this whole root even when its local
+                // tab strip is hidden or interaction-disabled.
+                let prospective =
+                    (!visible_items.is_empty()).then_some(crate::ids::TabKey::for_layout(node));
+                let mut labels = visible_items
+                    .iter()
+                    .copied()
+                    .filter_map(|tab| {
+                        Some((
+                            tab,
+                            crate::presentation::scene::FrozenTabLabel::from_node(
+                                workspace.node(tab.layout()?)?,
+                            ),
+                        ))
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                if let Some(tab) = prospective {
+                    labels.insert(
+                        tab,
+                        crate::presentation::scene::FrozenTabLabel::from_node(
+                            workspace.node(node).ok_or(
+                                SceneRequirementDerivationError::MissingNode {
+                                    surface,
+                                    root,
+                                    node,
+                                },
+                            )?,
+                        ),
+                    );
+                    tab_intrinsics.insert(TabIntrinsicKey::new(
+                        surface,
+                        TabSceneId {
+                            root,
+                            tabs: node,
+                            tab,
+                        },
+                    ));
+                }
                 tab_bars.insert(
                     id,
                     TabBarRequirement::new(
@@ -198,15 +234,12 @@ fn derive_root_requirements(
                             .iter()
                             .copied()
                             .map(|tab| {
-                                let capability = tab
-                                    .item()
-                                    .map_or(crate::policy::CloseCapability::Disabled, |item| {
-                                        policy.pane_close_capability(item)
-                                    });
+                                let capability = tab_close_capability(workspace, policy, root, tab);
                                 (tab, capability)
                             })
                             .collect(),
-                    ),
+                    )
+                    .with_layout_labels(labels),
                 );
                 // Auto-hidden bars retain the measurements required to reveal
                 // them and to preview a merge before its first visible frame.
@@ -228,12 +261,44 @@ fn derive_root_requirements(
                     }));
                 }
             }
-            Node::Split { children, .. } => {
+            Node::Split { children, .. } | Node::Grid { children, .. } => {
                 pending.extend(children.iter().rev().copied());
             }
         }
     }
     Ok(())
+}
+
+/// Resolves close chrome for one complete direct child without choosing a representative item.
+pub(crate) fn tab_close_capability(
+    workspace: &Workspace,
+    policy: &DockPolicySnapshot,
+    root: RootId,
+    tab: crate::ids::TabKey,
+) -> crate::policy::CloseCapability {
+    use crate::policy::CloseCapability;
+    if let Some(item) = tab.item() {
+        return policy.pane_close_capability(item);
+    }
+    if workspace.layout_tab_contains_central(root, tab) {
+        return CloseCapability::Disabled;
+    }
+    let Some(node) = tab.layout() else {
+        return CloseCapability::Disabled;
+    };
+    let items = workspace.collect_items_in_subtree(node);
+    if items.is_empty() {
+        return CloseCapability::Disabled;
+    }
+    let mut aggregate = CloseCapability::DeferredAllowed;
+    for item in items {
+        match policy.pane_close_capability(item) {
+            CloseCapability::Disabled => return CloseCapability::Disabled,
+            CloseCapability::Immediate => aggregate = CloseCapability::Immediate,
+            CloseCapability::DeferredAllowed => {}
+        }
+    }
+    aggregate
 }
 
 /// Failure to derive an exact semantic measurement inventory.

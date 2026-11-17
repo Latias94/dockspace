@@ -10,7 +10,7 @@ use dockspace::engine::{
 use dockspace::geometry::{LogicalRect, LogicalSize};
 use dockspace::graph::command::{DockTarget, WorkspaceCommand};
 use dockspace::graph::{Node, RootRecord, SurfacePresentation, Workspace};
-use dockspace::ids::{ItemId, RootId, StableInputSourceId, SurfaceId};
+use dockspace::ids::{ItemId, RootId, StableInputSourceId, SurfaceId, TabKey};
 use dockspace::policy::DockPolicy;
 use dockspace::presentation::config::DockPresentationConfig;
 use dockspace::presentation::manifest::{
@@ -112,7 +112,23 @@ fn engine_exposes_a_core_derived_exact_surface_manifest() {
     assert_eq!(manifest.surfaces().len(), 1);
     assert_eq!(requirements.ticket().surface(), SURFACE);
     assert_eq!(requirements.pane_sizings().len(), 2);
-    assert_eq!(requirements.tab_intrinsics().len(), 2);
+    let root = engine.workspace().root(ROOT).unwrap().node;
+    assert_eq!(
+        requirements
+            .tab_intrinsics()
+            .map(|key| key.tab().tab)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([
+            TabKey::for_item(ItemId::new(10)),
+            TabKey::for_item(ItemId::new(11)),
+            TabKey::for_layout(root),
+        ])
+    );
+    assert!(
+        requirements
+            .tab_intrinsics()
+            .all(|key| requirements.tab_label(key.tab()).is_some())
+    );
     assert_eq!(requirements.tab_strips().len(), 1);
 }
 

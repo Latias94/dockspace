@@ -127,14 +127,17 @@ fn sampled_leaf_reflows_without_scaling_text_and_keeps_target_layout_shared() {
         .find(|record| record.id() == pane.id())
         .unwrap();
     assert_eq!(sampled_pane.bounds(), rect);
-    assert_eq!(
-        sampled.pane_selected(sampled_pane),
-        target.pane_selected(pane)
-    );
+    assert_eq!(sampled_pane.item(), pane.item());
     let bar = sampled
         .tab_bar_records()
         .iter()
-        .find(|bar| bar.id().tabs == pane.id().tabs)
+        .find(|bar| {
+            bar.id().tabs
+                == pane
+                    .containing_tab_bar()
+                    .expect("flat fixture has a containing bar")
+                    .tabs
+        })
         .unwrap();
     assert_eq!(
         bar.bounds().height(),
@@ -143,7 +146,13 @@ fn sampled_leaf_reflows_without_scaling_text_and_keeps_target_layout_shared() {
     let old_tab = target
         .tab_records()
         .iter()
-        .find(|tab| tab.id().tabs == pane.id().tabs)
+        .find(|tab| {
+            tab.id().tabs
+                == pane
+                    .containing_tab_bar()
+                    .expect("flat fixture has a containing bar")
+                    .tabs
+        })
         .unwrap();
     let new_tab = sampled
         .tab_records()
@@ -199,11 +208,21 @@ fn fractional_sample_keeps_content_inside_the_exact_pane_edges() {
     let bar = sampled
         .tab_bar_records()
         .iter()
-        .find(|bar| bar.id().tabs == pane.id().tabs)
+        .find(|bar| {
+            bar.id().tabs
+                == pane
+                    .containing_tab_bar()
+                    .expect("flat fixture has a containing bar")
+                    .tabs
+        })
         .unwrap();
     assert_eq!(pane.bounds(), bounds);
     assert_eq!(pane.content_bounds().max(), bounds.max());
-    assert_eq!(bar.bounds().min(), bounds.min());
+    assert_eq!(bar.bounds().x(), bounds.x());
+    assert_eq!(
+        bar.bounds().y(),
+        bounds.y() - target.layout_facts().unwrap().config().tab_bar_height()
+    );
     assert_eq!(bar.bounds().max().y(), pane.content_bounds().y());
     assert!(pane.content_bounds().y() <= bounds.max().y());
 }
@@ -238,9 +257,13 @@ proptest! {
         prop_assert!(pane.content_bounds().y() >= bounds.y());
         prop_assert!(pane.content_bounds().y() <= bounds.max().y());
         if let Some(bar) = sampled.tab_bar_records().iter()
-            .find(|bar| bar.id().tabs == pane.id().tabs)
+            .find(|bar| bar.id().tabs == pane.containing_tab_bar().expect("flat fixture has a containing bar").tabs)
         {
-            prop_assert_eq!(bar.bounds().min(), bounds.min());
+            prop_assert_eq!(bar.bounds().x(), bounds.x());
+            prop_assert_eq!(
+                bar.bounds().y(),
+                (bounds.y() - target.layout_facts().unwrap().config().tab_bar_height()).max(0.0),
+            );
             prop_assert_eq!(bar.bounds().max().x(), bounds.max().x());
             prop_assert_eq!(bar.bounds().max().y(), pane.content_bounds().y());
         }
@@ -329,10 +352,24 @@ fn pane_rank_groups_front_content_after_all_rear_pane_chrome() {
     )
     .unwrap();
     assert_eq!(
-        sampled.pane_rank(front.id().root, front.id().tabs),
+        sampled.pane_rank(
+            front.id().root,
+            front
+                .containing_tab_bar()
+                .expect("flat fixture has a containing bar")
+                .tabs
+        ),
         usize::MAX
     );
-    assert_eq!(sampled.pane_rank(rear.id().root, rear.id().tabs), 0);
+    assert_eq!(
+        sampled.pane_rank(
+            rear.id().root,
+            rear.containing_tab_bar()
+                .expect("flat fixture has a containing bar")
+                .tabs
+        ),
+        0
+    );
     let blocks = sampled.surface_program().blocks();
     let front_start = blocks.iter().position(|block| matches!(
         block,
@@ -345,14 +382,28 @@ fn pane_rank_groups_front_content_after_all_rear_pane_chrome() {
                 *id == rear.id()
             }
             SurfaceProgramBlock::RootOperation(SurfaceProgramRootOperation::TabBar(id)) => {
-                id.tabs == rear.id().tabs
+                id.tabs
+                    == rear
+                        .containing_tab_bar()
+                        .expect("flat fixture has a containing bar")
+                        .tabs
             }
             SurfaceProgramBlock::RootOperation(SurfaceProgramRootOperation::Tab(id)) => {
-                id.tabs == rear.id().tabs
+                id.tabs
+                    == rear
+                        .containing_tab_bar()
+                        .expect("flat fixture has a containing bar")
+                        .tabs
             }
             SurfaceProgramBlock::RootOperation(SurfaceProgramRootOperation::TabStripControl(
                 id,
-            )) => id.bar().tabs == rear.id().tabs,
+            )) => {
+                id.bar().tabs
+                    == rear
+                        .containing_tab_bar()
+                        .expect("flat fixture has a containing bar")
+                        .tabs
+            }
             _ => false,
         })
         .unwrap();
@@ -470,7 +521,13 @@ fn front_pane_body_blocks_rear_tabs_and_moving_partition_has_no_resize_receivers
     let rear_tab = sampled
         .tab_records()
         .iter()
-        .find(|tab| tab.id().tabs == rear.id().tabs)
+        .find(|tab| {
+            tab.id().tabs
+                == rear
+                    .containing_tab_bar()
+                    .expect("flat fixture has a containing bar")
+                    .tabs
+        })
         .unwrap();
     let point = LogicalPoint::new(
         rear_tab.drag_hit().rect().x() + 2.0,

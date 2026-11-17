@@ -682,10 +682,10 @@ fn owned_run_snapshots_pointer_events_before_dockspace_appears_on_second_pass() 
     output.drop_without_applying_deltas();
     receipt.report(SurfacePresentationResult::Presented);
     assert!(
-        !docking.view().item(ItemId::new(1)).unwrap().is_selected(),
+        !docking.view().item(ItemId::new(1)).unwrap().is_active(),
         "the first-pass post-hook click must reach Dockspace on its first appearance"
     );
-    assert!(docking.view().item(ItemId::new(2)).unwrap().is_selected());
+    assert!(docking.view().item(ItemId::new(2)).unwrap().is_active());
 }
 
 #[test]
@@ -760,7 +760,7 @@ fn owned_run_pointer_input_uses_the_post_hook_event_set() {
     output.drop_without_applying_deltas();
     receipt.report(SurfacePresentationResult::Presented);
     assert!(
-        docking.view().item(ItemId::new(1)).unwrap().is_selected(),
+        docking.view().item(ItemId::new(1)).unwrap().is_active(),
         "the filtered press cannot select the inactive tab"
     );
 }

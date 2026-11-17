@@ -84,6 +84,7 @@ fn root_fingerprint_preserves_split_weight_bits_below_f32_precision() {
                 weights: shares
                     .map(|share| SplitWeight::new(share).unwrap())
                     .to_vec(),
+                layout_title: None,
             },
         )
         .unwrap();
@@ -222,6 +223,7 @@ fn strict_validation_rejects_weight_and_canonical_shape_corruption() {
             SplitWeight::new(0.25).expect("positive weight"),
             SplitWeight::new(0.25).expect("positive weight"),
         ],
+        layout_title: None,
     });
     let right = builder.insert_node(Node::tabs([ItemId::new(3)]));
     let root_node = builder.insert_node(

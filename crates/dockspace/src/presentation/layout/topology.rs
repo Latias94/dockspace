@@ -46,12 +46,15 @@ impl RootStructure {
                     let row = topology.nodes.len();
                     topology.nodes.push(RootNode {
                         id: node,
-                        kind: RootNodeKind::Tabs,
+                        kind: RootNodeKind::Tabs { children: 0..0 },
                     });
                     values.push(None);
                     rows.insert(node, row);
                     match live {
-                        Node::Tabs { .. } => {
+                        Node::Grid { .. } => unreachable!(
+                            "the malformed-draft oracle generates only flat Tabs and Splits"
+                        ),
+                        Node::Pane { .. } | Node::Tabs { .. } => {
                             values[row] = Some(SubtreeMeasurement {
                                 constraints: leaves.get(node)?,
                                 contains_central: record.central == Some(node),
@@ -153,7 +156,7 @@ impl RootStructure {
         for &row in &self.postorder {
             let node = &self.nodes[row];
             values[row].constraints = match &node.kind {
-                RootNodeKind::Tabs => {
+                RootNodeKind::Pane { .. } | RootNodeKind::Tabs { .. } => {
                     if central == Some(node.id) {
                         central_reachable = true;
                     }
@@ -207,6 +210,48 @@ impl RootStructure {
                             child_measurements,
                             metrics,
                             minimums_only,
+                        )?
+                    }
+                }
+                RootNodeKind::Grid {
+                    payload, children, ..
+                } => {
+                    let children = &self.children[children.clone()];
+                    let mut min_width: f64 = 0.0;
+                    let mut min_height: f64 = 0.0;
+                    let mut max_width: f64 = 0.0;
+                    let mut max_height: f64 = 0.0;
+                    let mut visible = false;
+                    for &child in children {
+                        if !values[child].visible {
+                            continue;
+                        }
+                        visible = true;
+                        let constraints = values[child].constraints;
+                        min_width = min_width.max(constraints.min().width());
+                        min_height = min_height.max(constraints.min().height());
+                        max_width = max_width.max(constraints.max().width());
+                        max_height = max_height.max(constraints.max().height());
+                    }
+                    values[row].visible = visible;
+                    if let crate::model::DockspaceGridShape::Fixed { rows, columns } =
+                        payload.shape()
+                    {
+                        grid::grid_constraints(
+                            self,
+                            row,
+                            &values,
+                            ResolvedGridShape {
+                                rows: rows.get(),
+                                columns: columns.get(),
+                            },
+                            metrics,
+                            zero,
+                        )?
+                    } else {
+                        Constraints::new(
+                            LogicalSize::new(min_width, min_height)?,
+                            LogicalSize::new(max_width, max_height)?,
                         )?
                     }
                 }

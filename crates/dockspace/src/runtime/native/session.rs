@@ -1039,6 +1039,44 @@ impl DockspaceSession {
         Ok(())
     }
 
+    /// Records ordered whole-group center insertion from an exact native callback.
+    ///
+    /// This uses the same callback, focus and gesture-owner checks as docking
+    /// enablement; it does not fabricate pointer motion or change reservations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a stale binding, foreign provider or exhausted ingress.
+    pub fn report_native_group_dock_mode(
+        &mut self,
+        binding: impl Into<NativeWindowBinding>,
+        mode: crate::model::TabGroupDockMode,
+    ) -> Result<(), DockspaceRuntimeError> {
+        let binding = binding.into();
+        self.ensure_managed_native_host_available()?;
+        let native = self.native_state_mut()?;
+        if binding.provider != native.provider() {
+            return Err(NativePlatformError::ProviderSuperseded.into());
+        }
+        let binding = native
+            .window_observation_binding(binding)
+            .ok_or(NativePlatformError::StaleWindow { binding })?;
+        native
+            .recorder
+            .preflight_native_transport_append(1, size_of::<EngineInput>())
+            .map_err(NativePlatformError::from_ingress)?;
+        let provider = native.recorder.lease();
+        native
+            .recorder_mut()
+            .record_semantic_input(EngineInput::UpdateNativeGroupDockMode {
+                provider,
+                binding,
+                mode,
+            })
+            .map_err(NativePlatformError::from_ingress)?;
+        Ok(())
+    }
+
     /// Records one explicit core-owned close-plan request for an exact native edge.
     ///
     /// # Errors

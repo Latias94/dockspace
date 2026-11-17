@@ -67,11 +67,15 @@ impl DockspaceEvent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DockspaceEventKind {
-    /// Durable selection or its MRU ordering changed for this item.
+    /// Durable selection or its MRU ordering changed for this direct tab child.
     ///
     /// This does not mean a widget became active, nor that pane or native-window
     /// focus was observed. Selecting an already selected item can update MRU.
     SelectionCommitted { tab: TabKey },
+    /// A real item's complete ancestor path was activated.
+    ///
+    /// This reports durable layout activation, independently of widget or native focus.
+    ItemActivated { item: ItemId },
     /// One tab changed its index within its existing group.
     TabReordered { tab: TabKey, from: usize, to: usize },
     /// One previously closed item was opened.
@@ -190,6 +194,13 @@ fn product_kind(
                 root: *root,
                 items: items.clone(),
             },
+            CloseCommitOutcome::TabClosed { root, tab, items } => {
+                DockspaceCloseOutcome::TabClosed {
+                    root: *root,
+                    tab: *tab,
+                    items: items.clone(),
+                }
+            }
             CloseCommitOutcome::SurfaceClosed { surface, items } => {
                 DockspaceCloseOutcome::SurfaceClosed {
                     surface: *surface,
@@ -223,6 +234,7 @@ fn command_kind(
             }
         }
         CommandOutcome::Selected { tab, .. } => Event::SelectionCommitted { tab: *tab },
+        CommandOutcome::ItemActivated { item, .. } => Event::ItemActivated { item: *item },
         CommandOutcome::Reordered { tab, from, to, .. } => Event::TabReordered {
             tab: *tab,
             from: *from,
@@ -329,7 +341,7 @@ fn command_kind(
             bounds_changed: false,
             order: Some((*from, *to)),
         },
-        CommandOutcome::SplitsResized { .. }
+        CommandOutcome::TracksResized { .. }
         | CommandOutcome::EmptySurfaceAttached { .. }
         | CommandOutcome::EmptySurfaceRetired { .. }
         | CommandOutcome::EmptyRootRemoved { .. } => return None,

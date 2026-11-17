@@ -48,10 +48,14 @@ fn egui_facade_docks_a_complete_group_with_one_selected_result() {
         );
         let selected = dockspace.view().item(SECOND).unwrap();
         assert_eq!(
-            selected.tabs().items().collect::<Vec<_>>(),
+            selected
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
             &[THIRD, FIRST, SECOND]
         );
-        assert!(selected.is_selected());
+        assert!(selected.is_active());
     }
 }
 
@@ -85,10 +89,14 @@ fn egui_facade_floats_only_the_captured_group_after_real_surface_measurement() {
         assert_ne!(root, ROOT);
         let selected = dockspace.view().item(SECOND).unwrap();
         assert_eq!(
-            selected.tabs().items().collect::<Vec<_>>(),
+            selected
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
             &[FIRST, SECOND]
         );
-        assert!(selected.is_selected());
+        assert!(selected.is_active());
         assert_eq!(selected.contained(), Some(floating));
         assert_eq!(dockspace.view().item(THIRD).unwrap().root(), ROOT);
         assert_eq!(
@@ -97,6 +105,7 @@ fn egui_facade_floats_only_the_captured_group_after_real_surface_measurement() {
                 .item(THIRD)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[THIRD]
@@ -144,6 +153,7 @@ fn egui_facade_does_not_refresh_a_stored_group_after_its_anchor_moves() {
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[THIRD, FIRST]
@@ -154,6 +164,7 @@ fn egui_facade_does_not_refresh_a_stored_group_after_its_anchor_moves() {
                 .item(SECOND)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[SECOND]

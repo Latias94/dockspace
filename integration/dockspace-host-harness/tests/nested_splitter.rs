@@ -58,6 +58,7 @@ fn same_rect(actual: LogicalRect, expected: LogicalRect) {
 
 #[derive(Debug)]
 struct Pane {
+    frame: LogicalRect,
     bounds: LogicalRect,
     content: LogicalRect,
 }
@@ -81,17 +82,27 @@ struct Geometry {
 impl Geometry {
     fn read(plan: SurfacePaintPlan<'_>) -> Self {
         let mut geometry = Self::default();
+        let mut tabs_frames = BTreeMap::new();
+        let mut bar_frames = BTreeMap::new();
         plan.visit_surface_program(|step| {
             if let Step::Operation { operation, .. } = step {
                 match operation {
+                    Operation::Tabs(tabs) => {
+                        tabs_frames.insert(tabs.visual_id(), tabs.bounds());
+                    }
+                    Operation::TabBar(bar) => {
+                        let frame = tabs_frames[&bar.tabs_visual_id()];
+                        bar_frames.insert(bar.visual_id(), frame);
+                    }
                     Operation::Pane(pane) => {
                         assert_eq!(pane.root(), ROOT);
                         assert!(
                             geometry
                                 .panes
                                 .insert(
-                                    pane.selected().expect("each fixture pane has one item"),
+                                    pane.item(),
                                     Pane {
+                                        frame: bar_frames[&pane.tab_bar_visual_id().unwrap()],
                                         bounds: pane.bounds(),
                                         content: pane.content_bounds(),
                                     },
@@ -150,7 +161,8 @@ impl Geometry {
         assert_eq!(self.panes.len(), expected.len());
         for &(item, bounds) in expected {
             let pane = &self.panes[&item];
-            same_rect(pane.bounds, bounds);
+            same_rect(pane.frame, bounds);
+            same_rect(pane.bounds, pane.content);
             same_rect(
                 pane.content,
                 rect(

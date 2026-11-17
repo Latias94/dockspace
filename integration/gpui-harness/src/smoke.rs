@@ -251,12 +251,12 @@ impl Smoke {
             .session
             .view()
             .item(EDITOR)
-            .is_some_and(|item| item.is_selected());
+            .is_some_and(|item| item.is_active());
         let preview_selected = host
             .session
             .view()
             .item(PREVIEW)
-            .is_some_and(|item| item.is_selected());
+            .is_some_and(|item| item.is_active());
         let active = host.session.has_active_gesture();
         let retained = host.panels[&EDITOR].view.entity_id() == editor.entity.entity_id()
             && host.panels[&PREVIEW].view.entity_id() == preview.entity.entity_id();

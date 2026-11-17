@@ -50,7 +50,7 @@ fn equalize_with_metrics(
 fn pane_bounds(session: &mut DockspaceSession) -> Vec<(ItemId, LogicalRect)> {
     inspect_surface(session, |plan| {
         plan.panes()
-            .filter_map(|pane| pane.selected().map(|item| (item, pane.bounds())))
+            .map(|pane| (pane.item(), pane.bounds()))
             .collect()
     })
 }
@@ -426,11 +426,25 @@ fn a_nested_touching_minimum_stops_equalization_before_the_remote_pane_moves() {
     let version = session.version();
     let mut frame = session.begin_host_frame().unwrap();
     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+    let mut first_container = None;
+    plan.visit_surface_program(|step| {
+        if let crate::runtime::SurfacePaintProgramStep::Operation {
+            operation: crate::runtime::SurfacePaintProgramOperation::Tabs(tabs),
+            ..
+        } = step
+            && tabs.content_bounds() == bound(&before, FIRST)
+        {
+            assert!(first_container.replace(tabs.bounds()).is_none());
+        }
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap();
+    let first_container = first_container.expect("the first content has its own actual tabs frame");
     let outer = plan
         .splitters()
         .find(|splitter| {
             splitter.axis() == DockspaceAxis::Horizontal
-                && splitter.before_bounds() == bound(&before, FIRST)
+                && splitter.before_bounds() == first_container
         })
         .unwrap();
     let range = plan.splitter_resize_range(outer.visual_id()).unwrap();
@@ -599,6 +613,7 @@ fn equalization_respects_axis_policy_and_discarded_or_stale_actions() {
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("fixture item belongs to a tabs container")
             .items()
             .collect::<Vec<_>>(),
         [FIRST, SECOND]

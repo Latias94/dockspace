@@ -297,6 +297,35 @@ impl DockspaceSession {
         self.engine.prepare_dock_item(item, placement)
     }
 
+    /// Captures one direct tab at its current session, owner and revision.
+    ///
+    /// Returns `None` if the key is absent or denotes a standalone Pane rather
+    /// than a direct Tabs child. A layout tab includes its complete subtree.
+    #[must_use]
+    pub fn capture_tab(&self, key: crate::model::TabKey) -> Option<super::PreparedTab> {
+        self.engine.capture_tab(key)
+    }
+
+    /// Prepares a move of exactly one captured direct tab.
+    #[must_use]
+    pub fn prepare_dock_tab(
+        &self,
+        tab: super::PreparedTab,
+        placement: DockPlacement,
+    ) -> PreparedDockAction {
+        self.engine.prepare_dock_tab(tab, placement)
+    }
+
+    /// Prepares a contained-floating move of exactly one captured direct tab.
+    #[must_use]
+    pub fn prepare_float_tab(
+        &self,
+        tab: super::PreparedTab,
+        surface: crate::model::SurfaceId,
+    ) -> PreparedDockAction {
+        self.engine.prepare_float_tab(tab, surface)
+    }
+
     /// Prepares one atomic move of a previously captured complete tabs group.
     ///
     /// The group retains its original session and workspace version. Preparing
@@ -308,6 +337,20 @@ impl DockspaceSession {
         placement: DockPlacement,
     ) -> PreparedDockAction {
         self.engine.prepare_dock_tabs(group, placement)
+    }
+
+    /// Prepares a complete-group move with explicit center insertion semantics.
+    ///
+    /// Edge docking and root installation retain their ordinary structural scope.
+    #[must_use]
+    pub fn prepare_dock_tabs_with_mode(
+        &self,
+        group: PreparedTabsGroup,
+        placement: DockPlacement,
+        mode: crate::model::TabGroupDockMode,
+    ) -> PreparedDockAction {
+        self.engine
+            .prepare_dock_tabs_with_mode(group, placement, mode)
     }
 
     /// Prepares one complete-root move against the exact published workspace version.
@@ -442,6 +485,18 @@ impl DockspaceSession {
         )
     }
 
+    /// Prepares one atomic close of a captured tab and all its real descendants.
+    ///
+    /// Deferred decisions use the existing target-local close workflow.
+    #[must_use]
+    pub fn prepare_close_tab(&self, tab: super::PreparedTab) -> PreparedCloseRequest {
+        PreparedCloseRequest::new(
+            tab.authority_domain,
+            tab.expected,
+            ContentCloseTarget::Tab { source: tab.source },
+        )
+    }
+
     /// Prepares an atomic close for an exact captured group without refreshing its authority.
     ///
     /// Layout changes after capture make submission stale. Accepted close plans
@@ -450,9 +505,8 @@ impl DockspaceSession {
         PreparedCloseRequest::new(
             group.authority_domain,
             group.expected,
-            ContentCloseTarget::Tabs {
-                root: group.source.root(),
-                anchor: group.anchor,
+            ContentCloseTarget::TabsSource {
+                source: group.source,
             },
         )
     }

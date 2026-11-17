@@ -20,6 +20,18 @@ pub enum PaneOverflowPolicy {
     Compress,
 }
 
+/// How a constrained splitter transfers space between neighboring tracks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ResizePropagation {
+    /// Stop when either immediate neighbor reaches its minimum or maximum.
+    #[default]
+    Adjacent,
+    /// Consume capacity in the nearest neighbor before continuing outward.
+    ///
+    /// Hidden Split children are skipped; Grid tracks retain their shared slots.
+    Outward,
+}
+
 /// Monotonic revision of the core-owned presentation configuration.
 ///
 /// Revisions are advanced explicitly. They are never derived from hashes, so a
@@ -71,6 +83,7 @@ pub struct DockPresentationConfig {
     splitter_thickness: f64,
     splitter_hit_extent: f64,
     splitter_keyboard_step: f64,
+    resize_propagation: ResizePropagation,
     pane_overflow_policy: PaneOverflowPolicy,
     pointer_drag_start_distance: f64,
     hover_selection_delay: Option<Duration>,
@@ -125,6 +138,7 @@ impl DockPresentationConfig {
             splitter_thickness: self.splitter_thickness,
             splitter_hit_extent: self.splitter_hit_extent,
             splitter_keyboard_step: self.splitter_keyboard_step,
+            resize_propagation: self.resize_propagation,
             pane_overflow_policy: self.pane_overflow_policy,
             pointer_drag_start_distance: self.pointer_drag_start_distance,
             hover_selection_delay: self.hover_selection_delay,
@@ -227,6 +241,12 @@ impl DockPresentationConfig {
     #[must_use]
     pub const fn pane_overflow_policy(&self) -> PaneOverflowPolicy {
         self.pane_overflow_policy
+    }
+
+    /// Returns the space-transfer policy shared by pointer and semantic resizing.
+    #[must_use]
+    pub const fn resize_propagation(&self) -> ResizePropagation {
+        self.resize_propagation
     }
 
     /// Returns the logical source-surface distance required to begin a pointer drag.
@@ -383,6 +403,7 @@ pub struct DockPresentationConfigBuilder {
     splitter_thickness: f64,
     splitter_hit_extent: f64,
     splitter_keyboard_step: f64,
+    resize_propagation: ResizePropagation,
     pane_overflow_policy: PaneOverflowPolicy,
     pointer_drag_start_distance: f64,
     hover_selection_delay: Option<Duration>,
@@ -423,6 +444,7 @@ impl Default for DockPresentationConfigBuilder {
             splitter_thickness: 1.0,
             splitter_hit_extent: 6.0,
             splitter_keyboard_step: 16.0,
+            resize_propagation: ResizePropagation::default(),
             pane_overflow_policy: PaneOverflowPolicy::default(),
             pointer_drag_start_distance: 6.0,
             hover_selection_delay: Some(Duration::from_millis(150)),
@@ -545,6 +567,13 @@ impl DockPresentationConfigBuilder {
     #[must_use]
     pub const fn pane_overflow_policy(mut self, value: PaneOverflowPolicy) -> Self {
         self.pane_overflow_policy = value;
+        self
+    }
+
+    /// Sets the space-transfer policy shared by pointer and semantic resizing.
+    #[must_use]
+    pub const fn resize_propagation(mut self, value: ResizePropagation) -> Self {
+        self.resize_propagation = value;
         self
     }
 
@@ -847,6 +876,7 @@ impl DockPresentationConfigBuilder {
             splitter_thickness: self.splitter_thickness,
             splitter_hit_extent: self.splitter_hit_extent,
             splitter_keyboard_step: self.splitter_keyboard_step,
+            resize_propagation: self.resize_propagation,
             pane_overflow_policy: self.pane_overflow_policy,
             pointer_drag_start_distance: self.pointer_drag_start_distance,
             hover_selection_delay: self.hover_selection_delay,

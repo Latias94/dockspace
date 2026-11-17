@@ -107,9 +107,26 @@ fn an_animated_close_over_another_tab_body_does_not_fail_the_pointer_protocol() 
     for _ in 0..3 {
         frame(&context, &mut dockspace, 1.0, Vec::new());
     }
-    let (output, _) = frame(&context, &mut dockspace, 1.45, Vec::new());
-    let (close_id, close) = control(&output, Role::Button, "Close First");
-    let (body_id, body) = control(&output, Role::Tab, "Second");
+    // Both panes travel during the swap. Real pane identities order Second
+    // above First; sample after the midpoint so its close crosses First's tab.
+    let (output, _) = frame(&context, &mut dockspace, 1.55, Vec::new());
+    let (close_id, close) = control(&output, Role::Button, "Close Second");
+    let (body_id, body) = control(&output, Role::Tab, "First");
+    context.viewport(|viewport| {
+        let paint_order = |id| {
+            viewport
+                .prev_pass
+                .widgets
+                .layers()
+                .flat_map(|(_, widgets)| widgets)
+                .position(|widget| widget.id.accesskit_id() == id)
+                .unwrap()
+        };
+        assert!(
+            paint_order(close_id) > paint_order(body_id),
+            "the fixture's close control must belong to the actual foreground pane"
+        );
+    });
     let overlap = close.intersect(body);
     assert!(
         overlap.is_positive(),
@@ -119,14 +136,19 @@ fn an_animated_close_over_another_tab_body_does_not_fail_the_pointer_protocol() 
     frame(
         &context,
         &mut dockspace,
-        1.45,
+        1.55,
         vec![Event::PointerMoved(point)],
     );
     context.viewport(|viewport| {
+        let actual_click = viewport.hits.click.map(|hit| hit.id.accesskit_id());
+        let click_node = output.platform_output.accesskit_update.as_ref().unwrap().nodes.iter()
+            .find(|(id, _)| Some(*id) == actual_click)
+            .map(|(_, node)| (node.role(), node.label(), node.bounds()));
         assert_eq!(
-            viewport.hits.click.map(|hit| hit.id.accesskit_id()),
+            actual_click,
             Some(close_id),
-            "the actual front close control owns the click lane",
+            "the actual front close control owns the click lane; winner={click_node:?}, widget={:?}, close={close:?}, other_body={body:?}, point={point:?}",
+            viewport.hits.click,
         );
         assert_eq!(
             viewport.hits.drag.map(|hit| hit.id.accesskit_id()),
@@ -139,7 +161,7 @@ fn an_animated_close_over_another_tab_body_does_not_fail_the_pointer_protocol() 
     let (_, closed) = frame(
         &context,
         &mut dockspace,
-        1.45,
+        1.55,
         vec![
             Event::ModifiersChanged(Modifiers::SHIFT),
             Event::PointerMoved(point),
@@ -168,7 +190,7 @@ fn an_animated_close_over_another_tab_body_does_not_fail_the_pointer_protocol() 
     let (_, closed) = frame(
         &context,
         &mut dockspace,
-        1.45,
+        1.55,
         vec![
             Event::PointerMoved(point),
             button(point, true),
@@ -177,11 +199,11 @@ fn an_animated_close_over_another_tab_body_does_not_fail_the_pointer_protocol() 
     );
     assert_eq!(
         closed,
-        [FIRST],
+        [SECOND],
         "an actual click still requests closing the foreground tab only",
     );
     let (settled, _) = frame(&context, &mut dockspace, 2.1, Vec::new());
-    let (_, body) = control(&settled, Role::Tab, "Second");
+    let (_, body) = control(&settled, Role::Tab, "First");
     let source = body.center();
     let target = source + egui::vec2(96.0, 80.0);
     frame(
@@ -205,7 +227,7 @@ fn an_animated_close_over_another_tab_body_does_not_fail_the_pointer_protocol() 
         ],
     );
     assert!(
-        dockspace.view().item(SECOND).unwrap().contained().is_some(),
+        dockspace.view().item(FIRST).unwrap().contained().is_some(),
         "another real tab must remain draggable after resolving the overlap",
     );
     assert!(!dockspace.has_active_gesture());

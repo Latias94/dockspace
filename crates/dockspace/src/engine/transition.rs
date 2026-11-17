@@ -80,6 +80,11 @@ pub enum InputOutcome {
         /// Whether a matching live owner changed its effective intent.
         changed: bool,
     },
+    /// A whole-group insertion directive updated the exact active gesture.
+    GroupDockModeUpdated {
+        mode: crate::model::TabGroupDockMode,
+        changed: bool,
+    },
     /// The exact managed provider accepted terminal overload cancellation.
     NativeInputCancelledForOverload,
     /// Native input device removal cancelled live input without ending input capture.

@@ -99,10 +99,28 @@ fn all_hidden_main_outer_drop_previews_the_same_full_space_as_the_committed_visi
     let pane = committed
         .pane_records()
         .iter()
-        .find(|pane| committed.pane_selected(pane) == Some(MOVED))
+        .find(|pane| pane.item() == MOVED)
         .unwrap();
     assert_eq!(resolved.visual().rect(), pane.bounds());
-    assert_eq!(pane.bounds(), committed.bounds());
+    assert_eq!(
+        pane.bounds(),
+        LogicalRect::new(
+            0.0,
+            config.tab_bar_height(),
+            1000.0,
+            600.0 - config.tab_bar_height(),
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        committed
+            .tabs_records()
+            .iter()
+            .find(|tabs| tabs.id().root == ROOT)
+            .unwrap()
+            .bounds(),
+        committed.bounds()
+    );
     assert!(workspace.item_is_hidden(hidden_item));
     assert!(workspace.node(target).is_some());
     assert!(

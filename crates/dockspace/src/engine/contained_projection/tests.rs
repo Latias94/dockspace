@@ -109,7 +109,7 @@ fn paint_frame(
                 total_panes += 1;
                 if pane.root() == CONTAINED_ROOT {
                     assert_eq!(paint, SurfacePaintDisposition::Visible);
-                    assert_eq!(pane.selected(), Some([LEFT, RIGHT][panes.len()]));
+                    assert_eq!(Some(pane.item()), Some([LEFT, RIGHT][panes.len()]));
                     panes.push((pane.visual_id(), pane.content_bounds()));
                 }
             }

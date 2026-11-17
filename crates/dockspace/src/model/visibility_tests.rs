@@ -25,18 +25,18 @@ fn layout_visibility_is_queryable_and_survives_copying_without_exposing_runtime_
     let hidden = view.item(ItemId::new(2)).unwrap();
     assert!(hidden.is_hidden());
     assert!(!hidden.is_visible());
-    assert!(!hidden.is_selected());
-    assert!(view.item(ItemId::new(1)).unwrap().is_selected());
+    assert!(!hidden.is_active());
+    assert!(view.item(ItemId::new(1)).unwrap().is_active());
     assert_eq!(
-        hidden.tabs().visible_items().collect::<Vec<_>>(),
+        hidden.tabs().unwrap().visible_items().collect::<Vec<_>>(),
         [ItemId::new(1)]
     );
     assert_eq!(
-        hidden.tabs().items().collect::<Vec<_>>(),
+        hidden.tabs().unwrap().items().collect::<Vec<_>>(),
         [ItemId::new(1), ItemId::new(2), ItemId::new(3)]
     );
     assert_eq!(
-        hidden.tabs().visible_selected(),
+        hidden.tabs().unwrap().visible_selected(),
         Some(TabKey::for_item(ItemId::new(1)))
     );
     assert_eq!(
@@ -49,7 +49,12 @@ fn layout_visibility_is_queryable_and_survives_copying_without_exposing_runtime_
         view.hidden_items().collect::<Vec<_>>()
     );
     assert_eq!(
-        copy.view().item(ItemId::new(2)).unwrap().tabs().selected(),
+        copy.view()
+            .item(ItemId::new(2))
+            .unwrap()
+            .tabs()
+            .unwrap()
+            .selected(),
         Some(TabKey::for_item(ItemId::new(1)))
     );
 }
@@ -61,12 +66,12 @@ fn all_hidden_layout_keeps_logical_selection_and_replacing_the_hidden_set_shows_
         .unwrap();
     let item = layout.view().item(ItemId::new(2)).unwrap();
     assert_eq!(
-        item.tabs().selected(),
+        item.tabs().unwrap().selected(),
         Some(TabKey::for_item(ItemId::new(2)))
     );
-    assert_eq!(item.tabs().visible_selected(), None);
-    assert!(item.tabs().visible_items().next().is_none());
-    assert!(!item.is_selected());
+    assert_eq!(item.tabs().unwrap().visible_selected(), None);
+    assert!(item.tabs().unwrap().visible_items().next().is_none());
+    assert!(!item.is_active());
     let layout = layout
         .with_hidden_items([ItemId::new(1), ItemId::new(2)])
         .unwrap();
@@ -76,6 +81,7 @@ fn all_hidden_layout_keeps_logical_selection_and_replacing_the_hidden_set_shows_
             .item(ItemId::new(3))
             .unwrap()
             .tabs()
+            .unwrap()
             .visible_selected(),
         Some(TabKey::for_item(ItemId::new(3)))
     );
@@ -87,6 +93,7 @@ fn all_hidden_layout_keeps_logical_selection_and_replacing_the_hidden_set_shows_
             .item(ItemId::new(3))
             .unwrap()
             .tabs()
+            .unwrap()
             .visible_selected(),
         Some(TabKey::for_item(ItemId::new(3)))
     );

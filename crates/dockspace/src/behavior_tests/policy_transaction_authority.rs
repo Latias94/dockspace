@@ -353,7 +353,9 @@ fn changing_selected_target_item_invalidates_the_frozen_command() {
         .capture_item_source(TARGET_ROOT, target_tabs, TARGET_PEER)
         .expect("target peer is selectable");
     WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source: selection.as_tab_source(),
+        source: selection
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     }])
     .apply(&mut workspace, &DockPolicySnapshot::default())
     .expect("selection changes target semantics");
@@ -505,6 +507,7 @@ fn tab_group_and_subtree_policy_checks_every_payload_item() {
             SplitWeight::new(0.5).expect("weight is valid"),
             SplitWeight::new(0.5).expect("weight is valid"),
         ],
+        layout_title: None,
     });
     let target_tabs = builder.insert_node(Node::tabs([TARGET_ITEM]));
     builder.set_root(SOURCE_ROOT, RootRecord::new(source_split));
@@ -555,7 +558,9 @@ fn reorder_and_tab_gap_commands_enforce_effective_tab_bar_policy() {
     let before = workspace.clone();
 
     let error = WorkspaceTransaction::from_commands([WorkspaceCommand::Reorder {
-        source: source.as_tab_source(),
+        source: source
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
         insertion_index: 0,
     }])
     .apply(&mut workspace, &snapshot(&policy))

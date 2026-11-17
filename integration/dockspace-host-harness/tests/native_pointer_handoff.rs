@@ -407,6 +407,7 @@ fn order(session: &DockspaceSession) -> Vec<ItemId> {
         .item(FIRST)
         .unwrap()
         .tabs()
+        .expect("item is an inline tab")
         .items()
         .collect::<Vec<_>>()
 }
@@ -682,6 +683,7 @@ fn explicit_handoff_retries_the_release_frame_and_settles_without_redelivery() {
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             [SECOND, THIRD, FIRST]
@@ -753,8 +755,8 @@ fn inactive_tab_same_batch_handoff_preserves_the_actual_output_and_source_contin
     let presented = session.presented_surface(A).unwrap();
     let source = sample(cap, binding, original.tab(SECOND).receiver.center());
     let target = sample(cap, binding, original.insertion(FIRST, true));
-    assert!(session.view().item(FIRST).unwrap().is_selected());
-    assert!(!session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
+    assert!(!session.view().item(SECOND).unwrap().is_active());
     session
         .record_native_pointer_batch([
             local(binding, Event::ButtonPressed(Button::Primary), source),
@@ -782,7 +784,7 @@ fn inactive_tab_same_batch_handoff_preserves_the_actual_output_and_source_contin
     assert!(report.manipulation_feedback().is_empty());
     assert!(actual_hover_queries > 0);
     assert!(session.has_active_gesture());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert_eq!(order(&session), [FIRST, SECOND, THIRD]);
     assert_eq!(session.presented_surface(A), Some(presented));
     assert_eq!(session.native_local_coordinates(binding), Some(cap));
@@ -840,7 +842,7 @@ fn inactive_tab_same_batch_handoff_preserves_the_actual_output_and_source_contin
     assert!(settled.manipulation_feedback().is_empty());
     assert!(!settled.workspace_changed());
     assert_eq!(session.version(), committed);
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert_clean_idle(&mut session);
 }
 
@@ -1265,7 +1267,7 @@ fn wrong_winner_suffix_rolls_back_handoff_and_retries_the_original_batch_once() 
     );
     assert_eq!(session.version(), version);
     assert_eq!(order(&session), [FIRST, SECOND, THIRD]);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert_eq!(session.native_local_coordinates(binding), Some(cap));
     assert_eq!(session.presented_surface(A), Some(presented));
     assert_eq!(session.native_input_recorded_count(), accepted);
@@ -1545,6 +1547,7 @@ fn cross_window_handoff_preserves_root_input_and_delivers_before_the_target_outp
                 .item(OTHER)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             [OTHER, FIRST]
@@ -1555,6 +1558,7 @@ fn cross_window_handoff_preserves_root_input_and_delivers_before_the_target_outp
                 .item(SECOND)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             [SECOND, THIRD]
@@ -1688,8 +1692,8 @@ fn stationary_hover_after_handoff_keeps_source_binding_and_requires_confirmed_cr
         assert_eq!(report.after(), session.version());
         assert_ne!(session.version(), version);
         assert!(report.take_native_effects().is_empty());
-        assert!(session.view().item(FIFTH).unwrap().is_selected());
-        assert!(!session.view().item(OTHER).unwrap().is_selected());
+        assert!(session.view().item(FIFTH).unwrap().is_active());
+        assert!(!session.view().item(OTHER).unwrap().is_active());
         assert_eq!(session.view().item(FIRST).unwrap().surface(), A);
         assert!(session.has_active_gesture());
         assert!(session.native_pointer_continuation().is_none());

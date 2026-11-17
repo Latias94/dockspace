@@ -42,7 +42,11 @@ struct DurableState {
 
 fn durable(session: &DockspaceSession) -> DurableState {
     let view = session.view();
-    let tabs = view.item(FIRST).unwrap().tabs();
+    let tabs = view
+        .item(FIRST)
+        .unwrap()
+        .tabs()
+        .expect("fixture item is an inline tab");
     DurableState {
         version: session.version(),
         tabs: tabs.items().collect::<Vec<_>>(),
@@ -549,7 +553,7 @@ fn cross_root_touch_dock_does_not_require_unrelated_destination_raise_permission
     let after = durable(&session);
     assert_eq!(after.contained, before.contained);
     assert_eq!(session.view().item(INACTIVE).unwrap().root(), target_root);
-    assert!(session.view().item(INACTIVE).unwrap().is_selected());
+    assert!(session.view().item(INACTIVE).unwrap().is_active());
     assert!(!session.has_active_gesture());
     assert!(session.pointer_continuation().is_none());
 }

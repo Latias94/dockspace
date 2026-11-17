@@ -554,6 +554,24 @@ pub enum EngineInput {
         /// Whether docking targets, including explicit guides, may be acquired.
         enabled: bool,
     },
+    /// Changes whole-group insertion from one current host-local owner.
+    UpdatePointerGroupDockMode {
+        /// Exact ordered provider.
+        provider: PointerInputLease,
+        /// Exact active pointer.
+        pointer: PointerId,
+        /// Logical insertion mode.
+        mode: crate::model::TabGroupDockMode,
+    },
+    /// Changes whole-group insertion from one exact native callback.
+    UpdateNativeGroupDockMode {
+        /// Exact joined provider.
+        provider: BackendIngressLease,
+        /// Exact callback incarnation.
+        binding: ViewportBinding,
+        /// Logical insertion mode.
+        mode: crate::model::TabGroupDockMode,
+    },
     /// Changes targeting intent from one exact managed window callback.
     UpdateNativeDockingEnabled {
         /// Joined provider which captured the source callback in its total order.
@@ -804,6 +822,24 @@ pub enum EngineInput {
         /// Item-, root-, or surface-centric destination.
         placement: crate::model::DockPlacement,
     },
+    /// Move an exact direct tab without widening to its owner group.
+    DockTab {
+        /// Captured revision.
+        expected: WorkspaceVersion,
+        /// Exact direct child.
+        tab: crate::model::PreparedTab,
+        /// Core placement intent.
+        placement: crate::model::DockPlacement,
+    },
+    /// Float an exact direct tab without widening to its owner group.
+    FloatTab {
+        /// Captured revision.
+        expected: WorkspaceVersion,
+        /// Exact direct child.
+        tab: crate::model::PreparedTab,
+        /// Hosting logical surface.
+        surface: SurfaceId,
+    },
     /// Move one captured complete tabs group as one atomic payload.
     DockTabs {
         /// Exact version retained by the group capture.
@@ -812,6 +848,8 @@ pub enum EngineInput {
         group: crate::model::PreparedTabsGroup,
         /// Stable destination for the complete group.
         placement: crate::model::DockPlacement,
+        /// Center insertion preserves the group or merges its direct children.
+        mode: crate::model::TabGroupDockMode,
     },
     /// Move one complete root to a stable product placement.
     DockRoot {
@@ -1185,6 +1223,8 @@ impl EngineInput {
             Self::ActivateViewport { .. }
             | Self::UpdatePointerDockingEnabled { .. }
             | Self::UpdateNativeDockingEnabled { .. }
+            | Self::UpdatePointerGroupDockMode { .. }
+            | Self::UpdateNativeGroupDockMode { .. }
             | Self::CancelNativeInputForOverload { .. }
             | Self::AttachEmptySurface { .. }
             | Self::RetireEmptySurface { .. }
@@ -1194,6 +1234,8 @@ impl EngineInput {
             | Self::OpenItem { .. }
             | Self::DockItem { .. }
             | Self::DockTabs { .. }
+            | Self::DockTab { .. }
+            | Self::FloatTab { .. }
             | Self::DockRoot { .. }
             | Self::DockBackRoot { .. }
             | Self::TearOffNative { .. }

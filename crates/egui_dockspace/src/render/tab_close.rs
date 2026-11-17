@@ -114,6 +114,9 @@ pub(super) fn paint(
         node.set_role(Role::Button);
         node.set_bounds(accesskit_bounds(rect));
         node.set_label(close_label);
+        if tab.key().is_layout() {
+            node.set_description("Closes this layout tab and all of its content together");
+        }
         if enabled {
             node.add_action(Action::Click);
         } else {

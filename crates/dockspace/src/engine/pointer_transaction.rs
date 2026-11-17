@@ -84,6 +84,20 @@ impl DockEngine {
         enabled: bool,
         interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<InputOutcome, EngineError> {
+        let owner = self.native_gesture_directive_owner(provider, binding)?;
+        let changed = if let Some(owner) = owner {
+            self.update_gesture_docking_enabled(cause, owner, enabled, interaction_events)?
+        } else {
+            false
+        };
+        Ok(InputOutcome::DockingEnabledUpdated { enabled, changed })
+    }
+
+    fn native_gesture_directive_owner(
+        &self,
+        provider: BackendIngressLease,
+        binding: ViewportBinding,
+    ) -> Result<Option<GestureOwner>, EngineError> {
         self.require_managed_input_provider(provider)?;
         let window = binding.window();
         let current = self
@@ -108,17 +122,92 @@ impl DockEngine {
                         if source.window() == window
                 )
             });
-        let owner = self.interaction.active_owner().filter(|owner| {
+        Ok(self.interaction.active_owner().filter(|owner| {
             current
                 && owner.lease() == provider.pointer_provider()
                 && (keyboard_focus || source_matches)
+        }))
+    }
+
+    fn update_gesture_group_dock_mode(
+        &mut self,
+        cause: ReductionCause,
+        owner: GestureOwner,
+        mode: crate::model::TabGroupDockMode,
+        events: &mut Vec<InteractionEvent>,
+    ) -> Result<bool, EngineError> {
+        if self.interaction.active_owner() != Some(owner) {
+            return Ok(false);
+        }
+        let changed = self.interaction.set_group_dock_mode(mode);
+        if changed && let InteractionStatus::Dragging { session } = self.interaction.status() {
+            let is_dock = self
+                .interaction
+                .active_drag(session)
+                .ok()
+                .and_then(|drag| drag.preview())
+                .is_some_and(|preview| matches!(preview.proof(), PreviewProof::Dock { .. }));
+            if is_dock {
+                self.interaction
+                    .clear_preview(session, PreviewResolutionStatus::KnownNone)
+                    .map_err(|source| EngineError::PointerInteractionInvariant {
+                        cause,
+                        detail: format!("{source:?}"),
+                    })?;
+                events.push(InteractionEvent::new_caused(
+                    cause,
+                    self.version,
+                    InteractionEventKind::PreviewCleared { session },
+                ));
+            }
+            self.interaction
+                .set_drop_affordance(session, None)
+                .map_err(|source| EngineError::PointerInteractionInvariant {
+                    cause,
+                    detail: format!("{source:?}"),
+                })?;
+        }
+        Ok(changed)
+    }
+
+    pub(super) fn reduce_pointer_group_dock_mode(
+        &mut self,
+        cause: ReductionCause,
+        provider: PointerInputLease,
+        pointer: PointerId,
+        mode: crate::model::TabGroupDockMode,
+        events: &mut Vec<InteractionEvent>,
+    ) -> Result<InputOutcome, EngineError> {
+        let owner = self.interaction.active_owner().filter(|owner| {
+            self.pointer_provider() == Some(provider)
+                && owner.lease() == provider
+                && owner.pointer() == pointer
+                && matches!(
+                    provider.scope(),
+                    PointerProviderScope::HostLocal(_) | PointerProviderScope::SurfaceLocal(_)
+                )
         });
-        let changed = if let Some(owner) = owner {
-            self.update_gesture_docking_enabled(cause, owner, enabled, interaction_events)?
-        } else {
-            false
+        let changed = match owner {
+            Some(owner) => self.update_gesture_group_dock_mode(cause, owner, mode, events)?,
+            None => false,
         };
-        Ok(InputOutcome::DockingEnabledUpdated { enabled, changed })
+        Ok(InputOutcome::GroupDockModeUpdated { mode, changed })
+    }
+
+    pub(super) fn reduce_native_group_dock_mode(
+        &mut self,
+        cause: ReductionCause,
+        provider: BackendIngressLease,
+        binding: ViewportBinding,
+        mode: crate::model::TabGroupDockMode,
+        events: &mut Vec<InteractionEvent>,
+    ) -> Result<InputOutcome, EngineError> {
+        let owner = self.native_gesture_directive_owner(provider, binding)?;
+        let changed = match owner {
+            Some(owner) => self.update_gesture_group_dock_mode(cause, owner, mode, events)?,
+            None => false,
+        };
+        Ok(InputOutcome::GroupDockModeUpdated { mode, changed })
     }
 
     fn reduce_journal_pointer_edge(
@@ -246,6 +335,15 @@ impl DockEngine {
             && let Some(enabled) = edge.metadata().docking_enabled()
         {
             self.update_gesture_docking_enabled(cause, owner, enabled, interaction_events)?;
+        }
+        if matching_owner
+            && !matches!(
+                edge.kind(),
+                PointerEdgeKind::ButtonPressed(PointerButton::Primary)
+            )
+            && let Some(mode) = edge.metadata().group_dock_mode()
+        {
+            self.update_gesture_group_dock_mode(cause, owner, mode, interaction_events)?;
         }
         let event_start = interaction_events.len();
         let mut outcomes = match edge.kind() {
@@ -384,6 +482,12 @@ impl DockEngine {
                 cause,
                 owner,
                 edge.metadata().docking_enabled().unwrap_or(true),
+                interaction_events,
+            )?;
+            self.update_gesture_group_dock_mode(
+                cause,
+                owner,
+                edge.metadata().group_dock_mode().unwrap_or_default(),
                 interaction_events,
             )?;
         }
@@ -802,7 +906,7 @@ impl DockEngine {
                 plan.pane_records()
                     .iter()
                     .find(|record| record.id() == pane)
-                    .and_then(|record| plan.pane_selected(record)),
+                    .map(crate::presentation::scene::PaneRecord::item),
             ),
             PresentationHitRegionKind::ContainedFrameBlocker(floating) => {
                 (plan.contained_record(floating), None)
@@ -2124,7 +2228,7 @@ impl DockEngine {
         } else {
             DropTargeting::Explicit
         };
-        resolve_presented_drop_with_targeting(
+        crate::interaction::targeting::resolver::resolve_presented_drop_with_group_mode(
             presentation.scene(),
             presentation.plan(),
             source_layout_facts,
@@ -2139,6 +2243,7 @@ impl DockEngine {
             surface_background_offer,
             point,
             targeting,
+            self.interaction.group_dock_mode(),
         )
     }
 
@@ -2778,41 +2883,45 @@ impl DockEngine {
                 }
             }
             TabGestureSource::Tab(_) | TabGestureSource::Group(_) => {
-                let pane = plan
-                    .pane_records()
-                    .iter()
-                    .find(|pane| {
-                        pane.id() == (crate::presentation::scene::PaneSceneId { root, tabs })
-                    })
-                    .ok_or_else(unavailable)?;
                 let facts = plan.layout_facts().ok_or_else(unavailable)?;
                 let root_facts = facts.root(root).ok_or_else(unavailable)?;
-                let pane_sizing = if let TabGestureSource::Tab(item) = source {
-                    let measured = root_facts
-                        .pane_sizing(PaneSizingKey::new(root, tabs, item.tab.item()))
-                        .ok_or_else(unavailable)?;
-                    let visibility = self
-                        .presentation_requirements()
-                        .surface(surface)
-                        .and_then(|requirements| {
-                            requirements
-                                .tab_bar(crate::presentation::scene::TabBarSceneId { root, tabs })
-                        })
-                        .map(|bar| bar.policy().resolved(1, false).visibility())
-                        .ok_or_else(unavailable)?;
-                    pane_outer_sizing(measured, facts.config(), visibility)
-                        .map_err(|_| unavailable())?
-                        .minimum_size()
-                } else {
-                    root_facts
-                        .projection()
-                        .nodes
-                        .get(&tabs)
-                        .map(|result| result.constraints.min())
-                        .ok_or_else(unavailable)?
+                let source_node = match source {
+                    TabGestureSource::Tab(tab) => tab.tab.layout().unwrap_or(tabs),
+                    _ => tabs,
+                };
+                let projected = root_facts
+                    .projection()
+                    .nodes
+                    .get(&source_node)
+                    .ok_or_else(unavailable)?;
+                let pane_sizing = match source {
+                    TabGestureSource::Tab(tab) if tab.tab.item().is_some() => {
+                        let measured = root_facts
+                            .pane_sizing(PaneSizingKey::new(
+                                root,
+                                tab.tab.item().ok_or_else(unavailable)?,
+                            ))
+                            .ok_or_else(unavailable)?;
+                        let visibility =
+                            self.presentation_requirements()
+                                .surface(surface)
+                                .and_then(|requirements| {
+                                    requirements.tab_bar(
+                                        crate::presentation::scene::TabBarSceneId { root, tabs },
+                                    )
+                                })
+                                .map(|bar| bar.policy().resolved(1, false).visibility())
+                                .ok_or_else(unavailable)?;
+                        pane_outer_sizing(measured, facts.config(), visibility)
+                            .map_err(|_| unavailable())?
+                            .minimum_size()
+                    }
+                    TabGestureSource::Tab(_) => projected.constraints.min(),
+                    TabGestureSource::Group(_) => projected.constraints.min(),
+                    TabGestureSource::ContainedTitle { .. } => return Err(unavailable()),
                 };
                 JournalDragSourceGeometry {
-                    source_rect: pane.bounds(),
+                    source_rect: projected.rect,
                     minimum_size: contained_minimum_size(facts.config(), pane_sizing)
                         .map_err(|_| unavailable())?,
                 }

@@ -52,7 +52,7 @@ pub struct DockspacePreviewTabPaintRecord<'plan> {
     record: &'plan FutureTab,
 }
 
-impl DockspacePreviewTabPaintRecord<'_> {
+impl<'plan> DockspacePreviewTabPaintRecord<'plan> {
     /// Returns the direct child whose tab metadata should be painted.
     #[must_use]
     pub const fn key(self) -> TabKey {
@@ -63,6 +63,21 @@ impl DockspacePreviewTabPaintRecord<'_> {
     #[must_use]
     pub const fn item(self) -> Option<ItemId> {
         self.key().item()
+    }
+
+    /// Returns the same application or layout label used by normal tabs.
+    #[must_use]
+    pub fn label(self) -> crate::graph::TabLabel<'plan> {
+        match self.key().item() {
+            Some(item) => crate::graph::TabLabel::Item(item),
+            None => crate::graph::TabLabel::Layout {
+                title: self
+                    .record
+                    .layout_title
+                    .as_deref()
+                    .expect("future layout tabs retain their declared label"),
+            },
+        }
     }
 
     /// Returns the member's index in the complete future target strip.

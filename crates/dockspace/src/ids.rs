@@ -168,6 +168,14 @@ impl From<ItemId> for TabKey {
     }
 }
 
+/// Opaque identity of a structural node in one live layout session.
+///
+/// A key can be read from a layout view; it grants no mutation authority. Splits,
+/// merges, restoration and replacement may retire it. Persist application item
+/// keys or layout declarations instead of retaining node keys across sessions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NodeKey(pub(crate) NodeId);
+
 stable_id!(RootId, "Stable identity for a docking graph root.");
 stable_id!(
     SurfaceId,

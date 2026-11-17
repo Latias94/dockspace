@@ -136,7 +136,7 @@ fn owned_update_suspends_without_publication_and_resumes_the_same_candidate_once
         assert_ne!(frame.version(), before);
         let update = frame.suspend();
         assert_eq!(session.version(), before);
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
         assert!(session.presented_surface(A).is_none());
         if drop_resumed {
             drop(session.resume_update(update).unwrap());
@@ -144,7 +144,7 @@ fn owned_update_suspends_without_publication_and_resumes_the_same_candidate_once
             drop(update);
         }
         assert_eq!(session.version(), before);
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
     }
 
     let update = session.begin_update().unwrap();
@@ -156,12 +156,12 @@ fn owned_update_suspends_without_publication_and_resumes_the_same_candidate_once
     let candidate_version = frame.version();
     let update = frame.suspend();
     assert_eq!(session.version(), before);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert!(session.bind_presented_receiver(&receiver).is_none());
 
     let mut frame = session.resume_update(update).unwrap();
     assert_eq!(frame.version(), candidate_version);
-    assert!(frame.view().item(SECOND).unwrap().is_selected());
+    assert!(frame.view().item(SECOND).unwrap().is_active());
     let (retained, _) = RecordingRenderer::execute(ready(&mut frame, A)).unwrap();
     assert_eq!(retained.records, recording.records);
     let update = frame.suspend();
@@ -173,11 +173,12 @@ fn owned_update_suspends_without_publication_and_resumes_the_same_candidate_once
     assert!(matches!(
         report.inputs(),
         [HostInputOutcome::ProductActionApplied(
-            DockspaceActionOutcome::Selected {
-                tab: selected_tab,
+            DockspaceActionOutcome::ItemActivated {
+                item: SECOND,
                 changed: true,
             }
-        )] if selected_tab.item() == Some(SECOND)));
+        )]
+    ));
     assert_eq!(report.surface_commits().len(), 1);
     let output = only_output(&mut report);
     assert!(output.matches_semantic_output(semantic(&recording)));
@@ -241,7 +242,7 @@ fn suspended_pointer_update_keeps_late_output_terminals_pending_until_its_succes
             let update = session.begin_update().unwrap();
             let mut frame = session.resume_update(update).unwrap();
             frame.submit_host_pointer_batch(click()).unwrap();
-            assert!(frame.view().item(SECOND).unwrap().is_selected());
+            assert!(frame.view().item(SECOND).unwrap().is_active());
             frame.measure_surface(A, metrics(800.0, 96.0)).unwrap();
             assert!(matches!(
                 frame
@@ -253,13 +254,13 @@ fn suspended_pointer_update_keeps_late_output_terminals_pending_until_its_succes
             ));
             let update = frame.suspend();
             assert_eq!(session.version(), before);
-            assert!(session.view().item(FIRST).unwrap().is_selected());
+            assert!(session.view().item(FIRST).unwrap().is_active());
 
             session
                 .report_surface_presentation(inflight, result)
                 .unwrap();
             let mut frame = session.resume_update(update).unwrap();
-            assert!(frame.view().item(SECOND).unwrap().is_selected());
+            assert!(frame.view().item(SECOND).unwrap().is_active());
             assert!(matches!(
                 frame
                     .prepare_surface_with::<DockspaceRuntimeError>(A, |_| {
@@ -292,7 +293,7 @@ fn suspended_pointer_update_keeps_late_output_terminals_pending_until_its_succes
                 assert_eq!(session.version(), before);
             }
             assert_eq!(
-                session.view().item(SECOND).unwrap().is_selected(),
+                session.view().item(SECOND).unwrap().is_active(),
                 commit_update
             );
             assert!(!session.has_active_gesture());
@@ -348,7 +349,7 @@ fn suspended_pointer_update_keeps_late_output_terminals_pending_until_its_succes
             assert!(rejected.events().is_empty());
             assert!(rejected.manipulation_feedback().is_empty());
             assert_eq!(
-                session.view().item(SECOND).unwrap().is_selected(),
+                session.view().item(SECOND).unwrap().is_active(),
                 commit_update
             );
             assert!(!session.has_active_gesture());
@@ -391,7 +392,7 @@ fn suspended_pointer_update_keeps_late_output_terminals_pending_until_its_succes
                 usize::from(!commit_update),
                 "a fresh input selects once only when the suspended prefix was rolled back"
             );
-            assert!(session.view().item(SECOND).unwrap().is_selected());
+            assert!(session.view().item(SECOND).unwrap().is_active());
             assert!(!session.has_active_gesture());
             let quiet = settle(&mut session);
             assert!(quiet.inputs().is_empty());
@@ -427,7 +428,7 @@ fn owned_update_rejects_competing_foreign_and_stale_session_authority_without_lo
         DockspaceRuntimeErrorKind::ForeignUpdate
     );
     assert_eq!(origin.version(), before);
-    assert!(origin.view().item(FIRST).unwrap().is_selected());
+    assert!(origin.view().item(FIRST).unwrap().is_active());
     drop(origin.begin_update().unwrap());
     drop(origin.begin_host_frame().unwrap());
     assert_eq!(
@@ -458,7 +459,7 @@ fn owned_update_rejects_competing_foreign_and_stale_session_authority_without_lo
             DockspaceRuntimeErrorKind::ForeignUpdate
         );
         assert_eq!(stale.version(), before);
-        assert!(stale.view().item(FIRST).unwrap().is_selected());
+        assert!(stale.view().item(FIRST).unwrap().is_active());
         drop(stale.begin_update().unwrap());
     }
 }
@@ -477,7 +478,7 @@ fn repeated_encoding_keeps_one_input_candidate_and_rejects_discarded_pass_receip
     let (_, discarded_receipt) = RecordingRenderer::execute(ready(&mut frame, A)).unwrap();
     let update = frame.suspend();
     assert_eq!(session.version(), before);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
 
     let mut frame = session.resume_update(update).unwrap();
     frame.restart_encoding_pass().unwrap();
@@ -500,11 +501,12 @@ fn repeated_encoding_keeps_one_input_candidate_and_rejects_discarded_pass_receip
     assert!(matches!(
         report.inputs(),
         [HostInputOutcome::ProductActionApplied(
-            DockspaceActionOutcome::Selected {
-                tab: selected_tab,
+            DockspaceActionOutcome::ItemActivated {
+                item: SECOND,
                 changed: true
             }
-        )] if selected_tab.item() == Some(SECOND)));
+        )]
+    ));
     assert_eq!(report.surface_commits().len(), 1);
     let output = only_output(&mut report);
     assert!(output.matches_semantic_output(semantic(&recording)));
@@ -635,7 +637,7 @@ fn selection_or_topology_and_resize_are_encoded_before_their_single_publication(
             })
             .collect::<Vec<_>>();
         assert_eq!(selected.len(), if split { 2 } else { 1 });
-        assert!(selected.contains(&Some(if split { THIRD } else { SECOND })));
+        assert!(selected.contains(&if split { THIRD } else { SECOND }));
         let pane_right = recording
             .records
             .iter()
@@ -693,7 +695,7 @@ fn abandoned_and_failed_encoded_updates_preserve_scene_version_and_producer_wate
         let abandoned = encode(&mut candidate, A);
         assert_ne!(semantic(&abandoned), semantic(&original));
         assert_ne!(candidate.version(), before);
-        assert!(candidate.view().item(SECOND).unwrap().is_selected());
+        assert!(candidate.view().item(SECOND).unwrap().is_active());
         if fail {
             assert!(candidate.select_item_current(FIRST).is_err());
             assert!(
@@ -707,7 +709,7 @@ fn abandoned_and_failed_encoded_updates_preserve_scene_version_and_producer_wate
         }
 
         assert_eq!(session.version(), before);
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
         assert_eq!(session.presented_surface(A), Some(surface));
         assert_eq!(session.bind_presented_receiver(&receiver), Some(bound));
         assert!(!session.has_active_gesture());
@@ -728,13 +730,14 @@ fn abandoned_and_failed_encoded_updates_preserve_scene_version_and_producer_wate
         assert!(matches!(
             report.inputs(),
             [HostInputOutcome::ProductActionApplied(
-                DockspaceActionOutcome::Selected {
-                    tab: selected_tab,
+                DockspaceActionOutcome::ItemActivated {
+                    item: SECOND,
                     changed: true,
                 }
-            )] if selected_tab.item() == Some(SECOND)));
+            )]
+        ));
         assert!(only_output(&mut report).matches_semantic_output(semantic(&recording)));
-        assert!(session.view().item(SECOND).unwrap().is_selected());
+        assert!(session.view().item(SECOND).unwrap().is_active());
         let mut old_time = session.begin_host_frame().unwrap();
         assert!(old_time.submit_host_pointer(unknown_move(19)).is_err());
     }
@@ -765,7 +768,7 @@ fn full_output_capacity_skips_prepare_resolver_but_allows_zero_output_selection_
     let mut selected = frame.commit().unwrap();
     assert!(selected.workspace_changed());
     assert!(selected.take_painted_outputs().is_empty());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
 
     let mut close = session.begin_host_frame().unwrap();
     close.request_close_item_current(FIRST).unwrap();
@@ -812,7 +815,7 @@ fn full_output_capacity_skips_prepare_resolver_but_allows_zero_output_selection_
     assert!(closed.workspace_changed());
     assert!(closed.take_painted_outputs().is_empty());
     assert!(session.view().item(FIRST).is_none());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     drop(inflight);
 }
 

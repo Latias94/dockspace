@@ -21,7 +21,9 @@ use crate::presentation::scene::{
 };
 use crate::presentation::tab_strip::{TabStripControlId, TabStripStateKey};
 
+mod composable;
 mod contained_geometry;
+mod grid;
 mod rootless_guides;
 mod tab_strip_geometry;
 mod visibility;
@@ -217,7 +219,12 @@ fn compiler_emits_the_same_magnetic_catalog_when_guides_are_disabled() {
     let content = unguided
         .pane_records()
         .iter()
-        .find(|pane| pane.id().tabs == tabs)
+        .find(|pane| {
+            pane.containing_tab_bar()
+                .expect("flat fixture has a containing bar")
+                .tabs
+                == tabs
+        })
         .expect("guide-disabled pane must remain compiled")
         .content_bounds();
     let center_point = LogicalPoint::new(
@@ -675,6 +682,17 @@ fn surface_program_keeps_root_chrome_pane_contained_and_guide_order_in_core() {
             })
             .expect("each presentation root should have one end");
         let operations = &blocks[begin + 1..end];
+        let tabs = operations
+            .iter()
+            .position(|operation| {
+                matches!(
+                    operation,
+                    crate::presentation::scene::SurfaceProgramBlock::RootOperation(
+                        crate::presentation::scene::SurfaceProgramRootOperation::Tabs(_)
+                    )
+                )
+            })
+            .expect("root program should contain its real Tabs container");
         let pane = operations
             .iter()
             .position(|operation| {
@@ -708,7 +726,7 @@ fn surface_program_keeps_root_chrome_pane_contained_and_guide_order_in_core() {
                 )
             })
             .expect("root program should contain a tab");
-        assert!(pane < tab_bar && tab_bar < tab);
+        assert!(tabs < tab_bar && tab_bar < tab && tab < pane);
 
         if root == contained_root || root == second_contained_root {
             let floating = if root == contained_root {
@@ -1816,7 +1834,9 @@ fn fractional_origin_selection_reveal_matches_validated_full_compilation() {
         let mut changed = workspace.clone();
         crate::graph::transaction::WorkspaceTransaction::from_commands([
             crate::graph::command::WorkspaceCommand::Select {
-                source: source.as_tab_source(),
+                source: source
+                    .as_tab_source()
+                    .expect("the fixture item belongs directly to Tabs"),
             },
         ])
         .apply(&mut changed, &policy)
@@ -1920,8 +1940,8 @@ fn partially_visible_tabs_keep_body_paint_and_hits_when_the_close_button_is_clip
         assert!(first_record.close_visual_bounds().is_some());
         assert!(first_record.close_bounds().is_some());
         assert_eq!(
-            plan.pane_selected(&plan.pane_records()[0]),
-            first.tab().tab.item()
+            plan.pane_records()[0].item(),
+            first.tab().tab.item().unwrap()
         );
 
         let tab = plan
@@ -2972,11 +2992,11 @@ fn single_central_leaf_derives_every_exact_question() {
     assert_eq!(
         requirements.pane_sizings().collect::<Vec<_>>(),
         [
-            PaneSizingKey::new(root, tabs, Some(ItemId::new(10))),
-            PaneSizingKey::new(root, tabs, Some(ItemId::new(11))),
+            PaneSizingKey::new(root, ItemId::new(10)),
+            PaneSizingKey::new(root, ItemId::new(11)),
         ]
     );
-    assert_eq!(requirements.tab_intrinsics().len(), 2);
+    assert_eq!(requirements.tab_intrinsics().len(), 3);
     assert_eq!(
         requirements.tab_strips().collect::<Vec<_>>(),
         [TabStripKey::new(surface, TabBarSceneId { root, tabs })]
@@ -3039,7 +3059,7 @@ fn nested_split_and_rootless_contained_roster_are_complete() {
         .expect("surface should be present");
 
     assert_eq!(requirements.pane_sizings().len(), 4);
-    assert_eq!(requirements.tab_intrinsics().len(), 4);
+    assert_eq!(requirements.tab_intrinsics().len(), 7);
     assert_eq!(requirements.tab_strips().len(), 3);
     assert_eq!(requirements.ticket().surface(), surface);
 }

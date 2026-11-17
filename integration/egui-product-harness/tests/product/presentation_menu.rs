@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn menu_floated_root_stays_floating_when_released_away_from_docking_guides() {
-    for layout in [layout(), split_layout()] {
+    for (layout, root_label) in [(layout(), "Tabs"), (split_layout(), "Split")] {
         let context = Context::default();
         context.enable_accesskit();
         let mut dockspace = Dockspace::builder("menu-float-empty-floor-drag", layout)
@@ -15,7 +15,7 @@ fn menu_floated_root_stays_floating_when_released_away_from_docking_guides() {
         let (menu, menu_node) = accesskit_node(&stable.output, Role::Button, "Layout actions");
         assert_eq!(
             menu_node.description(),
-            Some("Actions for the entire layout, including all split groups")
+            Some("Actions for the entire layout, or choose one of its active panes")
         );
         let _ = run_frame(
             &context,
@@ -33,7 +33,7 @@ fn menu_floated_root_stays_floating_when_released_away_from_docking_guides() {
         );
         let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
         let floating = dockspace.view().item(FIRST).unwrap().contained().unwrap();
-        let source = node_center(&stable.output, Role::TitleBar, "First");
+        let source = node_center(&stable.output, Role::TitleBar, root_label);
         let blank = Pos2::new(80.0, 450.0);
         for events in [
             vec![Event::PointerMoved(source)],
@@ -78,7 +78,7 @@ fn menu_floated_root_stays_floating_when_released_away_from_docking_guides() {
 
         for modifiers in [Modifiers::SHIFT, Modifiers::NONE] {
             let stable = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
-            let source = node_center(&stable.output, Role::TitleBar, "First");
+            let source = node_center(&stable.output, Role::TitleBar, root_label);
             let button = |pressed| Event::PointerButton {
                 pos: if pressed { source } else { guide.center() },
                 button: PointerButton::Primary,
@@ -198,11 +198,19 @@ fn presentation_menu_floats_and_docks_back_with_truthful_native_availability() {
             .expect("Float preserves every item");
         assert_eq!(location.contained(), Some(floating_id));
         assert_eq!(
-            location.tabs().items().collect::<Vec<_>>(),
+            location
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
             &[FIRST, SECOND]
         );
         assert_eq!(
-            location.tabs().selected().and_then(|tab| tab.item()),
+            location
+                .tabs()
+                .expect("item is an inline tab")
+                .selected()
+                .and_then(|tab| tab.item()),
             Some(FIRST)
         );
     }
@@ -270,11 +278,19 @@ fn presentation_menu_floats_and_docks_back_with_truthful_native_availability() {
         assert_eq!(location.surface(), SURFACE);
         assert_eq!(location.contained(), None);
         assert_eq!(
-            location.tabs().items().collect::<Vec<_>>(),
+            location
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
             &[FIRST, SECOND]
         );
         assert_eq!(
-            location.tabs().selected().and_then(|tab| tab.item()),
+            location
+                .tabs()
+                .expect("item is an inline tab")
+                .selected()
+                .and_then(|tab| tab.item()),
             Some(FIRST)
         );
     }

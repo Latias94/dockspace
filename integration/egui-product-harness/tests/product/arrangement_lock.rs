@@ -119,7 +119,7 @@ fn locked_overflow_menu_selects_hidden_tabs_without_reordering_or_closing() {
         let settled = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
         assert!(settled.close_requests.is_empty());
         assert!(
-            dockspace.view().item(FOURTH).unwrap().is_selected(),
+            dockspace.view().item(FOURTH).unwrap().is_active(),
             "{activation:?}"
         );
         assert_eq!(
@@ -214,7 +214,7 @@ fn locked_rear_contained_tab_and_content_keep_focus_and_raise_without_geometry_c
             [FLOATING, FRONT_FLOATING]
         );
         assert_eq!(
-            dockspace.view().item(SECOND).unwrap().is_selected(),
+            dockspace.view().item(SECOND).unwrap().is_active(),
             content_click
         );
         let source = if content_click {
@@ -242,7 +242,7 @@ fn locked_rear_contained_tab_and_content_keep_focus_and_raise_without_geometry_c
             context.memory(|memory| memory.has_focus(panes.target)),
             "content_click={content_click}"
         );
-        assert!(dockspace.view().item(SECOND).unwrap().is_selected());
+        assert!(dockspace.view().item(SECOND).unwrap().is_active());
         assert_eq!(
             dockspace
                 .view()

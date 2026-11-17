@@ -7,10 +7,14 @@ mod authority;
 pub(crate) mod canonical;
 pub(crate) mod command;
 #[cfg(test)]
+mod composable_tests;
+#[cfg(test)]
 mod copy_tests;
 #[cfg(test)]
 mod docking_cost;
 pub(crate) mod error;
+#[cfg(test)]
+mod grid_tests;
 pub(crate) mod operation;
 pub(crate) mod root_structure;
 mod shared_storage;
@@ -30,6 +34,7 @@ use crate::geometry::LogicalRect;
 use crate::graph::canonical::CanonicalizationError;
 use crate::graph::validation::WorkspaceValidationErrors;
 use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
+use crate::model::{DockspaceGridError, DockspaceGridShape, DockspaceGridShares};
 use shared_storage::NodeStore;
 
 pub(crate) const NORMALIZED_WEIGHT_TOLERANCE: f64 = 1.0e-12;
@@ -187,7 +192,12 @@ pub enum InvalidSplitWeights {
 /// Runtime node in a docking forest.
 #[derive(Debug, PartialEq)]
 pub enum Node {
-    /// Ordered tabs sharing one content rectangle.
+    /// One real application content pane without tabs chrome.
+    Pane {
+        /// Real application content owned by this pane.
+        item: ItemId,
+    },
+    /// Ordered direct children sharing one content rectangle.
     Tabs {
         /// Direct children in visual tab order.
         items: Vec<TabKey>,
@@ -195,6 +205,8 @@ pub enum Node {
         selected: Option<TabKey>,
         /// Complete most-recent-first permutation, with the selected child first.
         mru: Vec<TabKey>,
+        /// Explicit title when this container is presented as a layout tab.
+        layout_title: Option<Arc<str>>,
     },
     /// Ordered N-ary split children.
     Split {
@@ -204,6 +216,19 @@ pub enum Node {
         children: Vec<NodeId>,
         /// Normalized child shares, one per child.
         weights: Vec<SplitWeight>,
+        /// Explicit title when this container is presented as a layout tab.
+        layout_title: Option<Arc<str>>,
+    },
+    /// Row-major children sharing complete row and column track axes.
+    Grid {
+        /// Fixed dimensions or a shape resolved for the offered bounds.
+        shape: DockspaceGridShape,
+        /// Real child nodes in durable row-major order.
+        children: Vec<NodeId>,
+        /// Explicit row and column shares, or equal tracks when absent.
+        shares: Option<DockspaceGridShares>,
+        /// Explicit title when this grid is presented as a layout tab.
+        layout_title: Option<Arc<str>>,
     },
 }
 
@@ -212,71 +237,228 @@ impl Clone for Node {
         #[cfg(test)]
         crate::interaction::targeting::resolver::structural_work::record_node_payload_clone(self);
         match self {
+            Self::Pane { item } => Self::Pane { item: *item },
             Self::Tabs {
                 items,
                 selected,
                 mru,
+                layout_title,
             } => Self::Tabs {
                 items: items.clone(),
                 selected: *selected,
                 mru: mru.clone(),
+                layout_title: layout_title.clone(),
             },
             Self::Split {
                 axis,
                 children,
                 weights,
+                layout_title,
             } => Self::Split {
                 axis: *axis,
                 children: children.clone(),
                 weights: weights.clone(),
+                layout_title: layout_title.clone(),
+            },
+            Self::Grid {
+                shape,
+                children,
+                shares,
+                layout_title,
+            } => Self::Grid {
+                shape: *shape,
+                children: children.clone(),
+                shares: shares.clone(),
+                layout_title: layout_title.clone(),
             },
         }
     }
 }
 
+/// Failure to edit an existing structural child slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum NodeEditError {
+    /// The index does not name a structural child.
+    #[error("node has no structural child at index {index}")]
+    NotStructuralChild { index: usize },
+}
+
+/// Borrowed label of one exact direct tab child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabLabel<'a> {
+    /// Application title supplied for real content.
+    Item(ItemId),
+    /// Declared title or deterministic container-kind fallback.
+    Layout { title: &'a str },
+}
+
 impl Node {
+    /// Trims tracks made entirely empty by a checked roster removal.
+    /// This writer repair is never applied while validating external graph input.
+    pub(crate) fn repair_grid_tracks(&mut self) -> Result<(), DockspaceGridError> {
+        let Self::Grid {
+            shape,
+            children,
+            shares,
+            ..
+        } = self
+        else {
+            return Ok(());
+        };
+        if children.is_empty() {
+            return Err(DockspaceGridError::EmptyChildren);
+        }
+        if let DockspaceGridShape::Fixed { rows, columns } = shape {
+            let count = children.len();
+            let next_columns = columns.get().min(count);
+            let next_rows = count.div_ceil(next_columns);
+            if rows.get() != next_rows || columns.get() != next_columns {
+                *rows = std::num::NonZeroUsize::new(next_rows)
+                    .ok_or(DockspaceGridError::EmptyChildren)?;
+                *columns = std::num::NonZeroUsize::new(next_columns)
+                    .ok_or(DockspaceGridError::EmptyChildren)?;
+                if let Some(current) = shares {
+                    let rows = if current.row_weights().len() == next_rows {
+                        current.row_weights().to_vec()
+                    } else {
+                        SplitWeight::normalize(current.rows().take(next_rows))
+                            .map_err(|source| DockspaceGridError::InvalidRowShares { source })?
+                    };
+                    let columns = if current.column_weights().len() == next_columns {
+                        current.column_weights().to_vec()
+                    } else {
+                        SplitWeight::normalize(current.columns().take(next_columns))
+                            .map_err(|source| DockspaceGridError::InvalidColumnShares { source })?
+                    };
+                    *current = DockspaceGridShares::from_normalized(rows, columns)?;
+                }
+            }
+        } else if shares
+            .as_ref()
+            .is_some_and(|shares| shares.validate_for(*shape, children.len()).is_err())
+        {
+            *shares = None;
+        }
+        Ok(())
+    }
+
+    /// Creates a pane without an implicit tabs container.
+    pub const fn pane(item: ItemId) -> Self {
+        Self::Pane { item }
+    }
+
     /// Creates a tabs node and selects its first item, if present.
     pub fn tabs(items: impl IntoIterator<Item = ItemId>) -> Self {
-        let items: Vec<TabKey> = items.into_iter().map(TabKey::for_item).collect();
+        let items: Vec<_> = items.into_iter().map(TabKey::for_item).collect();
         let selected = items.first().copied();
-        let mru = initial_tab_mru(&items, selected);
-        Self::Tabs {
-            items,
-            selected,
-            mru,
-        }
+        Self::tabs_from_keys(items, selected)
     }
 
     /// Creates a tabs node with an explicit selection.
-    ///
-    /// Full selection and duplicate-item checks run when the workspace draft is built.
+    /// Full membership checks run when the workspace draft is built.
     pub fn tabs_with_selection(
         items: impl IntoIterator<Item = ItemId>,
         selected: Option<ItemId>,
     ) -> Self {
-        let items = items.into_iter().map(TabKey::for_item).collect::<Vec<_>>();
-        let selected = selected.map(TabKey::for_item);
+        Self::tabs_from_keys(
+            items.into_iter().map(TabKey::for_item).collect(),
+            selected.map(TabKey::for_item),
+        )
+    }
+
+    pub(crate) fn tabs_from_keys(items: Vec<TabKey>, selected: Option<TabKey>) -> Self {
         let mru = initial_tab_mru(&items, selected);
         Self::Tabs {
             items,
             selected,
             mru,
+            layout_title: None,
+        }
+    }
+
+    /// Borrows this container's explicit layout title.
+    pub fn layout_title(&self) -> Option<&str> {
+        match self {
+            Self::Pane { .. } => None,
+            Self::Tabs { layout_title, .. }
+            | Self::Split { layout_title, .. }
+            | Self::Grid { layout_title, .. } => layout_title.as_deref(),
+        }
+    }
+
+    /// Sets a structural container's title; pane titles remain application-owned.
+    pub fn set_layout_title(&mut self, title: Option<Arc<str>>) {
+        match self {
+            Self::Pane { .. } => {}
+            Self::Tabs { layout_title, .. }
+            | Self::Split { layout_title, .. }
+            | Self::Grid { layout_title, .. } => *layout_title = title,
+        }
+    }
+
+    /// Iterates structural children with their original visual roster indices.
+    pub fn child_nodes(&self) -> impl DoubleEndedIterator<Item = (usize, NodeId)> + Clone + '_ {
+        let len = match self {
+            Self::Pane { .. } => 0,
+            Self::Tabs { items, .. } => items.len(),
+            Self::Split { children, .. } | Self::Grid { children, .. } => children.len(),
+        };
+        (0..len).filter_map(move |index| {
+            let child = match self {
+                Self::Pane { .. } => None,
+                Self::Tabs { items, .. } => items[index].layout(),
+                Self::Split { children, .. } | Self::Grid { children, .. } => Some(children[index]),
+            };
+            child.map(|child| (index, child))
+        })
+    }
+
+    /// Replaces an existing structural edge, preserving selection and MRU.
+    /// Workspace operations validate replacement kind and exclusive ownership.
+    pub fn replace_child(
+        &mut self,
+        index: usize,
+        replacement: NodeId,
+    ) -> Result<NodeId, NodeEditError> {
+        let invalid = || NodeEditError::NotStructuralChild { index };
+        match self {
+            Self::Pane { .. } => Err(invalid()),
+            Self::Tabs {
+                items,
+                selected,
+                mru,
+                ..
+            } => {
+                let slot = items.get_mut(index).ok_or_else(invalid)?;
+                let previous = slot.layout().ok_or_else(invalid)?;
+                let old = *slot;
+                let new = TabKey::for_layout(replacement);
+                *slot = new;
+                if *selected == Some(old) {
+                    *selected = Some(new);
+                }
+                for entry in mru {
+                    if *entry == old {
+                        *entry = new;
+                    }
+                }
+                Ok(previous)
+            }
+            Self::Split { children, .. } | Self::Grid { children, .. } => {
+                let slot = children.get_mut(index).ok_or_else(invalid)?;
+                Ok(std::mem::replace(slot, replacement))
+            }
         }
     }
 
     /// Creates an N-ary split and normalizes its raw weights.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`NodeBuildError`] when there are fewer than two children, cardinalities differ,
-    /// or the supplied weights cannot be normalized.
     #[cfg(test)]
     pub fn split(
         axis: Axis,
         children: impl IntoIterator<Item = NodeId>,
         weights: impl IntoIterator<Item = f64>,
     ) -> Result<Self, NodeBuildError> {
-        let children: Vec<NodeId> = children.into_iter().collect();
+        let children: Vec<_> = children.into_iter().collect();
         if children.len() < 2 {
             return Err(NodeBuildError::SplitTooFewChildren {
                 children: children.len(),
@@ -293,20 +475,17 @@ impl Node {
             axis,
             children,
             weights,
+            layout_title: None,
         })
     }
 
     /// Creates an equal-share N-ary split.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`NodeBuildError::SplitTooFewChildren`] when fewer than two children are supplied.
     #[cfg(test)]
     pub fn equal_split(
         axis: Axis,
         children: impl IntoIterator<Item = NodeId>,
     ) -> Result<Self, NodeBuildError> {
-        let children: Vec<NodeId> = children.into_iter().collect();
+        let children: Vec<_> = children.into_iter().collect();
         let weights = std::iter::repeat_n(1.0, children.len());
         Self::split(axis, children, weights)
     }
@@ -571,7 +750,7 @@ impl WorkspaceData {
     pub fn tab_mru(&self, tabs: NodeId) -> Option<&[TabKey]> {
         match self.nodes.get(tabs)? {
             Node::Tabs { mru, .. } => Some(mru),
-            Node::Split { .. } => None,
+            Node::Pane { .. } | Node::Split { .. } | Node::Grid { .. } => None,
         }
     }
 
@@ -615,6 +794,13 @@ impl WorkspaceData {
         #[cfg(test)]
         let mut item_visits = 0;
         for node in self.nodes.values() {
+            if let Node::Pane { item } = node {
+                *items.entry(*item).or_insert(0) += 1;
+                #[cfg(test)]
+                {
+                    item_visits += 1;
+                }
+            }
             if let Node::Tabs {
                 items: tab_items, ..
             } = node
@@ -872,41 +1058,22 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_layout_tabs_cannot_be_accepted_as_application_items() {
+    fn layout_tabs_own_real_containers_without_becoming_application_items() {
         let item = ItemId::new(1);
         let mut builder = Workspace::builder();
         let child = builder.insert_node(Node::tabs([item]));
         let layout = TabKey::for_layout(child);
         assert_ne!(layout, TabKey::for_item(item));
         assert_eq!(layout.item(), None);
-        let tabs = builder.insert_node(Node::Tabs {
-            items: vec![layout],
-            selected: Some(layout),
-            mru: vec![layout],
-        });
+        let tabs = builder.insert_node(Node::tabs_from_keys(vec![layout], Some(layout)));
         let root = RootId::new(1);
         builder.set_root(root, RootRecord::new(tabs));
         builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(root));
-
-        assert!(
-            builder
-                .validate()
-                .unwrap_err()
-                .errors()
-                .iter()
-                .any(|error| matches!(
-                    error,
-                    validation::WorkspaceValidationError::UnsupportedLayoutTab { tabs: actual, tab }
-                        if *actual == tabs && *tab == layout
-                ))
-        );
-        assert_eq!(
-            builder.build().unwrap_err(),
-            CanonicalizationError::UnsupportedLayoutTab {
-                node: tabs,
-                tab: layout
-            },
-        );
+        builder.validate().unwrap();
+        let workspace = builder.build().unwrap();
+        assert_eq!(workspace.nodes().count(), 2);
+        assert_eq!(workspace.item_multiset(), BTreeMap::from([(item, 1)]));
+        assert_eq!(workspace.first_active_item(tabs), Some(item));
     }
 
     #[test]

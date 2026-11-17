@@ -23,7 +23,7 @@ use crate::geometry::{
     Constraints, LogicalPoint, LogicalRect, LogicalSize, PhysicalPoint, PhysicalRect, ScaleFactor,
 };
 use crate::graph::command::{
-    CommandOutcome, ContainedRosterSource, MovePayload, NodeSource, SplitResize, WorkspaceCommand,
+    CommandOutcome, ContainedRosterSource, MovePayload, NodeSource, TrackResize, WorkspaceCommand,
 };
 use crate::graph::{Axis, SplitWeight};
 use crate::ids::{
@@ -630,7 +630,7 @@ pub struct ActiveResizeView<'state> {
     surface: SurfaceId,
     scene: SurfaceSceneStamp,
     target: SplitterResizeTarget,
-    updates: &'state [SplitResize],
+    updates: &'state [TrackResize],
 }
 
 impl<'state> ActiveResizeView<'state> {
@@ -649,7 +649,7 @@ impl<'state> ActiveResizeView<'state> {
 
     /// Returns the latest validated atomic transient updates.
     #[must_use]
-    pub const fn updates(self) -> &'state [SplitResize] {
+    pub const fn updates(self) -> &'state [TrackResize] {
         self.updates
     }
 }
@@ -1496,7 +1496,7 @@ pub enum InteractionOutcome {
     /// The resize proposal was prevalidated and stored for painting.
     ResizeUpdated {
         session: ResizeSessionId,
-        splits: Vec<SplitResize>,
+        splits: Vec<TrackResize>,
     },
     /// One scene-bound keyboard or accessibility resize committed.
     SplitterAdjusted {
@@ -2209,7 +2209,7 @@ pub(crate) struct ActiveResize {
     pub(crate) initial_pointer: LogicalPoint,
     pub(crate) current_pointer: LogicalPoint,
     pub(crate) axis_groups: Vec<FrozenResizeAxisGroup>,
-    pub(crate) updates: Vec<SplitResize>,
+    pub(crate) updates: Vec<TrackResize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2231,12 +2231,17 @@ pub(crate) struct FrozenResizeSplit {
 pub(crate) struct FrozenResizeAxisGroup {
     pub(crate) axis: Axis,
     pub(crate) splits: Vec<FrozenResizeSplit>,
+    pub(crate) piecewise: Option<Arc<crate::engine::FrozenPiecewiseAxis>>,
     pub(crate) common_delta: ResizeDeltaInterval,
 }
 
 impl FrozenResizeAxisGroup {
     pub(crate) fn sources(&self) -> impl Iterator<Item = &NodeSource> {
-        self.splits.iter().map(|split| &split.source)
+        self.splits.iter().map(|split| &split.source).chain(
+            self.piecewise
+                .iter()
+                .flat_map(|piecewise| piecewise.sources()),
+        )
     }
 
     pub(crate) fn resized_sources(&self) -> impl Iterator<Item = &NodeSource> {
@@ -2244,6 +2249,11 @@ impl FrozenResizeAxisGroup {
             .iter()
             .filter(|split| split.axis == self.axis)
             .map(|split| &split.source)
+            .chain(
+                self.piecewise
+                    .iter()
+                    .flat_map(|piecewise| piecewise.sources()),
+            )
     }
 }
 
@@ -2410,6 +2420,7 @@ enum ActiveGesture {
 pub struct InteractionState {
     active: ActiveGesture,
     docking_enabled: bool,
+    group_dock_mode: crate::model::TabGroupDockMode,
     last_click_generation: ClickGeneration,
     last_drag_generation: DragGeneration,
     last_resize_generation: ResizeGeneration,
@@ -2421,6 +2432,14 @@ pub struct InteractionState {
 }
 
 impl InteractionState {
+    pub(crate) const fn group_dock_mode(&self) -> crate::model::TabGroupDockMode {
+        self.group_dock_mode
+    }
+
+    pub(crate) fn set_group_dock_mode(&mut self, mode: crate::model::TabGroupDockMode) -> bool {
+        std::mem::replace(&mut self.group_dock_mode, mode) != mode
+    }
+
     pub(crate) const fn docking_enabled(&self) -> bool {
         self.docking_enabled
     }
@@ -2800,7 +2819,7 @@ impl InteractionState {
 
     /// Returns the validated resize override eligible for transient projection.
     #[must_use]
-    pub fn resize_overrides(&self) -> Option<(ResizeSessionId, &[SplitResize])> {
+    pub fn resize_overrides(&self) -> Option<(ResizeSessionId, &[TrackResize])> {
         match &self.active {
             ActiveGesture::Resizing(resize) if !resize.updates.is_empty() => {
                 Some((resize.session, &resize.updates))
@@ -3268,7 +3287,7 @@ impl InteractionState {
         &mut self,
         session: ResizeSessionId,
         current_pointer: LogicalPoint,
-        updates: Vec<SplitResize>,
+        updates: Vec<TrackResize>,
     ) -> Result<(), InteractionRejection> {
         match &mut self.active {
             ActiveGesture::Resizing(resize) if resize.session == session => {
@@ -3558,6 +3577,7 @@ impl Default for InteractionState {
         Self {
             active: ActiveGesture::Idle,
             docking_enabled: true,
+            group_dock_mode: crate::model::TabGroupDockMode::MergeTabs,
             last_click_generation: ClickGeneration::default(),
             last_drag_generation: DragGeneration::default(),
             last_resize_generation: ResizeGeneration::default(),

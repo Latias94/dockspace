@@ -1605,9 +1605,9 @@ impl PhysicalSmokeApp {
                         return None;
                     }
                     Some(SourceSelection {
-                        main_selected: main.is_selected(),
-                        anchor_selected: anchor.is_selected(),
-                        child_selected: child.is_selected(),
+                        main_selected: main.is_active(),
+                        anchor_selected: anchor.is_active(),
+                        child_selected: child.is_active(),
                     })
                 })
             })
@@ -1861,7 +1861,7 @@ mod tests {
             session
                 .view()
                 .item(CHILD_ITEM)
-                .is_some_and(|item| item.is_selected())
+                .is_some_and(|item| item.is_active())
         );
     }
 

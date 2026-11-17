@@ -81,13 +81,15 @@ fn defer_close(
 ) -> (CloseRequestId, DeferredCloseToken) {
     let prepared = match target {
         ClosePlanTarget::Item { item } => session.prepare_close_item(item),
-        ClosePlanTarget::Tabs { root, anchor } => {
-            assert_eq!(session.view().item(anchor).unwrap().root(), root);
-            let group = session
-                .capture_tabs_group(DockAnchor::Item(anchor))
-                .unwrap();
+        ClosePlanTarget::Tabs { group, .. } => {
+            let group = session.capture_tabs_group(DockAnchor::Node(group)).unwrap();
             session.prepare_close_tabs(group)
         }
+        ClosePlanTarget::Tab { tab, .. } => session.prepare_close_tab(
+            session
+                .capture_tab(tab)
+                .expect("close target is a direct tab"),
+        ),
         ClosePlanTarget::Root { root } => session.prepare_close_root(root),
         ClosePlanTarget::Surface { .. } => panic!("content-close fixture"),
     };
@@ -274,6 +276,7 @@ fn veto_keeps_the_entire_group_and_later_local_selection_remains_usable() {
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND]
@@ -283,7 +286,7 @@ fn veto_keeps_the_entire_group_and_later_local_selection_remains_usable() {
     frame.submit_prepared_action(select).unwrap();
     measure(&mut frame);
     assert!(frame.commit().unwrap().workspace_changed());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
 }
 
 #[test]
@@ -359,6 +362,7 @@ fn current_close_decisions_resume_bounded_prefixes_and_drop_retries_the_original
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>()
                     .len(),
@@ -540,7 +544,7 @@ fn review_deferred_close_survives_tab_selection_on_another_surface() {
                 .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
                 .unwrap();
             assert!(frame.commit().unwrap().workspace_changed());
-            assert!(session.view().item(FOURTH).unwrap().is_selected());
+            assert!(session.view().item(FOURTH).unwrap().is_active());
         }
         let mut frame = session.begin_host_frame().unwrap();
         frame
@@ -562,6 +566,7 @@ fn review_deferred_close_survives_tab_selection_on_another_surface() {
                 .item(SECOND)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[SECOND]
@@ -572,12 +577,13 @@ fn review_deferred_close_survives_tab_selection_on_another_surface() {
                 .item(THIRD)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[THIRD, FOURTH]
         );
         if select_other_surface {
-            assert!(session.view().item(FOURTH).unwrap().is_selected());
+            assert!(session.view().item(FOURTH).unwrap().is_active());
         }
     }
 }
@@ -603,6 +609,7 @@ fn deferred_root_close_scopes_to_content_not_selection_order_or_unrelated_edits(
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[SECOND, FIRST]
@@ -644,6 +651,7 @@ fn deferred_root_close_scopes_to_content_not_selection_order_or_unrelated_edits(
             .item(FOURTH)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FOURTH, FIFTH]
@@ -739,6 +747,7 @@ fn deferred_root_close_rejects_changed_surface_owner_with_identical_content() {
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND]

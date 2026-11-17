@@ -1,26 +1,31 @@
 //! Typed commands and topology references for durable workspace mutation.
 
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use crate::geometry::LogicalRect;
 pub use crate::graph::RootReference;
+pub use crate::graph::workspace::ItemPlace;
 use crate::graph::{Axis, SplitWeight};
 use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
+use crate::model::{DockspaceGridShape, DockspaceGridShares};
 use crate::policy::DockTargetRuleKey;
 
 /// Programmatic request to close one item or one complete root.
 ///
 /// The target carries only stable identity. The core captures all graph,
 /// presentation, and policy facts when it accepts the request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContentCloseTarget {
     /// Close one item in its current tabs node.
     Item(ItemId),
     /// Close every item in one complete root.
     Root(RootId),
-    /// Close one captured tabs leaf, addressed by a stable member.
-    Tabs { root: RootId, anchor: ItemId },
+    /// Close one exact direct tab, including its complete layout subtree.
+    Tab { source: TabSource },
+    /// Close one exact tabs container without a representative content item.
+    TabsSource { source: NodeSource },
 }
 
 /// Durable result of an approved content-close transaction.
@@ -32,6 +37,12 @@ pub enum CloseCommitOutcome {
     RootClosed { root: RootId, items: Vec<ItemId> },
     /// One complete tabs group was removed in one transaction.
     TabsClosed { root: RootId, items: Vec<ItemId> },
+    /// One direct layout tab and every real descendant were removed atomically.
+    TabClosed {
+        root: RootId,
+        tab: TabKey,
+        items: Vec<ItemId>,
+    },
     /// One complete surface roster and all of its items were removed atomically.
     SurfaceClosed {
         surface: SurfaceId,
@@ -113,10 +124,33 @@ impl NodeFingerprint {
                                     && left_children == right_children
                                     && (!compare_weights || left_weights == right_weights)
                             }
-                            (FingerprintNode::Tabs { .. }, FingerprintNode::Split { .. })
-                            | (FingerprintNode::Split { .. }, FingerprintNode::Tabs { .. }) => {
-                                false
+                            (
+                                FingerprintNode::Grid {
+                                    shape: left_shape,
+                                    children: left_children,
+                                    share_bits: left_shares,
+                                },
+                                FingerprintNode::Grid {
+                                    shape: right_shape,
+                                    children: right_children,
+                                    share_bits: right_shares,
+                                },
+                            ) => {
+                                left_shape == right_shape
+                                    && left_children == right_children
+                                    && (!compare_weights || left_shares == right_shares)
                             }
+                            (
+                                FingerprintNode::Pane {
+                                    item: left,
+                                    hidden: lh,
+                                },
+                                FingerprintNode::Pane {
+                                    item: right,
+                                    hidden: rh,
+                                },
+                            ) => left == right && lh == rh,
+                            _ => false,
                         }
                 })
     }
@@ -151,6 +185,10 @@ pub(crate) struct NodeFingerprintRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FingerprintNode {
+    Pane {
+        item: ItemId,
+        hidden: bool,
+    },
     Tabs {
         items: Arc<[TabKey]>,
         hidden: Vec<ItemId>,
@@ -161,6 +199,11 @@ pub(crate) enum FingerprintNode {
         axis: Axis,
         children: Arc<[NodeId]>,
         weight_bits: Arc<[u64]>,
+    },
+    Grid {
+        shape: DockspaceGridShape,
+        children: Arc<[NodeId]>,
+        share_bits: Option<(Arc<[u64]>, Arc<[u64]>)>,
     },
 }
 
@@ -175,40 +218,49 @@ pub(crate) enum FingerprintPresentation {
     },
 }
 
-/// A source tabs item frozen against one workspace state.
+/// A real content source frozen against one workspace state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemSource {
     pub(crate) root: RootId,
-    pub(crate) tabs: NodeId,
+    pub(crate) place: ItemPlace,
     pub(crate) item: ItemId,
     pub(crate) reference: RootReference,
 }
 
 impl ItemSource {
-    /// Captures this real content item's direct tab identity against the same owner.
-    pub(crate) fn as_tab_source(&self) -> TabSource {
-        TabSource {
+    /// Captures an inline content tab; bare panes have no direct tab source.
+    pub(crate) fn as_tab_source(&self) -> Option<TabSource> {
+        Some(TabSource {
             root: self.root,
-            tabs: self.tabs,
+            tabs: self.tabs()?,
             tab: TabKey::for_item(self.item),
             reference: self.reference.clone(),
-        }
+        })
     }
     /// Returns the source root.
     pub const fn root(&self) -> RootId {
         self.root
     }
-
-    /// Returns the source tabs node.
-    pub const fn tabs(&self) -> NodeId {
-        self.tabs
+    /// Returns the real content placement captured by this source.
+    pub const fn place(&self) -> ItemPlace {
+        self.place
     }
-
+    /// Returns the real immediate owner node.
+    pub const fn owner_node(&self) -> NodeId {
+        self.place.owner_node()
+    }
+    /// Returns the immediate inline tabs owner, if present.
+    pub const fn tabs(&self) -> Option<NodeId> {
+        self.place.tabs()
+    }
+    /// Returns the inline tab index, if present.
+    pub const fn tab_index(&self) -> Option<usize> {
+        self.place.tab_index()
+    }
     /// Returns the source item.
     pub const fn item(&self) -> ItemId {
         self.item
     }
-
     /// Returns the exact root-owner reference.
     pub const fn reference(&self) -> &RootReference {
         &self.reference
@@ -225,6 +277,11 @@ pub struct TabSource {
 }
 
 impl TabSource {
+    /// Returns the immediate tabs owner.
+    pub const fn owner_node(&self) -> NodeId {
+        self.tabs
+    }
+
     /// Returns the source root.
     pub const fn root(&self) -> RootId {
         self.root
@@ -254,32 +311,147 @@ pub struct NodeSource {
     pub(crate) reference: RootReference,
 }
 
-/// One exact split-weight replacement inside an atomic resize batch.
+/// A complete replacement of one owner's shared track weights.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SplitResize {
-    split: NodeSource,
-    weights: Vec<SplitWeight>,
+pub enum TrackWeights {
+    /// One normalized share for each split child.
+    Split(Vec<SplitWeight>),
+    /// Complete independently normalized row and column shares.
+    Grid(DockspaceGridShares),
 }
 
-impl SplitResize {
+/// Frozen resolved dimensions and the complete cell map used by a grid resize.
+///
+/// The presentation owner proves that these dimensions describe the actual
+/// presented grid. Command validation independently checks the durable roster
+/// and derives effective shares from the exact source instead of trusting a
+/// caller-supplied changed-axis mask.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridResizeBasis {
+    rows: NonZeroUsize,
+    columns: NonZeroUsize,
+    children: Arc<[NodeId]>,
+}
+
+impl GridResizeBasis {
+    /// Captures one legal resolved rectangle without choosing a viewport shape.
+    #[must_use]
+    pub fn new(rows: usize, columns: usize, children: Arc<[NodeId]>) -> Option<Self> {
+        let rows = NonZeroUsize::new(rows)?;
+        let columns = NonZeroUsize::new(columns)?;
+        DockspaceGridShape::Fixed { rows, columns }
+            .validate_children(children.len())
+            .ok()?;
+        Some(Self {
+            rows,
+            columns,
+            children,
+        })
+    }
+
+    /// Returns the frozen shared row count.
+    #[must_use]
+    pub const fn rows(&self) -> usize {
+        self.rows.get()
+    }
+
+    /// Returns the frozen shared column count.
+    #[must_use]
+    pub const fn columns(&self) -> usize {
+        self.columns.get()
+    }
+
+    /// Borrows the exact row-major roster, including hidden cells.
+    #[must_use]
+    pub fn children(&self) -> &[NodeId] {
+        &self.children
+    }
+}
+
+/// One exact shared-track replacement inside an atomic resize batch.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackResize {
+    source: NodeSource,
+    weights: TrackWeights,
+    grid_basis: Option<GridResizeBasis>,
+}
+
+impl TrackResize {
     /// Creates one resize update from a frozen split source and normalized weights.
     ///
     /// Validation against the current workspace is deferred to command execution.
     #[must_use]
-    pub fn new(split: NodeSource, weights: Vec<SplitWeight>) -> Self {
-        Self { split, weights }
+    pub fn split(source: NodeSource, weights: Vec<SplitWeight>) -> Self {
+        Self {
+            source,
+            weights: TrackWeights::Split(weights),
+            grid_basis: None,
+        }
     }
 
-    /// Returns the frozen split source.
+    /// Creates a durable grid replacement without a presented-shape interpretation.
+    ///
+    /// Every changed stored axis requires policy authorization, including latent
+    /// Auto shares. Use [`Self::grid_resolved`] for a proven presented shape.
     #[must_use]
-    pub const fn split(&self) -> &NodeSource {
-        &self.split
+    pub fn grid(source: NodeSource, shares: DockspaceGridShares) -> Self {
+        Self {
+            source,
+            weights: TrackWeights::Grid(shares),
+            grid_basis: None,
+        }
     }
 
-    /// Returns the complete proposed split weights.
+    /// Creates a grid update against one frozen presented shape and cell map.
+    ///
+    /// Both proposed axes must match the basis. Stored Auto shares with either
+    /// dimension mismatched are latent, so policy compares both proposed axes
+    /// against equal defaults. An effective no-op preserves the latent values.
     #[must_use]
-    pub fn weights(&self) -> &[SplitWeight] {
+    pub fn grid_resolved(
+        source: NodeSource,
+        basis: GridResizeBasis,
+        shares: DockspaceGridShares,
+    ) -> Self {
+        Self {
+            source,
+            weights: TrackWeights::Grid(shares),
+            grid_basis: Some(basis),
+        }
+    }
+
+    /// Returns the exact frozen owner source.
+    #[must_use]
+    pub const fn source(&self) -> &NodeSource {
+        &self.source
+    }
+
+    /// Borrows the complete proposed track values.
+    #[must_use]
+    pub const fn weights(&self) -> &TrackWeights {
         &self.weights
+    }
+
+    /// Borrows the frozen grid interpretation used for effective-axis validation.
+    #[must_use]
+    pub const fn grid_basis(&self) -> Option<&GridResizeBasis> {
+        self.grid_basis.as_ref()
+    }
+
+    /// Borrows proposed split weights, when the owner is a split.
+    pub fn split_weights(&self) -> Option<&[SplitWeight]> {
+        match &self.weights {
+            TrackWeights::Split(weights) => Some(weights),
+            TrackWeights::Grid(_) => None,
+        }
+    }
+
+    /// Borrows both proposed grid axes, when the owner is a grid.
+    pub const fn grid_shares(&self) -> Option<&DockspaceGridShares> {
+        match &self.weights {
+            TrackWeights::Grid(shares) => Some(shares),
+            TrackWeights::Split(_) => None,
+        }
     }
 }
 
@@ -420,12 +592,12 @@ impl TabTarget {
         self.surface
     }
 
-    /// Returns whether this tabs leaf was the root's declared central node.
+    /// Returns whether this target was the root's declared central Tabs container.
     pub const fn is_central(&self) -> bool {
         self.central
     }
 
-    /// Returns the selected item that represented this pane-local target.
+    /// Returns the real item or root policy scope frozen for this target.
     pub const fn rule(&self) -> DockTargetRuleKey {
         self.rule
     }
@@ -480,7 +652,7 @@ pub enum Edge {
 /// Semantic extent of one frozen edge target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EdgeTargetScope {
-    /// Split one selected tabs leaf at a branch-local edge.
+    /// Split one bare Pane or Tabs container at a branch-local edge.
     Inner,
     /// Split the complete docking root at its outer boundary.
     Outer,
@@ -559,7 +731,7 @@ pub enum DockTarget {
         /// Gap index in the target's current tab sequence.
         index: usize,
     },
-    /// Split a selected tabs leaf at an explicit branch-local edge and fraction.
+    /// Split a bare Pane or Tabs container at an explicit local edge and fraction.
     InnerEdge(EdgeTarget),
     /// Split the complete target root at an explicit outer edge and fraction.
     OuterEdge(EdgeTarget),
@@ -599,7 +771,7 @@ pub enum MovePayload {
     /// Move and merge one complete tabs stack.
     /// An inner central container stays in its source root with no tabs.
     Tabs(NodeSource),
-    /// Move an arbitrary complete subtree; center targets reject split payloads.
+    /// Move an arbitrary complete subtree, preserving it as one tab at center targets.
     Subtree(NodeSource),
 }
 
@@ -678,6 +850,8 @@ pub enum RootPresentationTarget {
 pub enum WorkspaceCommand {
     /// Select one direct child in its current tabs container.
     Select { source: TabSource },
+    /// Activate real content and every containing layout tab atomically.
+    SelectItem { source: ItemSource },
     /// Show or hide an owned item while retaining its membership and split weights.
     SetItemVisibility { source: ItemSource, visible: bool },
     /// Reorder one direct child to an exact pre-removal gap in the same container.
@@ -696,8 +870,9 @@ pub enum WorkspaceCommand {
         payload: MovePayload,
         target: DockTarget,
     },
-    /// Atomically replace every weight for one or more distinct splits.
-    ResizeSplits { splits: Vec<SplitResize> },
+    /// Atomically replace complete shared-track values for distinct layout owners.
+    /// An empty batch succeeds without changing graph state or owner authority.
+    ResizeTracks { tracks: Vec<TrackResize> },
     /// Attach a logical surface with a new main root containing one empty central tabs leaf.
     ///
     /// This creates no native hosting and admits no application item.
@@ -810,10 +985,11 @@ impl WorkspaceCommand {
                 ..
             } => Some(*item),
             Self::Select { .. }
+            | Self::SelectItem { .. }
             | Self::SetItemVisibility { .. }
             | Self::Reorder { .. }
             | Self::Move { .. }
-            | Self::ResizeSplits { .. }
+            | Self::ResizeTracks { .. }
             | Self::AttachEmptySurface { .. }
             | Self::RetireEmptySurface { .. }
             | Self::CreateSurfaceRoot {
@@ -841,6 +1017,8 @@ impl WorkspaceCommand {
 /// Structured result of one successfully staged command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutcome {
+    /// Real content and its containing layout branches were activated.
+    ItemActivated { item: ItemId, changed: bool },
     /// Selection was checked and optionally changed.
     Selected {
         tab: TabKey,
@@ -871,8 +1049,8 @@ pub enum CommandOutcome {
         target_root: RootId,
         changed: bool,
     },
-    /// One atomic split-resize batch was checked and optionally stored.
-    SplitsResized { splits: Vec<NodeId>, changed: bool },
+    /// One atomic track-resize batch was checked and optionally stored.
+    TracksResized { tracks: Vec<NodeId>, changed: bool },
     /// A logical surface with an empty central main root was attached.
     EmptySurfaceAttached { surface: SurfaceId, root: RootId },
     /// A logical surface and its complete item-free forest were retired.
@@ -936,11 +1114,12 @@ pub enum CommandOutcome {
 impl CommandOutcome {
     pub(crate) const fn changes_workspace(&self) -> bool {
         match self {
-            Self::Selected { changed, .. }
+            Self::ItemActivated { changed, .. }
+            | Self::Selected { changed, .. }
             | Self::ItemVisibilityChanged { changed, .. }
             | Self::Reordered { changed, .. }
             | Self::Moved { changed, .. }
-            | Self::SplitsResized { changed, .. }
+            | Self::TracksResized { changed, .. }
             | Self::RootRehomed { changed, .. }
             | Self::ContainedRectUpdated { changed, .. }
             | Self::ContainedRaised { changed, .. } => *changed,

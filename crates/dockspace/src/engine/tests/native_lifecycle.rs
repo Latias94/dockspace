@@ -3839,7 +3839,8 @@ fn explicit_tick_fatal_reduction_rolls_back_provenance_and_complete_state() {
         source: workspace
             .capture_item_source(root, tabs, ItemId::new(2))
             .expect("source must be capturable")
-            .as_tab_source(),
+            .as_tab_source()
+            .expect("fixture item is an inline tab"),
     };
     let mut engine =
         DockEngine::new(workspace, DockPolicy::default()).expect("engine must be valid");
@@ -4567,7 +4568,9 @@ fn stale_roster_precondition_is_a_nonpublishing_recovery_rejection() {
         .capture_item_source(source_root, source_tabs, ItemId::new(42))
         .unwrap();
     crate::graph::transaction::WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source: source.as_tab_source(),
+        source: source
+            .as_tab_source()
+            .expect("fixture item is an inline tab"),
     }])
     .apply(&mut changed, &engine.policy)
     .unwrap();

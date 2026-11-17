@@ -1261,6 +1261,7 @@ fn assert_close_create_and_output_pressure(
             .item(ItemId::new(3))
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>()
     };

@@ -45,13 +45,15 @@ mod operation_log;
 #[path = "basic/smoke.rs"]
 mod smoke;
 
-fn main() -> eframe::Result {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let operation_log = operation_log::OperationLog::from_args()
         .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     let mut policy = DockPolicy::default();
     policy.set_allow_native_surfaces(true);
     policy.set_close_capability(CloseCapability::DeferredAllowed);
     let command_smoke = std::env::args().any(|argument| argument == "--command-smoke");
+    let command_smoke_completed =
+        command_smoke.then(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     let smoke = std::env::args().any(|argument| argument == "--smoke");
     let docking_smoke = std::env::args().any(|argument| argument == "--docking-smoke");
     // The finite journeys deliberately exercise their own initial geometry,
@@ -142,7 +144,9 @@ fn main() -> eframe::Result {
         status: None,
         smoke: smoke.then(smoke::EditorSmoke::new),
         docking_smoke: docking_smoke.then(docking_smoke::DockingSmoke::new),
-        command_smoke: command_smoke.then(command_smoke::CommandSmoke::new),
+        command_smoke: command_smoke_completed
+            .as_ref()
+            .map(|completed| command_smoke::CommandSmoke::new(std::sync::Arc::clone(completed))),
         operation_log,
     };
     let options = eframe::NativeOptions {
@@ -175,7 +179,16 @@ fn main() -> eframe::Result {
             }
             Ok(Box::new(app))
         }),
-    )
+    )?;
+    if command_smoke_completed
+        .is_some_and(|completed| !completed.load(std::sync::atomic::Ordering::Relaxed))
+    {
+        return Err(std::io::Error::other(
+            "native editor command smoke failed; see preceding diagnostics",
+        )
+        .into());
+    }
+    Ok(())
 }
 
 struct NativeExampleApp {

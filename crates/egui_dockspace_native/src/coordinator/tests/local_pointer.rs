@@ -274,7 +274,7 @@ fn fixture_with_capabilities(
             .local_coordinates_for_event(WindowId::from(WINDOW), Some(ViewportId::ROOT))),
         Some(cap)
     );
-    assert!(native.session.view().item(FIRST).unwrap().is_selected());
+    assert!(native.session.view().item(FIRST).unwrap().is_active());
     assert!(!native.session.has_pending_native_input());
     (native, binding, scene, now)
 }
@@ -355,6 +355,7 @@ fn order(native: &NativeCoordinator) -> Vec<ItemId> {
         .item(FIRST)
         .unwrap()
         .tabs()
+        .expect("item is an inline tab")
         .items()
         .collect::<Vec<_>>()
 }

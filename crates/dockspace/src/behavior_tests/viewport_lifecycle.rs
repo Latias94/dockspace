@@ -3786,7 +3786,9 @@ fn pending_item_create_rejects_source_selection_before_first_live_admission() {
     let input = command_input(
         &fixture.engine,
         WorkspaceCommand::Select {
-            source: changing_source.as_tab_source(),
+            source: changing_source
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     );
     let rejected = submit_test_input(&mut fixture, input)
@@ -3874,7 +3876,9 @@ fn pending_complete_root_create_rejects_fingerprint_changes_atomically() {
     let input = command_input(
         &fixture.engine,
         WorkspaceCommand::Select {
-            source: changing_source.as_tab_source(),
+            source: changing_source
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     );
     let rejected = submit_test_input(&mut fixture, input).expect("source mutation must reduce");

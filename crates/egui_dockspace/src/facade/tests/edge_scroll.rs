@@ -186,7 +186,7 @@ fn stationary_drag_edge_scroll_repeats_after_presented_output_without_selecting_
     assert_eq!(overflow(&mut dockspace).1, initial + 40.0);
     assert!(dockspace.session.has_active_gesture());
     assert_eq!(dockspace.version(), before);
-    assert!(dockspace.view().item(TARGET).unwrap().is_selected());
+    assert!(dockspace.view().item(TARGET).unwrap().is_active());
     assert_eq!(context.memory(|memory| memory.focused()), focus_before);
     // The next product run accepts the exact newly painted scroll geometry.
     frame(&context, &mut dockspace, 1.08, Vec::new());
@@ -196,7 +196,7 @@ fn stationary_drag_edge_scroll_repeats_after_presented_output_without_selecting_
     frame(&context, &mut dockspace, 1.11, Vec::new());
     assert_eq!(overflow(&mut dockspace).1, initial + 80.0);
     assert_eq!(dockspace.version(), before);
-    assert!(dockspace.view().item(TARGET).unwrap().is_selected());
+    assert!(dockspace.view().item(TARGET).unwrap().is_active());
     assert_eq!(context.memory(|memory| memory.focused()), focus_before);
     frame(
         &context,
@@ -338,7 +338,7 @@ fn edge_scroll_yields_to_explicit_scroll_then_menu_selection_and_reveal() {
     let offset = overflow(&mut dockspace).1;
     assert!(offset > 40.0, "manual scroll uses its own aligned offset");
     assert_eq!(dockspace.version(), original);
-    assert!(dockspace.view().item(TARGET).unwrap().is_selected());
+    assert!(dockspace.view().item(TARGET).unwrap().is_active());
     assert!(dockspace.session.has_active_gesture());
     frame(&context, &mut dockspace, 1.2, Vec::new());
     assert_eq!(overflow(&mut dockspace).1, offset);
@@ -390,13 +390,7 @@ fn edge_scroll_yields_to_explicit_scroll_then_menu_selection_and_reveal() {
             break;
         }
     }
-    assert!(
-        dockspace
-            .view()
-            .item(ItemId::new(20))
-            .unwrap()
-            .is_selected()
-    );
+    assert!(dockspace.view().item(ItemId::new(20)).unwrap().is_active());
     assert!(
         visible,
         "menu selection owns reveal and restores an operable close control"

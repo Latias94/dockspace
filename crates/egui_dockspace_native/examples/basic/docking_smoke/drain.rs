@@ -69,7 +69,11 @@ impl DrainSmoke {
                         assert_eq!(remaining.root(), INSPECTOR_ROOT);
                         assert_eq!(remaining.contained(), Some(INSPECTOR_FLOATING));
                         assert_eq!(
-                            remaining.tabs().items().collect::<Vec<_>>(),
+                            remaining
+                                .tabs()
+                                .expect("item is an inline tab")
+                                .items()
+                                .collect::<Vec<_>>(),
                             [self.order[1]]
                         );
                     });
@@ -191,6 +195,7 @@ fn assert_drained(app: &NativeExampleApp, order: [ItemId; 2]) {
             view.item(OUTLINE)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             [OUTLINE, ASSETS, order[0], order[1]]
@@ -206,6 +211,7 @@ fn pane_bounds(app: &NativeExampleApp, axis: DockspaceAxis) -> Option<[egui::Rec
                 view.item(OUTLINE)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .selected()
                     .and_then(|tab| tab.item())
             })?;

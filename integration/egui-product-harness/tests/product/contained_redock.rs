@@ -139,7 +139,7 @@ fn redocking_both_tabs_of_a_central_contained_root_retires_it_and_keeps_input_li
             ],
         );
         assert!(
-            dock.view().item(FIRST).unwrap().is_selected(),
+            dock.view().item(FIRST).unwrap().is_active(),
             "retiring the floating root must leave tab selection usable"
         );
         let stable = frame(&context, &mut dock, Vec::new());
@@ -236,6 +236,13 @@ fn contained_title_drag_keeps_the_main_center_guide_reachable() {
     let mut panes = Panes;
     let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
     let _ = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
+    let source_key = dockspace
+        .view()
+        .root(FLOATING_ROOT)
+        .unwrap()
+        .content()
+        .unwrap()
+        .key();
     let source = contained_title_point(&dockspace);
     let _ = run_frame(
         &context,
@@ -279,8 +286,33 @@ fn contained_title_drag_keeps_the_main_center_guide_reachable() {
             pointer_button(target.center(), false),
         ],
     );
-    assert_eq!(root_tabs(&dockspace), Some(vec![FIRST, SECOND]));
-    assert!(dockspace.view().contained(FLOATING).is_none());
+    let view = dockspace.view();
+    let root = view.root(ROOT).unwrap();
+    let tabs = root.content().unwrap().tabs().unwrap();
+    assert_eq!(tabs.items().collect::<Vec<_>>(), [FIRST]);
+    assert_eq!(tabs.tabs().len(), 2);
+    assert_eq!(tabs.tabs()[0].item(), Some(FIRST));
+    let layout = tabs.tabs()[1];
+    assert!(layout.is_layout());
+    assert_eq!(tabs.selected(), Some(layout));
+    let egui_dockspace::DockspaceTabView::Layout(moved) = tabs.child(layout).unwrap() else {
+        panic!("the contained root must dock as one complete layout tab")
+    };
+    assert_eq!(moved.key(), source_key);
+    assert_eq!(moved.layout_title(), Some("Second"));
+    let nested = moved.tabs().unwrap();
+    assert_eq!(nested.items().collect::<Vec<_>>(), [SECOND]);
+    assert_eq!(nested.selected().and_then(|tab| tab.item()), Some(SECOND));
+    assert_eq!(root.items().collect::<Vec<_>>(), [FIRST, SECOND]);
+    assert_eq!(root.active_items().collect::<Vec<_>>(), [SECOND]);
+    assert!(!view.item(FIRST).unwrap().is_active());
+    let second = view.item(SECOND).unwrap();
+    assert_eq!(second.root(), ROOT);
+    assert_eq!(second.surface(), SURFACE);
+    assert_eq!(second.contained(), None);
+    assert!(second.is_active());
+    assert!(view.contained(FLOATING).is_none());
+    assert!(view.root(FLOATING_ROOT).is_none());
 }
 
 #[test]
@@ -396,7 +428,14 @@ fn redock_full_surface_contained_tab(present_before_release: bool) {
     );
     assert_eq!(second.surface(), SURFACE);
     assert_ne!(second.root(), ROOT);
-    assert_eq!(second.tabs().items().collect::<Vec<_>>(), &[SECOND]);
+    assert_eq!(
+        second
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
+        &[SECOND]
+    );
     assert_eq!(root_tabs(&dockspace), Some(vec![FIRST]));
 
     let unmodified = run_pane_frame(
@@ -549,7 +588,7 @@ fn redock_full_surface_contained_tab(present_before_release: bool) {
     assert_eq!(second.surface(), SURFACE);
     assert_eq!(second.root(), ROOT);
     assert_eq!(second.contained(), None);
-    assert!(second.is_selected());
+    assert!(second.is_active());
     assert_eq!(surface_ids(&dockspace), [SURFACE]);
     assert_eq!(
         dockspace.view().surface(SURFACE).unwrap().contained_count(),

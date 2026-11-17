@@ -104,6 +104,7 @@ fn locked_product_commands_reject_structural_changes_but_select_still_works() {
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND]
@@ -114,13 +115,14 @@ fn locked_product_commands_reject_structural_changes_but_select_still_works() {
     frame.select_item_current(SECOND).unwrap();
     let report = commit_measured(frame);
     assert!(report.workspace_changed());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert_eq!(
         session
             .view()
             .item(SECOND)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND]
@@ -133,7 +135,7 @@ fn locked_product_commands_reject_structural_changes_but_select_still_works() {
         .unwrap();
     frame.request_close_item_current(FIRST).unwrap();
     let report = commit_measured(frame);
-    assert!(session.view().item(CLOSED).unwrap().is_selected());
+    assert!(session.view().item(CLOSED).unwrap().is_active());
     assert!(
         matches!(report.inputs()[1], HostInputOutcome::CloseRejected(_)),
         "unlock preserves the original per-item restriction"
@@ -189,8 +191,8 @@ fn current_action_tokens_correlate_mixed_batch_outcomes_in_submission_order() {
     for (index, item) in [(1, SECOND), (4, FIRST)] {
         assert_eq!(
             report.inputs()[index],
-            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                tab: item.into(),
+            HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::ItemActivated {
+                item,
                 changed: true,
             })
         );
@@ -202,13 +204,14 @@ fn current_action_tokens_correlate_mixed_batch_outcomes_in_submission_order() {
         ));
     }
     assert!(report.workspace_changed());
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert_eq!(
         session
             .view()
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND]
@@ -376,7 +379,7 @@ fn locked_tab_pointer_press_selects_without_arming_a_drag_or_changing_arrangemen
         } else {
             frame.submit_host_pointer_batch([press]).unwrap();
             commit_measured(frame);
-            assert!(session.view().item(SECOND).unwrap().is_selected());
+            assert!(session.view().item(SECOND).unwrap().is_active());
             assert!(
                 !session.has_active_gesture(),
                 "a policy-denied source must never arm a drag on press"
@@ -385,13 +388,14 @@ fn locked_tab_pointer_press_selects_without_arming_a_drag_or_changing_arrangemen
             frame.submit_host_pointer_batch(tail).unwrap();
             commit_measured(frame);
         }
-        assert!(session.view().item(SECOND).unwrap().is_selected());
+        assert!(session.view().item(SECOND).unwrap().is_active());
         assert_eq!(
             session
                 .view()
                 .item(SECOND)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[FIRST, SECOND]

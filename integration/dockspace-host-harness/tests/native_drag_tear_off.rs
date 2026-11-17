@@ -262,13 +262,19 @@ impl Fixture {
             );
         }
         assert_eq!(
-            view.item(MOVED).unwrap().tabs().items().collect::<Vec<_>>(),
+            view.item(MOVED)
+                .unwrap()
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
             &[RETAINED, MOVED]
         );
         assert_eq!(
             view.item(MOVED)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .selected()
                 .and_then(|tab| tab.item()),
             Some(MOVED)

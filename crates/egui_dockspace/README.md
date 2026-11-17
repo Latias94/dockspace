@@ -190,12 +190,15 @@ for modifier matching, tab cycling, middle-click close and splitter shortcuts.
 
 ## More examples
 
-These use an ordinary eframe callback and teach application workflows. Use the
-workbench for drag docking. Run commands from the repository root.
+The shared-grid example and workbench use the complete-output winit/WGPU host
+for drag docking and resizing. The remaining examples use an ordinary eframe
+callback to teach application workflows. Run commands from the repository root.
 
 | Example | Run command |
 | --- | --- |
 | [Basic pane rendering](examples/basic.rs) | `cargo run -p egui_dockspace --example basic --features example-app --locked` |
+| [Named nested layouts and bare panes](examples/composable.rs) | `cargo run -p egui_dockspace --example composable --features example-app --locked` |
+| [Shared grid tracks and layout tabs](examples/shared_grid.rs) | `cargo run -p egui_dockspace --example shared_grid --features wgpu --locked` |
 | [Background saving](examples/background_save.rs) | `cargo run -p egui_dockspace --example background_save --features example-app --locked` |
 | [Layout presets and autosave](examples/workspace_persistence.rs) | `cargo run -p egui_dockspace --example workspace_persistence --features example-app,serde --locked` |
 

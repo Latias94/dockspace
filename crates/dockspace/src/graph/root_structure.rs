@@ -9,7 +9,8 @@ use super::authority::NodePlacement;
 use super::{Axis, Node, SplitWeight, WorkspaceData};
 use crate::graph::error::{CommandError, ReferenceRole};
 use crate::graph::workspace::ParentLink;
-use crate::ids::{NodeId, RootId};
+use crate::ids::{ItemId, NodeId, RootId};
+use crate::model::{DockspaceGridShape, DockspaceGridShares};
 
 /// One exact immutable split value, shared with its current arena handle.
 #[derive(Debug)]
@@ -35,13 +36,33 @@ impl SharedSplit {
         weights
     }
 
-    pub(crate) fn children(&self) -> &[NodeId] {
-        let Node::Split { children, .. } = self.0.as_ref() else {
-            unreachable!("shared split contains a split payload")
-        };
-        children
+    #[cfg(test)]
+    pub(super) fn shares_payload(&self, other: &Arc<Node>) -> bool {
+        Arc::ptr_eq(&self.0, other)
     }
+}
 
+/// One immutable grid value, shared with its current arena handle.
+#[derive(Debug)]
+pub(crate) struct SharedGrid(Arc<Node>);
+
+impl SharedGrid {
+    pub(crate) fn new(node: Arc<Node>) -> Self {
+        debug_assert!(matches!(node.as_ref(), Node::Grid { .. }));
+        Self(node)
+    }
+    pub(crate) fn shape(&self) -> DockspaceGridShape {
+        let Node::Grid { shape, .. } = self.0.as_ref() else {
+            unreachable!("shared grid contains a grid payload")
+        };
+        *shape
+    }
+    pub(crate) fn shares(&self) -> Option<&DockspaceGridShares> {
+        let Node::Grid { shares, .. } = self.0.as_ref() else {
+            unreachable!("shared grid contains a grid payload")
+        };
+        shares.as_ref()
+    }
     #[cfg(test)]
     pub(super) fn shares_payload(&self, other: &Arc<Node>) -> bool {
         Arc::ptr_eq(&self.0, other)
@@ -56,11 +77,20 @@ pub(crate) struct RootNode {
 
 #[derive(Debug)]
 pub(crate) enum RootNodeKind {
-    Tabs,
+    Pane {
+        item: ItemId,
+    },
+    Tabs {
+        children: Range<usize>,
+    },
     Split {
         payload: SharedSplit,
         children: Range<usize>,
         split: usize,
+    },
+    Grid {
+        payload: SharedGrid,
+        children: Range<usize>,
     },
 }
 
@@ -73,6 +103,8 @@ pub(crate) struct RootStructure {
     pub(crate) postorder: Vec<usize>,
     pub(crate) ordered_rows: Vec<usize>,
     pub(crate) split_rows: Vec<usize>,
+    pub(crate) grid_rows: Vec<usize>,
+    has_composition: bool,
 }
 
 enum BuildFrame {
@@ -145,8 +177,9 @@ impl RootStructure {
                     let row = structure.nodes.len();
                     if row == 0 && node_capacity_hint != 0 {
                         let capacity = match value.as_ref() {
-                            Node::Tabs { .. } => 1,
-                            Node::Split { .. } => {
+                            Node::Pane { .. } => 1,
+                            Node::Tabs { .. } if value.child_nodes().next().is_none() => 1,
+                            Node::Tabs { .. } | Node::Split { .. } | Node::Grid { .. } => {
                                 let edges = node_capacity_hint.saturating_sub(1);
                                 structure.children.reserve(edges);
                                 structure.split_rows.reserve(edges / 2);
@@ -159,40 +192,61 @@ impl RootStructure {
                     }
                     structure.nodes.push(RootNode {
                         id: node,
-                        kind: RootNodeKind::Tabs,
+                        kind: RootNodeKind::Tabs { children: 0..0 },
                     });
                     on_node(node, parent);
                     if let Some(slot) = child_slot {
                         structure.children[slot] = row;
                     }
+                    let child_count = value.child_nodes().count();
+                    let start = structure.children.len();
+                    structure.children.resize(start + child_count, 0);
+                    let child_range = start..structure.children.len();
                     match value.as_ref() {
-                        Node::Tabs { .. } => structure.postorder.push(row),
+                        Node::Pane { item } => {
+                            structure.has_composition = true;
+                            structure.nodes[row].kind = RootNodeKind::Pane { item: *item };
+                        }
+                        Node::Tabs { .. } => {
+                            structure.has_composition |= child_count != 0;
+                            structure.nodes[row].kind = RootNodeKind::Tabs {
+                                children: child_range,
+                            };
+                        }
                         Node::Split {
                             children, weights, ..
                         } => {
                             debug_assert_eq!(children.len(), weights.len());
-                            let payload = SharedSplit::new(Arc::clone(value));
-                            let child_count = payload.children().len();
-                            let start = structure.children.len();
-                            structure.children.resize(start + child_count, 0);
                             structure.nodes[row].kind = RootNodeKind::Split {
-                                payload,
-                                children: start..structure.children.len(),
+                                payload: SharedSplit::new(Arc::clone(value)),
+                                children: child_range,
                                 split: structure.split_rows.len(),
                             };
                             structure.split_rows.push(row);
-                            pending.push(BuildFrame::Exit(row));
-                            pending.extend(children.iter().copied().enumerate().rev().map(
-                                |(index, child)| BuildFrame::Enter {
-                                    node: child,
-                                    parent: Some(ParentLink {
-                                        parent: node,
-                                        index,
-                                    }),
-                                    child_slot: Some(start + index),
-                                },
-                            ));
                         }
+                        Node::Grid { .. } => {
+                            structure.has_composition = true;
+                            structure.nodes[row].kind = RootNodeKind::Grid {
+                                payload: SharedGrid::new(Arc::clone(value)),
+                                children: child_range,
+                            };
+                            structure.grid_rows.push(row);
+                        }
+                    }
+                    if child_count == 0 {
+                        structure.postorder.push(row);
+                    } else {
+                        pending.push(BuildFrame::Exit(row));
+                        pending.extend(value.child_nodes().rev().enumerate().map(
+                            |(offset, (index, child))| BuildFrame::Enter {
+                                node: child,
+                                parent: Some(ParentLink {
+                                    parent: node,
+                                    index,
+                                }),
+                                child_slot: Some(start + child_count - 1 - offset),
+                            },
+                        ));
                     }
                 }
                 BuildFrame::Exit(row) => structure.postorder.push(row),
@@ -207,6 +261,10 @@ impl RootStructure {
         Ok(structure)
     }
 
+    pub(crate) const fn has_composition(&self) -> bool {
+        self.has_composition
+    }
+
     pub(crate) fn finish_directory(&mut self) {
         let nodes = &self.nodes;
         self.ordered_rows.extend(0..nodes.len());
@@ -217,6 +275,13 @@ impl RootStructure {
                 .iter()
                 .copied()
                 .filter(|&row| matches!(&nodes[row].kind, RootNodeKind::Split { .. })),
+        );
+        self.grid_rows.clear();
+        self.grid_rows.extend(
+            self.ordered_rows
+                .iter()
+                .copied()
+                .filter(|&row| matches!(&nodes[row].kind, RootNodeKind::Grid { .. })),
         );
     }
 

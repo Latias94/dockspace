@@ -325,12 +325,12 @@ const fn layout_error_kind(error: &LayoutError) -> DockspaceRuntimeErrorKind {
         | LayoutError::Cycle { .. }
         | LayoutError::SplitCardinalityMismatch { .. }
         | LayoutError::CentralNodeNotReachable { .. }
-        | LayoutError::SplitWeightOverrideRootMismatch { .. }
-        | LayoutError::InvalidSplitWeightOverrideSource { .. }
-        | LayoutError::DuplicateSplitWeightOverride { .. }
-        | LayoutError::SplitWeightOverrideNodeNotSplit { .. }
-        | LayoutError::SplitWeightOverrideLengthMismatch { .. }
-        | LayoutError::SplitWeightOverrideNotNormalized { .. } => {
+        | LayoutError::TrackWeightOverrideRootMismatch { .. }
+        | LayoutError::InvalidTrackWeightOverrideSource { .. }
+        | LayoutError::DuplicateTrackWeightOverride { .. }
+        | LayoutError::TrackWeightOverrideNodeNotTracks { .. }
+        | LayoutError::TrackWeightOverrideLengthMismatch { .. }
+        | LayoutError::TrackWeightOverrideNotNormalized { .. } => {
             DockspaceRuntimeErrorKind::Internal
         }
     }

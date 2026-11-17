@@ -1,6 +1,6 @@
 //! Exact tabs-group commands attached to the existing surface action pipeline.
 
-use crate::model::{DockAnchor, NativeTearOffSource, PreparedTabsGroup, ProductAction};
+use crate::model::{NativeTearOffSource, PreparedTabsGroup, ProductAction};
 use crate::policy::TabBarInteraction;
 
 use super::{
@@ -17,7 +17,7 @@ pub enum DockspaceTabsGroupCommandKind {
     MoveToNewWindow,
 }
 
-impl SurfacePaintPlan<'_> {
+impl<'frame> SurfacePaintPlan<'frame> {
     /// Returns whether this exact group-menu anchor has authoritative visible area.
     #[must_use]
     pub fn tabs_group_menu_operable(self, bar: TabBarPaintRecord<'_>) -> bool {
@@ -58,10 +58,94 @@ impl SurfacePaintPlan<'_> {
         bar: TabBarPaintRecord<'_>,
     ) -> Option<PreparedTabsGroup> {
         self.tabs_group_menu_operable(bar).then_some(())?;
-        let item = bar.record.members().first()?.tab().tab.item()?;
-        self.candidate
-            .capture_tabs_group(DockAnchor::Item(item))
-            .ok()
+        let id = *bar.record.id();
+        let source = self
+            .candidate
+            .workspace()
+            .capture_node_source(id.root, id.tabs)
+            .ok()?;
+        Some(PreparedTabsGroup {
+            authority_domain: self.authority_domain,
+            expected: self.version,
+            source,
+        })
+    }
+
+    /// Borrows the group's own title, independently of its selected content.
+    #[must_use]
+    pub fn tabs_group_label(
+        self,
+        bar: TabBarPaintRecord<'_>,
+    ) -> Option<crate::model::TabLabel<'frame>> {
+        self.plan
+            .tab_bar_records()
+            .iter()
+            .any(|record| std::ptr::eq(record, bar.record))
+            .then_some(())?;
+        self.plan
+            .node_label(bar.record.id().root, bar.record.id().tabs)
+    }
+
+    /// Preflights center docking between two exact groups exposed by this output.
+    ///
+    /// Both menu modes use the same graph evaluator as pointer preview and commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an internal error only if core product preflight violates an invariant.
+    pub fn tabs_group_center_command(
+        self,
+        source: TabBarPaintRecord<'_>,
+        target: TabBarPaintRecord<'_>,
+        mode: crate::model::TabGroupDockMode,
+    ) -> Result<Option<PresentationCommandPaintRecord>, DockspaceRuntimeError> {
+        let Some(group) = self.tabs_group_for_menu(source) else {
+            return Ok(None);
+        };
+        if source.visual_id() == target.visual_id()
+            || !self
+                .plan
+                .tab_bar_records()
+                .iter()
+                .any(|record| std::ptr::eq(record, target.record))
+            || target.record.interaction() != TabBarInteraction::Enabled
+            || !self
+                .plan
+                .region_is_operable(target.record.viewport(), target.record.layer())
+        {
+            return Ok(None);
+        }
+        let root = group.source.root();
+        let action = ProductAction::DockTabs {
+            group,
+            mode,
+            placement: crate::model::DockPlacement::Center(crate::model::DockAnchor::Node(
+                crate::ids::NodeKey(target.record.id().tabs),
+            )),
+        };
+        Ok(Some(
+            match self.candidate.prepare_product_action_if_available(action)? {
+                Ok(prepared) => {
+                    let (domain, version, action) = prepared.into_parts();
+                    PresentationCommandPaintRecord::ready(
+                        domain,
+                        version,
+                        self.scene,
+                        root,
+                        DockspacePresentationCommandKind::DockCenter,
+                        action,
+                    )
+                }
+                Err(reason) => PresentationCommandPaintRecord::unavailable(
+                    self.authority_domain,
+                    self.version,
+                    self.scene,
+                    root,
+                    DockspacePresentationCommandKind::DockCenter,
+                    DockspacePresentationCommandUnavailable::Action(reason),
+                ),
+            },
+        ))
     }
 
     /// Preflights one command for this exact current-frame group anchor.

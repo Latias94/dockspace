@@ -1155,7 +1155,9 @@ impl SurfaceRosterDisposition {
             SurfaceMainRehome::Dock(target) if target.surface() == target_surface => {
                 let payload = match workspace.node(source.node())? {
                     Node::Tabs { .. } => MovePayload::Tabs(source.clone()),
-                    Node::Split { .. } => MovePayload::Subtree(source.clone()),
+                    Node::Pane { .. } | Node::Split { .. } | Node::Grid { .. } => {
+                        MovePayload::Subtree(source.clone())
+                    }
                 };
                 Some(WorkspaceCommand::Move {
                     payload,

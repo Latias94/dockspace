@@ -12,6 +12,7 @@ use crate::model::{
 };
 use crate::policy::{CloseCapability, DockPolicy};
 
+mod composable;
 mod deferred_move;
 mod multiview;
 mod tab_body_close;
@@ -382,11 +383,11 @@ fn multiple_policy_replacements_correlate_noops_changes_and_intermediate_version
     assert!(matches!(
         report.submitted_action_outcome(selection),
         Some(HostInputOutcome::ProductActionApplied(
-            DockspaceActionOutcome::Selected {
-                tab,
+            DockspaceActionOutcome::ItemActivated {
+                item,
                 changed: true,
             }
-        )) if *tab == SECOND.into()
+        )) if *item == SECOND
     ));
     let intermediate = WorkspaceVersion::new(
         selected_version.epoch(),

@@ -140,7 +140,7 @@ fn compile_on_surface_with_sizing(
         )
         .unwrap();
     for key in requirements.pane_sizings() {
-        let measured = sizing.get(&key.selected()).copied().unwrap_or_default();
+        let measured = sizing.get(&Some(key.item())).copied().unwrap_or_default();
         measurements
             .insert_pane_sizing(key, Measurement::Measured(measured))
             .unwrap();
@@ -363,7 +363,7 @@ fn auto_hidden_single_merge_then_split_previews_match_committed_layouts() {
         &policy,
         &plan,
         &plan,
-        MovePayload::Subtree(
+        MovePayload::Tabs(
             workspace
                 .capture_node_source(floating_root, source)
                 .unwrap(),
@@ -384,7 +384,11 @@ fn auto_hidden_single_merge_then_split_previews_match_committed_layouts() {
         merged_plan
             .pane_records()
             .iter()
-            .find(|pane| pane.id().tabs == target)
+            .find(|pane| pane
+                .containing_tab_bar()
+                .expect("flat fixture has a containing bar")
+                .tabs
+                == target)
             .unwrap()
             .content_bounds()
     );
@@ -415,7 +419,7 @@ fn auto_hidden_single_merge_then_split_previews_match_committed_layouts() {
     let moved_pane = separated_plan
         .pane_records()
         .iter()
-        .find(|pane| separated_plan.pane_selected(pane) == Some(MOVED))
+        .find(|pane| pane.item() == MOVED)
         .unwrap();
     assert_eq!(
         separated.visual().rect(),
@@ -516,7 +520,7 @@ fn future_split_preserves_an_unchanged_revealed_single_sibling() {
     let moved_pane = committed
         .pane_records()
         .iter()
-        .find(|pane| committed.pane_selected(pane) == Some(MOVED))
+        .find(|pane| pane.item() == MOVED)
         .unwrap();
     assert_eq!(
         resolved.visual().rect(),
@@ -604,7 +608,7 @@ fn check_contained_bar_merge_preview(
         &WorkspaceIndex::build(&workspace, version).unwrap(),
         &policy,
         DragSessionId::new(version.epoch(), DragGeneration::new(1)),
-        MovePayload::Subtree(
+        MovePayload::Tabs(
             workspace
                 .capture_node_source(floating_root, source)
                 .unwrap(),
@@ -633,9 +637,14 @@ fn check_contained_bar_merge_preview(
     let pane = committed_plan
         .pane_records()
         .iter()
-        .find(|pane| pane.id().tabs == target)
+        .find(|pane| {
+            pane.containing_tab_bar()
+                .expect("flat fixture has a containing bar")
+                .tabs
+                == target
+        })
         .unwrap();
-    assert_eq!(committed_plan.pane_selected(pane), Some(MOVED));
+    assert_eq!(pane.item(), MOVED);
     assert_eq!(
         resolved.visual().rect(),
         pane.content_bounds(),
@@ -1125,7 +1134,12 @@ fn center_merge_with_minimum_overflow_clips_content_and_tabs_to_the_same_root_bo
     let pane = committed_plan
         .pane_records()
         .iter()
-        .find(|pane| pane.id().tabs == target)
+        .find(|pane| {
+            pane.containing_tab_bar()
+                .expect("flat fixture has a containing bar")
+                .tabs
+                == target
+        })
         .unwrap();
     assert!(
         pane.bounds().width() < minimums[&MOVED].width(),

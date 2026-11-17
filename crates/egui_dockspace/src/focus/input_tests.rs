@@ -204,7 +204,7 @@ fn presented_editor_in_viewport(
         output.drop_without_applying_deltas();
         receipt.report(SurfacePresentationResult::Presented);
     }
-    assert!(dockspace.view().item(EDITOR).unwrap().is_selected());
+    assert!(dockspace.view().item(EDITOR).unwrap().is_active());
     assert!(pane.bounds.is_some());
     (context, dockspace, pane, tab.unwrap())
 }
@@ -312,10 +312,10 @@ fn a_new_pane_focus_request_delivers_the_first_frames_text() {
             let selected = dockspace.select_item_current(EDITOR).unwrap();
             assert!(matches!(
                 selected.status(),
-                DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
-                    tab: selected_tab,
+                DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated {
+                    item: selected_tab,
                     ..
-                }) if selected_tab.item() == Some(EDITOR)));
+                }) if *selected_tab == EDITOR));
             let (mut output, receipt) = run(
                 owned,
                 &context,
@@ -346,7 +346,7 @@ fn a_new_pane_focus_request_is_observed_as_gained_focus_by_its_callback() {
         let selected = dockspace.select_item_current(EDITOR).unwrap();
         assert!(matches!(
             selected.status(),
-            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(EDITOR)));
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated { item: selected_tab, .. }) if *selected_tab == EDITOR));
         for time in [1.0, 1.1, 1.2] {
             let (mut output, receipt) =
                 run(owned, &context, &mut dockspace, &mut pane, time, Vec::new()).into_parts();
@@ -369,7 +369,7 @@ fn pending_pane_focus_keeps_ime_composition_while_receipts_are_held() {
         let selected = dockspace.select_item_current(EDITOR).unwrap();
         assert!(matches!(
             selected.status(),
-            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(EDITOR)));
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated { item: selected_tab, .. }) if *selected_tab == EDITOR));
         let (mut output, request_receipt) =
             run(owned, &context, &mut dockspace, &mut pane, 1.0, Vec::new()).into_parts();
         output.textures_delta.clear();
@@ -631,7 +631,7 @@ fn assert_pending_pane_focus_yields_to_search(owned: bool, hold_receipts: bool) 
     let selected = dockspace.select_item_current(EDITOR).unwrap();
     assert!(matches!(
         selected.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(EDITOR)));
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated { item: selected_tab, .. }) if *selected_tab == EDITOR));
     let (mut output, receipt) = run_with_ui(
         owned,
         &context,
@@ -778,7 +778,7 @@ fn a_stable_unfocused_request_idles_and_a_new_selection_can_request_focus_again(
         let selected = dockspace.select_item_current(EDITOR).unwrap();
         assert!(matches!(
             selected.status(),
-            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(EDITOR)));
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated { item: selected_tab, .. }) if *selected_tab == EDITOR));
         let (mut output, receipt) = run_with_ui(
             owned,
             &context,
@@ -824,7 +824,7 @@ fn a_stable_unfocused_request_idles_and_a_new_selection_can_request_focus_again(
         let selected = dockspace.select_item_current(EDITOR).unwrap();
         assert!(matches!(
             selected.status(),
-            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(EDITOR)));
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated { item: selected_tab, .. }) if *selected_tab == EDITOR));
         let (mut output, receipt) = run_with_ui(
             owned,
             &context,

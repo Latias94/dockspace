@@ -64,7 +64,7 @@ pub(super) fn selected(dockspace: &Dockspace) -> Option<ItemId> {
         dockspace
             .view()
             .item(*item)
-            .is_some_and(|view| view.is_selected())
+            .is_some_and(|view| view.is_active())
     })
 }
 

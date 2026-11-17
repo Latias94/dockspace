@@ -205,7 +205,7 @@ fn sparse_touch_partition_matches_exhaustive_partition_with_overlapping_bases() 
             };
             let id = SplitterSceneId {
                 root: RootId::new(1),
-                split,
+                owner: crate::presentation::scene::SplitterOwner::Split(split),
                 index: usize::try_from(index).unwrap(),
             };
             let layer = u64::try_from(index % 2).unwrap();
@@ -294,7 +294,7 @@ fn dense_touch_overlap_uses_the_bounded_exhaustive_fallback() {
             region(
                 PresentationHitRegionKind::SplitterHandle(SplitterSceneId {
                     root: RootId::new(1),
-                    split,
+                    owner: crate::presentation::scene::SplitterOwner::Split(split),
                     index,
                 }),
                 bounds,
@@ -326,7 +326,7 @@ fn disjoint_long_rows_prune_both_axes_without_quadratic_chrome_pairs() {
                 region(
                     PresentationHitRegionKind::SplitterHandle(SplitterSceneId {
                         root: RootId::new(1),
-                        split: node(),
+                        owner: crate::presentation::scene::SplitterOwner::Split(node()),
                         index,
                     }),
                     rect(
@@ -527,14 +527,14 @@ fn splitter_lookup_matches_linear_first_for_complete_ids_and_noncanonical_record
     let second_split = builder.insert_node(Node::tabs([]));
     let first = SplitterSceneId {
         root: RootId::new(1),
-        split: first_split,
+        owner: crate::presentation::scene::SplitterOwner::Split(first_split),
         index: 0,
     };
     let ids = [
         first,
         SplitterSceneId { index: 1, ..first },
         SplitterSceneId {
-            split: second_split,
+            owner: crate::presentation::scene::SplitterOwner::Split(second_split),
             ..first
         },
         SplitterSceneId {
@@ -607,7 +607,7 @@ fn splitter_lookup_preserves_ordered_touch_bits_for_permutations_duplicates_and_
     let split = node();
     let id = |index| SplitterSceneId {
         root: RootId::new(1),
-        split,
+        owner: crate::presentation::scene::SplitterOwner::Split(split),
         index,
     };
     let records = vec![
@@ -718,7 +718,7 @@ fn touch_resize_extents_preserve_larger_mouse_configuration() {
         let mut plan = plan(config);
         let north_south = SplitterSceneId {
             root: RootId::new(1),
-            split: node(),
+            owner: crate::presentation::scene::SplitterOwner::Split(node()),
             index: 0,
         };
         let east_west = SplitterSceneId {
@@ -856,7 +856,7 @@ fn parallel_touch_bands_partition_geometrically_even_with_extreme_extents() {
                 let mut plan = plan(config);
                 let first = SplitterSceneId {
                     root: RootId::new(1),
-                    split: node(),
+                    owner: crate::presentation::scene::SplitterOwner::Split(node()),
                     index: 0,
                 };
                 let second = SplitterSceneId { index: 1, ..first };
@@ -924,7 +924,7 @@ fn adjacent_junction_halos_preserve_visible_arms_and_each_junction() {
     let mut plan = plan(config);
     let vertical = SplitterSceneId {
         root: RootId::new(1),
-        split: node(),
+        owner: crate::presentation::scene::SplitterOwner::Split(node()),
         index: 0,
     };
     let upper = SplitterSceneId {
@@ -1096,7 +1096,7 @@ fn extreme_touch_corners_do_not_erase_original_contained_edges() {
 fn touch_replacements_are_device_specific_and_empty_never_falls_back() {
     let id = SplitterSceneId {
         root: RootId::new(1),
-        split: node(),
+        owner: crate::presentation::scene::SplitterOwner::Split(node()),
         index: 0,
     };
     let handle = region(
@@ -1108,7 +1108,7 @@ fn touch_replacements_are_device_specific_and_empty_never_falls_back() {
     let tab = region(
         PresentationHitRegionKind::TabBody(TabSceneId {
             root: id.root,
-            tabs: id.split,
+            tabs: id.node(),
             tab: (ItemId::new(1)).into(),
         }),
         rect(200.0, 200.0, 100.0, 20.0),
@@ -1176,14 +1176,14 @@ fn touch_replacements_are_device_specific_and_empty_never_falls_back() {
 fn only_final_maximum_stack_can_be_ambiguous() {
     let id = SplitterSceneId {
         root: RootId::new(1),
-        split: node(),
+        owner: crate::presentation::scene::SplitterOwner::Split(node()),
         index: 0,
     };
     let other = SplitterSceneId { index: 1, ..id };
     let bounds = rect(0.0, 0.0, 100.0, 100.0);
     let tab = TabSceneId {
         root: id.root,
-        tabs: id.split,
+        tabs: id.node(),
         tab: (ItemId::new(1)).into(),
     };
     let first = region(
@@ -1330,7 +1330,7 @@ fn touch_protection_uses_visible_chrome_and_real_front_occlusion() {
     let body = region(
         PresentationHitRegionKind::PaneBody(PaneSceneId {
             root: tab.root,
-            tabs,
+            item: crate::ids::ItemId::new(1),
         }),
         plan.bounds(),
         0,
@@ -1391,7 +1391,7 @@ fn touch_geometry_clips_after_centering_and_keeps_small_window_partitions_disjoi
     let mut plan = plan(DockPresentationConfig::default());
     let north_south = SplitterSceneId {
         root: RootId::new(1),
-        split: node(),
+        owner: crate::presentation::scene::SplitterOwner::Split(node()),
         index: 0,
     };
     let east_west = SplitterSceneId {

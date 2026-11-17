@@ -573,9 +573,7 @@ impl DockEngine {
                 PaneFocusRevealRejection::ItemUnavailable { item },
             );
         };
-        let command = WorkspaceCommand::Select {
-            source: source.as_tab_source(),
-        };
+        let command = WorkspaceCommand::SelectItem { source };
         let application = match focus_causal.cause() {
             ReductionCause::Input { input, .. } => {
                 self.apply_interaction_command(input, &command, events)?

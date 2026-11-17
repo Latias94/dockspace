@@ -62,6 +62,28 @@ fn zero_width_title_drag_keeps_the_exact_title_bottom() {
     assert_eq!(drag.max().y(), contained.title_bounds().max().y());
 }
 
+#[test]
+fn narrow_fractional_contained_bar_keeps_its_exact_viewport_edges() {
+    let bounds = LogicalRect::new(
+        3.500_635_177_675_262_4,
+        0.0,
+        25.761_005_312_236_758,
+        448.450_760_973_025_3,
+    )
+    .unwrap();
+    let plan = contained_plan(bounds);
+    let contained = plan.contained_record(FLOATING).unwrap();
+    let [bar] = plan.tab_bar_records() else {
+        panic!("the contained Tabs root must retain its real header")
+    };
+    assert_eq!(bar.bounds().min(), contained.content_bounds().min());
+    assert_eq!(bar.bounds().max().x(), contained.content_bounds().max().x());
+    assert_eq!(bar.viewport(), bar.bounds());
+    assert!(bar.group_grip_bounds().is_none());
+    assert!(bar.group_menu_bounds().is_none());
+    assert!(plan.tab_strip_control_records().is_empty());
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
 

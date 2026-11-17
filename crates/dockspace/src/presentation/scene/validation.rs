@@ -4,11 +4,11 @@ use super::*;
 #[cfg(test)]
 use crate::graph::command::Edge;
 use crate::graph::workspace::WorkspaceIndexView;
-use crate::graph::{NORMALIZED_WEIGHT_TOLERANCE, normalized_weight_sum};
+use crate::graph::{Axis, NORMALIZED_WEIGHT_TOLERANCE, Node, normalized_weight_sum};
 #[cfg(test)]
 use crate::interaction::targeting::field::{pane_center_basin, root_edge_band};
 use crate::interaction::targeting::targets::DropTargetLocation;
-use crate::presentation::layout::measure_resize_contacts;
+use crate::presentation::layout::measure_resize_geometry;
 
 mod record_order;
 mod target_catalog;
@@ -161,7 +161,7 @@ impl<'a> PresentationPlanValidator<'a> {
         let (ready, validator) = compiled.into_finalization()?;
         let (record_order, drop_target_index) = validator.begin_validation(&ready)?;
         validate_contained_records(&ready, validator.workspace, &validator.workspace_index)?;
-        for (id, record) in record_order.panes.iter(&ready.facts.pane_records) {
+        for (id, record) in record_order.panes.iter(&ready.content.pane_records) {
             if !rect_contains(ready.facts.bounds, record.bounds())
                 || !rect_contains(record.bounds(), record.content_bounds())
             {
@@ -398,8 +398,16 @@ fn validate_magnetic_target_field(
                 return Err(invalid());
             }
             match workspace.node(node).ok_or_else(&invalid)? {
-                Node::Tabs { .. } => {}
-                Node::Split { children, .. } => pending.extend(
+                Node::Pane { .. } => {}
+                Node::Tabs { .. } => {
+                    if let Some(child) = workspace
+                        .visible_tab_selection(node)
+                        .and_then(TabKey::layout)
+                    {
+                        pending.push((child, depth + 1));
+                    }
+                }
+                Node::Split { children, .. } | Node::Grid { children, .. } => pending.extend(
                     children
                         .iter()
                         .rev()
@@ -468,17 +476,25 @@ fn validate_magnetic_target_field(
 
     let expected_panes = ready
         .facts
-        .pane_records
+        .tabs_records
         .iter()
         .filter(|pane| rect_has_area(pane.content_bounds()))
-        .map(|pane| (pane.id(), pane))
+        .map(|pane| ((pane.id().root, pane.id().tabs), pane.content_bounds()))
+        .chain(
+            ready
+                .content
+                .pane_records
+                .iter()
+                .filter(|pane| {
+                    rect_has_area(pane.bounds())
+                        && matches!(workspace.node(pane.owner_node()), Some(Node::Pane { .. }))
+                })
+                .map(|pane| ((pane.id().root, pane.owner_node()), pane.bounds())),
+        )
         .collect::<BTreeMap<_, _>>();
     let mut panes = BTreeMap::new();
     for field in ready.facts.magnetic_target_field.panes() {
-        let id = PaneSceneId {
-            root: field.root(),
-            tabs: field.tabs(),
-        };
+        let id = (field.root(), field.tabs());
         if panes.insert(id, field).is_some() {
             return Err(invalid());
         }
@@ -486,32 +502,30 @@ fn validate_magnetic_target_field(
     if panes.len() != expected_panes.len() {
         return Err(invalid());
     }
-    for (id, pane) in expected_panes {
+    for ((root, node), content) in expected_panes {
+        let id = (root, node);
         let field = panes.get(&id).copied().ok_or_else(&invalid)?;
-        let root_record = workspace.root(id.root).ok_or_else(&invalid)?;
-        let layer = workspace_index.root_layer(id.root).ok_or_else(&invalid)?;
-        let depth = depths
-            .get(&(id.root, id.tabs))
-            .copied()
-            .ok_or_else(&invalid)?;
+        let root_record = workspace.root(root).ok_or_else(&invalid)?;
+        let layer = workspace_index.root_layer(root).ok_or_else(&invalid)?;
+        let depth = depths.get(&id).copied().ok_or_else(&invalid)?;
         let center_target = DropTargetId::Center {
             surface: ready.surface,
-            root: id.root,
-            tabs: id.tabs,
+            root,
+            tabs: node,
         };
         let edge_target = |edge| {
-            if root_record.node == id.tabs && root_record.central == Some(id.tabs) {
+            if root_record.node == node && root_record.central == Some(node) {
                 DropTargetId::OuterEdge {
                     surface: ready.surface,
-                    root: id.root,
-                    node: id.tabs,
+                    root,
+                    node,
                     edge,
                 }
             } else {
                 DropTargetId::InnerEdge {
                     surface: ready.surface,
-                    root: id.root,
-                    node: id.tabs,
+                    root,
+                    node,
                     edge,
                 }
             }
@@ -524,9 +538,8 @@ fn validate_magnetic_target_field(
         );
         if field.layer() != layer
             || field.depth() != depth
-            || field.content() != pane.content_bounds()
-            || field.center()
-                != pane_center_basin(pane.content_bounds(), config).map_err(|_| invalid())?
+            || field.content() != content
+            || field.center() != pane_center_basin(content, config).map_err(|_| invalid())?
             || field.center_target() != center_target
             || field.edges() != expected_edges
             || !magnetic_targets_are_canonical(
@@ -632,7 +645,7 @@ fn validate_semantic_uniqueness(
     }
 
     let record_order = SemanticRecordOrder {
-        panes: RecordOrder::new(ready.facts.pane_records.iter().map(PaneRecord::id))
+        panes: RecordOrder::new(ready.content.pane_records.iter().map(PaneRecord::id))
             .map_err(|id| SceneBuildError::DuplicatePane { id })?,
         bars: RecordOrder::new(
             ready
@@ -947,10 +960,27 @@ fn validate_presentation_menu_anchors(
                 surface: ready.surface,
             })?;
     let mut expected = BTreeMap::new();
-    if let Some(root) = presentation.main_root
-        && canonical_presentation_menu_tab_bar(ready, workspace, root)?.is_some()
-    {
-        expected.insert(root, None);
+    let mut independent_controls = None;
+    if let Some(root) = presentation.main_root {
+        if canonical_presentation_menu_tab_bar(ready, workspace, root)?.is_some() {
+            expected.insert(root, None);
+        } else if let Some(layout) = ready.layout_facts() {
+            if let Some(facts) = layout.root(root) {
+                independent_controls = crate::presentation::compiler::root_controls_layout(
+                    workspace,
+                    root,
+                    facts.bounds(),
+                    layout.config(),
+                )
+                .map_err(|_| SceneBuildError::InvalidPresentationMenuAnchor {
+                    surface: ready.surface,
+                    root,
+                })?;
+                if independent_controls.is_some() {
+                    expected.insert(root, Some(PresentationMenuAnchorHost::RootControls));
+                }
+            }
+        }
     }
     expected.extend(ready.facts.contained_records.iter().map(|record| {
         (
@@ -1017,6 +1047,28 @@ fn validate_presentation_menu_anchors(
                         (None, Some(_)) | (Some(_), None) => false,
                     }
                 }),
+            PresentationMenuAnchorHost::RootControls => {
+                independent_controls.as_ref().is_some_and(|controls| {
+                    presentation.main_root == Some(root)
+                        && anchor.reserved_bounds() == Some(controls.reserved)
+                        && anchor.ready_bounds() == controls.menu
+                        && anchor.ready_hit().map(|hit| hit.rect()) == controls.menu
+                        && ready
+                            .layout_facts()
+                            .and_then(|facts| facts.root(root))
+                            .is_some_and(|facts| facts.content_bounds() == controls.content)
+                        && ready
+                            .content
+                            .pane_records
+                            .iter()
+                            .filter(|pane| pane.id().root == root)
+                            .all(|pane| !rects_overlap_with_area(controls.reserved, pane.bounds()))
+                        && rect_contains(ready.bounds(), controls.reserved)
+                        && workspace.presentation_for_root(root).is_some_and(|owner| {
+                            matches!(owner, RootPresentationOwner::Main { .. })
+                        })
+                })
+            }
             PresentationMenuAnchorHost::ContainedTitle(floating) => ready
                 .facts
                 .contained_records
@@ -1044,7 +1096,10 @@ fn validate_presentation_menu_anchors(
                     }
                 }),
         };
-        if !valid {
+        if !valid
+            || (anchor.host() != PresentationMenuAnchorHost::RootControls
+                && anchor.reserved_bounds().is_some())
+        {
             return Err(SceneBuildError::InvalidPresentationMenuAnchor {
                 surface: ready.surface,
                 root,
@@ -1094,8 +1149,16 @@ fn canonical_presentation_menu_tab_bar(
             Some(Node::Tabs { .. }) if is_compiled(node) => {
                 return Ok(Some(TabBarSceneId { root, tabs: node }));
             }
-            Some(Node::Tabs { .. }) => {}
-            Some(Node::Split { children, .. }) => {
+            Some(Node::Pane { .. }) => {}
+            Some(Node::Tabs { .. }) => {
+                if let Some(child) = workspace
+                    .visible_tab_selection(node)
+                    .and_then(TabKey::layout)
+                {
+                    pending.push(child);
+                }
+            }
+            Some(Node::Split { children, .. } | Node::Grid { children, .. }) => {
                 pending.extend(children.iter().rev().copied());
             }
             None => {
@@ -1114,7 +1177,7 @@ fn expected_pane_records(
     ready: &PresentationPlan,
     workspace: &Workspace,
     workspace_index: &SceneWorkspaceIndex,
-) -> Result<BTreeMap<PaneSceneId, (Option<ItemId>, SceneLayerKey)>, SceneBuildError> {
+) -> Result<BTreeMap<PaneSceneId, (ItemId, SceneLayerKey)>, SceneBuildError> {
     let mut roots = Vec::new();
     if let Some(root) = workspace
         .surface(ready.surface)
@@ -1147,18 +1210,22 @@ fn expected_pane_records(
         )?];
         while let Some(node) = pending.pop() {
             match workspace.node(node) {
-                Some(Node::Tabs { .. }) => {
-                    if workspace.node_has_visible_content(node) {
-                        expected.insert(
-                            PaneSceneId { root, tabs: node },
-                            (
-                                workspace.visible_tab_selection(node).and_then(TabKey::item),
-                                layer,
-                            ),
-                        );
+                Some(Node::Pane { item }) => {
+                    if !workspace.item_is_hidden(*item) {
+                        expected.insert(PaneSceneId { root, item: *item }, (*item, layer));
                     }
                 }
-                Some(Node::Split { children, .. }) => {
+                Some(Node::Tabs { .. }) => {
+                    if let Some(selected) = workspace.visible_tab_selection(node) {
+                        if let Some(item) = selected.item() {
+                            expected.insert(PaneSceneId { root, item }, (item, layer));
+                        }
+                        if let Some(child) = selected.layout() {
+                            pending.push(child);
+                        }
+                    }
+                }
+                Some(Node::Split { children, .. } | Node::Grid { children, .. }) => {
                     pending.extend(children.iter().rev().copied());
                 }
                 None => {
@@ -1180,7 +1247,7 @@ fn validate_pane_and_tab_records(
     workspace: &Workspace,
     workspace_index: &SceneWorkspaceIndex,
     policy: &DockPolicySnapshot,
-    expected_panes: &BTreeMap<PaneSceneId, (Option<ItemId>, SceneLayerKey)>,
+    expected_panes: &BTreeMap<PaneSceneId, (ItemId, SceneLayerKey)>,
 ) -> Result<(), SceneBuildError> {
     let panes = &record_order.panes;
     if panes.entries().len() != expected_panes.len() {
@@ -1188,13 +1255,13 @@ fn validate_pane_and_tab_records(
             surface: ready.surface,
         });
     }
-    for (id, (selected, layer)) in expected_panes {
-        let Some(record) = panes.get(&ready.facts.pane_records, *id) else {
+    for (id, (item, layer)) in expected_panes {
+        let Some(record) = panes.get(&ready.content.pane_records, *id) else {
             return Err(SceneBuildError::PaneRecordSetMismatch {
                 surface: ready.surface,
             });
         };
-        if ready.pane_selected(record) != *selected
+        if record.item() != *item
             || record.layer() != *layer
             || !rect_contains(ready.facts.bounds, record.bounds())
             || !rect_contains(record.bounds(), record.content_bounds())
@@ -1216,16 +1283,23 @@ fn validate_tab_records(
     workspace_index: &SceneWorkspaceIndex,
     policy: &DockPolicySnapshot,
 ) -> Result<(), SceneBuildError> {
-    let panes = &record_order.panes;
+    let panes =
+        RecordOrder::new(ready.facts.tabs_records.iter().map(TabsRecord::id)).map_err(|id| {
+            SceneBuildError::InvalidTabBarRecord {
+                surface: ready.surface,
+                id,
+            }
+        })?;
     let bars = &record_order.bars;
     // The caller establishes membership, owner and selection through either
     // the expected roster or the sealed compiler. Policy needs only the
     // selected item's stable rule, not another complete root fingerprint.
-    let pane_policy = |pane: &PaneRecord| {
+    let pane_policy = |pane: &TabsRecord| {
         let declaration = policy.tab_bar_declaration(
             ready.surface,
             ready
-                .pane_selected(pane)
+                .selected_in_tabs(pane.id().tabs)
+                .and_then(TabKey::item)
                 .map(crate::policy::DockTargetRuleKey::Item)
                 .or(Some(crate::policy::DockTargetRuleKey::Root(pane.id().root))),
         );
@@ -1281,8 +1355,8 @@ fn validate_tab_records(
                 || !controls.contains_key(&TabStripControlId::RevealTabBar(*id))
                 || panes
                     .get(
-                        &ready.facts.pane_records,
-                        PaneSceneId {
+                        &ready.facts.tabs_records,
+                        TabBarSceneId {
                             root: id.root,
                             tabs: id.tabs,
                         },
@@ -1299,7 +1373,7 @@ fn validate_tab_records(
         });
     }
     let expected_bars = panes
-        .iter(&ready.facts.pane_records)
+        .iter(&ready.facts.tabs_records)
         .filter(|(_, pane)| {
             rect_has_area(pane.bounds())
                 && pane_policy(pane).visibility() == TabBarVisibility::Visible
@@ -1310,7 +1384,7 @@ fn validate_tab_records(
             surface: ready.surface,
         });
     }
-    for (id, pane) in panes.iter(&ready.facts.pane_records) {
+    for (id, pane) in panes.iter(&ready.facts.tabs_records) {
         let bar_id = TabBarSceneId {
             root: id.root,
             tabs: id.tabs,
@@ -1329,7 +1403,8 @@ fn validate_tab_records(
                 let declaration = policy.tab_bar_declaration(
                     ready.surface,
                     ready
-                        .pane_selected(pane)
+                        .selected_in_tabs(pane.id().tabs)
+                        .and_then(TabKey::item)
                         .map(crate::policy::DockTargetRuleKey::Item),
                 );
                 let expected_bounds = ready.layout_facts().and_then(|facts| {
@@ -1574,10 +1649,10 @@ fn validate_tab_records(
             let record = &ready.facts.tab_records[row];
             let id = *record.id();
             let ordinal_matches = items.get(record.ordinal()).copied() == Some(id.tab);
-            let close_allowed = id
-                .tab
-                .item()
-                .is_some_and(|item| policy.pane_close_capability(item).allows_close());
+            let close_allowed = crate::presentation::compiler::tab_close_capability(
+                workspace, policy, id.root, id.tab,
+            )
+            .allows_close();
             let close_visual_matches = match (close_allowed, record.close_visual_bounds()) {
                 (false, None) => true,
                 (true, Some(close)) => {
@@ -1824,7 +1899,7 @@ fn validate_splitter_record_sets(
     let splitters = &record_order.splitters;
     let splitter_gaps = &record_order.gaps;
     let compiled_roots = ready
-        .facts
+        .content
         .pane_records
         .iter()
         .map(|pane| pane.id().root)
@@ -1844,7 +1919,37 @@ fn validate_splitter_record_sets(
                 continue;
             }
             match workspace.node(node) {
-                Some(Node::Tabs { .. }) => {}
+                Some(Node::Pane { .. }) => {}
+                Some(Node::Tabs { .. }) => {
+                    if let Some(child) = workspace
+                        .visible_tab_selection(node)
+                        .and_then(TabKey::layout)
+                    {
+                        pending.push(child);
+                    }
+                }
+                Some(Node::Grid { children, .. }) => {
+                    if let Some(grid) = ready
+                        .layout_facts()
+                        .and_then(|layout| layout.root(root))
+                        .and_then(|facts| facts.projection().grids.get(&node))
+                    {
+                        if ready
+                            .layout_facts()
+                            .and_then(|layout| layout.root(root))
+                            .and_then(|facts| facts.projection().nodes.get(&node))
+                            .is_some_and(|result| result.visible)
+                        {
+                            for axis in [Axis::Horizontal, Axis::Vertical] {
+                                for index in 0..grid.axis(axis).tracks.len().saturating_sub(1) {
+                                    expected_splitters
+                                        .insert(SplitterSceneId::grid(root, node, axis, index));
+                                }
+                            }
+                        }
+                    }
+                    pending.extend(children.iter().rev().copied());
+                }
                 Some(Node::Split { children, .. }) => {
                     let mut visible = children
                         .iter()
@@ -1859,7 +1964,7 @@ fn validate_splitter_record_sets(
                         }
                         expected_splitters.insert(SplitterSceneId {
                             root,
-                            split: node,
+                            owner: crate::presentation::scene::SplitterOwner::Split(node),
                             index,
                         });
                     }
@@ -1918,8 +2023,7 @@ fn validate_splitter_geometry(
                 .map(|root| {
                     (
                         root.root(),
-                        measure_resize_contacts(
-                            workspace,
+                        measure_resize_geometry(
                             root.projection(),
                             layout.config().splitter_thickness(),
                         ),
@@ -1930,7 +2034,20 @@ fn validate_splitter_geometry(
         .unwrap_or_default();
     let mut validated_resize_arrays: Option<&SplitterRecord> = None;
     for (id, record) in splitters.iter(&ready.facts.splitter_records) {
-        let Some(Node::Split { axis, children, .. }) = workspace.node(id.split) else {
+        if let SplitterOwner::Grid { node, axis } = id.owner {
+            validate_grid_splitter(
+                ready,
+                record,
+                workspace,
+                workspace_index,
+                policy,
+                resize_contacts.get(&id.root),
+                node,
+                axis,
+            )?;
+            continue;
+        }
+        let Some(Node::Split { axis, children, .. }) = workspace.node(id.node()) else {
             return Err(SceneBuildError::InvalidSplitterRecord {
                 surface: ready.surface,
                 id,
@@ -1950,7 +2067,7 @@ fn validate_splitter_geometry(
                 surface: ready.surface,
                 id,
             })?;
-        if !workspace_index.semantic_node_exists(ready.surface, id.root, id.split)
+        if !workspace_index.semantic_node_exists(ready.surface, id.root, id.node())
             || id.index >= children.len().saturating_sub(1)
             || record.after_index() <= id.index
             || record.after_index() >= children.len()
@@ -1996,7 +2113,7 @@ fn validate_splitter_geometry(
                 && !compressed
                 && resize_contacts.get(&id.root).is_some_and(|contacts| {
                     contacts.splitter_is_operable(
-                        id.split,
+                        id.node(),
                         children[id.index],
                         children[record.after_index()],
                     )
@@ -2018,6 +2135,89 @@ fn validate_splitter_geometry(
     Ok(())
 }
 
+fn validate_grid_splitter(
+    ready: &PresentationPlan,
+    record: &SplitterRecord,
+    workspace: &Workspace,
+    index: &SceneWorkspaceIndex,
+    policy: &DockPolicySnapshot,
+    contacts: Option<&crate::presentation::layout::ResizeGeometryFacts>,
+    node: NodeId,
+    axis: Axis,
+) -> Result<(), SceneBuildError> {
+    let id = *record.id();
+    let invalid = || SceneBuildError::InvalidSplitterRecord {
+        surface: ready.surface,
+        id,
+    };
+    let Some(Node::Grid { children, .. }) = workspace.node(node) else {
+        return Err(invalid());
+    };
+    let layout = ready.layout_facts().ok_or_else(invalid)?;
+    let root = layout.root(id.root).ok_or_else(invalid)?;
+    let grid = root.projection().grids.get(&node).ok_or_else(invalid)?;
+    let tracks = grid.axis(axis);
+    let before = tracks.tracks.get(id.index).ok_or_else(invalid)?;
+    let after = tracks.tracks.get(id.index + 1).ok_or_else(invalid)?;
+    let proof = record.grid().ok_or_else(invalid)?;
+    let clip = root.content_bounds();
+    let clip_rect = |rect: LogicalRect| {
+        let x = rect.x().max(clip.x()).min(clip.max().x());
+        let y = rect.y().max(clip.y()).min(clip.max().y());
+        LogicalRect::from_min_max(
+            crate::geometry::LogicalPoint::new(x, y).map_err(|_| invalid())?,
+            crate::geometry::LogicalPoint::new(
+                rect.max().x().min(clip.max().x()).max(x),
+                rect.max().y().min(clip.max().y()).max(y),
+            )
+            .map_err(|_| invalid())?,
+        )
+        .map_err(|_| invalid())
+    };
+    let gap = before.following_gap.ok_or_else(invalid)?;
+    let extents_match = record
+        .child_extents()
+        .iter()
+        .copied()
+        .eq(tracks.tracks.iter().map(|track| track.extent));
+    let operable = policy.splitter_resize_is_allowed(id.root, axis, ready.surface)
+        && tracks.overflow == 0.0
+        && tracks.unallocated <= f64::EPSILON * 64.0 * before.extent.max(after.extent).max(1.0)
+        && contacts
+            .is_some_and(|contacts| contacts.grid_splitter_is_operable(grid, axis, id.index))
+        && region_has_authoritative_area(
+            record.hit().rect(),
+            record.layer(),
+            &ready.facts.drop_occlusions,
+        );
+    if !index.semantic_node_exists(ready.surface, id.root, node)
+        || children.as_slice() != proof.children()
+        || grid.children.as_ref() != proof.children()
+        || grid.shape.rows != proof.rows()
+        || grid.shape.columns != proof.columns()
+        || record.axis() != axis
+        || record.after_index() != id.index + 1
+        || !splitter_resize_arrays_are_valid(record, tracks.tracks.len())
+        || !extents_match
+        || record.weights() != tracks.weights.as_slice()
+        || record.draw_bounds() != clip_rect(gap)?
+        || record.before_bounds() != clip_rect(before.bounds)?
+        || record.after_bounds() != clip_rect(after.bounds)?
+        || record.before_minimum_extent() != before.minimum
+        || record.before_maximum_extent() != before.maximum
+        || record.after_minimum_extent() != after.minimum
+        || record.after_maximum_extent() != after.maximum
+        || !rect_has_area(record.draw_bounds())
+        || !rect_has_area(record.hit().rect())
+        || !rect_contains(record.hit().rect(), record.draw_bounds())
+        || !rect_contains(ready.bounds(), record.hit().rect())
+        || record.operable() != operable
+    {
+        return Err(invalid());
+    }
+    validate_semantic_layer(ready.surface, id.root, record.layer(), index)
+}
+
 fn splitter_compression(ready: &PresentationPlan, record: &SplitterRecord) -> Option<bool> {
     let Some(layout) = ready.layout_facts() else {
         return Some(false);
@@ -2028,7 +2228,19 @@ fn splitter_compression(ready: &PresentationPlan, record: &SplitterRecord) -> Op
         return Some(false);
     }
     let id = record.id();
-    let split = layout.root(id.root)?.projection().splits.get(&id.split)?;
+    if let SplitterOwner::Grid { node, axis } = id.owner {
+        return Some(
+            layout
+                .root(id.root)?
+                .projection()
+                .grids
+                .get(&node)?
+                .axis(axis)
+                .overflow
+                > 0.0,
+        );
+    }
+    let split = layout.root(id.root)?.projection().splits.get(&id.node())?;
     if split.overflow == 0.0 {
         return Some(false);
     }
@@ -2144,8 +2356,11 @@ fn canonicalize_ready(
     record_order: SemanticRecordOrder,
     target_order: DropTargetOrder,
 ) {
+    record_order
+        .panes
+        .apply(&mut ready.content_mut().pane_records);
     let facts = ready.facts_mut();
-    record_order.panes.apply(&mut facts.pane_records);
+    facts.tabs_records.sort_unstable_by_key(TabsRecord::id);
     record_order.tabs.apply(&mut facts.tab_records);
     record_order.bars.apply(&mut facts.tab_bar_records);
     facts
@@ -2280,7 +2495,10 @@ fn validate_drop_guide_cluster_identity(
             .is_some_and(|presentation| presentation.main_root.is_none()),
         DropGuideClusterId::Inner { root, node, .. } => {
             workspace_index.semantic_node_exists(ready.surface, root, node)
-                && matches!(workspace.node(node), Some(Node::Tabs { .. }))
+                && matches!(
+                    workspace.node(node),
+                    Some(Node::Pane { .. } | Node::Tabs { .. })
+                )
         }
         DropGuideClusterId::Outer { root, .. } => {
             workspace_index.root_belongs_to_surface(ready.surface, root)
@@ -2672,12 +2890,18 @@ fn target_structure_is_valid(
         DropTargetLocation::Center { tabs, .. } => {
             workspace_index.contains_node(root, tabs)
                 && workspace.node_has_visible_content(tabs)
-                && matches!(workspace.node(tabs), Some(Node::Tabs { .. }))
+                && matches!(
+                    workspace.node(tabs),
+                    Some(Node::Pane { .. } | Node::Tabs { .. })
+                )
         }
         DropTargetLocation::InnerEdge { node, .. } => {
             workspace_index.contains_node(root, node)
                 && workspace.node_has_visible_content(node)
-                && matches!(workspace.node(node), Some(Node::Tabs { .. }))
+                && matches!(
+                    workspace.node(node),
+                    Some(Node::Pane { .. } | Node::Tabs { .. })
+                )
         }
         DropTargetLocation::OuterEdge { node, .. } => workspace_index.root_node(root) == Some(node),
         DropTargetLocation::SurfaceBackground { .. } => false,
@@ -2801,8 +3025,8 @@ impl<'a> SceneWorkspaceIndex<'a> {
                 if !nodes.insert(node) {
                     continue;
                 }
-                if let Some(Node::Split { children, .. }) = workspace.node(node) {
-                    stack.extend(children.iter().copied());
+                if let Some(value) = workspace.node(node) {
+                    stack.extend(value.child_nodes().map(|(_, child)| child));
                 }
             }
             let fingerprint = workspace.root_fingerprint(root).ok();

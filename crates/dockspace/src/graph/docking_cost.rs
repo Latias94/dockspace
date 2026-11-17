@@ -115,6 +115,9 @@ fn extreme_leaf(workspace: &Workspace, root: RootId, last: bool) -> (NodeId, Axi
     let mut parent_axis = None;
     loop {
         match workspace.node(node).unwrap() {
+            Node::Pane { .. } | Node::Grid { .. } => {
+                panic!("ordinary benchmark fixture requires explicit tabs and split containers")
+            }
             Node::Tabs { .. } => return (node, parent_axis.expect("fixture has multiple panes")),
             Node::Split { axis, children, .. } => {
                 parent_axis = Some(*axis);
@@ -201,10 +204,10 @@ fn collect_constraints(
     constraints: &mut Vec<(NodeId, Constraints)>,
 ) {
     match workspace.node(node).unwrap() {
-        Node::Tabs { .. } => {
+        Node::Pane { .. } | Node::Tabs { .. } => {
             constraints.push((node, leaf));
         }
-        Node::Split { children, .. } => {
+        Node::Split { children, .. } | Node::Grid { children, .. } => {
             for &child in children {
                 collect_constraints(workspace, child, leaf, constraints);
             }
@@ -291,6 +294,9 @@ fn append_node<'layout>(
     );
     let record = workspace.node(node).unwrap();
     let (kind, items, selected) = match record {
+        Node::Pane { .. } | Node::Grid { .. } => {
+            panic!("ordinary benchmark fixture requires explicit tabs containers")
+        }
         Node::Tabs {
             items, selected, ..
         } => (
@@ -373,6 +379,9 @@ fn preorder_export_matches_the_keyed_export_for_all_primary_commands() {
     ) {
         let rect = projection.layout.nodes[&node].rect;
         let (kind, items, selected) = match workspace.node(node).unwrap() {
+            Node::Pane { .. } | Node::Grid { .. } => {
+                panic!("ordinary benchmark fixture requires explicit tabs and split containers")
+            }
             Node::Tabs {
                 items, selected, ..
             } => (
@@ -629,6 +638,9 @@ fn validate(
     for (node, record) in fixture.workspace.nodes() {
         counts.nodes += 1;
         match record {
+            Node::Pane { .. } | Node::Grid { .. } => {
+                panic!("ordinary benchmark fixture requires explicit tabs and split containers")
+            }
             Node::Tabs {
                 items, selected, ..
             } => {

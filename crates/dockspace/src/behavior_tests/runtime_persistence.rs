@@ -816,7 +816,7 @@ fn saving_does_not_stale_a_prepared_product_action() {
         session
             .view()
             .item(first)
-            .is_some_and(|item| item.is_selected())
+            .is_some_and(|item| item.is_active())
     );
 }
 

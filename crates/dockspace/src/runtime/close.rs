@@ -22,11 +22,21 @@ use crate::policy::CloseCapability;
 
 use super::DockspaceSession;
 
-pub(crate) const fn product_close_target(target: ContentCloseTarget) -> ClosePlanTarget {
+pub(crate) fn product_close_target(target: &ContentCloseTarget) -> ClosePlanTarget {
     match target {
-        ContentCloseTarget::Item(item) => ClosePlanTarget::Item { item },
-        ContentCloseTarget::Root(root) => ClosePlanTarget::Root { root },
-        ContentCloseTarget::Tabs { root, anchor } => ClosePlanTarget::Tabs { root, anchor },
+        ContentCloseTarget::Item(item) => ClosePlanTarget::Item { item: *item },
+        ContentCloseTarget::Root(root) => ClosePlanTarget::Root { root: *root },
+        ContentCloseTarget::TabsSource { source } => ClosePlanTarget::Tabs {
+            root: source.root(),
+            group: crate::ids::NodeKey(source.node()),
+        },
+        ContentCloseTarget::Tab { source } => match source.tab().item() {
+            Some(item) => ClosePlanTarget::Item { item },
+            None => ClosePlanTarget::Tab {
+                root: source.root(),
+                tab: source.tab(),
+            },
+        },
     }
 }
 
@@ -74,8 +84,8 @@ pub enum DockspaceCloseRequestRejection {
 }
 
 impl DockspaceCloseRequestRejection {
-    pub(crate) const fn from_core(
-        target: ContentCloseTarget,
+    pub(crate) fn from_core(
+        target: &ContentCloseTarget,
         reason: &ContentCloseRequestRejection,
     ) -> Self {
         let target = product_close_target(target);
@@ -138,8 +148,8 @@ impl PreparedCloseRequest {
 
     /// Returns the stable content target requested by this action.
     #[must_use]
-    pub const fn target(&self) -> ClosePlanTarget {
-        product_close_target(self.target)
+    pub fn target(&self) -> ClosePlanTarget {
+        product_close_target(&self.target)
     }
 
     /// Returns the workspace revision from which this request was prepared.
@@ -222,7 +232,8 @@ impl DockspaceClosePhase {
                 ClosePlanTarget::Surface { .. } => Self::Settling,
                 ClosePlanTarget::Item { .. }
                 | ClosePlanTarget::Root { .. }
-                | ClosePlanTarget::Tabs { .. } => Self::NotApplied,
+                | ClosePlanTarget::Tabs { .. }
+                | ClosePlanTarget::Tab { .. } => Self::NotApplied,
             },
             CoreClosePlanPhase::Stale
             | CoreClosePlanPhase::Cancelled
@@ -360,6 +371,7 @@ impl DockspaceSession {
                     ClosePlanTarget::Item { .. }
                         | ClosePlanTarget::Root { .. }
                         | ClosePlanTarget::Tabs { .. }
+                        | ClosePlanTarget::Tab { .. }
                 ) && DockspaceClosePhase::from_core(plan).requires_decision()
             })
             .map(DockspaceClosePlan::from_core)

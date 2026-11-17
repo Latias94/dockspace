@@ -243,6 +243,7 @@ pub struct DropGuideClusterRecord {
     id: DropGuideClusterId,
     activation: HitRegion,
     layer: SceneLayerKey,
+    depth: usize,
     targets: DropGuideClusterTargets,
 }
 
@@ -269,6 +270,7 @@ impl DropGuideClusterRecord {
             id: DropGuideClusterId::surface(surface),
             activation,
             layer: SceneLayerKey::surface_base(),
+            depth: 0,
             targets: DropGuideClusterTargets::Centered {
                 center,
                 edges: None,
@@ -291,6 +293,7 @@ impl DropGuideClusterRecord {
             id: DropGuideClusterId::inner(surface, root, node),
             activation,
             layer,
+            depth: 0,
             targets: DropGuideClusterTargets::Centered {
                 center,
                 edges: Some(edges),
@@ -312,6 +315,7 @@ impl DropGuideClusterRecord {
             id: DropGuideClusterId::inner(surface, root, node),
             activation,
             layer,
+            depth: 0,
             targets: DropGuideClusterTargets::Centered {
                 center,
                 edges: None,
@@ -332,6 +336,7 @@ impl DropGuideClusterRecord {
             id: DropGuideClusterId::outer(surface, root),
             activation,
             layer,
+            depth: 0,
             targets: DropGuideClusterTargets::Outer { edges },
         }
     }
@@ -352,6 +357,15 @@ impl DropGuideClusterRecord {
     #[must_use]
     pub const fn layer(&self) -> SceneLayerKey {
         self.layer
+    }
+
+    pub(crate) fn with_depth(mut self, depth: usize) -> Self {
+        self.depth = depth;
+        self
+    }
+
+    pub(crate) const fn depth(&self) -> usize {
+        self.depth
     }
 
     /// Returns the complete four-direction edge set when this cluster has one.

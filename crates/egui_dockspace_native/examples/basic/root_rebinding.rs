@@ -130,8 +130,8 @@ impl RootRebinding {
                 if !matches!(
                     status,
                     NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-                        DockspaceActionOutcome::Selected { tab, .. }
-                    )) if tab == TabKey::for_item(EDITOR)
+                        DockspaceActionOutcome::ItemActivated { item: tab, .. }
+                    )) if tab == EDITOR
                 ) {
                     return Err(format!(
                         "Document focus before Root rebinding failed: {status:?}"
@@ -347,8 +347,12 @@ impl RootRebinding {
                     .expect("the complete eight-pane layout");
                 SavedTabs {
                     item: *item,
-                    items: pane.tabs().items().collect::<Vec<_>>(),
-                    selected: pane.tabs().selected(),
+                    items: pane
+                        .tabs()
+                        .expect("item is an inline tab")
+                        .items()
+                        .collect::<Vec<_>>(),
+                    selected: pane.tabs().expect("item is an inline tab").selected(),
                 }
             })
             .collect()

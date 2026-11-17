@@ -261,7 +261,7 @@ fn emit_first_live_child_output(
             session
                 .view()
                 .item(*item)
-                .is_some_and(|source| source.is_selected())
+                .is_some_and(|source| source.is_active())
         })
         .expect("the source pane has one selected item");
     let mut measure = session
@@ -365,7 +365,7 @@ fn emit_first_live_child_output(
                 } => match operation {
                     SurfacePaintProgramOperation::Pane(pane) => {
                         assert_eq!(root.root(), ROOT);
-                        panes.push((pane.root(), pane.selected()));
+                        panes.push((pane.root(), Some(pane.item())));
                     }
                     SurfacePaintProgramOperation::Tab(tab) => {
                         assert_eq!(root.root(), ROOT);
@@ -552,7 +552,8 @@ fn ordered_first_live_rebases_following_surface_action_and_retries_atomically() 
             source: workspace
                 .capture_item_source(ROOT, tabs, ITEM)
                 .expect("the former selected item remains in the child")
-                .as_tab_source(),
+                .as_tab_source()
+                .expect("fixture item is an inline tab"),
         };
         let fresh = frame
             .paint_plan(child.surface())
@@ -574,7 +575,7 @@ fn ordered_first_live_rebases_following_surface_action_and_retries_atomically() 
                 .view()
                 .item(SECOND_ITEM)
                 .expect("the fresh command's item exists")
-                .is_selected(),
+                .is_active(),
             "the current post-first-live version must authorize the fresh command"
         );
         frame
@@ -602,7 +603,7 @@ fn ordered_first_live_rebases_following_surface_action_and_retries_atomically() 
         session.version().revision().get(),
         version.revision().get() + 2
     );
-    assert!(session.view().item(SECOND_ITEM).unwrap().is_selected());
+    assert!(session.view().item(SECOND_ITEM).unwrap().is_active());
 }
 
 #[inline(never)]
@@ -1433,7 +1434,7 @@ fn native_first_live_projection_compiles_child_without_publishing_ownership() {
             session
                 .view()
                 .item(*item)
-                .is_some_and(|source| source.is_selected())
+                .is_some_and(|source| source.is_active())
         })
         .expect("the source tabs leaf has one selected item");
 
@@ -1468,11 +1469,11 @@ fn native_first_live_projection_compiles_child_without_publishing_ownership() {
     let selected_panes = plan
         .pane_records()
         .iter()
-        .filter(|pane| plan.pane_selected(pane).is_some())
+        .filter(|pane| Some(pane.item()).is_some())
         .collect::<Vec<_>>();
     assert_eq!(selected_panes.len(), 1);
     assert_eq!(selected_panes[0].id().root, ROOT);
-    assert_eq!(plan.pane_selected(selected_panes[0]), Some(source_selected));
+    assert_eq!(Some(selected_panes[0].item()), Some(source_selected));
     let mut program_steps = 0;
     plan.visit_surface_program(|_| {
         program_steps += 1;

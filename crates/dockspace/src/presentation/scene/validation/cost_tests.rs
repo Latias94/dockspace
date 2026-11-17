@@ -243,7 +243,7 @@ fn duplicate_validation_keeps_the_smallest_identity_and_record_class_priority() 
     let expected = low.id().min(high.id());
     let bounds = original.bounds();
     let mut plan = PresentationPlan::new(SURFACE, bounds);
-    plan.facts_mut().pane_records = vec![high, high, low, low];
+    plan.content_mut().pane_records = vec![high, high, low, low];
     let minimum = ContainedMinimumMeasurement::new(
         FloatingPresentationId::new(0),
         LogicalSize::new(0.0, 0.0).unwrap(),
@@ -255,7 +255,7 @@ fn duplicate_validation_keeps_the_smallest_identity_and_record_class_priority() 
             validate_semantic_uniqueness(&plan),
             Err(SceneBuildError::DuplicatePane { id }) if id == expected
         ));
-        plan.facts_mut().pane_records.reverse();
+        plan.content_mut().pane_records.reverse();
     }
 }
 
@@ -279,8 +279,8 @@ fn semantic_row_orders_restore_all_records_and_linked_slots_after_permutation() 
     let (engine, original) = compiled_split_with_tabs(4, 4);
     let mut plan = original.clone();
     for offset in 0..7 {
+        plan.content_mut().pane_records.reverse();
         let facts = plan.facts_mut();
-        facts.pane_records.reverse();
         facts
             .tab_bar_records
             .rotate_left(offset % original.tab_bar_records().len());
@@ -347,10 +347,11 @@ fn semantic_record_duplicates_keep_every_class_in_the_original_priority() {
     let (_, original) = compiled_split_with_tabs(4, 4);
     for class in 0..5 {
         let mut plan = original.clone();
-        let facts = plan.facts_mut();
+        let content = Arc::make_mut(&mut plan.content);
+        let facts = Arc::make_mut(&mut plan.facts);
         let expected = match class {
             0 => SceneBuildError::DuplicatePane {
-                id: facts.pane_records[0].id(),
+                id: content.pane_records[0].id(),
             },
             1 => SceneBuildError::DuplicateTabBar {
                 id: *facts.tab_bar_records[0].id(),
@@ -366,7 +367,7 @@ fn semantic_record_duplicates_keep_every_class_in_the_original_priority() {
             },
         };
         if class == 0 {
-            facts.pane_records.push(facts.pane_records[0]);
+            content.pane_records.push(content.pane_records[0]);
         }
         if class <= 1 {
             facts.tab_bar_records.push(facts.tab_bar_records[0].clone());

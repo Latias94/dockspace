@@ -1291,6 +1291,23 @@ impl<P: PaneView> NativeRuntimeState<P> {
                 .map_err(map_pass_action_error)?;
             for (index, surface) in publication.surfaces.iter().copied().enumerate() {
                 let surface_ui = surface_uis.as_mut().map_or(&mut *ui, |uis| &mut uis[index]);
+                let menu_owner = bridge
+                    .output_reservation(token)
+                    .and_then(|reservation| reservation.binding())
+                    .and_then(|binding| {
+                        host_frame
+                            .frame
+                            .native_surface_bindings_for_window(binding.window())
+                            .find(|binding| binding.surface() == surface)
+                    });
+                self.pass_actions.stage_touch_menu(
+                    token,
+                    menu_owner,
+                    host_frame.frame.version(),
+                    surface_ui,
+                    self.instance_id.with(surface.get()),
+                    surface,
+                );
                 let paint = host_frame.paint_surface(
                     self.instance_id.with(surface.get()),
                     surface,
@@ -1702,6 +1719,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
             .and_then(NativeSubmittedApplicationAction::commit_input)
         {
             self.coordinator.set_input(input);
+            self.coordinator.refresh_group_dock_mode()?;
             for surface in self.view().surfaces() {
                 if let Some(viewport) = self.coordinator.surface_viewport(surface.id()) {
                     context.request_repaint_once_of(viewport);
@@ -1739,6 +1757,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
         }
         self.pass_actions
             .commit_presentations(report.surface_presentation_commits());
+        if from_ui_run && let Some(token) = token {
+            self.pass_actions.acknowledge_touch_menu(token);
+        }
         let application_action_settled = self
             .application_actions
             .settle_submission(submitted_application_action, &report)
@@ -1760,6 +1781,28 @@ impl<P: PaneView> NativeRuntimeState<P> {
         }
         self.root_placements
             .commit(&self.coordinator, self.root_surface, &report);
+        if let Some(request) = report.inputs().iter().rev().find_map(|input| match input {
+            HostInputOutcome::Touch(
+                dockspace::runtime::DockspaceTouchEvent::ContextMenuRequested(request),
+            ) => Some(*request),
+            _ => None,
+        }) {
+            let bridge = self.coordinator.dispatch_bridge();
+            let session = self.coordinator.session();
+            let owner = session.native_window_bindings().find_map(|window| {
+                session
+                    .native_surface_bindings_for_window(window)
+                    .find(|binding| binding.surface() == request.surface())
+            });
+            if let Some(owner) = owner {
+                self.pass_actions.capture_touch_menu(request, owner);
+                if let Some(viewport) =
+                    bridge.with_viewports(|viewports| viewports.viewport_for_window(owner.window()))
+                {
+                    context.request_repaint_of(viewport);
+                }
+            }
+        }
         let native_effects = report.take_native_effects();
         let native_effects_emitted = !native_effects.is_empty();
         let outputs = report.take_painted_outputs();
@@ -1808,6 +1851,8 @@ impl<P: PaneView> NativeRuntimeState<P> {
             | self
                 .coordinator
                 .drive_pointer_capture(context, budget, self.shutdown.is_none())?;
+        self.pass_actions
+            .retire_touch_menu(self.coordinator.session());
         for repaint_surface in report.repaint_surfaces() {
             match self.coordinator.repaint_viewport(*repaint_surface) {
                 Some(egui::ViewportId::ROOT) | None if *repaint_surface == self.root_surface => {

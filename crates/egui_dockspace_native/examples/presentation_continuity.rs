@@ -83,7 +83,7 @@ impl eframe::App for ContinuityApp {
             assert!(status.is_ok(), "selection failed: {status:?}");
             assert_eq!(
                 self.dockspace
-                    .with_view(|view| view.item(target).unwrap().is_selected()),
+                    .with_view(|view| view.item(target).unwrap().is_active()),
                 true,
             );
             self.pending = None;

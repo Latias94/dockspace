@@ -50,7 +50,7 @@ fn assert_selected(harness: &Harness, expected: u64) {
             .view()
             .item(ItemId::new(expected))
             .unwrap()
-            .is_selected()
+            .is_active()
     );
 }
 

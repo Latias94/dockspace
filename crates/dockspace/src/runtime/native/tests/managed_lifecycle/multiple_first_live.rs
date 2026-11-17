@@ -347,7 +347,7 @@ fn paint_pending_children(
         let child = children[index];
         let selected = SOURCE_ITEMS[index]
             .into_iter()
-            .find(|item| paint.view().item(*item).unwrap().is_selected())
+            .find(|item| paint.view().item(*item).unwrap().is_active())
             .expect("the source pane has one selected item");
         let plan = paint
             .paint_plan(child.surface())
@@ -378,9 +378,9 @@ fn paint_pending_children(
                             SurfacePaintProgramOperation::Pane(pane) => {
                                 assert_eq!(
                                     pane.bounds(),
-                                    LogicalRect::new(0.0, 0.0, 420.0, 320.0).unwrap()
+                                    LogicalRect::new(0.0, 28.0, 420.0, 292.0).unwrap()
                                 );
-                                panes.push((pane.root(), pane.selected()));
+                                panes.push((pane.root(), Some(pane.item())));
                             }
                             SurfacePaintProgramOperation::Tab(tab) => {
                                 tabs.push((tab.root(), tab.item(), tab.selected()));

@@ -17,10 +17,16 @@ mod tests;
 
 #[cfg(test)]
 thread_local! {
+    static COMPILATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FRAGMENT_BUFFER_CUTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static REFERENCE_SUBTRACTION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static REFERENCE_LINEAR_SPLITTER_LOOKUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static NEIGHBOR_BOUNDS_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn compilation_count() -> usize {
+    COMPILATIONS.get()
 }
 
 pub(super) const fn replaces(kind: PresentationHitRegionKind) -> bool {
@@ -148,6 +154,8 @@ pub(super) fn compile_reusing_order(
     regions: &[PresentationHitRegion],
     previous_order: Option<&[usize]>,
 ) -> TouchGeometry {
+    #[cfg(test)]
+    COMPILATIONS.set(COMPILATIONS.get() + 1);
     let context = TouchContext::new(plan);
     let Some(facts) = context.facts else {
         // Synthetic plans have no exact configuration authority. Fail closed.

@@ -45,8 +45,15 @@ fn layout_checkpoints_remain_read_only_while_busy_and_after_fatal_shutdown() {
             .item(ItemId::new(1))
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .tabs(),
-        before.view().item(ItemId::new(1)).unwrap().tabs().tabs()
+        before
+            .view()
+            .item(ItemId::new(1))
+            .unwrap()
+            .tabs()
+            .expect("item is an inline tab")
+            .tabs()
     );
     assert_eq!(
         checkpoint.view().item(ItemId::new(1)).unwrap().surface(),
@@ -82,6 +89,6 @@ fn layout_checkpoints_remain_read_only_while_busy_and_after_fatal_shutdown() {
     .unwrap();
     assert_eq!(rebuilt.error_kind(), None);
     assert!(rebuilt.take_action_status().is_none());
-    rebuilt.with_view(|view| assert!(view.item(ItemId::new(1)).unwrap().is_selected()));
+    rebuilt.with_view(|view| assert!(view.item(ItemId::new(1)).unwrap().is_active()));
     assert!(app.error_kind().is_some());
 }

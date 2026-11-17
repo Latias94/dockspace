@@ -589,6 +589,20 @@ pub fn paint_surface(
     })
 }
 
+/// Stages one committed context-menu event for this exact native paint pass.
+///
+/// The host must verify the request's workspace version, logical surface and
+/// current native binding before staging it. This grants no action authority;
+/// the matching visible tab or root still prepares every command from its plan.
+#[doc(hidden)]
+pub fn stage_touch_context_menu(
+    ui: &Ui,
+    instance: egui::Id,
+    request: dockspace::runtime::DockspaceContextMenuRequest,
+) {
+    crate::touch_menu::stage_touch_context_menu(ui, instance, request);
+}
+
 /// Supplies the egui measurements required to compile the next core surface
 /// contribution. This is intentionally separate from painting: a native host
 /// can paint a previously accepted plan and acknowledge its output while a

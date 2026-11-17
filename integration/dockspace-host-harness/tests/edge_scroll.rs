@@ -337,7 +337,7 @@ fn assert_durable_unchanged(session: &DockspaceSession, version: WorkspaceVersio
         let view = session.view();
         let item = view.item(item).unwrap();
         assert_eq!(item.surface(), surface);
-        assert_eq!(item.is_selected(), selected);
+        assert_eq!(item.is_active(), selected);
     }
     assert_eq!(
         session
@@ -345,6 +345,7 @@ fn assert_durable_unchanged(session: &DockspaceSession, version: WorkspaceVersio
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND]
@@ -355,6 +356,7 @@ fn assert_durable_unchanged(session: &DockspaceSession, version: WorkspaceVersio
             .item(ItemId::new(10))
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         target_items().collect::<Vec<_>>()

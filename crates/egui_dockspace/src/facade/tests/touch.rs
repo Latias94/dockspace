@@ -76,7 +76,7 @@ fn explicit_touch_tap_deduplicates_synthesized_pointer_and_selects_on_release() 
         ],
     );
     assert_eq!(dockspace.version(), before);
-    assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(!dockspace.view().item(SECOND).unwrap().is_active());
     let wake = dockspace.session.pointer_continuation().unwrap();
     assert_ne!(wake.pointer().get(), 1);
     assert_eq!(wake.deadline(), std::time::Duration::from_millis(1350));
@@ -92,7 +92,7 @@ fn explicit_touch_tap_deduplicates_synthesized_pointer_and_selects_on_release() 
         ],
     );
     assert!(touch.is_empty());
-    assert!(dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(dockspace.view().item(SECOND).unwrap().is_active());
     assert!(!dockspace.session.has_active_gesture());
     assert!(dockspace.session.pointer_continuation().is_none());
     let selected = dockspace.version();
@@ -225,7 +225,7 @@ fn explicit_touch_close_control_checks_release_slop_and_keeps_ordinary_taps() {
     clippy::cast_possible_truncation,
     reason = "the actual menu bounds are inside the finite egui viewport"
 )]
-fn explicit_touch_long_press_opens_the_existing_semantic_menu_once() {
+fn explicit_touch_long_press_opens_the_exact_tab_menu_once() {
     let (context, mut dockspace, mut panes, point) = setup();
     let before = dockspace.version();
     frame(
@@ -249,7 +249,7 @@ fn explicit_touch_long_press_opens_the_existing_semantic_menu_once() {
         if *pointer == wake.pointer() && *surface == SURFACE)
     );
     assert_eq!(dockspace.version(), before);
-    assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(!dockspace.view().item(SECOND).unwrap().is_active());
     let (mut output, events) = frame(
         &context,
         &mut dockspace,
@@ -266,6 +266,7 @@ fn explicit_touch_long_press_opens_the_existing_semantic_menu_once() {
     };
     assert_eq!(request.pointer(), wake.pointer());
     assert_eq!(request.root(), ROOT);
+    assert_eq!(request.tab(), Some(SECOND.into()));
     assert_eq!(request.item(), Some(SECOND));
     assert_eq!(dockspace.version(), before);
     assert!(!dockspace.session.has_active_gesture());
@@ -276,7 +277,7 @@ fn explicit_touch_long_press_opens_the_existing_semantic_menu_once() {
             .as_ref()
             .is_some_and(|tree| {
                 tree.nodes.iter().any(|(_, node)| {
-                    node.role() == Role::Menu && node.label() == Some("Layout actions")
+                    node.role() == Role::Menu && node.label() == Some("Tab actions")
                 })
             })
         {
@@ -300,9 +301,7 @@ fn explicit_touch_long_press_opens_the_existing_semantic_menu_once() {
             .unwrap()
             .nodes
             .iter()
-            .any(|(_, node)| {
-                node.role() == Role::Menu && node.label() == Some("Layout actions")
-            })
+            .any(|(_, node)| { node.role() == Role::Menu && node.label() == Some("Tab actions") })
     );
     let float = output
         .platform_output
@@ -312,11 +311,11 @@ fn explicit_touch_long_press_opens_the_existing_semantic_menu_once() {
         .nodes
         .iter()
         .find_map(|(_, node)| {
-            (node.role() == Role::MenuItem && node.label() == Some("Float Layout"))
+            (node.role() == Role::MenuItem && node.label() == Some("Float Tab"))
                 .then(|| node.bounds())
                 .flatten()
         })
-        .expect("the existing presentation menu exposes its Float command");
+        .expect("the exact tab menu exposes its Float command");
     let point = Pos2::new(
         ((float.x0 + float.x1) * 0.5) as f32,
         ((float.y0 + float.y1) * 0.5) as f32,
@@ -348,7 +347,7 @@ fn explicit_touch_long_press_opens_the_existing_semantic_menu_once() {
         }
     }
     assert!(dockspace.view().item(SECOND).unwrap().contained().is_some());
-    assert_eq!(
+    assert_ne!(
         dockspace.view().item(FIRST).unwrap().root(),
         dockspace.view().item(SECOND).unwrap().root()
     );
@@ -378,7 +377,7 @@ fn explicit_touch_prearm_motion_yields_without_selecting_or_dragging() {
         [DockspaceTouchEvent::YieldedToContent { .. }]
     ));
     assert_eq!(dockspace.version(), before);
-    assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(!dockspace.view().item(SECOND).unwrap().is_active());
     assert!(!dockspace.session.has_active_gesture());
     assert!(dockspace.session.pointer_continuation().is_none());
     frame(
@@ -424,7 +423,7 @@ fn explicit_touch_long_press_then_motion_uses_the_normal_preview_and_dock_releas
             1.0,
             vec![contact(egui::TouchPhase::Start, source)],
         );
-        assert!(!dockspace.view().item(THIRD).unwrap().is_selected());
+        assert!(!dockspace.view().item(THIRD).unwrap().is_active());
         let (_, events) = frame(&context, &mut dockspace, &mut panes, 1.35, Vec::new());
         assert!(matches!(
             events.as_slice(),
@@ -453,7 +452,7 @@ fn explicit_touch_long_press_then_motion_uses_the_normal_preview_and_dock_releas
             );
             assert!(dockspace.session.has_active_gesture());
             assert_eq!(dockspace.version(), version);
-            assert!(!dockspace.view().item(THIRD).unwrap().is_selected());
+            assert!(!dockspace.view().item(THIRD).unwrap().is_active());
             frame(&context, &mut dockspace, &mut panes, 1.4, Vec::new());
             frame(
                 &context,
@@ -489,6 +488,7 @@ fn explicit_touch_long_press_then_motion_uses_the_normal_preview_and_dock_releas
                 .item(THIRD)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>()
                 .contains(&FIRST)
@@ -502,6 +502,7 @@ fn explicit_touch_long_press_then_motion_uses_the_normal_preview_and_dock_releas
                 .item(THIRD)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>()
                 .contains(&FIRST)
@@ -598,6 +599,7 @@ fn touch_drag_pauses_docking_without_motion_and_end_does_not_restore_the_old_tar
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FIRST]

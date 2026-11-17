@@ -2,10 +2,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use dockspace::model::SurfaceId;
+use dockspace::model::{SurfaceId, WorkspaceVersion};
 use dockspace::runtime::{
-    DeferredSurfaceAction, DockspaceSession, NativeSurfaceBinding, PreparedPaneFocusObservation,
-    PresentedDockspaceSurface, SurfacePresentationArtifact, SurfacePresentationCommit,
+    DeferredSurfaceAction, DockspaceContextMenuRequest, DockspaceSession, NativeSurfaceBinding,
+    PreparedPaneFocusObservation, PresentedDockspaceSurface, SurfacePresentationArtifact,
+    SurfacePresentationCommit,
 };
 use eframe::{NativeOutputToken, egui};
 
@@ -45,6 +46,13 @@ pub(crate) struct NativePassActions {
     pane_focus: BTreeMap<SurfaceId, PendingPaneFocus>,
     output_surfaces: BTreeMap<NativeOutputToken, Vec<SurfaceId>>,
     staged: BTreeMap<NativeOutputToken, NativeFinalPass>,
+    touch_menu: Option<PendingTouchMenu>,
+}
+
+struct PendingTouchMenu {
+    request: DockspaceContextMenuRequest,
+    owner: NativeSurfaceBinding,
+    staged_in: Option<NativeOutputToken>,
 }
 
 struct PendingPaneFocus {
@@ -56,11 +64,61 @@ struct PendingPaneFocus {
 
 impl NativePassActions {
     pub(crate) fn has_retained_action_work(&self) -> bool {
-        !self.local_actions.is_empty() || !self.pane_focus.is_empty()
+        !self.local_actions.is_empty() || !self.pane_focus.is_empty() || self.touch_menu.is_some()
     }
 
     pub(crate) fn has_retained_local_actions(&self) -> bool {
-        !self.local_actions.is_empty()
+        !self.local_actions.is_empty() || self.touch_menu.is_some()
+    }
+
+    pub(crate) fn capture_touch_menu(
+        &mut self,
+        request: DockspaceContextMenuRequest,
+        owner: NativeSurfaceBinding,
+    ) {
+        self.touch_menu = Some(PendingTouchMenu {
+            request,
+            owner,
+            staged_in: None,
+        });
+    }
+
+    pub(crate) fn stage_touch_menu(
+        &mut self,
+        token: NativeOutputToken,
+        owner: Option<NativeSurfaceBinding>,
+        version: WorkspaceVersion,
+        ui: &egui::Ui,
+        instance: egui::Id,
+        surface: SurfaceId,
+    ) {
+        if let Some(pending) = &mut self.touch_menu
+            && pending.request.surface() == surface
+            && pending.request.version() == version
+            && owner == Some(pending.owner)
+        {
+            egui_dockspace::native_support::stage_touch_context_menu(ui, instance, pending.request);
+            pending.staged_in = Some(token);
+        }
+    }
+
+    pub(crate) fn acknowledge_touch_menu(&mut self, token: NativeOutputToken) {
+        if self
+            .touch_menu
+            .as_ref()
+            .is_some_and(|pending| pending.staged_in == Some(token))
+        {
+            self.touch_menu = None;
+        }
+    }
+
+    pub(crate) fn retire_touch_menu(&mut self, session: &DockspaceSession) {
+        if self.touch_menu.as_ref().is_some_and(|pending| {
+            pending.request.version() != session.version()
+                || !session.is_current_native_binding(pending.owner)
+        }) {
+            self.touch_menu = None;
+        }
     }
 
     pub(crate) fn prepare_pass(
@@ -219,6 +277,7 @@ impl NativePassActions {
         });
         self.pane_focus
             .retain(|surface, pending| owner_is_current(surface, pending.owner));
+        self.retire_touch_menu(session);
     }
 
     pub(crate) fn retain_pane_focus(
@@ -390,6 +449,7 @@ impl NativePassActions {
                 on_error(error);
             }
         }
+        self.touch_menu = None;
     }
 
     fn remember_painted_surfaces(

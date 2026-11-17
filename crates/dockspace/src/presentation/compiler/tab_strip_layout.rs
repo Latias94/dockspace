@@ -208,7 +208,14 @@ pub(super) fn select_menu_host<E: From<SceneCompilationError>>(
                 root,
                 node,
             })? {
+            Node::Pane { .. } => {}
             Node::Tabs { .. } => {
+                if let Some(child) = workspace
+                    .visible_tab_selection(node)
+                    .and_then(crate::ids::TabKey::layout)
+                {
+                    pending.push(child);
+                }
                 let Some(menu_available) = visible_menu_available(node)? else {
                     continue;
                 };
@@ -217,7 +224,9 @@ pub(super) fn select_menu_host<E: From<SceneCompilationError>>(
                     return Ok(Some(node));
                 }
             }
-            Node::Split { children, .. } => pending.extend(children.iter().rev().copied()),
+            Node::Split { children, .. } | Node::Grid { children, .. } => {
+                pending.extend(children.iter().rev().copied())
+            }
         }
     }
     Ok(compacted_fallback)

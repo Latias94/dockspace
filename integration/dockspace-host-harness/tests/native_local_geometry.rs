@@ -81,7 +81,7 @@ fn external_root_layout_continuation_preserves_declared_identities_without_persi
                 frame.view().item(SECOND).unwrap().surface(),
                 successor.surface()
             );
-            assert!(frame.view().item(SECOND).unwrap().is_selected());
+            assert!(frame.view().item(SECOND).unwrap().is_active());
             if commit {
                 let mut report = finish(frame);
                 assert_eq!(report.native_root_continuations(), pairs);
@@ -213,14 +213,24 @@ fn record(frame: &mut DockspaceHostFrame<'_>, selected: ItemId) -> DockspaceSema
     let [(visual, item, content, paint)] = panes.as_slice() else {
         panic!("the complete root program must record exactly one pane");
     };
-    assert_eq!(*item, Some(selected));
+    assert_eq!(*item, selected);
     assert_eq!(*paint, SurfacePaintDisposition::Visible);
-    assert!(content.width() > 0.0 && content.height() > 0.0);
+    let header = frame.presentation_config().tab_bar_height();
+    assert_eq!(
+        *content,
+        LogicalRect::new(0.0, header, 800.0, 600.0 - header).unwrap()
+    );
     assert!(recording.records.contains(&OwnedRecord::Geometry {
         visual: *visual,
-        bounds: local_bounds(),
+        bounds: *content,
         paint: SurfacePaintDisposition::Visible,
     }));
+    assert!(recording.records.iter().any(|record| matches!(
+        record,
+        OwnedRecord::Geometry { visual, bounds, paint: SurfacePaintDisposition::Visible }
+            if visual.kind() == dockspace::runtime::DockspaceVisualKind::Tabs
+                && *bounds == local_bounds()
+    )));
     let Some(OwnedRecord::SurfaceEnd(semantic)) = recording.records.last() else {
         panic!("the accepting renderer must reach the complete program's semantic seal");
     };
@@ -303,13 +313,13 @@ fn local_size_only_root_presents_and_current_selection_commits_once_after_drop()
             .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
             .unwrap();
         dropped.select_item_current(SECOND).unwrap();
-        assert!(dropped.view().item(SECOND).unwrap().is_selected());
+        assert!(dropped.view().item(SECOND).unwrap().is_active());
         assert_ne!(dropped.version(), version);
         measure(&mut dropped);
     }
     assert_eq!(session.version(), version);
     assert_eq!(session.native_input_recorded_count(), recorded);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert_eq!(session.presented_surface(SURFACE), Some(presented));
 
     let mut frame = session
@@ -324,14 +334,14 @@ fn local_size_only_root_presents_and_current_selection_commits_once_after_drop()
     assert_eq!(
         report.inputs(),
         &[HostInputOutcome::ProductActionApplied(
-            DockspaceActionOutcome::Selected {
-                tab: SECOND.into(),
+            DockspaceActionOutcome::ItemActivated {
+                item: SECOND,
                 changed: true,
             },
         )]
     );
     assert!(report.take_painted_outputs().is_empty());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     let output = paint(&mut session, binding, SECOND);
     present(&mut session, output);
 
@@ -346,8 +356,8 @@ fn local_size_only_root_presents_and_current_selection_commits_once_after_drop()
     assert_eq!(
         report.inputs(),
         &[HostInputOutcome::ProductActionApplied(
-            DockspaceActionOutcome::Selected {
-                tab: SECOND.into(),
+            DockspaceActionOutcome::ItemActivated {
+                item: SECOND,
                 changed: false,
             },
         )]
@@ -490,8 +500,8 @@ fn a_desktop_pointer_cannot_borrow_local_geometry_without_a_real_desktop_origin(
     let report = finish(frame);
     assert!(!report.workspace_changed());
     assert_eq!(session.version(), version);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
-    assert!(!session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
+    assert!(!session.view().item(SECOND).unwrap().is_active());
     assert!(!session.has_pending_native_input());
 }
 
@@ -545,6 +555,6 @@ fn desktop_origin_withdrawal_and_return_require_fresh_exact_output() {
         assert_ne!(fresh.presentation_artifact(), old_artifact);
         present(&mut session, fresh);
         assert_eq!(session.version(), version);
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
     }
 }

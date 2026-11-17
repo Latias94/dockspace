@@ -14,7 +14,7 @@ use crate::presentation::observation::PresentationOutputSerial;
 use crate::presentation::scene::{
     PaneRecord, RootLayoutFacts, SplitterRecord, SurfaceProgramRootOperation,
     SurfaceProgramRootPresentation, SurfaceSceneStamp, TabBarRecord,
-    TabListMenuGeometryAvailability,
+    TabListMenuGeometryAvailability, TabsRecord,
 };
 
 fn rect(x: f64, y: f64, width: f64, height: f64) -> LogicalRect {
@@ -50,6 +50,8 @@ struct Fixture {
     axis: Axis,
     chrome_bounds: LogicalRect,
     selected: ItemId,
+    sibling: Option<ItemId>,
+    selection_context: bool,
     config: DockPresentationConfig,
     occlusions: Vec<DropOcclusionRecord>,
 }
@@ -65,6 +67,8 @@ impl Default for Fixture {
             axis: Axis::Horizontal,
             chrome_bounds: rect(280.0, 120.0, 40.0, 20.0),
             selected: ItemId::new(1),
+            sibling: None,
+            selection_context: true,
             config: DockPresentationConfig::default(),
             occlusions: Vec::new(),
         }
@@ -93,15 +97,24 @@ impl Fixture {
         let root = RootId::new(1);
         let mut builder = Workspace::builder();
         let tabs = builder.insert_node(Node::tabs_with_selection(
-            [ItemId::new(1), ItemId::new(2)],
+            [ItemId::new(1), ItemId::new(2), ItemId::new(9)],
             Some(self.selected),
         ));
-        builder.set_root(root, RootRecord::new(tabs));
+        let sibling = self
+            .sibling
+            .map(|item| builder.insert_node(Node::tabs([item])));
+        let root_node = sibling.map_or(tabs, |sibling| {
+            builder.insert_node(Node::equal_split(Axis::Horizontal, [tabs, sibling]).unwrap())
+        });
+        builder.set_root(root, RootRecord::new(root_node));
         builder.set_surface(ticket().surface(), SurfacePresentation::with_main(root));
         let workspace = builder.build().unwrap();
         let constraints =
             Constraints::new(LogicalSize::new(0.0, 0.0).unwrap(), self.root_bounds.size()).unwrap();
-        let leaf_constraints = std::collections::BTreeMap::from([(tabs, constraints)]);
+        let mut leaf_constraints = std::collections::BTreeMap::from([(tabs, constraints)]);
+        if let Some(sibling) = sibling {
+            leaf_constraints.insert(sibling, constraints);
+        }
         let projection = project_root(
             &workspace,
             root,
@@ -120,18 +133,51 @@ impl Fixture {
         ));
         plan.begin_surface_program_root(root, SurfaceProgramRootPresentation::Main)
             .unwrap();
-        if let Some(bounds) = self.pane_bounds {
-            let pane = PaneSceneId { root, tabs };
-            plan.push_pane_record(PaneRecord::new(
-                pane,
-                bounds,
-                bounds,
-                SceneLayerKey::surface_base(),
-            ));
-            plan.push_surface_program_pane_operation(pane, Some(self.selected.into()))
-                .unwrap();
-        }
         let bar = TabBarSceneId { root, tabs };
+        let ancestry = self.selection_context.then(|| {
+            plan.push_tabs_record(
+                TabsRecord::new(
+                    bar,
+                    self.root_bounds,
+                    self.root_bounds,
+                    SceneLayerKey::surface_base(),
+                    None,
+                ),
+                Some(self.selected.into()),
+            );
+            plan.push_active_tab_choice(None, tabs, self.selected.into())
+        });
+        let mut panes = Vec::new();
+        if let Some(bounds) = self.pane_bounds {
+            let pane = PaneSceneId {
+                root,
+                item: self.selected,
+            };
+            panes.push(
+                PaneRecord::new(pane, tabs, bounds, bounds, SceneLayerKey::surface_base())
+                    .with_context(bounds, self.selection_context.then_some(bar), ancestry),
+            );
+            plan.push_surface_program_pane_operation(pane).unwrap();
+        }
+        if let Some((tabs, item)) = sibling.zip(self.sibling) {
+            let bar = TabBarSceneId { root, tabs };
+            let bounds = rect(400.0, 400.0, 120.0, 120.0);
+            plan.push_tabs_record(
+                TabsRecord::new(bar, bounds, bounds, SceneLayerKey::surface_base(), None),
+                Some(item.into()),
+            );
+            let ancestry = Some(plan.push_active_tab_choice(None, tabs, item.into()));
+            let pane = PaneSceneId { root, item };
+            panes.push(
+                PaneRecord::new(pane, tabs, bounds, bounds, SceneLayerKey::surface_base())
+                    .with_context(bounds, Some(bar), ancestry),
+            );
+            plan.push_surface_program_pane_operation(pane).unwrap();
+        }
+        panes.sort_unstable_by_key(PaneRecord::id);
+        for pane in panes {
+            plan.push_pane_record(pane);
+        }
         plan.push_tab_bar_record(TabBarRecord::new(
             bar,
             self.chrome_bounds,
@@ -150,7 +196,7 @@ impl Fixture {
             .unwrap();
         let splitter = SplitterSceneId {
             root,
-            split: tabs,
+            owner: crate::presentation::scene::SplitterOwner::Split(tabs),
             index: 0,
         };
         plan.push_splitter_record(SplitterRecord::new(
@@ -182,7 +228,10 @@ impl Fixture {
     }
 }
 
-fn assert_full_compile_matches(reused: &PresentationHitManifest, plan: &PresentationPlan) {
+fn assert_full_compile_matches(
+    reused: &PresentationHitManifest,
+    plan: &PresentationPlan,
+) -> PresentationHitManifest {
     let full = PresentationHitManifest::compile(reused.output(), plan).unwrap();
     assert_eq!(*reused, full);
     for (left, right) in reused.regions().iter().zip(full.regions()) {
@@ -201,30 +250,156 @@ fn assert_full_compile_matches(reused: &PresentationHitManifest, plan: &Presenta
             .map(|(row, rect)| (*row, rect_bits(*rect)))
             .collect::<Vec<_>>()
     );
+    assert_eq!(reused.geometry.emission_rows, full.geometry.emission_rows);
+    full
 }
 
 #[test]
-fn selected_item_change_replays_the_full_program_and_rebinds_shared_geometry() {
+fn content_identity_change_rebuilds_exact_receivers_at_the_same_geometry() {
     let fixture = Fixture::default();
     let previous_plan = fixture.plan();
     let previous = PresentationHitManifest::compile(output(1), &previous_plan).unwrap();
     assert!(!previous.geometry.touch_regions.is_empty());
+    let unchanged_plan = fixture.plan();
+    let compilations = touch::compilation_count();
+    let unchanged = PresentationHitManifest::compile_reusing(
+        output(2),
+        &unchanged_plan,
+        Some((&previous_plan, &previous)),
+    )
+    .unwrap();
+    assert_eq!(touch::compilation_count(), compilations);
+    assert!(Arc::ptr_eq(&previous.geometry, &unchanged.geometry));
+    assert_eq!(previous.regions(), unchanged.regions());
+    assert_eq!(unchanged.output(), output(2));
+    assert_ne!(previous.output(), unchanged.output());
+    assert_full_compile_matches(&unchanged, &unchanged_plan);
     let changed_plan = Fixture {
         selected: ItemId::new(2),
         ..fixture
     }
     .plan();
     assert_ne!(previous_plan, changed_plan);
+    let compilations = touch::compilation_count();
     let changed = PresentationHitManifest::compile_reusing(
-        output(2),
+        output(3),
         &changed_plan,
         Some((&previous_plan, &previous)),
     )
     .unwrap();
-    assert!(Arc::ptr_eq(&previous.geometry, &changed.geometry));
+    assert_eq!(touch::compilation_count(), compilations);
+    assert!(!Arc::ptr_eq(&previous.geometry, &changed.geometry));
+    let pane_region = |manifest: &PresentationHitManifest| {
+        manifest
+            .regions()
+            .iter()
+            .copied()
+            .find(|region| matches!(region.id().kind(), PresentationHitRegionKind::PaneBody(_)))
+            .unwrap()
+    };
+    let old_pane = pane_region(&previous);
+    let new_pane = pane_region(&changed);
+    assert_eq!(old_pane.hit(), new_pane.hit());
+    assert_ne!(old_pane.id(), new_pane.id());
+    assert_eq!(
+        new_pane.id().kind(),
+        PresentationHitRegionKind::PaneBody(PaneSceneId {
+            root: RootId::new(1),
+            item: ItemId::new(2),
+        })
+    );
+    assert!(
+        changed
+            .regions()
+            .iter()
+            .all(|region| region.id() != old_pane.id())
+    );
+    assert!(changed.region(old_pane.id()).is_none());
+    assert_eq!(changed.region(new_pane.id()), Some(&new_pane));
     assert_ne!(previous.output(), changed.output());
-    assert_eq!(changed.output(), output(2));
-    assert_full_compile_matches(&changed, &changed_plan);
+    assert_eq!(changed.output(), output(3));
+    let full = assert_full_compile_matches(&changed, &changed_plan);
+    assert_eq!(changed.geometry.touch_order, full.geometry.touch_order);
+}
+
+#[test]
+fn selection_rebinding_refreshes_canonical_rows_in_both_directions_without_touch_compilation() {
+    let fixture = Fixture {
+        sibling: Some(ItemId::new(5)),
+        ..Fixture::default()
+    };
+    let old_plan = fixture.plan();
+    let old = PresentationHitManifest::compile(output(1), &old_plan).unwrap();
+    assert!(!old.geometry.touch_regions.is_empty());
+    let new_plan = Fixture {
+        selected: ItemId::new(9),
+        ..fixture
+    }
+    .plan();
+    let compilations = touch::compilation_count();
+    let new =
+        PresentationHitManifest::compile_reusing(output(2), &new_plan, Some((&old_plan, &old)))
+            .unwrap();
+    assert_eq!(touch::compilation_count(), compilations);
+    assert_ne!(new.geometry.emission_rows, old.geometry.emission_rows);
+    assert_eq!(new.geometry.touch_regions, old.geometry.touch_regions);
+    assert_eq!(new.geometry.touch_order, old.geometry.touch_order);
+    let pane_id = |item| {
+        PresentationHitRegionId::new(
+            new_plan.surface(),
+            PresentationHitRegionKind::PaneBody(PaneSceneId {
+                root: RootId::new(1),
+                item: ItemId::new(item),
+            }),
+        )
+    };
+    assert!(new.region(pane_id(1)).is_none());
+    assert!(new.region(pane_id(9)).is_some());
+    let full = assert_full_compile_matches(&new, &new_plan);
+    assert_eq!(new.geometry.touch_order, full.geometry.touch_order);
+
+    let compilations = touch::compilation_count();
+    let unchanged =
+        PresentationHitManifest::compile_reusing(output(3), &new_plan, Some((&new_plan, &new)))
+            .unwrap();
+    assert_eq!(touch::compilation_count(), compilations);
+    assert!(Arc::ptr_eq(&unchanged.geometry, &new.geometry));
+    let full = assert_full_compile_matches(&unchanged, &new_plan);
+    assert_eq!(unchanged.geometry.touch_order, full.geometry.touch_order);
+
+    let compilations = touch::compilation_count();
+    let restored =
+        PresentationHitManifest::compile_reusing(output(4), &old_plan, Some((&new_plan, &new)))
+            .unwrap();
+    assert_eq!(touch::compilation_count(), compilations);
+    assert!(restored.region(pane_id(9)).is_none());
+    assert!(restored.region(pane_id(1)).is_some());
+    assert_eq!(*restored.geometry, *old.geometry);
+    assert_eq!(restored.geometry.emission_rows, old.geometry.emission_rows);
+    let full = assert_full_compile_matches(&restored, &old_plan);
+    assert_eq!(restored.geometry.touch_order, full.geometry.touch_order);
+}
+
+#[test]
+fn content_identity_without_a_direct_selection_proof_recompiles_touch_geometry() {
+    let fixture = Fixture {
+        selection_context: false,
+        ..Fixture::default()
+    };
+    let old_plan = fixture.plan();
+    let old = PresentationHitManifest::compile(output(1), &old_plan).unwrap();
+    let new_plan = Fixture {
+        selected: ItemId::new(2),
+        ..fixture
+    }
+    .plan();
+    assert!(touch::same_context(&old_plan, &new_plan));
+    let compilations = touch::compilation_count();
+    let new =
+        PresentationHitManifest::compile_reusing(output(2), &new_plan, Some((&old_plan, &old)))
+            .unwrap();
+    assert_eq!(touch::compilation_count(), compilations + 1);
+    assert_full_compile_matches(&new, &new_plan);
 }
 
 #[test]
@@ -279,12 +454,14 @@ fn touch_context_changes_reject_reuse_even_when_receiver_regions_are_unchanged()
                 .all(|(a, b)| same_region(a, b))
         );
         assert!(!touch::same_context(&plan, &previous_plan));
+        let compilations = touch::compilation_count();
         let actual = PresentationHitManifest::compile_reusing(
             output(2),
             &plan,
             Some((&previous_plan, &previous)),
         )
         .unwrap();
+        assert_eq!(touch::compilation_count(), compilations + 1);
         assert!(!Arc::ptr_eq(&actual.geometry, &previous.geometry));
         assert_full_compile_matches(&actual, &plan);
     }
@@ -315,12 +492,14 @@ fn draw_axis_surface_bounds_and_emission_count_changes_use_full_compilation() {
     ];
     for changed in cases {
         let plan = changed.plan();
+        let compilations = touch::compilation_count();
         let actual = PresentationHitManifest::compile_reusing(
             output(2),
             &plan,
             Some((&previous_plan, &previous)),
         )
         .unwrap();
+        assert_eq!(touch::compilation_count(), compilations + 1);
         assert!(!Arc::ptr_eq(&actual.geometry, &previous.geometry));
         assert_full_compile_matches(&actual, &plan);
     }
@@ -336,12 +515,14 @@ fn raw_signed_zero_changes_never_reuse_numerically_equal_receiver_geometry() {
     }
     .plan();
     assert_eq!(previous_plan.pane_records(), plan.pane_records());
+    let compilations = touch::compilation_count();
     let actual = PresentationHitManifest::compile_reusing(
         output(2),
         &plan,
         Some((&previous_plan, &previous)),
     )
     .unwrap();
+    assert_eq!(touch::compilation_count(), compilations + 1);
     assert!(!Arc::ptr_eq(&actual.geometry, &previous.geometry));
     assert_eq!(
         rect_bits(actual.regions()[0].hit.rect())[0],

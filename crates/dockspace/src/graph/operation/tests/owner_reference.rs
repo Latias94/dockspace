@@ -40,8 +40,8 @@ pub(super) fn assert_actual_placement(workspace: &Workspace) {
                     .insert(node, (root, parent, path.clone()))
                     .is_none()
             );
-            if let Some(Node::Split { children, .. }) = workspace.node(node) {
-                for (index, &child) in children.iter().enumerate() {
+            if let Some(value) = workspace.node(node) {
+                for (index, child) in value.child_nodes() {
                     let mut child_path = path.clone();
                     child_path.push(child);
                     pending.push((
@@ -71,19 +71,26 @@ pub(super) fn assert_actual_placement(workspace: &Workspace) {
         for (row, value) in structure.nodes.iter().enumerate() {
             assert_eq!(structure.row(&value.id), Some(row));
             match (&value.kind, workspace.node(value.id).unwrap()) {
-                (RootNodeKind::Tabs, Node::Tabs { .. }) => {}
+                (RootNodeKind::Pane { item }, Node::Pane { item: actual }) => {
+                    assert_eq!(item, actual);
+                }
+                (RootNodeKind::Tabs { .. }, Node::Tabs { .. }) => {}
                 (
                     RootNodeKind::Split {
                         payload, children, ..
                     },
                     Node::Split {
-                        children: actual, ..
+                        axis,
+                        children: actual,
+                        weights,
+                        ..
                     },
                 ) => {
                     assert!(
                         payload.shares_payload(workspace.storage().nodes.shared(value.id).unwrap())
                     );
-                    assert_eq!(payload.children(), actual);
+                    assert_eq!(payload.axis(), *axis);
+                    assert_eq!(payload.weights(), weights.as_slice());
                     assert_eq!(children.len(), actual.len());
                     assert_eq!(
                         structure.children[children.clone()]
@@ -91,6 +98,30 @@ pub(super) fn assert_actual_placement(workspace: &Workspace) {
                             .map(|&child| structure.nodes[child].id)
                             .collect::<Vec<_>>(),
                         *actual,
+                    );
+                }
+                (
+                    RootNodeKind::Grid {
+                        payload, children, ..
+                    },
+                    Node::Grid {
+                        shape,
+                        children: actual,
+                        shares,
+                        ..
+                    },
+                ) => {
+                    assert!(
+                        payload.shares_payload(workspace.storage().nodes.shared(value.id).unwrap())
+                    );
+                    assert_eq!(payload.shape(), *shape);
+                    assert_eq!(payload.shares(), shares.as_ref());
+                    assert_eq!(
+                        structure.children[children.clone()]
+                            .iter()
+                            .map(|&child| structure.nodes[child].id)
+                            .collect::<Vec<_>>(),
+                        *actual
                     );
                 }
                 _ => panic!("owner rows must use the current node kind"),
@@ -138,7 +169,10 @@ fn clone_keeps_exact_refs_independent_build_and_published_aba_reject_them() {
 
     let policy = default_policy();
     WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source: source.clone().as_tab_source(),
+        source: source
+            .clone()
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     }])
     .apply(&mut workspace, &policy)
     .unwrap();
@@ -151,7 +185,9 @@ fn clone_keeps_exact_refs_independent_build_and_published_aba_reject_them() {
             .capture_item_source(A, tabs[0], ItemId::new(item))
             .unwrap();
         WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-            source: source.as_tab_source(),
+            source: source
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         }])
         .apply(&mut workspace, &policy)
         .unwrap();
@@ -179,7 +215,8 @@ fn actual_stage_supports_net_zero_selection_but_rejects_predicted_branch_refs() 
         source: workspace
             .capture_item_source(A, tabs[0], ItemId::new(2))
             .unwrap()
-            .as_tab_source(),
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     };
     let mut predicted = workspace.clone();
     WorkspaceTransaction::from_commands([first.clone()])
@@ -191,7 +228,9 @@ fn actual_stage_supports_net_zero_selection_but_rejects_predicted_branch_refs() 
     let error = WorkspaceTransaction::from_commands([
         first,
         WorkspaceCommand::Select {
-            source: predicted_source.as_tab_source(),
+            source: predicted_source
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     ])
     .apply(&mut workspace, &policy)
@@ -214,7 +253,8 @@ fn actual_stage_supports_net_zero_selection_but_rejects_predicted_branch_refs() 
                 Ok(WorkspaceCommand::Select {
                     source: current
                         .capture_item_source(A, tabs[0], ItemId::new(item))?
-                        .as_tab_source(),
+                        .as_tab_source()
+                        .expect("fixture owns an inline item tab"),
                 })
             })?;
         }
@@ -259,12 +299,16 @@ fn ignoring_a_stage_error_cannot_publish_or_capture_again() {
             Ok(WorkspaceCommand::Select {
                 source: current
                     .capture_item_source(A, tabs[0], ItemId::new(2))?
-                    .as_tab_source(),
+                    .as_tab_source()
+                    .expect("fixture owns an inline item tab"),
             })
         })?;
         let ignored = stage.push(|_| {
             Ok(WorkspaceCommand::Select {
-                source: old.clone().as_tab_source(),
+                source: old
+                    .clone()
+                    .as_tab_source()
+                    .expect("fixture owns an inline item tab"),
             })
         });
         assert!(ignored.is_err());
@@ -273,7 +317,8 @@ fn ignoring_a_stage_error_cannot_publish_or_capture_again() {
             Ok(WorkspaceCommand::Select {
                 source: current
                     .capture_item_source(A, tabs[0], ItemId::new(1))?
-                    .as_tab_source(),
+                    .as_tab_source()
+                    .expect("fixture owns an inline item tab"),
             })
         });
         assert!(ignored.is_err());
@@ -369,7 +414,9 @@ fn same_version_index_rejects_changed_and_foreign_issuers_and_retains_unrelated_
         .capture_item_source(A, tabs[0], ItemId::new(2))
         .unwrap();
     WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source: source.as_tab_source(),
+        source: source
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     }])
     .apply(&mut workspace, &default_policy())
     .unwrap();
@@ -413,7 +460,9 @@ fn same_version_index_rejects_changed_and_foreign_issuers_and_retains_unrelated_
         .capture_item_source(A, tabs[0], ItemId::new(2))
         .unwrap();
     WorkspaceTransaction::from_commands([WorkspaceCommand::Reorder {
-        source: source.as_tab_source(),
+        source: source
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
         insertion_index: 0,
     }])
     .apply(&mut workspace, &default_policy())
@@ -422,7 +471,9 @@ fn same_version_index_rejects_changed_and_foreign_issuers_and_retains_unrelated_
         .capture_item_source(A, tabs[0], ItemId::new(1))
         .unwrap();
     WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source: source.as_tab_source(),
+        source: source
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     }])
     .apply(&mut workspace, &default_policy())
     .unwrap();
@@ -442,7 +493,9 @@ fn common_capture_select_and_item_move_build_no_full_root_proofs() {
         .capture_item_source(A, tabs[0], ItemId::new(2))
         .unwrap();
     WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source: source.as_tab_source(),
+        source: source
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     }])
     .apply(&mut workspace, &default_policy())
     .unwrap();
@@ -482,7 +535,7 @@ fn common_capture_select_and_item_move_build_no_full_root_proofs() {
 }
 
 #[test]
-fn cross_root_subtree_and_staged_merged_residue_have_actual_placement() {
+fn cross_root_subtree_and_staged_merge_retire_consumed_owner_with_actual_placement() {
     let (mut workspace, tabs) = fixture();
     let unaffected = workspace.capture_node_source(C, tabs[3]).unwrap();
     let moved_split = workspace.root(A).unwrap().node;
@@ -517,13 +570,28 @@ fn cross_root_subtree_and_staged_merged_residue_have_actual_placement() {
         target: DockTarget::Center(workspace.capture_tab_target(C, tabs[3]).unwrap()),
     };
     stage.push_command(&movement).unwrap();
-    assert!(stage.candidate.node(tabs[0]).is_some());
+    assert!(stage.candidate.node(tabs[0]).is_none());
     assert_eq!(stage.candidate.node_root(tabs[0]), None);
     for root in [B, C] {
         assert!(matches!(
             stage.candidate.capture_node_source(root, tabs[0]),
-            Err(CommandError::NodeOutsideRoot { .. })
+            Err(CommandError::MissingNode { .. })
         ));
+    }
+    let Node::Tabs { items, .. } = stage.candidate.node(tabs[3]).unwrap() else {
+        unreachable!()
+    };
+    assert_eq!(
+        items,
+        &[7, 8, 1, 2].map(|item| TabKey::for_item(ItemId::new(item)))
+    );
+    for item in [1, 2] {
+        let location = stage
+            .candidate
+            .locate_item_by_id(ItemId::new(item))
+            .unwrap();
+        assert_eq!(location.root, C);
+        assert_eq!(location.tabs(), Some(tabs[3]));
     }
     assert_actual_placement(&stage.candidate);
     let prepared = stage.finish(&original).unwrap();
@@ -573,7 +641,9 @@ fn retained_selection_rebind_rejects_an_unrelated_intervening_root_edit() {
             .capture_item_source(root, tabs, ItemId::new(item))
             .unwrap();
         WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-            source: source.as_tab_source(),
+            source: source
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         }])
         .apply(&mut workspace, &default_policy())
         .unwrap();
@@ -596,7 +666,9 @@ fn selection_and_resize_change_exact_refs_at_distinct_geometry_boundaries() {
         .capture_item_source(A, tabs[0], ItemId::new(2))
         .unwrap();
     WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source: source.as_tab_source(),
+        source: source
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     }])
     .apply(&mut workspace, &default_policy())
     .unwrap();
@@ -614,9 +686,9 @@ fn selection_and_resize_change_exact_refs_at_distinct_geometry_boundaries() {
     ));
 
     let source = workspace.capture_node_source(A, split).unwrap();
-    let resize = SplitResize::new(source.clone(), SplitWeight::normalize([0.3, 0.7]).unwrap());
-    let command = WorkspaceCommand::ResizeSplits {
-        splits: vec![resize],
+    let resize = TrackResize::split(source.clone(), SplitWeight::normalize([0.3, 0.7]).unwrap());
+    let command = WorkspaceCommand::ResizeTracks {
+        tracks: vec![resize],
     };
     WorkspaceTransaction::from_commands([command.clone()])
         .apply(&mut workspace, &default_policy())
@@ -635,9 +707,9 @@ fn selection_and_resize_change_exact_refs_at_distinct_geometry_boundaries() {
         Err(CommandError::StaleNode { .. })
     ));
     let current = workspace.capture_node_source(A, split).unwrap();
-    let noop = SplitResize::new(current.clone(), SplitWeight::normalize([0.3, 0.7]).unwrap());
-    let report = WorkspaceTransaction::from_commands([WorkspaceCommand::ResizeSplits {
-        splits: vec![noop],
+    let noop = TrackResize::split(current.clone(), SplitWeight::normalize([0.3, 0.7]).unwrap());
+    let report = WorkspaceTransaction::from_commands([WorkspaceCommand::ResizeTracks {
+        tracks: vec![noop],
     }])
     .apply(&mut workspace, &default_policy())
     .unwrap();
@@ -687,14 +759,17 @@ fn a_new_root_and_its_donor_issue_actual_refs_before_the_next_prefix() {
             Ok(WorkspaceCommand::Select {
                 source: current
                     .capture_item_source(new_root, new_tabs, ItemId::new(2))?
-                    .as_tab_source(),
+                    .as_tab_source()
+                    .expect("fixture owns an inline item tab"),
             })
         })?;
         stage.push(|current| {
             let source = current.capture_item_source(A, tabs[0], ItemId::new(1))?;
             assert_ne!(source.reference(), old_donor.reference());
             Ok(WorkspaceCommand::Select {
-                source: source.as_tab_source(),
+                source: source
+                    .as_tab_source()
+                    .expect("fixture owns an inline item tab"),
             })
         })?;
         Ok(())
@@ -785,7 +860,9 @@ fn an_exact_cold_move_noop_preserves_a_frozen_same_root_followup() {
     let report = WorkspaceTransaction::from_commands([
         noop,
         WorkspaceCommand::Select {
-            source: followup.as_tab_source(),
+            source: followup
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     ])
     .apply(&mut workspace, &default_policy())
@@ -970,7 +1047,8 @@ fn staged_selection_roundtrip_publishes_history_only_change() {
                 Ok(WorkspaceCommand::Select {
                     source: current
                         .capture_item_source(A, tabs, ItemId::new(item))?
-                        .as_tab_source(),
+                        .as_tab_source()
+                        .expect("fixture owns an inline item tab"),
                 })
             })?;
         }

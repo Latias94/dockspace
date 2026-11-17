@@ -216,7 +216,7 @@ fn fixture() -> (DockspaceSession, Geometry) {
         .iter()
         .find_map(|record| match record {
             OwnedRecord::PaneContent {
-                item: Some(THIRD),
+                item: THIRD,
                 bounds,
                 ..
             } => Some(*bounds),
@@ -294,12 +294,22 @@ fn assert_undocked(session: &DockspaceSession) {
     let view = session.view();
     assert_eq!(view.item(FIRST).unwrap().surface(), A);
     assert_eq!(
-        view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>(),
+        view.item(FIRST)
+            .unwrap()
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
     assert_eq!(view.item(THIRD).unwrap().surface(), B);
     assert_eq!(
-        view.item(THIRD).unwrap().tabs().items().collect::<Vec<_>>(),
+        view.item(THIRD)
+            .unwrap()
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
         &[THIRD, FOURTH]
     );
 }
@@ -308,7 +318,12 @@ fn assert_docked(session: &DockspaceSession, items: &[ItemId]) {
     let view = session.view();
     assert_eq!(view.item(FIRST).unwrap().surface(), B);
     assert_eq!(
-        view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>(),
+        view.item(FIRST)
+            .unwrap()
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
         items
     );
     assert_eq!(view.item(SECOND).unwrap().surface(), A);
@@ -316,6 +331,7 @@ fn assert_docked(session: &DockspaceSession, items: &[ItemId]) {
         view.item(SECOND)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[SECOND]

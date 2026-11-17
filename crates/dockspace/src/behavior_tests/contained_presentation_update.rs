@@ -191,7 +191,9 @@ fn stale_node_source_rejects_without_touching_rect_or_roster() {
         .capture_item_source(ROOT_A, node_a, ItemId::new(20))
         .expect("item source must be current");
     WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source: item.as_tab_source(),
+        source: item
+            .as_tab_source()
+            .expect("fixture owns an inline item tab"),
     }])
     .apply(&mut workspace, &DockPolicySnapshot::default())
     .expect("fixture selection must change the source fingerprint");

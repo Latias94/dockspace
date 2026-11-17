@@ -199,7 +199,7 @@ fn tabs_containing(workspace: &Workspace, needle: ItemId) -> NodeId {
         .nodes()
         .find_map(|(node, value)| match value {
             Node::Tabs { items, .. } if items.contains(&TabKey::for_item(needle)) => Some(node),
-            Node::Tabs { .. } | Node::Split { .. } => None,
+            Node::Pane { .. } | Node::Tabs { .. } | Node::Split { .. } | Node::Grid { .. } => None,
         })
         .expect("item must remain reachable")
 }
@@ -217,6 +217,7 @@ fn ae1_post_extraction_edge_failure_discards_the_candidate() {
             SplitWeight::new(f64::MIN_POSITIVE).expect("positive tiny weight"),
             SplitWeight::new(1.0).expect("positive unit weight"),
         ],
+        layout_title: None,
     });
     builder.set_root(ROOT_A, RootRecord::new(source_tabs));
     builder.set_root(ROOT_B, RootRecord::new(target_split));
@@ -268,10 +269,14 @@ fn ordinary_command_index_failure_rolls_back_earlier_staged_commands() {
         .expect("second selection exists");
     let transaction = WorkspaceTransaction::from_commands([
         WorkspaceCommand::Select {
-            source: selection.as_tab_source(),
+            source: selection
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
         WorkspaceCommand::Select {
-            source: stale_selection.as_tab_source(),
+            source: stale_selection
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     ]);
     let before = workspace.clone();
@@ -481,7 +486,11 @@ fn moving_a_central_tabs_group_transfers_content_and_preserves_its_source_contai
         if destination != 3 {
             assert_eq!(workspace.node(sibling), Some(&Node::tabs([item(2)])));
         }
-        let (target_root, moved_tabs, _) = workspace.locate_item_by_id(item(4)).unwrap();
+        let location = workspace.locate_item_by_id(item(4)).unwrap();
+        let target_root = location.root;
+        let moved_tabs = location
+            .tabs()
+            .expect("transferred group keeps its explicit tabs container");
         let expected_items = match destination {
             0 => {
                 assert_eq!(target_root, ROOT_B);
@@ -505,6 +514,7 @@ fn moving_a_central_tabs_group_transfers_content_and_preserves_its_source_contai
             items,
             selected,
             mru,
+            ..
         }) = workspace.node(moved_tabs)
         else {
             panic!("the transferred group must remain a tabs leaf");
@@ -626,6 +636,7 @@ fn same_axis_edge_insertion_splits_only_the_target_branch_weight() {
             SplitWeight::new(0.4).expect("positive"),
             SplitWeight::new(0.6).expect("positive"),
         ],
+        layout_title: None,
     });
     builder.set_root(ROOT_A, RootRecord::new(source_tabs));
     builder.set_root(ROOT_B, RootRecord::new(target_root));

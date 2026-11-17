@@ -24,13 +24,28 @@ pub enum LogicalSurfaceRejection {
     PolicyDenied,
 }
 
+/// Center-docking intent for a captured whole tab group.
+///
+/// This changes the logical insertion only; it never replaces the captured
+/// source, native reservation, release event or window lifetime.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum TabGroupDockMode {
+    /// Insert the group's direct children into the destination in their order.
+    #[default]
+    MergeTabs,
+    /// Insert the complete group as one layout tab.
+    PreserveLayout,
+}
+
 /// Stable item or central-region anchor used by product docking actions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DockAnchor {
-    /// The tabs leaf which currently owns this item.
+    /// The immediate inline Tabs owner, or the bare Pane itself.
     Item(ItemId),
-    /// The central tabs leaf declared by this root.
+    /// The central Tabs anchor declared by this root.
     Central(RootId),
+    /// One currently live layout node; this identity alone does not grant authority.
+    Node(crate::ids::NodeKey),
 }
 
 /// Physical side of a stable docking anchor.
@@ -82,17 +97,17 @@ pub struct InvalidDockFraction {
 /// Stable product placement for opening or moving one item.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DockPlacement {
-    /// Merge into the tabs leaf represented by the anchor.
+    /// Insert into the Tabs container or bare Pane represented by the anchor.
     ///
     /// Moving an item within its current group does not implicitly reorder it to the end.
     Center(DockAnchor),
-    /// Insert immediately before the named item in its current tabs leaf.
+    /// Insert immediately before the named inline tab in its current group.
     Before(ItemId),
-    /// Insert immediately after the named item in its current tabs leaf.
+    /// Insert immediately after the named inline tab in its current group.
     After(ItemId),
-    /// Split the anchor's tabs leaf at one branch-local edge.
+    /// Split the anchor's real layout node at one branch-local edge.
     InnerEdge {
-        /// Stable tabs or central-region anchor.
+        /// Stable content, node or central-region anchor.
         anchor: DockAnchor,
         /// Insertion side.
         edge: DockEdge,
@@ -142,7 +157,7 @@ impl NativeWindowPlacement {
 /// One exact tabs group captured from a published dockspace session.
 ///
 /// The capability freezes its source membership, order, selection and workspace
-/// version. Moving its former anchor into another group never retargets this
+/// version. Moving a former member into another group never retargets this
 /// value. Runtime graph identities remain private.
 /// Cloning preserves the same captured group and version; it does not refresh
 /// the capability against a changed workspace.
@@ -151,11 +166,34 @@ pub struct PreparedTabsGroup {
     pub(crate) authority_domain: EngineAuthorityDomainId,
     pub(crate) expected: WorkspaceVersion,
     pub(crate) source: crate::graph::command::NodeSource,
-    pub(crate) anchor: ItemId,
 }
 
 impl PreparedTabsGroup {
     /// Returns the published version from which the complete group was captured.
+    #[must_use]
+    pub const fn expected_version(&self) -> WorkspaceVersion {
+        self.expected
+    }
+}
+
+/// One direct tab captured against its session, membership and revision.
+///
+/// A layout tab denotes its complete subtree. Content identities remain ItemId.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedTab {
+    pub(crate) authority_domain: EngineAuthorityDomainId,
+    pub(crate) expected: WorkspaceVersion,
+    pub(crate) source: crate::graph::command::TabSource,
+}
+
+impl PreparedTab {
+    /// Returns the exact direct child represented by this capability.
+    #[must_use]
+    pub const fn key(&self) -> TabKey {
+        self.source.tab()
+    }
+
+    /// Returns the workspace revision from which the tab was captured.
     #[must_use]
     pub const fn expected_version(&self) -> WorkspaceVersion {
         self.expected
@@ -169,6 +207,8 @@ pub enum NativeTearOffSource {
     Item(ItemId),
     /// Move one previously captured complete tabs group.
     Tabs(PreparedTabsGroup),
+    /// Move one exact direct tab, preserving an entire layout subtree.
+    Tab(PreparedTab),
     /// Move one complete root, preserving its stable root identity.
     Root(RootId),
 }
@@ -176,11 +216,48 @@ pub enum NativeTearOffSource {
 /// Product-visible result of one accepted semantic docking action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DockspaceActionOutcome {
+    /// One exact direct tab was moved without widening its source scope.
+    TabDocked {
+        /// Direct child captured by the action.
+        tab: TabKey,
+        /// Root which originally owned the tab.
+        source_root: RootId,
+        /// Root which owns the resulting tab or split subtree.
+        target_root: RootId,
+        /// Every real descendant, in visual order.
+        items: Vec<ItemId>,
+        /// Whether durable state changed.
+        changed: bool,
+    },
+    /// One exact direct tab entered a contained floating presentation.
+    TabFloated {
+        /// Direct child captured by the action.
+        tab: TabKey,
+        /// Original owner.
+        source_root: RootId,
+        /// Resulting root.
+        root: RootId,
+        /// Logical hosting surface.
+        surface: SurfaceId,
+        /// Contained presentation identity.
+        floating: crate::ids::FloatingPresentationId,
+        /// Every real descendant, in visual order.
+        items: Vec<ItemId>,
+        /// Whether durable state changed.
+        changed: bool,
+    },
     /// Selection was checked and optionally changed.
     Selected {
         /// Selected direct tab child.
         tab: TabKey,
         /// Whether durable selection or MRU state changed.
+        changed: bool,
+    },
+    /// A real content item was activated through all of its containing tab groups.
+    ItemActivated {
+        /// Application content whose ancestor path was activated.
+        item: ItemId,
+        /// Whether any durable selection or MRU state changed.
         changed: bool,
     },
     /// One owned item was shown or hidden without changing its docking placement.
@@ -342,7 +419,10 @@ impl DockspaceActionOutcome {
     #[must_use]
     pub const fn changed(&self) -> bool {
         match self {
-            Self::Selected { changed, .. }
+            Self::TabDocked { changed, .. }
+            | Self::TabFloated { changed, .. }
+            | Self::Selected { changed, .. }
+            | Self::ItemActivated { changed, .. }
             | Self::ItemVisibilityChanged { changed, .. }
             | Self::Docked { changed, .. }
             | Self::TabsDocked { changed, .. }
@@ -493,9 +573,18 @@ pub(crate) enum ProductAction {
         item: ItemId,
         placement: DockPlacement,
     },
+    DockTab {
+        tab: PreparedTab,
+        placement: DockPlacement,
+    },
+    FloatTab {
+        tab: PreparedTab,
+        surface: SurfaceId,
+    },
     DockTabs {
         group: PreparedTabsGroup,
         placement: DockPlacement,
+        mode: TabGroupDockMode,
     },
     DockRoot {
         root: RootId,

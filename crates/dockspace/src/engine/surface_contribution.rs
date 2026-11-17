@@ -366,7 +366,7 @@ impl DockEngine {
                 .iter()
                 .zip(&resize_overrides)
                 .all(|(previous, current)| {
-                    previous.split() == current.source() && previous.weights() == current.weights()
+                    previous.source() == current.source() && previous.weights() == current.weights()
                 })
         {
             // Local tab-state edits invalidate Ready before preparation. Resize and
@@ -674,7 +674,7 @@ impl DockEngine {
     fn surface_resize_overrides(
         &self,
         surface: SurfaceId,
-    ) -> Vec<crate::presentation::layout::SplitWeightOverride<'_>> {
+    ) -> Vec<crate::presentation::layout::TrackWeightOverride<'_>> {
         self.interaction
             .resize_overrides()
             .map(|(_, updates)| {
@@ -682,7 +682,7 @@ impl DockEngine {
                     .iter()
                     .filter(|update| {
                         matches!(
-                            self.workspace.presentation_for_root(update.split().root()),
+                            self.workspace.presentation_for_root(update.source().root()),
                             Some(crate::graph::workspace::RootPresentationOwner::Main { surface: owner })
                                 | Some(crate::graph::workspace::RootPresentationOwner::Contained {
                                     surface: owner,
@@ -691,7 +691,7 @@ impl DockEngine {
                         )
                     })
                     .map(|update| {
-                        crate::presentation::layout::SplitWeightOverride::new(update.split(), update.weights())
+                        crate::presentation::layout::TrackWeightOverride::new(update.source(), update.weights())
                     })
                     .collect()
             })

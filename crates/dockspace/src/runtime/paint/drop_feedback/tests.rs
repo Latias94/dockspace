@@ -43,10 +43,10 @@ fn measured_session(workspace: Workspace, policy: DockPolicy) -> DockspaceSessio
     session
 }
 
-fn pane(plan: &PresentationPlan, tabs: NodeId) -> &crate::presentation::scene::PaneRecord {
-    plan.pane_records()
+fn pane(plan: &PresentationPlan, tabs: NodeId) -> &crate::presentation::scene::TabsRecord {
+    plan.tabs_records()
         .iter()
-        .find(|pane| pane.id().tabs == tabs)
+        .find(|tabs_record| tabs_record.id().tabs == tabs)
         .unwrap()
 }
 

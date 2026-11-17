@@ -118,7 +118,10 @@ impl RootMeasurement<'_> {
                     .node(*node)
                     .ok_or(LayoutError::MissingNode { node: *node })?
                 {
-                    Node::Tabs { .. } => leaf_maximum,
+                    Node::Grid { .. } => {
+                        unreachable!("the independent oracle generates only flat Tabs and Splits")
+                    }
+                    Node::Pane { .. } | Node::Tabs { .. } => leaf_maximum,
                     Node::Split { axis, children, .. } => {
                         let children = child_measurements(children, &self.measurements)?;
                         compose_maximum(
@@ -198,7 +201,10 @@ fn measure_root<'workspace>(
                     .node(current)
                     .ok_or(LayoutError::MissingNode { node: current })?;
                 match node {
-                    Node::Tabs { .. } => {
+                    Node::Grid { .. } => {
+                        unreachable!("the independent oracle generates only flat Tabs and Splits")
+                    }
+                    Node::Pane { .. } | Node::Tabs { .. } => {
                         let measurement = SubtreeMeasurement {
                             constraints: leaves.get(current)?,
                             contains_central: root_record.central == Some(current),
@@ -213,6 +219,7 @@ fn measure_root<'workspace>(
                         axis,
                         children,
                         weights,
+                        ..
                     } => {
                         if children.len() != weights.len() {
                             return Err(LayoutError::SplitCardinalityMismatch {
@@ -372,6 +379,7 @@ fn prepare_split_projection<'workspace>(
         axis,
         children,
         weights,
+        ..
     } = node
     else {
         return Ok(None);
@@ -553,19 +561,41 @@ pub(super) fn project(
     bounds: LogicalRect,
     leaves: LeafMeasurements<'_>,
     metrics: LayoutMetrics,
-    overrides: &[SplitWeightOverride<'_>],
+    overrides: &[TrackWeightOverride<'_>],
 ) -> Result<LayoutProjection, LayoutError> {
     match leaves {
         LeafMeasurements::Minimums(_) => {
             let measured = measure_root(workspace.storage(), root, leaves, metrics)?;
-            let weights = validate_split_weight_overrides(workspace, root, overrides, None)?;
+            let weights = validate_track_weight_overrides(workspace, root, overrides, None)?
+                .into_iter()
+                .map(|(node, weights)| {
+                    let TrackWeights::Split(weights) = weights else {
+                        unreachable!("the independent oracle uses only Split weights")
+                    };
+                    (
+                        node,
+                        weights.into_iter().map(|weight| weight.get()).collect(),
+                    )
+                })
+                .collect();
             measured.project_with_weights(bounds, &weights)
         }
         LeafMeasurements::Constraints(_) => {
             workspace
                 .root(root)
                 .ok_or(LayoutError::MissingRoot { root })?;
-            let weights = validate_split_weight_overrides(workspace, root, overrides, None)?;
+            let weights = validate_track_weight_overrides(workspace, root, overrides, None)?
+                .into_iter()
+                .map(|(node, weights)| {
+                    let TrackWeights::Split(weights) = weights else {
+                        unreachable!("the independent oracle uses only Split weights")
+                    };
+                    (
+                        node,
+                        weights.into_iter().map(|weight| weight.get()).collect(),
+                    )
+                })
+                .collect();
             measure_root(workspace.storage(), root, leaves, metrics)?
                 .project_with_weights(bounds, &weights)
         }

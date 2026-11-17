@@ -20,27 +20,20 @@ impl DockEngine {
         &self,
         tab: crate::presentation::scene::TabSceneId,
     ) -> Result<MovePayload, CommandError> {
-        let source = self
-            .workspace
+        self.workspace
             .capture_tab_source(tab.root, tab.tabs, tab.tab)?;
         match tab.tab.0 {
-            crate::ids::TabContent::Item(item) => {
-                Ok(MovePayload::Item(crate::graph::command::ItemSource {
-                    root: tab.root,
-                    tabs: tab.tabs,
-                    item,
-                    reference: source.reference,
-                }))
-            }
-            crate::ids::TabContent::Layout(node) => {
-                Ok(MovePayload::Subtree(crate::graph::command::NodeSource {
-                    root: tab.root,
-                    node,
-                    reference: source.reference,
-                }))
-            }
+            crate::ids::TabContent::Item(item) => self
+                .workspace
+                .capture_item_source(tab.root, tab.tabs, item)
+                .map(MovePayload::Item),
+            crate::ids::TabContent::Layout(node) => self
+                .workspace
+                .capture_node_source(tab.root, node)
+                .map(MovePayload::Subtree),
         }
     }
+
     pub(super) fn reduce_host_focus_observation(
         &mut self,
         expected_epoch: crate::ids::WorkspaceEpoch,

@@ -22,10 +22,7 @@ pub(super) fn paint(
     let Some(pointer) = context.ui.input(|input| input.pointer.hover_pos()) else {
         return;
     };
-    let resource = decoration
-        .ghost_item()
-        .and_then(|item| context.resources.tab(item))
-        .cloned();
+    let resource = context.resources.tab(decoration.key()).cloned();
     let projected_root = decoration.projected_root_bounds().and_then(egui_rect);
     let ghost_size = match decoration.kind() {
         DockspaceDragSourceKind::Item => source.size(),
@@ -58,7 +55,11 @@ pub(super) fn paint(
     };
     let preview = DragPreview {
         kind: decoration.kind(),
-        item: decoration.ghost_item(),
+        key: decoration.key(),
+        item: match decoration.label() {
+            dockspace::model::TabLabel::Item(item) => Some(item),
+            dockspace::model::TabLabel::Layout { .. } => None,
+        },
         rect: ghost,
         header_rect,
         title_rect: header_rect

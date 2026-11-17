@@ -21,7 +21,11 @@ impl Workspace {
     /// Returns whether a supported direct tab child contributes visible content.
     #[must_use]
     pub(crate) fn tab_is_visible(&self, tab: TabKey) -> bool {
-        tab.item().is_some_and(|item| !self.item_is_hidden(item))
+        match (tab.item(), tab.layout()) {
+            (Some(item), _) => !self.item_is_hidden(item),
+            (_, Some(node)) => self.node_has_visible_content(node),
+            _ => false,
+        }
     }
 
     /// Iterates hidden owned items in stable identity order.
@@ -29,7 +33,7 @@ impl Workspace {
         self.storage.hidden_items.iter().copied()
     }
 
-    /// Returns visible members of a tabs leaf in their durable tab order.
+    /// Returns visible direct children of a Tabs container in durable tab order.
     ///
     /// Fully visible tabs borrow their roster without allocating. Missing nodes
     /// and split nodes have no visible tab members.
@@ -38,8 +42,7 @@ impl Workspace {
         let Some(Node::Tabs { items, .. }) = self.node(tabs) else {
             return Cow::Borrowed(&[]);
         };
-        if self.storage.hidden_items.is_empty() || items.iter().all(|tab| self.tab_is_visible(*tab))
-        {
+        if items.iter().all(|tab| self.tab_is_visible(*tab)) {
             Cow::Borrowed(items)
         } else {
             Cow::Owned(
@@ -52,7 +55,7 @@ impl Workspace {
         }
     }
 
-    /// Returns the visible selected item, or `None` when every member is hidden.
+    /// Returns the visible selected tab, or `None` when every child is hidden.
     ///
     /// The logical selection remains valid even in an entirely hidden stack.
     /// When repairing an edit, a hidden selection yields to the next visible
@@ -91,35 +94,34 @@ impl Workspace {
     /// populated leaf whose members are all hidden contributes no rectangle.
     #[must_use]
     pub fn node_has_visible_content(&self, node: NodeId) -> bool {
-        let tabs_have_content = |node, items: &[TabKey]| {
-            if items.is_empty() {
-                self.node_root(node)
-                    .and_then(|root| self.root(root))
-                    .is_some_and(|record| record.central == Some(node))
-            } else {
-                self.storage.hidden_items.is_empty()
-                    || items.iter().any(|item| self.tab_is_visible(*item))
-            }
-        };
-        let mut pending = match self.node(node) {
-            Some(Node::Tabs { items, .. }) => return tabs_have_content(node, items),
-            // Canonical nonempty split trees always contain an owned item or
-            // the declared empty central target. No descendant scan is needed
-            // for the default, fully visible workspace.
-            Some(Node::Split { .. }) if self.storage.hidden_items.is_empty() => return true,
-            Some(Node::Split { children, .. }) => children.clone(),
-            None => return false,
-        };
-        while let Some(node) = pending.pop() {
-            match self.node(node) {
-                Some(Node::Tabs { items, .. }) => {
-                    if tabs_have_content(node, items) {
-                        return true;
+        let mut current = Some(node);
+        let mut pending = Vec::new();
+        while let Some(id) = current {
+            if let Some(value) = self.node(id) {
+                match value {
+                    Node::Pane { item } if !self.item_is_hidden(*item) => return true,
+                    Node::Tabs { items, .. } => {
+                        if items
+                            .iter()
+                            .filter_map(|tab| tab.item())
+                            .any(|item| !self.item_is_hidden(item))
+                        {
+                            return true;
+                        }
+                        if items.is_empty()
+                            && self
+                                .node_root(id)
+                                .and_then(|root| self.root(root))
+                                .is_some_and(|root| root.central == Some(id))
+                        {
+                            return true;
+                        }
                     }
+                    _ => {}
                 }
-                Some(Node::Split { children, .. }) => pending.extend(children.iter().copied()),
-                None => {}
+                pending.extend(value.child_nodes().map(|(_, child)| child));
             }
+            current = pending.pop();
         }
         false
     }
@@ -163,11 +165,13 @@ impl Workspace {
         tabs: NodeId,
         item: TabKey,
     ) -> Result<bool, CommandError> {
-        let content = item
-            .item()
-            .ok_or(CommandError::UnsupportedLayoutTab { tabs, tab: item })?;
-        if self.item_is_hidden(content) {
+        if let Some(content) = item.item()
+            && self.item_is_hidden(content)
+        {
             return Err(CommandError::ItemHidden { item: content });
+        }
+        if !self.tab_is_visible(item) {
+            return Err(CommandError::TabNotInTabs { tabs, tab: item });
         }
         if matches!(self.node(tabs), Some(Node::Tabs { selected, .. }) if *selected == Some(item)) {
             return Ok(false);

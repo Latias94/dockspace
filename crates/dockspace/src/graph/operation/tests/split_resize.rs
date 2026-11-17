@@ -26,7 +26,7 @@ fn a_resize_frontier_validates_each_root_once_without_lending_its_source_proof()
     let splits = nodes
         .iter()
         .map(|&node| {
-            SplitResize::new(
+            TrackResize::split(
                 NodeSource {
                     root: MAIN,
                     node,
@@ -37,7 +37,7 @@ fn a_resize_frontier_validates_each_root_once_without_lending_its_source_proof()
         })
         .collect::<Vec<_>>();
     crate::interaction::targeting::resolver::structural_work::reset();
-    let validated = validate_split_resizes_structure(&workspace, &splits).unwrap();
+    let validated = validate_track_resizes_structure(&workspace, &splits).unwrap();
     assert_eq!(validated.len(), SPLITS);
     assert!(validated.iter().all(|(_, changed)| *changed));
     let work = crate::interaction::targeting::resolver::structural_work::snapshot();
@@ -51,10 +51,10 @@ fn a_resize_frontier_validates_each_root_once_without_lending_its_source_proof()
     };
     let foreign_batch = [
         splits[0].clone(),
-        SplitResize::new(foreign_source, SplitWeight::normalize([0.4, 0.6]).unwrap()),
+        TrackResize::split(foreign_source, SplitWeight::normalize([0.4, 0.6]).unwrap()),
     ];
     assert!(matches!(
-        validate_split_resizes_structure(&workspace, &foreign_batch),
+        validate_track_resizes_structure(&workspace, &foreign_batch),
         Err(CommandError::NodeOutsideRoot { root: MAIN, node, .. }) if node == foreign
     ));
 
@@ -67,11 +67,11 @@ fn a_resize_frontier_validates_each_root_once_without_lending_its_source_proof()
     workspace.complete_root_structure(MAIN).unwrap();
     let current = workspace.capture_node_source(MAIN, subtree).unwrap();
     let stale_batch = [
-        SplitResize::new(current, SplitWeight::normalize([0.4, 0.6]).unwrap()),
+        TrackResize::split(current, SplitWeight::normalize([0.4, 0.6]).unwrap()),
         splits[0].clone(),
     ];
     assert!(matches!(
-        validate_split_resizes_structure(&workspace, &stale_batch),
+        validate_track_resizes_structure(&workspace, &stale_batch),
         Err(CommandError::StaleNode { node, .. }) if node == nodes[0]
     ));
 }

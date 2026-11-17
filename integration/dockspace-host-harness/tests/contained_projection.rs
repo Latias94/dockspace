@@ -97,10 +97,18 @@ fn metrics() -> UniformSurfaceMetrics {
 
 fn paint(session: &mut DockspaceSession) -> (Recorded, PaintedSurfaceOutput) {
     let mut frame = session.begin_host_frame().unwrap();
+    let content = frame.view().root(ROOT).unwrap().content().unwrap();
+    let title = if content.tabs().is_some() {
+        "Tabs"
+    } else {
+        assert!(content.split().is_some());
+        "Split"
+    };
     if frame.paint_plan(SURFACE).unwrap().is_none() {
         frame.measure_surface(SURFACE, metrics()).unwrap();
     }
     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+    let expected_title = title;
     let mut title = None;
     let mut close = None;
     let mut resize = Vec::new();
@@ -111,7 +119,16 @@ fn paint(session: &mut DockspaceSession) -> (Recorded, PaintedSurfaceOutput) {
     plan.visit_surface_program(|step| {
         match step {
             Step::RootBegin { root, .. } if root.root() == ROOT => {
-                assert_eq!(root.title_item(), Some(LEFT));
+                assert!(matches!(
+                    root.label(),
+                    dockspace::model::TabLabel::Layout { .. }
+                ));
+                assert_eq!(
+                    root.label(),
+                    dockspace::model::TabLabel::Layout {
+                        title: expected_title
+                    }
+                );
                 let contained = root.contained().unwrap();
                 assert!(contained.is_frontmost());
                 assert_eq!(contained.floating(), FLOATING);
@@ -517,8 +534,14 @@ fn assert_durable(session: &DockspaceSession, expected: LogicalRect) {
         assert_eq!(view.root(), ROOT);
         assert_eq!(view.surface(), SURFACE);
         assert_eq!(view.contained(), Some(FLOATING));
-        assert_eq!(view.tabs().items().collect::<Vec<_>>(), &[item]);
-        assert!(view.is_selected());
+        assert_eq!(
+            view.tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
+            &[item]
+        );
+        assert!(view.is_active());
     }
 }
 
@@ -561,7 +584,7 @@ fn assert_projected(
     assert_eq!(recorded.panes.len(), 2);
     for (index, (item, pane)) in [LEFT, RIGHT].into_iter().zip(expected_panes).enumerate() {
         let content = rect(pane.x(), pane.y() + tab, pane.width(), pane.height() - tab);
-        assert_eq!(contents[index].1, Some(item));
+        assert_eq!(contents[index].1, item);
         assert_eq!(
             contents[index].2, content,
             "{item:?}: pane content must be compiled from {projected:?}, not left under a preview shell"
@@ -579,7 +602,13 @@ fn assert_projected(
         );
     }
     for (kind, expected) in [
-        (Kind::Pane, expected_panes.to_vec()),
+        (Kind::Tabs, expected_panes.to_vec()),
+        (
+            Kind::Pane,
+            expected_panes
+                .map(|pane| rect(pane.x(), pane.y() + tab, pane.width(), pane.height() - tab))
+                .to_vec(),
+        ),
         (
             Kind::TabBar,
             expected_panes
@@ -1383,7 +1412,7 @@ fn frozen_clear_hover_batch_docks_behind_complete_source_at_release_commit() {
             let (recording, _) = RecordingRenderer::execute(plan).unwrap();
             for item in [LEFT, RIGHT] {
                 assert_eq!(recording.records.iter().filter(|record| matches!(record,
-                    OwnedRecord::PaneContent { item: Some(current), paint: Paint::Visible, .. } if *current == item
+                    OwnedRecord::PaneContent { item: current, paint: Paint::Visible, .. } if *current == item
                 )).count(), 1, "the projected source must retain both split panes");
             }
             assert!(
@@ -1424,7 +1453,13 @@ fn frozen_clear_hover_batch_docks_behind_complete_source_at_release_commit() {
                 assert_eq!(view.surface(), SURFACE);
                 assert_eq!(view.root(), MAIN_ROOT);
                 assert_eq!(view.contained(), None);
-                assert_eq!(view.tabs().items().collect::<Vec<_>>(), &[item]);
+                assert_eq!(
+                    view.tabs()
+                        .expect("item is an inline tab")
+                        .items()
+                        .collect::<Vec<_>>(),
+                    &[item]
+                );
             }
             assert!(session.bind_presented_receiver(&before.title).is_none());
         } else {
@@ -1533,7 +1568,7 @@ fn rejected_non_source_contained_target_blocks_a_legal_background_target_and_fal
         .iter()
         .find_map(|record| match record {
             OwnedRecord::PaneContent {
-                item: Some(RIGHT),
+                item: RIGHT,
                 bounds,
                 ..
             } => Some(*bounds),
@@ -1546,7 +1581,7 @@ fn rejected_non_source_contained_target_blocks_a_legal_background_target_and_fal
         .iter()
         .find_map(|record| match record {
             OwnedRecord::PaneContent {
-                item: Some(BACKGROUND),
+                item: BACKGROUND,
                 bounds,
                 ..
             } => Some(*bounds),
@@ -1703,13 +1738,21 @@ fn rejected_non_source_contained_target_blocks_a_legal_background_target_and_fal
         assert_eq!(source_view.surface(), SURFACE);
         assert_eq!(source_view.root(), MAIN_ROOT);
         assert!(source_view.contained().is_none());
-        assert_eq!(source_view.tabs().items().collect::<Vec<_>>(), &[SOURCE]);
+        assert_eq!(
+            source_view
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
+            &[SOURCE]
+        );
         assert_eq!(
             session
                 .view()
                 .item(BACKGROUND)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[BACKGROUND]
@@ -1837,7 +1880,7 @@ fn complete_contained_group_magnetic_hysteresis_survives_presented_source_only_p
             .iter()
             .find_map(|record| match record {
                 OwnedRecord::PaneContent {
-                    item: Some(BACKGROUND),
+                    item: BACKGROUND,
                     bounds,
                     ..
                 } => Some(*bounds),
@@ -1951,6 +1994,7 @@ fn complete_contained_group_magnetic_hysteresis_survives_presented_source_only_p
             assert_eq!(recorded.group_grips.len(), 1);
             for kind in [
                 Kind::Contained,
+                Kind::Tabs,
                 Kind::Pane,
                 Kind::TabBar,
                 Kind::Tab,
@@ -1976,7 +2020,7 @@ fn complete_contained_group_magnetic_hysteresis_survives_presented_source_only_p
                 }
             }
             assert!(recorded.renderer.records.iter().any(|record| matches!(record,
-                OwnedRecord::PaneContent { item: Some(BACKGROUND), bounds, paint: Paint::Visible, .. } if *bounds == content
+                OwnedRecord::PaneContent { item: BACKGROUND, bounds, paint: Paint::Visible, .. } if *bounds == content
             )), "the target layout must not change with the source-only projection");
             assert_eq!(session.version(), version);
             present_group(&mut session, output);

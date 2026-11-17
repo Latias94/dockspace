@@ -178,10 +178,10 @@ fn root_resize_rule_rejects_atomic_batches_before_and_after_surface_rehome() {
             .capture_node_source(CONTAINED_ROOT, horizontal)
             .unwrap();
         let before = workspace.clone();
-        let error = WorkspaceTransaction::from_commands([WorkspaceCommand::ResizeSplits {
-            splits: vec![
-                SplitResize::new(main, weights(0.25, 0.75)),
-                SplitResize::new(blocked, weights(0.25, 0.75)),
+        let error = WorkspaceTransaction::from_commands([WorkspaceCommand::ResizeTracks {
+            tracks: vec![
+                TrackResize::split(main, weights(0.25, 0.75)),
+                TrackResize::split(blocked, weights(0.25, 0.75)),
             ],
         }])
         .apply(workspace, &policy)
@@ -226,8 +226,8 @@ fn root_resize_rule_rejects_atomic_batches_before_and_after_surface_rehome() {
     let vertical_source = workspace
         .capture_node_source(CONTAINED_ROOT, vertical)
         .unwrap();
-    WorkspaceTransaction::from_commands([WorkspaceCommand::ResizeSplits {
-        splits: vec![SplitResize::new(vertical_source, weights(0.25, 0.75))],
+    WorkspaceTransaction::from_commands([WorkspaceCommand::ResizeTracks {
+        tracks: vec![TrackResize::split(vertical_source, weights(0.25, 0.75))],
     }])
     .apply(&mut workspace, &policy)
     .unwrap();

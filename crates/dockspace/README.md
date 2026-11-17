@@ -2,8 +2,9 @@
 
 A renderer-neutral docking library for Rust editor UIs.
 
-Build tab groups, nested splits and floating presentations while keeping pane
-content in your application. Dockspace handles layout, docking decisions,
+Compose bare panes, tab groups, nested splits, shared-track grids and floating
+presentations while keeping pane content in your application. A tab can contain
+a complete layout. Dockspace handles layout, docking decisions,
 interaction state, close approval and optional layout persistence. The host
 supplies measurements, drawing, input, frame scheduling and OS resources.
 
@@ -40,6 +41,9 @@ repository root to select, open and move panes and inspect committed results:
 ```sh
 cargo run -p dockspace --example layout_commands --locked
 ```
+
+The [composition guide](docs/guide.md#composable-layouts) covers named layout
+tabs, active versus owned content, shared Grid tracks and constrained resizing.
 
 ## Connect your host
 

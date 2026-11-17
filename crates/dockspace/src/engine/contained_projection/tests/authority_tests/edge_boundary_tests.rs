@@ -46,7 +46,7 @@ fn paint_boundary(mut frame: DockspaceHostFrame<'_>) -> (BoundaryPaint, PaintedS
                 operation: Operation::Pane(pane),
                 paint,
             } if root.root() == CONTAINED_ROOT => {
-                panes.push((pane.selected().unwrap(), paint));
+                panes.push((pane.item(), paint));
             }
             Step::Operation {
                 root,

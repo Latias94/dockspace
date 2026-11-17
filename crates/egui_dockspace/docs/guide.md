@@ -221,8 +221,10 @@ the surrounding egui run.
 Splitters support Tab focus, axis-aligned arrow keys and Home/End to reach the
 minimum/maximum position allowed by all touching panes. Junctions expose separate
 horizontal and vertical keyboard controls. Resizing is immediate; there is no
-animation delay on these keyboard actions. AccessKit reports the actual reachable
-range for each separator, including nested pane constraints.
+animation delay on these keyboard actions. AccessKit reports a separator's
+reachable range when core can prove both endpoints, including nested pane
+constraints. An Auto grid can omit that numeric range while still accepting
+individually validated small steps.
 
 ## Winit and browser hosts
 
@@ -523,10 +525,16 @@ settles that request as unavailable rather than guessing from the root viewport.
 ## Closing Content And Dock Back
 
 The window-outline **Layout actions** menu belongs to one complete root layout,
-including its split groups. The main layout exposes it on one tab bar; contained
+including its split groups and shared grids. The main layout reuses its root tab
+bar or exposes a separate control band when it has no root header; contained
 floating layouts expose it in their title bar. **Float Layout** detaches that
-whole layout. To float just one tab, use its drag gesture; to float one group,
-use its three-dot menu or group drag gesture.
+whole layout. **Active Panes…** lists the currently operable application content
+within a composite root, including bare panes. Choose a pane for its own float,
+available docking, native-window and close commands. A root consisting of one
+bare pane already has the same scope through its root commands. Application
+content keeps its own mouse and context-menu handling.
+To float one pane or layout tab with a header, use its tab menu or drag gesture;
+to float one group, use its three-dot menu or group drag gesture.
 After floating the main layout, dragging over blank canvas keeps it floating;
 the visible center docking guide returns it to the empty main area.
 
@@ -545,8 +553,16 @@ floating content to its docking destination while keeping it open. Closing and
 Dock Back share stable item/root identities, but execute different commands.
 
 Each visible group's vertical three-dot **Tab group actions** menu floats or
-closes only that group, leaving other split groups in place. It offers native
-tear-off when the host supports it. The separate **List tabs** control lists
+closes only that group, leaving other split groups in place. **Merge Tab Group
+Into…** appends its direct tabs to a visible destination group. **Dock Tab Group
+as Layout Tab…** inserts the complete source group as one layout tab. Both
+destination menus use the groups' own names and core command preflight. The
+group grip describes the same choice: center drops merge by default; hold Alt
+to preserve the group as one layout tab. Configure the chord with
+`DockInputConfig::group_preserve_layout`, or set it to `None` to disable that
+modifier gesture. Floating and native tear-off retain the original source in
+either mode. The menu offers native tear-off when the host supports it.
+The separate **List tabs** control lists
 the group's members; it does not move or close the group. Layout changes or
 session reconstruction dismiss an open action popup rather than retargeting
 its old commands.
@@ -564,9 +580,11 @@ Every required approval must allow closure; a veto preserves all members.
 Deferred approval survives unrelated group changes and local tab reorder, but
 not changed membership, a different root/presentation owner, changed effective
 close permissions or workspace replacement. `ClosePlanTarget::Tabs` identifies
-the request using its root and captured member anchor; that anchor never
+the request using its root and exact container `NodeKey`; this identity never
 refreshes the frozen membership. `DockspaceCloseOutcome::TabsClosed` reports
-the original decision roster after the single topology commit.
+the original decision roster after the single topology commit. Closing one
+captured layout tab uses `ClosePlanTarget::Tab` and reports `TabClosed`, preserving
+its siblings. Both scopes include all real hidden and inactive descendants.
 
 ## Committed lifecycle events
 
@@ -852,6 +870,42 @@ application-specific spacing.
 
 Choose **Tab style** in the desktop or browser workbench to compare the presets
 in both themes. Enable **Custom tabs** to layer application callbacks on top.
+
+### Default tab and layout interactions
+
+The adapter supplies the following controls without application menu callbacks:
+
+| Scope | Default interaction | Result |
+| --- | --- | --- |
+| Pane or layout tab | Select its header; drag its body when the host supplies pointer presentation | Acts on that direct `TabKey`; a layout tab retains its complete subtree. |
+| Tab actions | Right-click a header, press Menu or Shift+F10 on its focused header, invoke the accessibility context-menu action, or long-press on touch | Opens one scoped menu with float, available docking commands, native-window movement when supported, and close. Opening the menu leaves the current selection intact. |
+| Whole tab group | Drag the leading grip or free strip region; open the visible Tab group actions button | Center drops merge direct tabs by default; hold Alt to preserve one layout tab. The menu offers both modes with core-preflighted destinations. Sibling groups retain their scope. |
+| Bare content | Open Layout actions → Active Panes… and choose the active pane; a root consisting of one pane uses its root commands directly | Supplies float, available docking, native-window movement and exact content close without implicit tab headers or application context-menu interception. Core reserves a separate control band for roots without a header. |
+| Shared grid tracks | Drag a row or column boundary, focus it and use arrows or Home/End, or invoke its accessibility adjustment | Resizes the shared track across every occupied cell in that row or column. The intersection offers both axes. |
+| Overflow | Scroll the strip or use its scroll buttons and tab-list menu | Lists and reveals the direct typed members of that group, including layout tabs. |
+| Keyboard and focus | Focused-header arrows, Home/End, and Enter/Space; optional configured tab-cycling shortcuts | Keeps header focus separate from application content focus. Cycling from content uses its nearest active containing tab bar. |
+| Close | Close icon, middle click, or the scoped menu's Close command | Uses the ordinary application close-decision workflow. A layout close includes every real descendant, and partial approval keeps the subtree intact. |
+
+Layout labels come from the core declaration, for example `.named("Tools")`;
+application `title`, `ui`, sizing and focus callbacks receive only real `ItemId`s.
+`view.item(item).is_active()` checks all ancestor tab choices. Its `.tabs()` and
+`.tab_index()` are optional and describe only the immediate inline owner; bare
+content has neither, even inside a layout tab. Run the `composable` example with
+the `example-app` feature to explore a named layout containing nested tabs and
+bare content.
+
+Run the `shared_grid` example with the `wgpu` feature for a complete-output host
+with shared row and column drag resizing, bare cells, a regular tab group and a
+named layout tab. `DockspaceGridShape::Fixed` declares nonzero row and column
+counts; `Auto` resolves a shape from the available slot. `DockspaceGridShares`
+normalizes the two track axes independently. Grids retain real row-major children
+and do not add pane headers.
+
+Bare Pane nodes, nested layout tabs and Grids currently settle layout changes
+immediately across their entire surface, including ordinary roots sharing that
+surface. Surfaces containing only flat Tabs/Split layouts keep the configured
+layout motion. Decorative feedback retains its own motion settings. Divider
+dragging follows the pointer directly.
 
 ### Custom tabs and tab-bar controls
 

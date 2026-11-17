@@ -6,7 +6,7 @@ use crate::graph::{Node, Workspace};
 use crate::ids::{ItemId, RootId, SurfaceId, TabKey};
 use crate::interaction::targeting::targets::DropTargetId;
 use crate::model::DockEdge;
-use crate::presentation::scene::{PaneSceneId, PresentationPlan, TabBarSceneId};
+use crate::presentation::scene::{PresentationPlan, TabBarSceneId};
 
 use super::{DockspaceVisualId, VisualIdentity};
 
@@ -129,9 +129,10 @@ pub(super) fn resolve(
 ) -> Option<DockspaceDropTargetFeedback> {
     plan.drop_target(target)?;
     let (pane, action) = match target {
-        DropTargetId::Center { root, tabs, .. } => {
-            (Some(PaneSceneId { root, tabs }), DockspaceDropAction::Merge)
-        }
+        DropTargetId::Center { root, tabs, .. } => (
+            Some(TabBarSceneId { root, tabs }),
+            DockspaceDropAction::Merge,
+        ),
         DropTargetId::TabGap {
             root, tabs, index, ..
         } => {
@@ -164,7 +165,7 @@ pub(super) fn resolve(
                 .copied()
                 .find(|item| workspace.tab_is_visible(*item) && !excludes(*item));
             (
-                Some(PaneSceneId { root, tabs }),
+                Some(TabBarSceneId { root, tabs }),
                 DockspaceDropAction::InsertTab {
                     index,
                     previous,
@@ -175,7 +176,7 @@ pub(super) fn resolve(
         DropTargetId::InnerEdge {
             root, node, edge, ..
         } => (
-            Some(PaneSceneId { root, tabs: node }),
+            Some(TabBarSceneId { root, tabs: node }),
             DockspaceDropAction::Split {
                 edge: public_edge(edge),
             },
@@ -190,7 +191,7 @@ pub(super) fn resolve(
     };
     let (selected, bounds) = match pane {
         Some(id) => {
-            let panes = plan.pane_records();
+            let panes = plan.tabs_records();
             let pane = &panes[panes.binary_search_by_key(&id, |pane| pane.id()).ok()?];
             (plan.selected_in_tabs(id.tabs), pane.bounds())
         }

@@ -8,7 +8,7 @@ use crate::ids::NodeId;
 use crate::model::{
     DockAnchor, DockEdge, DockPlacement, DockspaceActionOutcome, DockspaceActionRejection,
     NativeTearOffSource, NativeWindowPlacement, PreparedDockAction,
-    PreparedDockActionAuthorityMismatch, PreparedTabsGroup, ProductAction,
+    PreparedDockActionAuthorityMismatch, PreparedTab, PreparedTabsGroup, ProductAction,
 };
 
 mod contained;
@@ -49,6 +49,7 @@ pub(super) enum ProductCommandContext {
         target_root: RootId,
     },
     DockTabs {
+        tab: Option<TabKey>,
         source_root: RootId,
         target_root: RootId,
         target_surface: Option<SurfaceId>,
@@ -106,6 +107,7 @@ pub(super) enum ProductCommandContext {
         floating: FloatingPresentationId,
     },
     FloatTabs {
+        tab: Option<TabKey>,
         source_root: RootId,
         root: RootId,
         surface: SurfaceId,
@@ -180,7 +182,7 @@ impl DockEngine {
     ) -> Result<InputOutcome, EngineError> {
         let expected = self.version;
         let scene = candidate.stamp();
-        let Some(root) = product_presentation_transition_root(&action) else {
+        let Some(root) = self.product_presentation_source_root(&action) else {
             return Err(EngineError::ReductionCauseInvariant {
                 detail: "local presentation command carried a non-presentation product action",
             });
@@ -206,6 +208,10 @@ impl DockEngine {
 
         match action {
             ProductAction::DockRoot { .. }
+            | ProductAction::DockItem { .. }
+            | ProductAction::FloatItem { .. }
+            | ProductAction::DockTab { .. }
+            | ProductAction::FloatTab { .. }
             | ProductAction::DockTabs { .. }
             | ProductAction::FloatTabs { .. } => self.reduce_product_action(
                 input,
@@ -262,7 +268,8 @@ impl DockEngine {
         &self,
         action: ProductAction,
     ) -> Result<Result<PreparedDockAction, DockspaceActionRejection>, EngineError> {
-        if product_presentation_transition_root(&action)
+        if self
+            .product_presentation_source_root(&action)
             .is_some_and(|root| self.root_has_pending_presentation_transition(root))
         {
             return Ok(Err(DockspaceActionRejection::Conflict));
@@ -350,15 +357,72 @@ impl DockEngine {
         self.prepare_product_action(ProductAction::DockItem { item, placement })
     }
 
+    pub(crate) fn capture_tab(&self, key: TabKey) -> Option<PreparedTab> {
+        let (root, tabs) = if let Some(item) = key.item() {
+            let location = self.workspace.locate_item_by_id(item)?;
+            (location.root, location.tabs()?)
+        } else {
+            let node = key.layout()?;
+            let root = self.workspace.node_root(node)?;
+            (root, self.workspace.parent_link(root, node)?.parent)
+        };
+        Some(PreparedTab {
+            authority_domain: self.authority_domain,
+            expected: self.version,
+            source: self.workspace.capture_tab_source(root, tabs, key).ok()?,
+        })
+    }
+
+    pub(crate) fn prepare_dock_tab(
+        &self,
+        tab: PreparedTab,
+        placement: DockPlacement,
+    ) -> PreparedDockAction {
+        PreparedDockAction::new(
+            tab.authority_domain,
+            tab.expected,
+            ProductAction::DockTab { tab, placement },
+        )
+    }
+
+    pub(crate) fn prepare_float_tab(
+        &self,
+        tab: PreparedTab,
+        surface: SurfaceId,
+    ) -> PreparedDockAction {
+        PreparedDockAction::new(
+            tab.authority_domain,
+            tab.expected,
+            ProductAction::FloatTab { tab, surface },
+        )
+    }
+
     pub(crate) fn prepare_dock_tabs(
         &self,
         group: PreparedTabsGroup,
         placement: DockPlacement,
     ) -> PreparedDockAction {
+        self.prepare_dock_tabs_with_mode(
+            group,
+            placement,
+            crate::model::TabGroupDockMode::MergeTabs,
+        )
+    }
+
+    pub(crate) fn prepare_dock_tabs_with_mode(
+        &self,
+        group: PreparedTabsGroup,
+        placement: DockPlacement,
+        mode: crate::model::TabGroupDockMode,
+    ) -> PreparedDockAction {
         PreparedDockAction::new(
             group.authority_domain,
             group.expected,
-            ProductAction::DockTabs { group, placement },
+            ProductAction::DockTabs {
+                group,
+                placement,
+                mode,
+            },
         )
     }
 
@@ -399,10 +463,9 @@ impl DockEngine {
         let Some(Node::Tabs { items, .. }) = self.workspace.node(tabs) else {
             return Err(DockspaceActionRejection::Conflict);
         };
-        let anchor = items
-            .iter()
-            .find_map(|tab| tab.item())
-            .ok_or(DockspaceActionRejection::Conflict)?;
+        if items.is_empty() {
+            return Err(DockspaceActionRejection::Conflict);
+        }
         let source = self
             .workspace
             .capture_node_source(root, tabs)
@@ -411,7 +474,6 @@ impl DockEngine {
             authority_domain: self.authority_domain,
             expected: self.version,
             source,
-            anchor,
         })
     }
 
@@ -422,6 +484,7 @@ impl DockEngine {
     ) -> PreparedDockAction {
         let (authority_domain, expected) = match &source {
             NativeTearOffSource::Tabs(group) => (group.authority_domain, group.expected),
+            NativeTearOffSource::Tab(tab) => (tab.authority_domain, tab.expected),
             NativeTearOffSource::Item(_) | NativeTearOffSource::Root(_) => {
                 (self.authority_domain, self.version)
             }
@@ -502,10 +565,25 @@ impl DockEngine {
                 item,
                 placement,
             },
-            ProductAction::DockTabs { group, placement } => EngineInput::DockTabs {
+            ProductAction::DockTab { tab, placement } => EngineInput::DockTab {
+                expected,
+                tab,
+                placement,
+            },
+            ProductAction::FloatTab { tab, surface } => EngineInput::FloatTab {
+                expected,
+                tab,
+                surface,
+            },
+            ProductAction::DockTabs {
+                group,
+                placement,
+                mode,
+            } => EngineInput::DockTabs {
                 expected,
                 group,
                 placement,
+                mode,
             },
             ProductAction::DockRoot { root, placement } => EngineInput::DockRoot {
                 expected,
@@ -565,7 +643,8 @@ impl DockEngine {
                 accepted_base,
             });
         }
-        if product_presentation_transition_root(&action)
+        if self
+            .product_presentation_source_root(&action)
             .is_some_and(|root| self.root_has_pending_presentation_transition(root))
         {
             return Ok(InputOutcome::ProductActionRejected {
@@ -587,11 +666,12 @@ impl DockEngine {
             | ProductAction::DockItem { item, .. }
             | ProductAction::FloatItem { item, .. } => Some(*item),
             ProductAction::DockTabs { group, .. } | ProductAction::FloatTabs { group, .. } => {
-                match self.workspace.node(group.source.node()) {
-                    Some(Node::Tabs { selected, .. }) => selected.and_then(TabKey::item),
-                    _ => None,
-                }
+                self.workspace.first_active_item(group.source.node())
             }
+            ProductAction::DockTab { tab, .. } | ProductAction::FloatTab { tab, .. } => tab
+                .key()
+                .item()
+                .or_else(|| self.workspace.first_active_item(tab.key().layout()?)),
             ProductAction::DockRoot { root, .. }
             | ProductAction::DockBackRoot { root }
             | ProductAction::FloatRoot { root, .. } => self.product_root_focus_item(*root),
@@ -701,31 +781,28 @@ impl DockEngine {
         if self.workspace.item_is_hidden(item) {
             return None;
         }
-        let (root, tabs, _) = self.workspace.locate_item_by_id(item)?;
-        let surface = self.root_surface(root)?;
+        let location = self.workspace.locate_item_by_id(item)?;
+        let surface = self.root_surface(location.root)?;
         // A newer intent takes precedence over an older focus observation.
         let focused = match self.viewport_focus.pending_pane_intent() {
             Some(intent) if intent.surface() == surface => intent.item(),
             Some(_) => None,
             None => self.viewport_focus.current_pane_focus(surface),
         };
-        (focused == Some(item)).then_some((surface, tabs))
+        (focused == Some(item)).then_some((surface, location.owner_node()))
     }
 
     fn product_root_focus_item(&self, root: RootId) -> Option<ItemId> {
         let surface = self.root_surface(root)?;
         let is_visible_source = |item: &ItemId| {
-            !self.workspace.item_is_hidden(*item) && self.workspace
-                .locate_item_by_id(*item)
-                .is_some_and(|(owner, tabs, _)| {
-                    owner == root
-                        && matches!(
-                            self.workspace.node(tabs),
-                            Some(Node::Tabs { selected: Some(selected), .. }) if selected.item() == Some(*item)
-                        )
-                })
+            self.workspace.item_is_active(*item)
+                && self
+                    .workspace
+                    .locate_item_by_id(*item)
+                    .is_some_and(|location| location.root == root)
         };
-        self.viewport_focus.pending_pane_intent()
+        self.viewport_focus
+            .pending_pane_intent()
             .filter(|intent| intent.surface() == surface)
             .and_then(crate::platform::focus::PaneFocusIntent::item)
             .filter(is_visible_source)
@@ -735,11 +812,7 @@ impl DockEngine {
             })
             .or_else(|| {
                 let node = self.workspace.root(root)?.node;
-                self.workspace.collect_items_in_subtree(node).into_iter().find(|item| {
-                    !self.workspace.item_is_hidden(*item) && self.workspace.locate_item_by_id(*item).is_some_and(|(_, tabs, _)| {
-                        matches!(self.workspace.node(tabs), Some(Node::Tabs { selected: Some(selected), .. }) if selected.item() == Some(*item))
-                    })
-                })
+                self.workspace.first_active_item(node)
             })
     }
 
@@ -752,7 +825,7 @@ impl DockEngine {
         let binding = self
             .workspace
             .locate_item_by_id(item)
-            .and_then(|(root, _, _)| self.root_surface(root))
+            .and_then(|location| self.root_surface(location.root))
             .and_then(|surface| self.viewport_focus_binding(surface));
         if let Some(binding) = binding {
             self.start_viewport_activation(
@@ -774,10 +847,10 @@ impl DockEngine {
         if self.workspace.item_is_hidden(item) {
             return Ok(());
         }
-        let Some((root, _, _)) = self.workspace.locate_item_by_id(item) else {
+        let Some(location) = self.workspace.locate_item_by_id(item) else {
             return Ok(());
         };
-        let Some(surface) = self.root_surface(root) else {
+        let Some(surface) = self.root_surface(location.root) else {
             return Ok(());
         };
         let guard = self.viewport_focus_binding(surface);
@@ -805,9 +878,7 @@ impl DockEngine {
             ProductAction::SelectItem { item } => {
                 let source = self.capture_product_item(item)?;
                 Ok(ProductActionPlan::Command {
-                    command: WorkspaceCommand::Select {
-                        source: source.as_tab_source(),
-                    },
+                    command: WorkspaceCommand::SelectItem { source },
                     context: ProductCommandContext::Select { item },
                 })
             }
@@ -833,9 +904,18 @@ impl DockEngine {
                 let source = self.capture_product_item(item)?;
                 self.compile_product_move(item, source, placement)
             }
-            ProductAction::DockTabs { group, placement } => {
-                self.compile_product_tabs_move(&group, placement)
+            ProductAction::DockTab { tab, placement } => {
+                let (payload, items) = self.capture_product_tab(&tab)?;
+                self.compile_product_group_move(payload, items, Some(tab.key()), placement)
             }
+            ProductAction::FloatTab { tab, surface } => {
+                self.compile_product_tab_float(&tab, surface)
+            }
+            ProductAction::DockTabs {
+                group,
+                placement,
+                mode,
+            } => self.compile_product_tabs_move(&group, placement, mode),
             ProductAction::DockRoot { root, placement } => {
                 self.compile_product_root_move(root, placement)
             }
@@ -894,6 +974,41 @@ impl DockEngine {
             )),
             _ => Err(DockspaceActionRejection::Conflict),
         }
+    }
+
+    pub(super) fn capture_product_tab(
+        &self,
+        tab: &PreparedTab,
+    ) -> Result<(MovePayload, Vec<ItemId>), DockspaceActionRejection> {
+        if tab.authority_domain != self.authority_domain || tab.expected != self.version {
+            return Err(DockspaceActionRejection::Conflict);
+        }
+        let source = &tab.source;
+        let actual = self
+            .workspace
+            .capture_tab_source(source.root(), source.tabs(), source.tab())
+            .map_err(|_| DockspaceActionRejection::Conflict)?;
+        if actual != *source {
+            return Err(DockspaceActionRejection::Conflict);
+        }
+        if let Some(item) = source.tab().item() {
+            return Ok((
+                MovePayload::Item(self.capture_product_item(item)?),
+                vec![item],
+            ));
+        }
+        let node = source
+            .tab()
+            .layout()
+            .ok_or(DockspaceActionRejection::Conflict)?;
+        let node_source = self
+            .workspace
+            .capture_node_source(source.root(), node)
+            .map_err(|_| DockspaceActionRejection::Conflict)?;
+        Ok((
+            MovePayload::Subtree(node_source),
+            self.workspace.collect_items_in_subtree(node),
+        ))
     }
 
     fn compile_product_placement(
@@ -987,10 +1102,32 @@ impl DockEngine {
         &self,
         group: &PreparedTabsGroup,
         placement: DockPlacement,
+        mode: crate::model::TabGroupDockMode,
     ) -> Result<ProductActionPlan, DockspaceActionRejection> {
         let (source, items) = self.capture_product_tabs(group)?;
-        let source_root = source.root();
-        let payload = MovePayload::Tabs(source);
+        let payload = if mode == crate::model::TabGroupDockMode::PreserveLayout
+            && matches!(
+                placement,
+                DockPlacement::Center(_) | DockPlacement::Before(_) | DockPlacement::After(_)
+            ) {
+            MovePayload::Subtree(source)
+        } else {
+            MovePayload::Tabs(source)
+        };
+        self.compile_product_group_move(payload, items, None, placement)
+    }
+
+    fn compile_product_group_move(
+        &self,
+        payload: MovePayload,
+        items: Vec<ItemId>,
+        tab: Option<TabKey>,
+        placement: DockPlacement,
+    ) -> Result<ProductActionPlan, DockspaceActionRejection> {
+        let source_root = match &payload {
+            MovePayload::Item(source) => source.root(),
+            MovePayload::Tabs(source) | MovePayload::Subtree(source) => source.root(),
+        };
         let (command, target_root, target_surface) = match placement {
             DockPlacement::Main(surface) => {
                 let (command, root) = match self.capture_complete_root_payload(&payload)? {
@@ -1026,6 +1163,7 @@ impl DockEngine {
         Ok(ProductActionPlan::Command {
             command,
             context: ProductCommandContext::DockTabs {
+                tab,
                 source_root,
                 target_root,
                 target_surface,
@@ -1096,7 +1234,9 @@ impl DockEngine {
         }
         let payload = match self.workspace.node(record.node) {
             Some(Node::Tabs { .. }) => MovePayload::Tabs(source.clone()),
-            Some(Node::Split { .. }) => MovePayload::Subtree(source.clone()),
+            Some(Node::Pane { .. } | Node::Split { .. } | Node::Grid { .. }) => {
+                MovePayload::Subtree(source.clone())
+            }
             None => return Err(DockspaceActionRejection::Conflict),
         };
         Ok((source, payload, items))
@@ -1207,17 +1347,8 @@ impl DockEngine {
                     .map_err(|_| DockspaceActionRejection::Conflict)?
                     .ok_or(DockspaceActionRejection::AnchorUnavailable { anchor })?;
                 let root = source.root();
-                let tabs = source.tabs();
-                let items = match self.workspace.node(tabs) {
-                    Some(Node::Tabs { items, .. }) => items,
-                    Some(Node::Split { .. }) | None => {
-                        return Err(DockspaceActionRejection::Conflict);
-                    }
-                };
-                let current = items
-                    .iter()
-                    .position(|candidate| candidate.item() == Some(item))
-                    .ok_or(DockspaceActionRejection::Conflict)?;
+                let tabs = source.owner_node();
+                let current = source.tab_index().unwrap_or(0);
                 let index = if matches!(placement, DockPlacement::After(_)) {
                     current + 1
                 } else {
@@ -1272,7 +1403,12 @@ impl DockEngine {
                 .workspace
                 .capture_item_source_by_id(item)
                 .map_err(|_| DockspaceActionRejection::Conflict)?
-                .map(|source| (source.root(), source.tabs()))
+                .map(|source| (source.root(), source.owner_node()))
+                .ok_or(DockspaceActionRejection::AnchorUnavailable { anchor }),
+            DockAnchor::Node(key) => self
+                .workspace
+                .node_root(key.0)
+                .map(|root| (root, key.0))
                 .ok_or(DockspaceActionRejection::AnchorUnavailable { anchor }),
             DockAnchor::Central(root) => self
                 .workspace
@@ -1294,6 +1430,24 @@ impl DockEngine {
         self.prepare_presentation_root_identity()
             .ok_or(DockspaceActionRejection::IdentityExhausted)
     }
+
+    pub(super) fn product_presentation_source_root(
+        &self,
+        action: &ProductAction,
+    ) -> Option<RootId> {
+        match action {
+            ProductAction::DockItem { item, .. }
+            | ProductAction::FloatItem { item, .. }
+            | ProductAction::TearOffNative {
+                source: NativeTearOffSource::Item(item),
+                ..
+            } => self
+                .workspace
+                .locate_item_by_id(*item)
+                .map(|place| place.root),
+            _ => product_presentation_transition_root(action),
+        }
+    }
 }
 
 pub(super) const fn product_presentation_transition_root(action: &ProductAction) -> Option<RootId> {
@@ -1301,6 +1455,12 @@ pub(super) const fn product_presentation_transition_root(action: &ProductAction)
         ProductAction::DockRoot { root, .. }
         | ProductAction::DockBackRoot { root }
         | ProductAction::FloatRoot { root, .. } => Some(*root),
+        ProductAction::DockTab { tab, .. }
+        | ProductAction::FloatTab { tab, .. }
+        | ProductAction::TearOffNative {
+            source: NativeTearOffSource::Tab(tab),
+            ..
+        } => Some(tab.source.root()),
         ProductAction::DockTabs { group, .. } | ProductAction::FloatTabs { group, .. } => {
             Some(group.source.root())
         }
@@ -1349,6 +1509,7 @@ impl ProductCommandContext {
             }
             (
                 Self::DockTabs {
+                    tab,
                     source_root,
                     target_root,
                     target_surface,
@@ -1400,6 +1561,15 @@ impl ProductCommandContext {
                         detail: "tabs docking outcome did not match its compiled payload",
                     });
                 }
+                if let Some(tab) = tab {
+                    return Ok(DockspaceActionOutcome::TabDocked {
+                        tab,
+                        source_root,
+                        target_root,
+                        items,
+                        changed,
+                    });
+                }
                 Ok(DockspaceActionOutcome::TabsDocked {
                     source_root,
                     target_root,
@@ -1409,6 +1579,7 @@ impl ProductCommandContext {
             }
             (
                 Self::FloatTabs {
+                    tab,
                     source_root,
                     root,
                     surface,
@@ -1456,6 +1627,17 @@ impl ProductCommandContext {
                         detail: "tabs floating outcome did not match its compiled payload",
                     });
                 }
+                if let Some(tab) = tab {
+                    return Ok(DockspaceActionOutcome::TabFloated {
+                        tab,
+                        source_root,
+                        root,
+                        surface,
+                        floating,
+                        items,
+                        changed,
+                    });
+                }
                 Ok(DockspaceActionOutcome::TabsFloated {
                     source_root,
                     root,
@@ -1465,13 +1647,10 @@ impl ProductCommandContext {
                     changed,
                 })
             }
-            (Self::Select { item }, CommandOutcome::Selected { tab: selected, .. })
-                if selected.item() == Some(item) =>
+            (Self::Select { item }, CommandOutcome::ItemActivated { item: selected, .. })
+                if selected == item =>
             {
-                Ok(DockspaceActionOutcome::Selected {
-                    tab: TabKey::for_item(item),
-                    changed,
-                })
+                Ok(DockspaceActionOutcome::ItemActivated { item, changed })
             }
             (Self::Open { item }, CommandOutcome::Opened { item: opened, root })
                 if opened == item =>

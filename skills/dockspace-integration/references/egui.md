@@ -29,6 +29,23 @@ missing presentation boundary.
 
 ## Pane UI and customization
 
+Choose the declaration's semantics explicitly: `pane(item)` has no header,
+`tabs(items)` stores ordinary tabs compactly, and `composed_tabs(children)` can
+select a complete named Split or Grid layout. Run `examples/shared_grid.rs`
+with the `wgpu` feature for complete-output composition and drag resizing;
+`examples/composable.rs` demonstrates nested activation in an eframe callback.
+`PaneView` callbacks receive real items; `.named("Tools")` supplies a layout
+tab's own title. The default adapter includes scoped tab/group/layout menus and
+an Active Panes menu for bare content. Its group grip merges direct tabs by
+default; the configurable Alt modifier preserves one complete layout tab.
+
+Use `select_item_current(item)` to activate every containing tab choice. Showing
+hidden content retains selection until explicit activation. Pane state belongs
+to the application's registry throughout these changes. A surface containing
+bare Pane nodes, Grid or nested layout tabs currently settles its complete layout
+immediately. Surfaces containing only flat Tabs/Split layouts retain configured
+motion; decorative feedback retains its own motion settings.
+
 Implement `PaneView` over the application's pane registry. Return the content
 responses through `PaneResponse::from`, `with_content` or `with_content_ids` so
 ordinary pane widgets can receive input and allow docking hover without making

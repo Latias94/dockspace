@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, Weak};
 
 use dockspace::model::{
-    DockAnchor, DockspaceActionRejection, DockspaceLayout, DockspaceView, PreparedTabsGroup,
-    SurfaceId,
+    DockAnchor, DockspaceActionRejection, DockspaceLayout, DockspaceView, PreparedTab,
+    PreparedTabsGroup, SurfaceId, TabKey,
 };
 use dockspace::runtime::DockspaceClosePlan;
 use dockspace::runtime::{DockspaceSession, NativeSurfacePlacement};
@@ -387,6 +387,21 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
     pub fn with_view<R>(&self, inspect: impl FnOnce(DockspaceView<'_>) -> R) -> R {
         let state = lock_state(&self.state);
         inspect(state.view())
+    }
+
+    /// Captures one direct tab from the published session under the runtime lock.
+    ///
+    /// A layout tab includes its complete subtree, including hidden and inactive
+    /// descendants. Store this opaque capability in [`crate::NativeCommand::DockTab`],
+    /// [`crate::NativeCommand::FloatTab`], [`crate::NativeCommand::CloseTab`] or
+    /// [`dockspace::model::NativeTearOffSource::Tab`]. Its session, membership and
+    /// version remain bound to the capture; admission never refreshes them.
+    /// This read-only query does not occupy the application command slot.
+    ///
+    /// Returns `None` for an absent key or a standalone Pane without a direct tab.
+    #[must_use]
+    pub fn capture_tab(&self, key: TabKey) -> Option<PreparedTab> {
+        lock_state(&self.state).capture_tab(key)
     }
 
     /// Captures one complete tabs group from the published session under the runtime lock.

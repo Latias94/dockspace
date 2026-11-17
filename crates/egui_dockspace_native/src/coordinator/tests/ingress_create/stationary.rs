@@ -180,7 +180,7 @@ impl Fixture {
                 .view()
                 .item(SOURCE_ITEM)
                 .unwrap()
-                .is_selected()
+                .is_active()
         );
         assert!(
             !fixture
@@ -189,7 +189,7 @@ impl Fixture {
                 .view()
                 .item(TARGET_ITEM)
                 .unwrap()
-                .is_selected()
+                .is_active()
         );
         let request = fixture.request();
         assert_eq!(request.source_binding(), binding);
@@ -460,7 +460,7 @@ fn model_stationary_unproven_press_rejects_sample_and_retries_its_exact_terminal
             .view()
             .item(SOURCE_ITEM)
             .unwrap()
-            .is_selected()
+            .is_active()
     );
     assert_eq!(
         fixture.native.session.native_input_recorded_count(),
@@ -561,7 +561,7 @@ fn model_stationary_unproven_press_queries_settle_without_selecting_or_reschedul
                 .view()
                 .item(SOURCE_ITEM)
                 .unwrap()
-                .is_selected(),
+                .is_active(),
             "{name}"
         );
         assert!(fixture.native.session.has_active_gesture(), "{name}");
@@ -894,7 +894,7 @@ fn model_stationary_unproven_press_terminal_retries_after_artifact_replacement()
             .view()
             .item(SOURCE_ITEM)
             .unwrap()
-            .is_selected()
+            .is_active()
     );
 }
 

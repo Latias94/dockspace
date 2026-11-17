@@ -1,5 +1,6 @@
 //! Contained-floating chrome and semantic keyboard/accessibility actions.
 
+use dockspace::model::TabLabel;
 use dockspace::runtime::{
     ContainedPaintRecord, ContainedResizeDirection, PreparedSurfaceAction,
     SurfaceContainedResizeAdjustment, SurfacePaintDisposition, SurfacePaintProgramRoot,
@@ -472,11 +473,15 @@ const fn cardinal_resize_axis(direction: ContainedResizeDirection) -> Option<(Or
 
 fn title_label<'a>(
     context: &'a RenderContext<'_, '_, '_>,
-    root: &SurfacePaintProgramRoot<'_>,
+    root: &'a SurfacePaintProgramRoot<'_>,
 ) -> &'a str {
-    root.title_item()
-        .and_then(|item| context.resources.tab(item))
-        .map_or("Floating", |resource| resource.title.as_str())
+    match root.label() {
+        TabLabel::Item(item) => context
+            .resources
+            .tab(item)
+            .map_or("Missing pane", |resource| resource.title.as_str()),
+        TabLabel::Layout { title } => title,
+    }
 }
 
 const fn resize_cursor(direction: ContainedResizeDirection) -> CursorIcon {
@@ -565,7 +570,7 @@ mod tests {
                     .shapes
                     .iter()
                     .filter_map(|shape| match &shape.shape {
-                        Shape::Text(text) if text.galley.job.text == "Inspector" => {
+                        Shape::Text(text) if text.galley.job.text == "Tabs" => {
                             Some((shape.clip_rect, text))
                         }
                         _ => None,

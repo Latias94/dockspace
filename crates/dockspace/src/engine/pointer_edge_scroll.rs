@@ -78,7 +78,12 @@ impl DockEngine {
                 }
                 PresentationHitRegionKind::TabGroupDrag { bar: owner, .. } => owner == bar,
                 PresentationHitRegionKind::PaneBody(pane) => {
-                    pane.root == bar.root && pane.tabs == bar.tabs
+                    pane.root == bar.root
+                        && plan
+                            .pane_records()
+                            .iter()
+                            .find(|record| record.id() == pane)
+                            .is_some_and(|record| record.containing_tab_bar() == Some(bar))
                 }
                 PresentationHitRegionKind::ContainedFrameBlocker(floating) => plan
                     .contained_record(floating)

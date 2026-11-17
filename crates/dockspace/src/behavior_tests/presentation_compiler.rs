@@ -225,7 +225,7 @@ fn positive_narrow_and_flat_leaves_keep_complete_compact_guide_semantics() {
         let pane = support::painted_plan(&engine, SURFACE)
             .pane_records()
             .iter()
-            .find(|pane| pane.id().tabs == tabs)
+            .find(|pane| pane.owner_node() == tabs)
             .expect("compiled pane exists");
         let content = pane.content_bounds();
         let placement = if content.width() > 0.0 && content.height() > 0.0 {
@@ -309,7 +309,7 @@ fn positive_root_central_leaf_keeps_center_only_inner_plus_compact_outer_four() 
         let pane = ready
             .pane_records()
             .iter()
-            .find(|pane| pane.id().tabs == tabs)
+            .find(|pane| pane.owner_node() == tabs)
             .expect("compiled pane exists");
         let expected_center_preview =
             if pane.content_bounds().width() > 0.0 && pane.content_bounds().height() > 0.0 {
@@ -772,14 +772,24 @@ fn hidden_draggable_tabs_keep_intrinsics_without_strip_or_paint_geometry() {
         .surface(SURFACE)
         .expect("surface requirements exist");
     assert_eq!(requirements.tab_strips().count(), 0);
-    assert_eq!(requirements.tab_intrinsics().count(), 2);
+    assert_eq!(
+        requirements
+            .tab_intrinsics()
+            .map(|key| key.tab().tab)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([
+            TabKey::for_item(ItemId::new(10)),
+            TabKey::for_item(ItemId::new(11)),
+            TabKey::for_layout(tabs),
+        ])
+    );
 
     install_surface_projection(&mut engine, &mut host, SURFACE, bounds());
     let ready = next_plan(&engine, SURFACE);
     let pane = ready
         .pane_records()
         .iter()
-        .find(|pane| pane.id().tabs == tabs)
+        .find(|pane| pane.owner_node() == tabs)
         .expect("hidden tab bar keeps pane content");
     assert_eq!(pane.bounds(), bounds());
     assert_eq!(pane.content_bounds(), bounds());
@@ -819,13 +829,31 @@ fn surface_hidden_tab_bar_does_not_affect_another_surface() {
         .surface(SURFACE)
         .expect("hidden surface requirements exist");
     assert_eq!(hidden.tab_strips().count(), 0);
-    assert_eq!(hidden.tab_intrinsics().count(), 1);
+    assert_eq!(
+        hidden
+            .tab_intrinsics()
+            .map(|key| key.tab().tab)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([
+            TabKey::for_item(ItemId::new(10)),
+            TabKey::for_layout(hidden_tabs),
+        ])
+    );
     let visible = engine
         .presentation_requirements()
         .surface(OTHER_SURFACE)
         .expect("visible surface requirements exist");
     assert_eq!(visible.tab_strips().count(), 1);
-    assert_eq!(visible.tab_intrinsics().count(), 1);
+    assert_eq!(
+        visible
+            .tab_intrinsics()
+            .map(|key| key.tab().tab)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([
+            TabKey::for_item(ItemId::new(11)),
+            TabKey::for_layout(visible_tabs),
+        ])
+    );
 }
 
 #[test]

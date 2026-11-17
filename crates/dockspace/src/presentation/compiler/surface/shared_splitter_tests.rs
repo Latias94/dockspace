@@ -65,7 +65,7 @@ fn fixture(children: u16) -> (DockEngine, SurfaceMeasurements) {
 fn compile(
     engine: &DockEngine,
     measurements: &SurfaceMeasurements,
-    overrides: &[SplitWeightOverride<'_>],
+    overrides: &[TrackWeightOverride<'_>],
 ) -> PresentationPlan {
     compile_surface_measurements_without_guides(
         engine.workspace(),
@@ -116,13 +116,16 @@ fn wide_split_retains_one_resize_snapshot_per_projection() {
 
         let source = engine
             .workspace()
-            .capture_node_source(ROOT, first.id().split)
+            .capture_node_source(ROOT, first.id().node())
             .unwrap();
         let weights = SplitWeight::normalize((1..=children).map(f64::from)).unwrap();
         let projected = compile(
             &engine,
             &measurements,
-            &[SplitWeightOverride::new(&source, &weights)],
+            &[TrackWeightOverride::new(
+                &source,
+                &crate::graph::command::TrackWeights::Split(weights.clone()),
+            )],
         );
         assert_ne!(
             projected.splitter_records()[0].child_extents(),

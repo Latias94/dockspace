@@ -5,7 +5,7 @@ use std::sync::Arc;
 pub use dockspace::runtime::DockspaceDragSourceKind;
 use egui::{Color32, CornerRadius, Galley, Rect, Stroke, StrokeKind, Ui};
 
-use crate::ItemId;
+use crate::{ItemId, TabKey};
 
 /// Non-interactive drag preview. Core retains the source, target and gesture.
 ///
@@ -17,7 +17,9 @@ use crate::ItemId;
 pub struct DragPreview {
     /// Whether the payload is one item, a tabs group, a subtree, or a complete root.
     pub kind: DockspaceDragSourceKind,
-    /// Representative title item, when the source has one; not the complete payload.
+    /// Identity of the source's own Item or layout label.
+    pub key: TabKey,
+    /// Actual application item when the source label names one; layouts have no item.
     pub item: Option<ItemId>,
     /// Complete ghost allocation, independent of the destination preview.
     pub rect: Rect,
@@ -25,7 +27,7 @@ pub struct DragPreview {
     pub header_rect: Option<Rect>,
     /// Available title area after docking padding.
     pub title_rect: Rect,
-    /// Original shaped title, absent when no representative title is available.
+    /// Shaped source title, including the core-supplied name of a layout container.
     pub title: Option<Arc<Galley>>,
     /// Fill of the ghost body.
     pub fill: Color32,

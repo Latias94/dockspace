@@ -71,12 +71,10 @@ fn paint(session: &mut DockspaceSession, motion: MotionFrame) -> (Sample, Painte
                 operation: Operation::Pane(pane),
                 ..
             } => {
-                if let Some(item) = pane.selected() {
-                    sample.panes.insert(item, pane.bounds());
-                    sample
-                        .receivers
-                        .insert(item, plan.receiver_for_pane(pane).unwrap());
-                }
+                sample.panes.insert(pane.item(), pane.bounds());
+                sample
+                    .receivers
+                    .insert(pane.item(), plan.receiver_for_pane(pane).unwrap());
             }
             Step::Operation {
                 operation: Operation::TabBar(bar),

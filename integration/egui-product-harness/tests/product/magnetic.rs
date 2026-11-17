@@ -74,7 +74,11 @@ fn configured_modifiers_control_real_docking_and_update_without_pointer_motion()
         let second = dockspace.view().item(SECOND).unwrap();
         if enabled {
             assert_eq!(
-                second.tabs().items().collect::<Vec<_>>(),
+                second
+                    .tabs()
+                    .expect("item is an inline tab")
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FIRST, SECOND],
                 "{activation:?}, {modifiers:?}"
             );
@@ -89,6 +93,7 @@ fn configured_modifiers_control_real_docking_and_update_without_pointer_motion()
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FIRST]
@@ -166,7 +171,9 @@ fn configured_cancel_shortcut_replaces_escape_and_keeps_extra_modifiers() {
         );
         let passive = dockspace.style().visuals.drop_guide_fill.unwrap();
         let active = dockspace.style().visuals.drop_guide_active_fill.unwrap();
+        let version = dockspace.version();
         let escape = run_pane_frame(&context, &mut dockspace, &mut panes, key_press(Key::Escape));
+        assert!(dockspace.has_active_gesture());
         assert!(
             guide_button_count(&escape.output, passive, active) > 0,
             "an unbound Escape must not cancel through the renderer fallback"
@@ -184,15 +191,39 @@ fn configured_cancel_shortcut_replaces_escape_and_keeps_extra_modifiers() {
             }],
         );
         assert_eq!(
-            guide_button_count(&cancelled.output, passive, active) == 0,
-            cancel_enabled
+            !dockspace.has_active_gesture(),
+            cancel_enabled,
+            "only the configured shortcut may cancel the gesture"
         );
+        assert_eq!(dockspace.version(), version);
+        if cancel_enabled {
+            assert_eq!(guide_button_count(&cancelled.output, passive, active), 0);
+        } else {
+            settle_until(6, || {
+                let frame = run_pane_frame(
+                    &context,
+                    &mut dockspace,
+                    &mut panes,
+                    vec![Event::PointerMoved(target)],
+                );
+                let missing = if guide_button_count(&frame.output, passive, active) > 0 {
+                    Vec::new()
+                } else {
+                    vec!["docking guides after the Alt mode change"]
+                };
+                (frame, missing)
+            })
+            .expect("an unbound F2 keeps the drag available for a fresh target observation");
+            assert!(dockspace.has_active_gesture());
+            assert_eq!(dockspace.version(), version);
+        }
         let _ = run_pane_frame(
             &context,
             &mut dockspace,
             &mut panes,
             vec![pointer_button(target, false)],
         );
+        assert!(!dockspace.has_active_gesture());
         if cancel_enabled {
             assert_eq!(
                 dockspace
@@ -200,6 +231,7 @@ fn configured_cancel_shortcut_replaces_escape_and_keeps_extra_modifiers() {
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FIRST]
@@ -211,6 +243,7 @@ fn configured_cancel_shortcut_replaces_escape_and_keeps_extra_modifiers() {
                     .item(FIRST)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FIRST, SECOND]
@@ -296,6 +329,7 @@ fn shift_disables_explicit_guides_and_tab_gap_docking() {
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[FIRST]
@@ -487,10 +521,18 @@ fn product_magnetic_snapshot(dockspace: &Dockspace) -> Option<ProductMagneticSna
         .content()
         .and_then(|content| item_split_relation(content, SECOND, FIRST));
     Some(ProductMagneticSnapshot {
-        source_tabs: source.tabs().items().collect::<Vec<_>>(),
-        target_tabs: target.tabs().items().collect::<Vec<_>>(),
+        source_tabs: source
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
+        target_tabs: target
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
         split_relation,
-        source_selected: source.is_selected(),
+        source_selected: source.is_active(),
         source_surface: source.surface(),
         source_root: source.root(),
         source_contained: source.contained(),
@@ -1004,6 +1046,7 @@ fn same_packet_shift_release_cannot_commit_an_earlier_magnetic_target() {
                         .item(FIRST)
                         .unwrap()
                         .tabs()
+                        .expect("item is an inline tab")
                         .items()
                         .collect::<Vec<_>>(),
                     &[FIRST]
@@ -1561,7 +1604,7 @@ fn ordinary_pane_center_release_uses_magnetic_merge_without_guide_aiming() {
     assert_eq!(moved.surface(), SURFACE);
     assert_eq!(moved.root(), ROOT);
     assert_eq!(moved.contained(), None);
-    assert!(moved.is_selected());
+    assert!(moved.is_active());
     assert!(dockspace.view().contained(FLOATING).is_none());
     assert_eq!(context.dragged_id(), None);
 

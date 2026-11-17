@@ -32,7 +32,9 @@ fn local_selection_and_reselection_preserve_revision_events_and_focus() {
                 EngineInput::WorkspaceCommand {
                     expected: before,
                     command: WorkspaceCommand::Select {
-                        source: source.as_tab_source(),
+                        source: source
+                            .as_tab_source()
+                            .expect("fixture item is an inline tab"),
                     },
                 }
             };
@@ -136,7 +138,9 @@ fn journal_selection_keeps_the_checked_result_and_discarded_frame_is_atomic() {
         .capture_item_source(SOURCE_ROOT, tabs, ItemId::new(2))
         .unwrap();
     let command = WorkspaceCommand::Select {
-        source: source.as_tab_source(),
+        source: source
+            .as_tab_source()
+            .expect("fixture item is an inline tab"),
     };
     structural_work::reset();
     let staged = engine
@@ -188,7 +192,9 @@ fn journal_selection_keeps_the_checked_result_and_discarded_frame_is_atomic() {
     )
     .unwrap();
     let stale = WorkspaceCommand::Select {
-        source: source.as_tab_source(),
+        source: source
+            .as_tab_source()
+            .expect("fixture item is an inline tab"),
     };
     let (_, application) = engine
         .stage_workspace_command(engine.last_input, &engine.policy, &stale, None)

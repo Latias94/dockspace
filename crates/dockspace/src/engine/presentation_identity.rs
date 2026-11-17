@@ -314,11 +314,12 @@ impl DockEngine {
                 }
             },
             WorkspaceCommand::Select { .. }
+            | WorkspaceCommand::SelectItem { .. }
             | WorkspaceCommand::SetItemVisibility { .. }
             | WorkspaceCommand::Reorder { .. }
             | WorkspaceCommand::Open { .. }
             | WorkspaceCommand::Move { .. }
-            | WorkspaceCommand::ResizeSplits { .. }
+            | WorkspaceCommand::ResizeTracks { .. }
             | WorkspaceCommand::PromoteContained { .. }
             | WorkspaceCommand::UpdateContainedRect { .. }
             | WorkspaceCommand::UpdateContainedPresentation { .. }
@@ -360,11 +361,12 @@ impl DockEngine {
                 RootPresentationTarget::Main { .. } | RootPresentationTarget::Contained { .. } => {}
             },
             WorkspaceCommand::Select { .. }
+            | WorkspaceCommand::SelectItem { .. }
             | WorkspaceCommand::SetItemVisibility { .. }
             | WorkspaceCommand::Reorder { .. }
             | WorkspaceCommand::Open { .. }
             | WorkspaceCommand::Move { .. }
-            | WorkspaceCommand::ResizeSplits { .. }
+            | WorkspaceCommand::ResizeTracks { .. }
             | WorkspaceCommand::PromoteContained { .. }
             | WorkspaceCommand::UpdateContainedRect { .. }
             | WorkspaceCommand::UpdateContainedPresentation { .. }

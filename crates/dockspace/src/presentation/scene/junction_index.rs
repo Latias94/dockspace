@@ -700,7 +700,7 @@ mod tests {
     fn splitter_id(index: usize) -> SplitterSceneId {
         SplitterSceneId {
             root: RootId::new(1),
-            split: NodeId::default(),
+            owner: crate::presentation::scene::SplitterOwner::Split(NodeId::default()),
             index,
         }
     }

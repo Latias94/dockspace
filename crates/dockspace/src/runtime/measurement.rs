@@ -58,7 +58,7 @@ impl UniformSurfaceMetrics {
 /// adapter sees only stable product items, opaque visual identities, and the
 /// policy fact needed to measure renderer chrome.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SurfaceMeasurementRequest {
+pub enum SurfaceMeasurementRequest<'a> {
     /// Measure the logical rectangle occupied by the dock layout.
     DockBounds {
         /// Logical surface being measured.
@@ -75,9 +75,9 @@ pub enum SurfaceMeasurementRequest {
     /// Hosts own content scrolling, wrapping and canvas navigation. A surface
     /// smaller than the combined minima can still clip panes out of view.
     PaneSizing {
-        /// Stable renderer identity of the tabs leaf.
+        /// Stable renderer identity of the real content placement.
         visual: DockspaceVisualId,
-        /// Visible pane item, including an inactive tab, or `None` for an empty leaf.
+        /// Real pane item, including content under an inactive layout tab.
         ///
         /// Every visible item needs sizing metadata independently of its
         /// content being loaded. Hidden items are omitted until shown again.
@@ -91,8 +91,11 @@ pub enum SurfaceMeasurementRequest {
         visual: DockspaceVisualId,
         /// Stable renderer identity of the tab strip owning this tab.
         bar: DockspaceVisualId,
-        /// Direct child represented by the tab, independent of application content.
+        /// Direct member or prospective whole-group layout key.
+        /// A prospective key requests metrics without declaring a visible header.
         key: TabKey,
+        /// Core-frozen application or structural-container label.
+        label: crate::graph::TabLabel<'a>,
     },
     /// Measure renderer-owned chrome around one tab strip.
     TabStrip {
@@ -265,14 +268,14 @@ impl DockspaceHostFrame<'_> {
         for key in requirements.pane_sizings() {
             let visual = DockspaceVisualId::from_pane_scene(PaneSceneId {
                 root: key.root(),
-                tabs: key.tabs(),
+                item: key.item(),
             });
             measurements
                 .insert_pane_sizing(
                     key,
                     resolve(SurfaceMeasurementRequest::PaneSizing {
                         visual,
-                        item: key.selected(),
+                        item: Some(key.item()),
                     })?
                     .into_pane_sizing()
                     .map_err(|error| core_error(error.into()))?,
@@ -295,6 +298,10 @@ impl DockspaceHostFrame<'_> {
                             },
                         ),
                         key: tab.tab,
+                        label: requirements
+                            .tab_label(tab)
+                            .ok_or(DockspaceInteractionError::MeasurementRosterInvariant)
+                            .map_err(|error| core_error(error.into()))?,
                     })?
                     .into_tab_intrinsic()
                     .map_err(|error| core_error(error.into()))?,

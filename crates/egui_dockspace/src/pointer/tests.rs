@@ -2,7 +2,7 @@
 
 use dockspace::model::{
     DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, RootId,
-    SurfaceId,
+    SurfaceId, TabGroupDockMode,
 };
 use dockspace::runtime::{
     DockspaceManipulationCancelReason, DockspaceManipulationStatus, DockspaceSession,
@@ -223,6 +223,7 @@ fn ordered_modifier_sources_preserve_intent_across_events_without_a_directive() 
 fn touch_samples_and_continuations_retain_the_observed_docking_intent() {
     let mut pointer = ProductPointer {
         docking_enabled: Some(false),
+        group_dock_mode: Some(TabGroupDockMode::PreserveLayout),
         ..ProductPointer::default()
     };
     let point = Pos2::new(180.0, 160.0);
@@ -234,39 +235,57 @@ fn touch_samples_and_continuations_retain_the_observed_docking_intent() {
             TouchPhase::Start,
             point,
             pointer.docking_enabled,
+            pointer.group_dock_mode,
         )
         .unwrap()
         .unwrap();
     assert_eq!(sample.docking_enabled, Some(false));
+    assert_eq!(
+        sample.group_dock_mode,
+        Some(TabGroupDockMode::PreserveLayout)
+    );
     let touch = continuation_sample(
         &pointer.touches,
         Some(point),
         pointer.docking_enabled,
+        pointer.group_dock_mode,
         sample.pointer,
         SurfacePointerEvent::Moved,
     )
     .unwrap();
     assert_eq!(touch.docking_enabled, Some(false));
+    assert_eq!(
+        touch.group_dock_mode,
+        Some(TabGroupDockMode::PreserveLayout)
+    );
     let generic = continuation_sample(
         &pointer.touches,
         Some(point),
         pointer.docking_enabled,
+        pointer.group_dock_mode,
         dockspace::runtime::SurfacePointerId::new(1),
         SurfacePointerEvent::Moved,
     )
     .unwrap();
     pointer.docking_enabled = Some(true);
+    pointer.group_dock_mode = Some(TabGroupDockMode::MergeTabs);
     assert_eq!(generic.docking_enabled, Some(false));
+    assert_eq!(
+        generic.group_dock_mode,
+        Some(TabGroupDockMode::PreserveLayout)
+    );
     assert_eq!(generic.position, Some(point));
     let changed = continuation_sample(
         &pointer.touches,
         Some(point),
         pointer.docking_enabled,
+        pointer.group_dock_mode,
         sample.pointer,
         SurfacePointerEvent::Moved,
     )
     .unwrap();
     assert_eq!(changed.docking_enabled, Some(true));
+    assert_eq!(changed.group_dock_mode, Some(TabGroupDockMode::MergeTabs));
     assert_eq!(changed.pointer, sample.pointer);
 }
 
@@ -310,6 +329,7 @@ fn configured_activation_rechecks_observations_without_modifier_events() {
     assert_eq!(pointer.input(), config);
     assert_eq!(pointer.observed_modifiers, None);
     assert_eq!(pointer.docking_enabled, None);
+    assert_eq!(pointer.group_dock_mode, None);
 }
 
 #[test]
@@ -327,6 +347,7 @@ fn modifier_markers_only_name_existing_generic_and_touch_streams() {
             TouchPhase::Start,
             Pos2::new(180.0, 160.0),
             Some(true),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -338,6 +359,7 @@ fn modifier_markers_only_name_existing_generic_and_touch_streams() {
             TouchPhase::Start,
             Pos2::new(240.0, 160.0),
             Some(true),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -361,6 +383,60 @@ fn modifier_markers_only_name_existing_generic_and_touch_streams() {
                 SurfacePointerEvent::DockingEnabledChanged { enabled: false }
             )
     }));
+}
+
+#[test]
+fn group_mode_modifiers_update_existing_streams_without_motion_and_recheck_configuration() {
+    let mut pointer = ProductPointer::default();
+    let mut mode = None;
+    assert_eq!(
+        super::group_dock_change_samples(&pointer.touches, false, TabGroupDockMode::PreserveLayout)
+            .count(),
+        0,
+        "a modifier cannot enroll a pointer stream",
+    );
+    let contact = pointer
+        .touches
+        .observe(
+            egui::TouchDeviceId(1),
+            egui::TouchId(7),
+            TouchPhase::Start,
+            Pos2::new(180.0, 160.0),
+            Some(true),
+            Some(TabGroupDockMode::MergeTabs),
+        )
+        .unwrap()
+        .unwrap();
+    for modifiers in [Modifiers::ALT, Modifiers::NONE] {
+        let changed = super::update_group_dock_mode(&mut mode, pointer.input(), modifiers).unwrap();
+        let markers =
+            super::group_dock_change_samples(&pointer.touches, true, changed).collect::<Vec<_>>();
+        assert_eq!(markers.len(), 2);
+        assert_eq!(markers[1].pointer, contact.pointer);
+        assert!(markers.iter().all(|marker| {
+            marker.position.is_none()
+                && marker.docking_enabled.is_none()
+                && marker.group_dock_mode == Some(changed)
+                && marker.event == SurfacePointerEvent::GroupDockModeChanged { mode: changed }
+        }));
+    }
+    pointer.observed_modifiers = Some(Modifiers::ALT);
+    assert_eq!(
+        super::update_group_dock_mode(&mut mode, pointer.input(), Modifiers::ALT),
+        Some(TabGroupDockMode::PreserveLayout)
+    );
+    pointer.set_input(DockInputConfig {
+        group_preserve_layout: None,
+        ..pointer.input()
+    });
+    assert_eq!(
+        super::update_group_dock_mode(
+            &mut mode,
+            pointer.input(),
+            pointer.observed_modifiers.unwrap()
+        ),
+        Some(TabGroupDockMode::MergeTabs)
+    );
 }
 
 #[test]
@@ -441,6 +517,7 @@ fn configured_drag_cancellation_replaces_escape_and_allows_extra_modifiers() {
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND]
@@ -494,14 +571,14 @@ fn touch_suppression_cancels_held_generic_once_and_allows_fresh_generic_press() 
             )],
             "the real generic owner terminates once before touch can acquire it",
         );
-        assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+        assert!(!dockspace.view().item(SECOND).unwrap().is_active());
         frame(
             &context,
             &mut dockspace,
             1.2,
             vec![contact(TouchPhase::End, second), Event::PointerGone],
         );
-        assert!(dockspace.view().item(SECOND).unwrap().is_selected());
+        assert!(dockspace.view().item(SECOND).unwrap().is_active());
         // Let the selected output settle before the next independent press.
         for index in 0..3 {
             frame(
@@ -517,7 +594,7 @@ fn touch_suppression_cancels_held_generic_once_and_allows_fresh_generic_press() 
             1.5,
             vec![Event::PointerMoved(first), button(first, true)],
         );
-        assert!(dockspace.view().item(FIRST).unwrap().is_selected());
+        assert!(dockspace.view().item(FIRST).unwrap().is_active());
         frame(&context, &mut dockspace, 1.6, vec![button(first, false)]);
     }
 }
@@ -585,6 +662,7 @@ fn a_foreign_payload_takes_capture_without_motion_and_cannot_finish_a_docking_dr
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND]
@@ -609,7 +687,7 @@ fn a_foreign_payload_takes_capture_without_motion_and_cannot_finish_a_docking_dr
             button(second, false),
         ],
     );
-    assert!(dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(dockspace.view().item(SECOND).unwrap().is_active());
 }
 
 #[test]
@@ -673,7 +751,7 @@ fn original_run_foreign_drag_ownership_survives_application_consumption() {
         output.drop_without_applying_deltas();
         receipt.report(crate::SurfacePresentationResult::Presented);
         assert!(
-            dockspace.view().item(FIRST).unwrap().is_selected(),
+            dockspace.view().item(FIRST).unwrap().is_active(),
             "files={files}"
         );
         assert!(!dockspace.has_active_gesture());

@@ -142,7 +142,7 @@ fn selected_second_pane() -> (Context, Dockspace, SmokePanes) {
         !dockspace
             .view()
             .item(SECOND_ITEM)
-            .is_some_and(|item| item.is_selected()),
+            .is_some_and(|item| item.is_active()),
         "encoding queues the selection without publishing it",
     );
     assert_ne!(
@@ -161,7 +161,7 @@ fn selected_second_pane() -> (Context, Dockspace, SmokePanes) {
         dockspace
             .view()
             .item(SECOND_ITEM)
-            .is_some_and(|item| item.is_selected())
+            .is_some_and(|item| item.is_active())
     );
     assert_ne!(
         context.memory(|memory| memory.focused()),
@@ -200,10 +200,10 @@ fn official_raw_egui_host_owns_terminal_settlement() {
         .expect("the product action boundary reduces one checked action");
     assert!(matches!(
         action.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
-            tab: selected_tab,
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated {
+            item: selected_tab,
             changed: false,
-        }) if selected_tab.item() == Some(ITEM)));
+        }) if *selected_tab == ITEM));
 
     let mut panes = SmokePanes::default();
     let mut local_actions_current = false;
@@ -315,7 +315,7 @@ fn official_raw_egui_host_owns_terminal_settlement() {
         dockspace
             .view()
             .item(SECOND_ITEM)
-            .is_some_and(|item| item.is_selected()),
+            .is_some_and(|item| item.is_active()),
     );
 }
 
@@ -398,10 +398,10 @@ fn missing_or_dropped_host_receipts_do_not_reapply_surrendered_focus() {
         let selected = dockspace.select_item_current(SECOND_ITEM).unwrap();
         assert!(matches!(
             selected.status(),
-            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
-                tab: selected_tab,
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated {
+                item: selected_tab,
                 ..
-            }) if selected_tab.item() == Some(SECOND_ITEM)));
+            }) if *selected_tab == SECOND_ITEM));
         for _ in 0..2 {
             let mut output = run_headless(&context, raw_input(), |ui| {
                 dockspace
@@ -692,7 +692,7 @@ fn official_eframe_app_reports_missing_terminal_settlement() {
         app.dockspace
             .view()
             .item(SECOND_ITEM)
-            .is_some_and(|item| item.is_selected()),
+            .is_some_and(|item| item.is_active()),
         "the AccessKit action must select the second tab through App::ui",
     );
     let target = app.panes.focus_id(SECOND_ITEM);
@@ -771,7 +771,7 @@ fn manual_pass_keeps_local_actions_but_cannot_mint_terminal_evidence() {
         !dockspace
             .view()
             .item(SECOND_ITEM)
-            .is_some_and(|item| item.is_selected()),
+            .is_some_and(|item| item.is_active()),
         "the manual pass queues its discrete AccessKit action for the next update",
     );
     assert_ne!(
@@ -792,7 +792,7 @@ fn manual_pass_keeps_local_actions_but_cannot_mint_terminal_evidence() {
         dockspace
             .view()
             .item(SECOND_ITEM)
-            .is_some_and(|item| item.is_selected()),
+            .is_some_and(|item| item.is_active()),
         "the queued manual-pass action publishes once in the next update",
     );
     assert_eq!(capability, Some(DockspaceCapability::Supported));
@@ -868,11 +868,11 @@ fn caller_owned_run_fans_out_terminal_settlement_to_multiple_dockspaces() {
         let was_selected = (
             left.view()
                 .item(SECOND_ITEM)
-                .is_some_and(|item| item.is_selected()),
+                .is_some_and(|item| item.is_active()),
             right
                 .view()
                 .item(SECOND_ITEM)
-                .is_some_and(|item| item.is_selected()),
+                .is_some_and(|item| item.is_active()),
         );
         let mut selection_input = raw_input();
         selection_input.events.push(accesskit_activate(second_tab));
@@ -890,11 +890,11 @@ fn caller_owned_run_fans_out_terminal_settlement_to_multiple_dockspaces() {
             (
                 left.view()
                     .item(SECOND_ITEM)
-                    .is_some_and(|item| item.is_selected()),
+                    .is_some_and(|item| item.is_active()),
                 right
                     .view()
                     .item(SECOND_ITEM)
-                    .is_some_and(|item| item.is_selected()),
+                    .is_some_and(|item| item.is_active()),
             ),
             was_selected,
             "the shared encoding run cannot publish either queued selection",
@@ -918,11 +918,11 @@ fn caller_owned_run_fans_out_terminal_settlement_to_multiple_dockspaces() {
         let is_selected = (
             left.view()
                 .item(SECOND_ITEM)
-                .is_some_and(|item| item.is_selected()),
+                .is_some_and(|item| item.is_active()),
             right
                 .view()
                 .item(SECOND_ITEM)
-                .is_some_and(|item| item.is_selected()),
+                .is_some_and(|item| item.is_active()),
         );
         let target = match (was_selected, is_selected) {
             ((false, previous), (true, current)) if previous == current => left_target,
@@ -1009,11 +1009,11 @@ fn caller_owned_run_fans_out_terminal_settlement_to_multiple_dockspaces() {
     assert!(
         left.view()
             .item(SECOND_ITEM)
-            .is_some_and(|item| item.is_selected())
+            .is_some_and(|item| item.is_active())
             && right
                 .view()
                 .item(SECOND_ITEM)
-                .is_some_and(|item| item.is_selected()),
+                .is_some_and(|item| item.is_active()),
     );
 }
 
@@ -1202,7 +1202,7 @@ fn denied_max_pass_discard_still_terminally_settles_output() {
         dockspace
             .view()
             .item(SECOND_ITEM)
-            .is_some_and(|item| item.is_selected()),
+            .is_some_and(|item| item.is_active()),
     );
     assert_ne!(context.memory(|memory| memory.focused()), Some(target));
 
@@ -1316,7 +1316,7 @@ fn non_root_caller_owned_run_settles_focus_from_its_final_accesskit_output() {
         dockspace
             .view()
             .item(SECOND_ITEM)
-            .is_some_and(|item| item.is_selected()),
+            .is_some_and(|item| item.is_active()),
     );
 
     let (mut output, receipt) = run_ui(&context, raw_input_for(child), |ui| {

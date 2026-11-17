@@ -121,20 +121,42 @@ fn assert_default_content(
     assert_eq!(first.root(), second.root());
     assert_eq!(third.root(), fourth.root());
     assert_ne!(first.root(), third.root());
-    assert_eq!(first.tabs().items().collect::<Vec<_>>(), &[FIRST, SECOND]);
-    assert_eq!(third.tabs().items().collect::<Vec<_>>(), &[THIRD, FOURTH]);
     assert_eq!(
-        first.tabs().selected().and_then(|tab| tab.item()),
+        first
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
+        &[FIRST, SECOND]
+    );
+    assert_eq!(
+        third
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
+        &[THIRD, FOURTH]
+    );
+    assert_eq!(
+        first
+            .tabs()
+            .expect("item is an inline tab")
+            .selected()
+            .and_then(|tab| tab.item()),
         Some(SECOND)
     );
     assert_eq!(
-        third.tabs().selected().and_then(|tab| tab.item()),
+        third
+            .tabs()
+            .expect("item is an inline tab")
+            .selected()
+            .and_then(|tab| tab.item()),
         Some(FOURTH)
     );
-    assert!(!first.is_selected());
-    assert!(!third.is_selected());
-    assert!(second.is_selected());
-    assert!(fourth.is_selected());
+    assert!(!first.is_active());
+    assert!(!third.is_active());
+    assert!(second.is_active());
+    assert!(fourth.is_active());
     let floating = third.contained().unwrap();
     assert_eq!(fourth.contained(), Some(floating));
     assert_eq!(view.contained(floating).unwrap().rect(), durable_rect());
@@ -304,14 +326,36 @@ fn reset_preserves_both_retired_and_fresh_declared_identities() {
     assert_eq!(first.root(), ROOT);
     assert_eq!(third.root(), FLOATING_ROOT);
     assert_ne!(first.root(), third.root());
-    assert_eq!(first.tabs().items().collect::<Vec<_>>(), &[FIRST, SECOND]);
     assert_eq!(
-        first.tabs().selected().and_then(|tab| tab.item()),
+        first
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
+        &[FIRST, SECOND]
+    );
+    assert_eq!(
+        first
+            .tabs()
+            .expect("item is an inline tab")
+            .selected()
+            .and_then(|tab| tab.item()),
         Some(SECOND)
     );
-    assert_eq!(third.tabs().items().collect::<Vec<_>>(), &[THIRD, FOURTH]);
     assert_eq!(
-        third.tabs().selected().and_then(|tab| tab.item()),
+        third
+            .tabs()
+            .expect("item is an inline tab")
+            .items()
+            .collect::<Vec<_>>(),
+        &[THIRD, FOURTH]
+    );
+    assert_eq!(
+        third
+            .tabs()
+            .expect("item is an inline tab")
+            .selected()
+            .and_then(|tab| tab.item()),
         Some(FOURTH)
     );
     let floating = third.contained().unwrap();
@@ -325,8 +369,8 @@ fn reset_preserves_both_retired_and_fresh_declared_identities() {
         (sixth.surface(), sixth.root(), sixth.contained()),
         (fresh_surface, fresh_floating_root, Some(fresh_floating))
     );
-    assert!(fifth.is_selected());
-    assert!(sixth.is_selected());
+    assert!(fifth.is_active());
+    assert!(sixth.is_active());
     assert_eq!(view.contained(fresh_floating).unwrap().rect(), fresh_rect);
 }
 
@@ -394,7 +438,7 @@ fn terminal_reset_rejects_locked_foreign_and_stale_preparations_without_mutation
     };
     assert_eq!(error.kind(), DockspaceRuntimeErrorKind::OperationConflict);
     assert_eq!(session.version(), changed);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
 
     let reset = session.prepare_layout_reset(defaults).unwrap();
     let mut frame = session.begin_host_frame().unwrap();
@@ -462,7 +506,7 @@ fn terminal_reset_preserves_declared_identities_and_retries_without_old_authorit
             contained.root(),
             contained.contained(),
         );
-        assert!(main.is_selected());
+        assert!(main.is_active());
         assert_eq!(main.root(), ROOT);
         assert_eq!(contained.root(), FLOATING_ROOT);
         assert_eq!(contained.contained(), Some(FLOATING));
@@ -503,7 +547,7 @@ fn terminal_reset_preserves_declared_identities_and_retries_without_old_authorit
     };
     assert_eq!(session.version(), before);
     assert_eq!(session.view().item(FIRST).unwrap().root(), ROOT);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     {
         let mut untouched = session.begin_host_frame().unwrap();
         assert_eq!(
@@ -579,7 +623,7 @@ fn terminal_reset_preserves_declared_identities_and_retries_without_old_authorit
     assert!(recording.records.iter().any(|record| matches!(
         record,
         OwnedRecord::PaneContent {
-            item: Some(SECOND),
+            item: SECOND,
             paint: SurfacePaintDisposition::Visible,
             ..
         }
@@ -607,7 +651,7 @@ fn terminal_reset_preserves_declared_identities_and_retries_without_old_authorit
             .any(|input| matches!(input, HostInputOutcome::StaleRejected { .. }))
     );
     assert_eq!(session.version(), version);
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert_eq!(focus_request(&mut session, surface), Some(fresh));
     assert!(session.bind_presented_receiver(&old_receiver).is_none());
 }
@@ -665,7 +709,7 @@ fn managed_native_prefix_and_reset_retry_share_one_publication_boundary() {
         let candidate = session
             .begin_native_layout_reset_frame(&reset, |_| NativeReceiverAnswer::Unknown)
             .unwrap();
-        assert!(candidate.view().item(SECOND).unwrap().is_selected());
+        assert!(candidate.view().item(SECOND).unwrap().is_active());
     }
     assert_eq!(session.version(), before);
     assert!(session.view().item(SECOND).is_none());
@@ -957,7 +1001,7 @@ fn budgeted_native_terminal_reset_resumes_receivers_and_retries_one_publication_
             ]
         );
         assert_eq!(session.version(), before);
-        assert!(session.view().item(SECOND).unwrap().is_selected());
+        assert!(session.view().item(SECOND).unwrap().is_active());
         assert!(session.has_pending_native_input());
         assert!(session.is_current_native_binding(old));
         assert_eq!(session.native_input_recorded_count(), recorded + 2);
@@ -987,16 +1031,16 @@ fn budgeted_native_terminal_reset_resumes_receivers_and_retries_one_publication_
             ]
         );
         assert!(!candidate.native_input_pending());
-        assert!(candidate.view().item(FIRST).unwrap().is_selected());
+        assert!(candidate.view().item(FIRST).unwrap().is_active());
         let prefix_version = candidate.version();
         assert_ne!(prefix_version, before);
         candidate.submit_layout_reset(&reset).unwrap();
         let replacement_version = candidate.version();
-        assert!(candidate.view().item(SECOND).unwrap().is_selected());
+        assert!(candidate.view().item(SECOND).unwrap().is_active());
         measure(&mut candidate);
         drop(candidate);
         assert_eq!(session.version(), before);
-        assert!(session.view().item(SECOND).unwrap().is_selected());
+        assert!(session.view().item(SECOND).unwrap().is_active());
         assert!(!session.has_active_gesture());
         assert!(session.has_pending_native_input());
         assert!(session.is_current_native_binding(old));
@@ -1020,7 +1064,7 @@ fn budgeted_native_terminal_reset_resumes_receivers_and_retries_one_publication_
             assert_eq!(retry_budget.remaining_records(), 0);
             assert_eq!(retry_queries, queries);
             assert_eq!(session.version(), before);
-            assert!(session.view().item(SECOND).unwrap().is_selected());
+            assert!(session.view().item(SECOND).unwrap().is_active());
             assert!(session.has_pending_native_input());
             assert!(session.is_current_native_binding(old));
             assert_eq!(session.native_input_recorded_count(), recorded + 2);
@@ -1040,14 +1084,14 @@ fn budgeted_native_terminal_reset_resumes_receivers_and_retries_one_publication_
                 .unwrap()
                 .unwrap();
             assert_eq!(retry_budget.remaining_records(), 254);
-            assert!(retry.view().item(FIRST).unwrap().is_selected());
+            assert!(retry.view().item(FIRST).unwrap().is_active());
             assert_eq!(retry.version(), prefix_version);
             retry.submit_layout_reset(&reset).unwrap();
             retry
         };
         assert_eq!(retry_queries, [queries, remaining_queries].concat());
         assert!(!retry.native_input_pending());
-        assert!(retry.view().item(SECOND).unwrap().is_selected());
+        assert!(retry.view().item(SECOND).unwrap().is_active());
         assert_eq!(retry.version(), replacement_version);
         let report = commit_measured(retry);
         assert!(report.workspace_changed());

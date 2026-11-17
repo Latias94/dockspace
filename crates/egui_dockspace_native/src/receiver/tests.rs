@@ -1357,8 +1357,8 @@ fn overflow_controls_block_disabled_click_and_drag_without_selecting_underlying_
                 .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
                 .expect("native overflow input frame settles");
             input.commit().expect("native overflow input frame commits");
-            assert!(session.view().item(first).unwrap().is_selected());
-            assert!(!session.view().item(second).unwrap().is_selected());
+            assert!(session.view().item(first).unwrap().is_active());
+            assert!(!session.view().item(second).unwrap().is_active());
         }
         assert_eq!(click_resolved, enabled);
         assert_eq!(drag_resolved, enabled);

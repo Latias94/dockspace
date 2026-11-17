@@ -105,6 +105,7 @@ impl PaneView for ContentPanes {
 struct SurfaceFrameResult {
     pane_center: Option<Pos2>,
     pane_receiver: Option<DockspaceVisualId>,
+    tabs_background: Option<(Pos2, DockspaceVisualId)>,
     second_tab_center: Option<Pos2>,
     second_tab_receiver: Option<DockspaceVisualId>,
     group_grip_center: Option<Pos2>,
@@ -206,6 +207,7 @@ fn run_surface_frame_with_overlay<P: PaneView>(
 ) -> SurfaceFrameResult {
     let mut pane_center = None;
     let mut pane_receiver = None;
+    let mut tabs_background = None;
     let mut second_tab_center = None;
     let mut second_tab_receiver = None;
     let mut group_grip_center = None;
@@ -228,6 +230,18 @@ fn run_surface_frame_with_overlay<P: PaneView>(
             plan.visit_surface_program(|step| {
                 if let SurfacePaintProgramStep::Operation { operation, .. } = step {
                     match operation {
+                        SurfacePaintProgramOperation::Tabs(record) => {
+                            if let Some(receiver) = plan.receiver_for_tabs(record) {
+                                assert!(
+                                    tabs_background
+                                        .replace((
+                                            logical_center(receiver.bounds()),
+                                            receiver.visual_id(),
+                                        ))
+                                        .is_none()
+                                );
+                            }
+                        }
                         SurfacePaintProgramOperation::Pane(record) => {
                             assert!(pane.replace(record).is_none());
                         }
@@ -311,6 +325,7 @@ fn run_surface_frame_with_overlay<P: PaneView>(
     SurfaceFrameResult {
         pane_center,
         pane_receiver,
+        tabs_background,
         second_tab_center,
         second_tab_receiver,
         group_grip_center,
@@ -414,7 +429,7 @@ fn external_pointer_journal_suppresses_local_response_actions() {
             .view()
             .item(FIRST)
             .expect("first item remains open")
-            .is_selected(),
+            .is_active(),
         "native rendering must not submit a second local pointer action"
     );
 }
@@ -627,23 +642,25 @@ fn completed_pass_scroll_hit_maps_to_the_exact_tab_strip_receiver() {
 }
 
 #[test]
-fn empty_central_leaf_registers_its_pane_receiver() {
+fn empty_central_tabs_register_their_background_receiver() {
     let context = Context::default();
     let mut session = empty_session();
     let mut panes = Panes;
     install_ready_candidate(&mut session);
 
     let painted = run_ready_surface_frame(&context, &mut session, &mut panes);
-    let pointer = painted
-        .pane_center
-        .expect("the empty central leaf still has pane geometry");
+    assert!(painted.pane_center.is_none());
+    assert!(painted.pane_receiver.is_none());
+    let (pointer, expected_receiver) = painted
+        .tabs_background
+        .expect("the empty central Tabs retains its exact background receiver");
     let (viewport, expected_pass) = painted
         .receiver_generation
         .expect("ready paint reports its pass identity");
     let hits = context
         .hit_test_last_pass(viewport, pointer)
         .expect("the viewport completed the painted pass");
-    let drag = hits.drag().expect("the empty pane owns the drag lane");
+    let click = hits.click().expect("the empty Tabs owns the click lane");
     let receiver = painted
         .receivers
         .iter()
@@ -651,11 +668,12 @@ fn empty_central_leaf_registers_its_pane_receiver() {
         .find(|receiver| {
             receiver.viewport_id() == viewport
                 && receiver.cumulative_pass_nr() == expected_pass
-                && receiver.widget_id() == drag.id()
-                && receiver.layer_id() == drag.layer_id()
+                && receiver.widget_id() == click.id()
+                && receiver.layer_id() == click.layer_id()
         })
-        .expect("the empty pane hit has an exact dockspace binding");
-    assert_eq!(receiver.role(), DockspaceReceiverRole::PaneBody);
+        .expect("the empty Tabs hit has an exact dockspace binding");
+    assert_eq!(receiver.visual_id(), expected_receiver);
+    assert_eq!(receiver.role(), DockspaceReceiverRole::TabsBackground);
 }
 
 #[test]

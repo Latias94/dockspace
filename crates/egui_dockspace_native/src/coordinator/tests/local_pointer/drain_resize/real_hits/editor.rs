@@ -196,6 +196,7 @@ impl Editor {
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .selected()
                 .and_then(|tab| tab.item());
             let mut frame = self
@@ -229,7 +230,7 @@ impl Editor {
                             );
                         }
                         SurfacePaintProgramOperation::Pane(pane)
-                            if pane.selected() == outline_selected =>
+                            if Some(pane.item()) == outline_selected =>
                         {
                             let bounds = pane.content_bounds();
                             outline = Some(

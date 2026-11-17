@@ -83,6 +83,7 @@ fn a_candidate_layout_checkpoint_is_owned_without_publishing_the_abandoned_frame
                 .item(LEFT)
                 .unwrap()
                 .tabs()
+                .expect("fixture item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             [LEFT, RIGHT]
@@ -97,6 +98,7 @@ fn a_candidate_layout_checkpoint_is_owned_without_publishing_the_abandoned_frame
             .item(LEFT)
             .unwrap()
             .tabs()
+            .expect("fixture item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         [LEFT]
@@ -108,6 +110,7 @@ fn a_candidate_layout_checkpoint_is_owned_without_publishing_the_abandoned_frame
             .item(LEFT)
             .unwrap()
             .tabs()
+            .expect("fixture item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         [LEFT, RIGHT]
@@ -119,6 +122,6 @@ fn a_candidate_layout_checkpoint_is_owned_without_publishing_the_abandoned_frame
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
     frame.commit().unwrap();
-    assert!(rebuilt.view().item(LEFT).unwrap().is_selected());
+    assert!(rebuilt.view().item(LEFT).unwrap().is_active());
     assert_eq!(session.workspace(), &before);
 }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dockspace::geometry::LogicalPoint;
-use dockspace::model::SurfaceId;
+use dockspace::model::{SurfaceId, TabGroupDockMode};
 use dockspace::runtime::{
     DockspaceHostFrame, DockspaceInteractionError, DockspacePointerContinuation,
     DockspaceRuntimeError, DockspaceSession, HostFrameReport, HostPointerInput, HostPointerRoute,
@@ -239,6 +239,7 @@ pub(crate) struct ProductPointer {
     generic_phase: GenericPointerPhase,
     observed_modifiers: Option<Modifiers>,
     docking_enabled: Option<bool>,
+    group_dock_mode: Option<TabGroupDockMode>,
     foreign_capture: bool,
     touches: TouchContacts,
 }
@@ -271,6 +272,7 @@ struct PointerSample {
     event: SurfacePointerEvent,
     position: Option<Pos2>,
     docking_enabled: Option<bool>,
+    group_dock_mode: Option<TabGroupDockMode>,
 }
 
 impl PointerSample {
@@ -278,6 +280,7 @@ impl PointerSample {
         event: SurfacePointerEvent,
         position: Option<Pos2>,
         docking_enabled: Option<bool>,
+        group_dock_mode: Option<TabGroupDockMode>,
     ) -> Self {
         Self {
             pointer: SurfacePointerId::new(1),
@@ -285,6 +288,7 @@ impl PointerSample {
             event,
             position,
             docking_enabled,
+            group_dock_mode,
         }
     }
 }
@@ -301,6 +305,7 @@ struct Edge {
     drag_delivery: Option<PresentedDockReceiver>,
     blocked: bool,
     docking_enabled: Option<bool>,
+    group_dock_mode: Option<TabGroupDockMode>,
     capture: SurfacePointerCapture,
 }
 
@@ -579,6 +584,7 @@ impl ProductPointer {
         let mut generic_phase = self.generic_phase;
         let mut observed_modifiers = self.observed_modifiers;
         let mut docking_enabled = self.docking_enabled;
+        let mut group_dock_mode = self.group_dock_mode;
         let mut touches = self.touches.clone();
         let host_focused = packet.focused();
         let mut pointer_focused = host_focused;
@@ -592,12 +598,14 @@ impl ProductPointer {
                     ),
                     position,
                     docking_enabled,
+                    group_dock_mode,
                 ));
                 generic_phase = GenericPointerPhase::Idle;
             }
             records.extend(touches.cancel_all(
                 SurfacePointerCancelReason::ExplicitPlatformCancellation,
                 docking_enabled,
+                group_dock_mode,
             ));
         }
         if foreign_drag && !self.foreign_capture {
@@ -606,9 +614,10 @@ impl ProductPointer {
                     SurfacePointerEvent::CaptureChanged,
                     position,
                     docking_enabled,
+                    group_dock_mode,
                 ));
             }
-            records.extend(touches.capture_changed(docking_enabled));
+            records.extend(touches.capture_changed(docking_enabled, group_dock_mode));
         }
         // Re-evaluate the last actual modifier observation after a configuration
         // change, without fabricating pointer motion or enrolling a new stream.
@@ -621,6 +630,17 @@ impl ProductPointer {
                 &touches,
                 generic_phase.is_live(),
                 enabled,
+            ));
+        }
+        if let Some(mode) = update_group_dock_mode(
+            &mut group_dock_mode,
+            self.config,
+            observed_modifiers.unwrap_or(Modifiers::NONE),
+        ) {
+            records.extend(group_dock_change_samples(
+                &touches,
+                generic_phase.is_live(),
+                mode,
             ));
         }
         for (event_index, event) in packet.events().iter().cloned().enumerate() {
@@ -660,6 +680,15 @@ impl ProductPointer {
                         enabled,
                     ));
                 }
+                if let Some(mode) =
+                    update_group_dock_mode(&mut group_dock_mode, self.config, modifiers)
+                {
+                    records.extend(group_dock_change_samples(
+                        &touches,
+                        generic_phase.is_live(),
+                        mode,
+                    ));
+                }
             }
             if touch_interval
                 && generic_phase.is_live()
@@ -680,6 +709,7 @@ impl ProductPointer {
                     ),
                     position,
                     docking_enabled,
+                    group_dock_mode,
                 ));
                 generic_phase = GenericPointerPhase::Idle;
             }
@@ -692,8 +722,14 @@ impl ProductPointer {
                     ..
                 } => {
                     if coordinates_supported
-                        && let Some(sample) =
-                            touches.observe(device_id, id, phase, pos, docking_enabled)?
+                        && let Some(sample) = touches.observe(
+                            device_id,
+                            id,
+                            phase,
+                            pos,
+                            docking_enabled,
+                            group_dock_mode,
+                        )?
                     {
                         records.push(sample);
                     }
@@ -725,6 +761,7 @@ impl ProductPointer {
                             ),
                             position,
                             docking_enabled,
+                            group_dock_mode,
                         ));
                         generic_phase = GenericPointerPhase::Idle;
                     }
@@ -742,6 +779,7 @@ impl ProductPointer {
                     records.extend(touches.cancel_all(
                         SurfacePointerCancelReason::ExplicitPlatformCancellation,
                         docking_enabled,
+                        group_dock_mode,
                     ));
                     Some(SurfacePointerEvent::StreamCancelled(
                         SurfacePointerCancelReason::ExplicitPlatformCancellation,
@@ -756,6 +794,7 @@ impl ProductPointer {
                     records.extend(touches.cancel_all(
                         SurfacePointerCancelReason::ExplicitCancellation,
                         docking_enabled,
+                        group_dock_mode,
                     ));
                     Some(SurfacePointerEvent::StreamCancelled(
                         SurfacePointerCancelReason::ExplicitCancellation,
@@ -783,7 +822,12 @@ impl ProductPointer {
                         _ => generic_phase,
                     };
                 }
-                records.push(PointerSample::generic(event, position, docking_enabled));
+                records.push(PointerSample::generic(
+                    event,
+                    position,
+                    docking_enabled,
+                    group_dock_mode,
+                ));
             }
         }
         // Empty packets and blocked layers need no join. All qualified edges
@@ -794,6 +838,7 @@ impl ProductPointer {
             if matches!(
                 sample.event,
                 SurfacePointerEvent::DockingEnabledChanged { .. }
+                    | SurfacePointerEvent::GroupDockModeChanged { .. }
             ) {
                 // A semantic marker has no coordinate or receiver observation.
                 return Edge {
@@ -807,6 +852,7 @@ impl ProductPointer {
                     drag_delivery: None,
                     blocked: false,
                     docking_enabled: sample.docking_enabled,
+                    group_dock_mode: sample.group_dock_mode,
                     capture,
                 };
             }
@@ -871,6 +917,7 @@ impl ProductPointer {
                     .flatten(),
                 blocked: !qualified,
                 docking_enabled: sample.docking_enabled,
+                group_dock_mode: sample.group_dock_mode,
                 capture,
             }
         };
@@ -888,6 +935,7 @@ impl ProductPointer {
                 &touches,
                 position,
                 docking_enabled,
+                group_dock_mode,
                 request.pointer(),
                 request.event(),
             )?;
@@ -927,6 +975,7 @@ impl ProductPointer {
         self.generic_phase = generic_phase;
         self.observed_modifiers = observed_modifiers;
         self.docking_enabled = docking_enabled;
+        self.group_dock_mode = group_dock_mode;
         self.foreign_capture = foreign_drag;
         self.touches = touches;
         Ok(PreparedPointerEdges {
@@ -955,13 +1004,19 @@ fn continuation_sample(
     touches: &TouchContacts,
     position: Option<Pos2>,
     docking_enabled: Option<bool>,
+    group_dock_mode: Option<TabGroupDockMode>,
     pointer: SurfacePointerId,
     event: SurfacePointerEvent,
 ) -> Option<PointerSample> {
     if pointer == SurfacePointerId::new(1) {
-        Some(PointerSample::generic(event, position, docking_enabled))
+        Some(PointerSample::generic(
+            event,
+            position,
+            docking_enabled,
+            group_dock_mode,
+        ))
     } else {
-        touches.continuation(pointer, event, docking_enabled)
+        touches.continuation(pointer, event, docking_enabled, group_dock_mode)
     }
 }
 
@@ -996,10 +1051,40 @@ fn docking_change_samples(
                 SurfacePointerEvent::DockingEnabledChanged { enabled },
                 None,
                 Some(enabled),
+                None,
             )
         })
         .into_iter()
         .chain(touches.docking_enabled_changed(enabled))
+}
+
+fn update_group_dock_mode(
+    current: &mut Option<TabGroupDockMode>,
+    config: DockInputConfig,
+    modifiers: Modifiers,
+) -> Option<TabGroupDockMode> {
+    let mode = config.tab_group_dock_mode(modifiers);
+    let changed = *current != Some(mode);
+    *current = Some(mode);
+    changed.then_some(mode)
+}
+
+fn group_dock_change_samples(
+    touches: &TouchContacts,
+    generic_live: bool,
+    mode: TabGroupDockMode,
+) -> impl Iterator<Item = PointerSample> {
+    generic_live
+        .then(|| {
+            PointerSample::generic(
+                SurfacePointerEvent::GroupDockModeChanged { mode },
+                None,
+                None,
+                Some(mode),
+            )
+        })
+        .into_iter()
+        .chain(touches.group_dock_mode_changed(mode))
 }
 
 fn pointer_input(edge: &Edge, observed_at: Option<Duration>) -> HostPointerInput<'_> {
@@ -1039,6 +1124,9 @@ fn pointer_input(edge: &Edge, observed_at: Option<Duration>) -> HostPointerInput
     );
     if let Some(enabled) = edge.docking_enabled {
         metadata = metadata.with_docking_enabled(enabled);
+    }
+    if let Some(mode) = edge.group_dock_mode {
+        metadata = metadata.with_group_dock_mode(mode);
     }
     HostPointerInput::new(
         edge.pointer,

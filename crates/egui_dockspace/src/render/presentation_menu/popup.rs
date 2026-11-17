@@ -1,5 +1,9 @@
 //! Product menus retain their source coordinates inside a viewport-wide overlay.
 
+use dockspace::runtime::{
+    DockspaceVisualId, SurfacePaintPlan, SurfacePaintProgramOperation as Operation,
+    SurfacePaintProgramStep as Step,
+};
 use egui::containers::menu::{MenuConfig, menu_style};
 use egui::emath::TSTransform;
 use egui::{
@@ -14,6 +18,8 @@ struct MenuRun {
     instance: Id,
     popup: Id,
     workspace: dockspace::runtime::DockspaceWorkspaceStamp,
+    surface: dockspace::model::SurfaceId,
+    visual: DockspaceVisualId,
     toggled_in: Option<(ViewportId, u64)>,
     visible_pass: u64,
     press_started_while_open: bool,
@@ -40,15 +46,57 @@ pub(crate) fn prepare_layer(ui: &Ui, instance: Id, surface: dockspace::model::Su
         .set_transform_layer(layer(instance, surface), transform);
 }
 
-pub(crate) fn invalidate_stale(
-    ui: &Ui,
-    instance: Id,
-    workspace: dockspace::runtime::DockspaceWorkspaceStamp,
-) {
-    if let Some(run) = ui.ctx().data(|data| data.get_temp::<MenuRun>(run_id()))
-        && run.instance == instance
-        && run.workspace != workspace
+pub(super) fn source_available(ui: &Ui, instance: Id, popup: Id) -> bool {
+    if ui.ctx().any_popup_open() {
+        return false;
+    }
+    if !Popup::is_any_open(ui.ctx()) || Popup::is_id_open(ui.ctx(), popup) {
+        return true;
+    }
+    ui.ctx()
+        .data(|data| data.get_temp::<MenuRun>(run_id()))
+        .is_some_and(|run| run.instance == instance && Popup::is_id_open(ui.ctx(), run.popup))
+}
+
+pub(crate) fn invalidate_stale(ui: &Ui, instance: Id, plan: SurfacePaintPlan<'_>) {
+    let Some(run) = ui
+        .ctx()
+        .data(|data| data.get_temp::<MenuRun>(run_id()))
+        .filter(|run| run.instance == instance && run.surface == plan.surface())
+    else {
+        return;
+    };
+    if run.workspace != plan.workspace_stamp()
+        || !super::effective_enabled(ui, true)
+        || !source_available(ui, instance, run.popup)
     {
+        Popup::close_id(ui.ctx(), run.popup);
+        ui.ctx().data_mut(|data| data.remove::<MenuRun>(run_id()));
+        return;
+    }
+    if !Popup::is_id_open(ui.ctx(), run.popup) {
+        return;
+    }
+    let mut live = false;
+    let valid_program = plan
+        .visit_surface_program(|step| {
+            if let Step::Operation {
+                operation, paint, ..
+            } = step
+                && operation.visual_id() == run.visual
+                && !paint.is_source_gap()
+            {
+                live = match operation {
+                    Operation::Tab(tab) => tab.operable(),
+                    Operation::TabBar(bar) => plan.tabs_group_menu_operable(bar),
+                    Operation::PresentationMenuAnchor(anchor) => anchor.operable(),
+                    _ => false,
+                };
+            }
+            Ok::<(), std::convert::Infallible>(())
+        })
+        .is_ok();
+    if !valid_program || !live {
         Popup::close_id(ui.ctx(), run.popup);
         ui.ctx().data_mut(|data| data.remove::<MenuRun>(run_id()));
     }
@@ -59,13 +107,20 @@ pub(super) fn show(
     instance: Id,
     surface: dockspace::model::SurfaceId,
     workspace: dockspace::runtime::DockspaceWorkspaceStamp,
+    visual: DockspaceVisualId,
     popup: Id,
     anchor: &Response,
-    touch_requested: bool,
+    toggle_on_click: bool,
     style: &crate::DockStyle,
-    content: impl FnOnce(&mut Ui) -> Vec<Id>,
+    content: impl FnOnce(&mut Ui) -> (Vec<Id>, Vec<Id>),
 ) -> Option<InnerResponse<Option<keyboard::Outcome>>> {
     let context = source.ctx();
+    if !super::effective_enabled(source, anchor.enabled())
+        || !source_available(source, instance, popup)
+    {
+        Popup::close_id(context, popup);
+        return None;
+    }
     let frame = (
         context.viewport_id(),
         context.cumulative_frame_nr_for(context.viewport_id()),
@@ -78,6 +133,8 @@ pub(super) fn show(
             instance,
             popup,
             workspace,
+            surface,
+            visual,
             toggled_in: None,
             visible_pass: 0,
             press_started_while_open: false,
@@ -87,7 +144,14 @@ pub(super) fn show(
         context.data_mut(|data| data.remove::<MenuRun>(run_id()));
         return None;
     }
-    if !touch_requested && anchor.clicked() && run.toggled_in != Some(frame) {
+    // While open, Enter/Space belong to the ordered menu keyboard handler.
+    // egui also marks the focused anchor as clicked for those same keys.
+    let anchor_toggle = !Popup::is_id_open(context, popup)
+        || source.input(|input| {
+            input.has_accesskit_action_request(anchor.id, egui::accesskit::Action::Click)
+        })
+        || super::unambiguous_pointer_click(source, anchor, egui::PointerButton::Primary);
+    if toggle_on_click && anchor.clicked() && anchor_toggle && run.toggled_in != Some(frame) {
         Popup::toggle_id(context, popup);
         run.toggled_in = Some(frame);
     }
@@ -154,7 +218,7 @@ pub(super) fn show(
             let margins = frame.total_margin();
             let available = (viewport.size() - margins.sum()).max(egui::Vec2::ZERO);
             ui.set_max_width(ui.max_rect().width().min(available.x));
-            let entries = frame
+            let (entries, submenus) = frame
                 .show(ui, |ui| {
                     ScrollArea::vertical()
                         .id_salt("presentation-menu-scroll")
@@ -163,7 +227,7 @@ pub(super) fn show(
                         .inner
                 })
                 .inner;
-            keyboard::capture(ui, anchor.id, &entries, source.is_enabled())
+            keyboard::capture(ui, anchor.id, &entries, &submenus, source.is_enabled())
         });
     if output.response.should_close() || (run.press_started_while_open && clicked) {
         Popup::close_id(context, popup);

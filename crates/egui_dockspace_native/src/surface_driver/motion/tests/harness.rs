@@ -275,9 +275,8 @@ impl Harness {
                         operation: SurfacePaintProgramOperation::Pane(pane),
                         ..
                     } = step
-                        && let Some(item) = pane.selected()
                     {
-                        panes.insert(item, pane.bounds());
+                        panes.insert(pane.item(), pane.bounds());
                     }
                     Ok::<(), ()>(())
                 })

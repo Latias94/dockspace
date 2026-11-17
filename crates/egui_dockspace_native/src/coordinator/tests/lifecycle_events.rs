@@ -40,7 +40,7 @@ fn publish(
 }
 
 #[test]
-fn native_handlers_observe_committed_selection_and_internal_close_once() {
+fn native_handlers_observe_committed_activation_and_internal_close_once() {
     let mut native = coordinator();
     register_roots(&mut native);
     let first = ItemId::new(1);
@@ -97,7 +97,7 @@ fn native_handlers_observe_committed_selection_and_internal_close_once() {
     );
     assert!(receiver.try_recv().is_err());
 
-    let selected = publish(
+    let activated = publish(
         &mut native,
         |frame| {
             frame.select_item_current(first).unwrap();
@@ -105,10 +105,10 @@ fn native_handlers_observe_committed_selection_and_internal_close_once() {
         false,
     );
     assert!(matches!(
-        selected.as_slice(),
-        [event] if event.kind() == &DockspaceEventKind::SelectionCommitted { tab: first.into() }
+        activated.as_slice(),
+        [event] if event.kind() == &DockspaceEventKind::ItemActivated { item: first }
     ));
-    assert_eq!(receiver.try_recv().unwrap(), (2, selected));
+    assert_eq!(receiver.try_recv().unwrap(), (2, activated));
 
     assert!(
         publish(

@@ -24,7 +24,7 @@ use crate::interaction::targeting::targets::{DropTargetRecord, DropVisual};
 use crate::policy::{DockPolicySnapshot, TabBarInteraction, TabBarVisibility};
 use crate::presentation::config::{DockPresentationConfig, PresentationConfigRevision};
 use crate::presentation::hit::region::HitRegion;
-use crate::presentation::layout::SplitWeightOverride;
+use crate::presentation::layout::TrackWeightOverride;
 use crate::presentation::manifest::{
     AuthoritativeSurfaceMeasurements, ManifestBuildError, PaneSizingKey, RequirementBuildError,
     RequirementRevision, SceneRequirementDraft, SceneRequirementManifest, SurfaceMeasurementTicket,
@@ -33,7 +33,8 @@ use crate::presentation::manifest::{
 };
 use crate::presentation::scene::junction_index::derive_splitter_junction_candidates;
 use crate::presentation::scene::{
-    ContainedLayoutProjection, ContainedMinimumMeasurement, PresentationPlan,
+    ContainedLayoutProjection, ContainedMinimumMeasurement, PaneRecord, PaneSceneId,
+    PresentationMenuAnchorHost, PresentationMenuAnchorRecord, PresentationPlan,
     PresentationPlanValidator, RootLayoutFacts, SceneBuildError, SplitterGapPresentation,
     SplitterGapRecord, SplitterJunctionRecord, SplitterRecord, SplitterSceneId,
     SurfaceProgramRootOperation, SurfaceProgramRootPresentation, TabBarSceneId,
@@ -54,13 +55,13 @@ pub(crate) use future_layout::{
 };
 pub(crate) use requirements::{
     SceneRequirementDerivationError, derive_scene_requirement_draft,
-    derive_scene_requirement_draft_with_index,
+    derive_scene_requirement_draft_with_index, tab_close_capability,
 };
 #[cfg(feature = "motion")]
 pub(crate) use surface::materialize_presentation_sample;
 pub(crate) use surface::{
     CompiledSurfacePlan, compile_surface_plan, contained_minimum_size, pane_outer_sizing,
-    selection_geometry_unchanged,
+    root_controls_layout, selection_geometry_unchanged,
 };
 pub use surface::{PresentationCompilationError, SceneCompilationError};
 

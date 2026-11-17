@@ -175,14 +175,20 @@ fn assert_source_edits_are_frozen(fixture: &mut BackgroundFixture, request: Nati
         .expect("the peer item must remain in the source root");
     for command in [
         WorkspaceCommand::Select {
-            source: select.as_tab_source(),
+            source: select
+                .as_tab_source()
+                .expect("fixture item is an inline tab"),
         },
         WorkspaceCommand::Reorder {
-            source: reorder.as_tab_source(),
+            source: reorder
+                .as_tab_source()
+                .expect("fixture item is an inline tab"),
             insertion_index: 2,
         },
         WorkspaceCommand::Select {
-            source: peer_select.as_tab_source(),
+            source: peer_select
+                .as_tab_source()
+                .expect("fixture item is an inline tab"),
         },
     ] {
         assert!(matches!(
@@ -245,7 +251,9 @@ fn assert_source_edits_are_frozen(fixture: &mut BackgroundFixture, request: Nati
         EngineInput::WorkspaceCommand {
             expected: version,
             command: WorkspaceCommand::Select {
-                source: unrelated.as_tab_source(),
+                source: unrelated
+                    .as_tab_source()
+                    .expect("fixture item is an inline tab"),
             },
         },
     )
@@ -255,7 +263,10 @@ fn assert_source_edits_are_frozen(fixture: &mut BackgroundFixture, request: Nati
         InputOutcome::CommandProcessed { changed: true, .. }
     ));
     assert_eq!(
-        fixture.engine.workspace().node(target_tabs),
+        fixture
+            .engine
+            .workspace()
+            .node(target_tabs.expect("fixture item is an inline tab")),
         Some(&Node::tabs_with_selection(
             [ItemId::new(3), ItemId::new(7)],
             Some(ItemId::new(7)),

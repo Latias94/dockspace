@@ -69,9 +69,8 @@ impl DockEngine {
                 self.close_root_from_candidate(input, witness, *root, policy)
             }
             LocalSurfaceAction::CloseTabs { group, .. } => {
-                let target = ContentCloseTarget::Tabs {
-                    root: group.source.root(),
-                    anchor: group.anchor,
+                let target = ContentCloseTarget::TabsSource {
+                    source: group.source.clone(),
                 };
                 self.request_deferred_content_close(input, target, policy)
             }
@@ -279,6 +278,10 @@ impl DockEngine {
                 && plan.tab_bar_records().iter().any(|bar| {
                     bar.id().root == group.source.root()
                         && bar.id().tabs == group.source.node()
+                        && plan.receiver_active_path_is_current(
+                            PresentationHitRegionKind::TabStripScroll(*bar.id()),
+                            &self.workspace,
+                        )
                         && bar
                             .group_menu_bounds()
                             .is_some_and(|bounds| plan.region_is_operable(bounds, bar.layer()))
@@ -322,6 +325,10 @@ impl DockEngine {
                 ..
             } => item_receiver_is_current(PresentationHitRegionKind::TabBody(*tab)),
             LocalSurfaceAction::Close {
+                target: CloseSceneTarget::Pane(pane),
+                ..
+            } => item_receiver_is_current(PresentationHitRegionKind::PaneBody(*pane)),
+            LocalSurfaceAction::Close {
                 target: CloseSceneTarget::Contained(floating),
                 ..
             } => plan
@@ -335,9 +342,38 @@ impl DockEngine {
             LocalSurfaceAction::CloseRoot { root, .. } => root_is_current(*root),
             LocalSurfaceAction::CloseTabs { group, .. } => tabs_group_menu_is_current(group),
             LocalSurfaceAction::PresentationCommand { action, .. } => {
-                product_action::product_presentation_transition_root(action)
+                self.product_presentation_source_root(action)
                     .is_some_and(root_is_current)
                     && match action {
+                        ProductAction::DockItem { item, .. }
+                        | ProductAction::FloatItem { item, .. }
+                        | ProductAction::TearOffNative {
+                            source: crate::model::NativeTearOffSource::Item(item),
+                            ..
+                        } => plan
+                            .pane_records()
+                            .iter()
+                            .find(|pane| pane.item() == *item)
+                            .is_some_and(|pane| {
+                                item_receiver_is_current(PresentationHitRegionKind::PaneBody(
+                                    pane.id(),
+                                ))
+                            }),
+                        ProductAction::DockTab { tab, .. }
+                        | ProductAction::FloatTab { tab, .. }
+                        | ProductAction::TearOffNative {
+                            source: crate::model::NativeTearOffSource::Tab(tab),
+                            ..
+                        } => {
+                            self.capture_product_tab(tab).is_ok()
+                                && item_receiver_is_current(PresentationHitRegionKind::TabBody(
+                                    crate::presentation::scene::TabSceneId {
+                                        root: tab.source.root(),
+                                        tabs: tab.source.tabs(),
+                                        tab: tab.key(),
+                                    },
+                                ))
+                        }
                         ProductAction::FloatTabs { group, .. }
                         | ProductAction::DockTabs { group, .. }
                         | ProductAction::TearOffNative {
@@ -385,15 +421,23 @@ impl DockEngine {
             || !plan.splitter_record(splitter).is_some_and(|record| {
                 record.operable() && plan.region_is_operable(record.hit().rect(), record.layer())
             })
+            || !plan.receiver_active_path_is_current(
+                PresentationHitRegionKind::SplitterHandle(splitter),
+                &self.workspace,
+            )
             || !plan
                 .pane_records()
                 .iter()
                 .filter(|pane| pane.id().root == splitter.root)
                 .all(|pane| {
-                    self.workspace
-                        .visible_tab_selection(pane.id().tabs)
-                        .and_then(TabKey::item)
-                        == plan.pane_selected(pane)
+                    self.workspace.item_is_active(pane.item())
+                        && self
+                            .workspace
+                            .locate_item_by_id(pane.item())
+                            .is_some_and(|location| {
+                                location.root == pane.id().root
+                                    && location.owner_node() == pane.owner_node()
+                            })
                 })
         {
             return false;
@@ -459,8 +503,11 @@ impl DockEngine {
         action: &ProductAction,
     ) -> bool {
         use crate::model::{DockAnchor, DockPlacement};
-        let ProductAction::DockRoot { placement, .. } = action else {
-            return true;
+        let placement = match action {
+            ProductAction::DockRoot { placement, .. }
+            | ProductAction::DockTabs { placement, .. }
+            | ProductAction::DockTab { placement, .. } => placement,
+            _ => return true,
         };
         let anchor = match *placement {
             DockPlacement::Center(anchor) | DockPlacement::InnerEdge { anchor, .. } => anchor,
@@ -482,6 +529,30 @@ impl DockEngine {
             }
         };
         let root = match anchor {
+            DockAnchor::Node(key) => {
+                let Some(root) = self.workspace.node_root(key.0) else {
+                    return false;
+                };
+                if !plan
+                    .layout_facts()
+                    .and_then(|facts| facts.root(root))
+                    .and_then(|facts| facts.projection().nodes.get(&key.0))
+                    .is_some_and(|result| result.visible)
+                {
+                    return false;
+                }
+                let mut node = key.0;
+                while let Some(parent) = self.workspace.parent_link(root, node) {
+                    if matches!(self.workspace.node(parent.parent), Some(Node::Tabs { .. }))
+                        && self.workspace.visible_tab_selection(parent.parent)
+                            != Some(TabKey::for_layout(node))
+                    {
+                        return false;
+                    }
+                    node = parent.parent;
+                }
+                root
+            }
             DockAnchor::Central(root) => root,
             DockAnchor::Item(item) => {
                 let Some(tab) = plan
@@ -495,7 +566,9 @@ impl DockEngine {
                 if !self
                     .workspace
                     .locate_item_by_id(item)
-                    .is_some_and(|(root, tabs, _)| root == tab.root && tabs == tab.tabs)
+                    .is_some_and(|location| {
+                        location.root == tab.root && location.tabs() == Some(tab.tabs)
+                    })
                 {
                     return false;
                 }
@@ -601,7 +674,7 @@ impl DockEngine {
         policy: &DockPolicySnapshot,
     ) -> Result<InputOutcome, EngineError> {
         let plan = candidate.plan();
-        let (bounds, layer, content) = match Self::scene_close_region(plan, target) {
+        let (bounds, layer, content) = match self.scene_close_region(plan, target) {
             Ok(region) => region,
             Err(error) => return Ok(self.candidate_action_rejection(error)),
         };

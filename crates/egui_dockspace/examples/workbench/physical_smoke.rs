@@ -311,7 +311,11 @@ impl PhysicalSmoke {
                     &[OUTLINE, PREVIEW, INSPECTOR]
                 };
                 let view = dock.view();
-                let merged = view.item(OUTLINE).unwrap().tabs();
+                let merged = view
+                    .item(OUTLINE)
+                    .unwrap()
+                    .tabs()
+                    .expect("fixture item is an inline tab");
                 if self.guide_sent
                     && !self.primary_down
                     && self.releases > self.baseline
@@ -323,6 +327,7 @@ impl PhysicalSmoke {
                         view.item(EDITOR)
                             .unwrap()
                             .tabs()
+                            .expect("item is an inline tab")
                             .items()
                             .collect::<Vec<_>>(),
                         [EDITOR]
@@ -446,6 +451,6 @@ fn top_weights(dock: &Dockspace) -> [u64; 2] {
 }
 
 fn outline_bounds(panes: &DemoPanes, dock: &Dockspace) -> Option<Rect> {
-    let tabs = dock.view().item(OUTLINE)?.tabs();
+    let tabs = dock.view().item(OUTLINE)?.tabs()?;
     panes.panes[&tabs.selected().and_then(|tab| tab.item())?].content
 }

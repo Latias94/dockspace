@@ -139,10 +139,10 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
     ] {
         let remaining_item = if source_item == FIRST { SECOND } else { FIRST };
         let mut session = session();
-        assert!(session.view().item(FIRST).unwrap().is_selected());
-        assert!(!session.view().item(SECOND).unwrap().is_selected());
-        assert!(session.view().item(THIRD).unwrap().is_selected());
-        assert!(!session.view().item(FOURTH).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
+        assert!(!session.view().item(SECOND).unwrap().is_active());
+        assert!(session.view().item(THIRD).unwrap().is_active());
+        assert!(!session.view().item(FOURTH).unwrap().is_active());
         let (receivers, _) = paint(&mut session, source_item);
         let source = session
             .bind_presented_receiver(&receivers[0].unwrap())
@@ -189,8 +189,8 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
         }
         let pressed = commit(frame);
         assert_eq!(pressed.workspace_changed(), source_item == SECOND);
-        assert!(session.view().item(source_item).unwrap().is_selected());
-        assert!(!session.view().item(remaining_item).unwrap().is_selected());
+        assert!(session.view().item(source_item).unwrap().is_active());
+        assert!(!session.view().item(remaining_item).unwrap().is_active());
         assert!(session.has_active_gesture());
 
         let request = session
@@ -253,12 +253,12 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
                 let mut abandoned = session.begin_host_frame().unwrap();
                 abandoned.submit_host_pointer(input).unwrap();
                 measure(&mut abandoned);
-                assert!(abandoned.view().item(FOURTH).unwrap().is_selected());
-                assert!(!abandoned.view().item(THIRD).unwrap().is_selected());
+                assert!(abandoned.view().item(FOURTH).unwrap().is_active());
+                assert!(!abandoned.view().item(THIRD).unwrap().is_active());
                 drop(abandoned);
                 assert_eq!(session.version(), before);
-                assert!(session.view().item(THIRD).unwrap().is_selected());
-                assert!(!session.view().item(FOURTH).unwrap().is_selected());
+                assert!(session.view().item(THIRD).unwrap().is_active());
+                assert!(!session.view().item(FOURTH).unwrap().is_active());
                 assert!(session.has_active_gesture());
                 assert_eq!(session.pointer_continuation(), Some(request));
             }
@@ -293,11 +293,11 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
             assert_eq!(report.workspace_changed(), selects);
             assert_eq!(report.before() == report.after(), !selects);
             assert_eq!(
-                session.view().item(FOURTH).unwrap().is_selected(),
+                session.view().item(FOURTH).unwrap().is_active(),
                 millis >= 160
             );
             assert_eq!(
-                session.view().item(THIRD).unwrap().is_selected(),
+                session.view().item(THIRD).unwrap().is_active(),
                 millis < 160
             );
             assert!(session.has_active_gesture());
@@ -308,6 +308,7 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
                     .item(source_item)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[FIRST, SECOND]
@@ -319,6 +320,7 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
                     .item(FOURTH)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[THIRD, FOURTH]
@@ -399,8 +401,8 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
                     )
                     .unwrap();
                 assert!(!commit(frame).workspace_changed());
-                assert!(!session.view().item(THIRD).unwrap().is_selected());
-                assert!(session.view().item(FOURTH).unwrap().is_selected());
+                assert!(!session.view().item(THIRD).unwrap().is_active());
+                assert!(session.view().item(FOURTH).unwrap().is_active());
                 assert!(session.pointer_continuation().is_none());
                 assert_eq!(session.has_active_gesture(), failure != "capture");
                 if failure != "capture" {
@@ -424,7 +426,7 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
                         )
                         .unwrap();
                     assert!(!commit(frame).workspace_changed());
-                    assert!(!session.view().item(THIRD).unwrap().is_selected());
+                    assert!(!session.view().item(THIRD).unwrap().is_active());
                     assert!(session.pointer_continuation().is_none());
                 }
             }
@@ -504,7 +506,7 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
             assert!(
                 recordings[1].records.iter().any(|record| matches!(
                     record,
-                    OwnedRecord::PaneContent { item: Some(item), .. } if *item == source_item
+                    OwnedRecord::PaneContent { item, .. } if *item == source_item
                 )),
                 "the release update encodes the committed target pane"
             );
@@ -559,6 +561,7 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
                     .item(source_item)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[THIRD, FOURTH, source_item]
@@ -570,6 +573,7 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
                     .item(remaining_item)
                     .unwrap()
                     .tabs()
+                    .expect("item is an inline tab")
                     .items()
                     .collect::<Vec<_>>(),
                 &[remaining_item]

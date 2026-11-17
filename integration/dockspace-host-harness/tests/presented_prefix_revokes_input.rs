@@ -247,7 +247,7 @@ fn later_presented_output_revokes_old_receiver_until_its_prefix_is_committed() {
         )
         .unwrap();
     finish(input);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
 
     drop((pending_b, pending_c));
     let settled = session.begin_host_frame().unwrap();

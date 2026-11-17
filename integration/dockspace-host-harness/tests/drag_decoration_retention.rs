@@ -160,7 +160,10 @@ fn decoration(plan: SurfacePaintPlan<'_>) -> Option<Decoration> {
                         visual: source.source_visual(),
                         bounds: source.source_bounds(),
                         item: source.item(),
-                        ghost: source.ghost_item(),
+                        ghost: match source.label() {
+                            dockspace::model::TabLabel::Item(item) => Some(item),
+                            dockspace::model::TabLabel::Layout { .. } => None,
+                        },
                         projected: source.projected_root_bounds(),
                         is_projected: source.source_is_projected(),
                     })

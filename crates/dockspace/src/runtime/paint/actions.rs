@@ -467,6 +467,9 @@ impl SurfacePaintPlan<'_> {
     /// resize. An endpoint followed by an outward and inward step therefore
     /// finishes one step inside that endpoint. Effective intermediate movement
     /// commits visible proportions even when the final displacement is zero.
+    /// Auto steps are checked in order: an infeasible step retains the last
+    /// accepted displacement and reversal continues from there. Failed source or
+    /// policy checks abort preparation; a single infeasible Auto step returns None.
     /// Empty sequences return `None`.
     #[must_use]
     pub fn prepare_splitter_adjustment_sequence(
@@ -540,7 +543,10 @@ impl SurfacePaintPlan<'_> {
     /// Every step uses the common reachable displacement of all incident pairs
     /// on this axis. The other axis remains unchanged. Equalizing still requires
     /// a common constrained destination. Effective intermediate movement commits
-    /// visible proportions; empty sequences return `None`.
+    /// visible proportions. Auto steps are checked in order: an infeasible step
+    /// retains the last accepted displacement and reversal continues from there.
+    /// Failed source or policy checks abort preparation; a single infeasible
+    /// Auto step returns `None`. Empty sequences return `None`.
     #[must_use]
     pub fn prepare_splitter_junction_adjustment_sequence(
         self,

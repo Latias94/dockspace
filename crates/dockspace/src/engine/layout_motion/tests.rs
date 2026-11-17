@@ -74,7 +74,7 @@ fn paint_with_metrics(
                 operation: Operation::Pane(pane),
                 ..
             } => {
-                if let Some(item) = pane.selected() {
+                if let Some(item) = Some(pane.item()) {
                     sample.panes.insert(item, pane.bounds());
                     sample
                         .receivers

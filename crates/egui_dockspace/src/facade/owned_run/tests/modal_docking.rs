@@ -111,7 +111,7 @@ fn an_application_modal_blocks_empty_surface_docking_and_a_fresh_drag_recovers()
     };
     let _ = harness.frame(Vec::new(), false);
     let stable = harness.frame(Vec::new(), false);
-    let source = center(&stable, Role::TitleBar, "First");
+    let source = center(&stable, Role::TitleBar, "Split");
     let blank = Pos2::new(90.0, 360.0);
     for events in [
         press(source),
@@ -164,7 +164,7 @@ fn an_application_modal_blocks_empty_surface_docking_and_a_fresh_drag_recovers()
             .memory(egui::Memory::top_modal_layer)
             .is_none()
     );
-    let source = center(&stable, Role::TitleBar, "First");
+    let source = center(&stable, Role::TitleBar, "Split");
     for events in [
         press(source),
         vec![Event::PointerMoved(source + egui::vec2(16.0, 8.0))],

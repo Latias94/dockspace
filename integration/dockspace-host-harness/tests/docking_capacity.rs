@@ -1,6 +1,6 @@
 //! Finite viewports retain item ownership through overflow, collapse and recovery.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use dockspace::geometry::{LogicalPoint, LogicalRect, LogicalSize};
 use dockspace::model::{
@@ -128,6 +128,7 @@ struct Snapshot {
     tabs: BTreeMap<ItemId, DockspaceReceiverDescriptor>,
     centers: BTreeMap<ItemId, LogicalPoint>,
     panes: BTreeMap<ItemId, LogicalRect>,
+    pane_frames: BTreeMap<ItemId, LogicalRect>,
     inner_guide_slots: Vec<usize>,
     splitters: Vec<(bool, bool)>,
     outer: Vec<(Direction, LogicalRect)>,
@@ -168,8 +169,15 @@ fn paint_present(session: &mut DockspaceSession) -> BTreeMap<SurfaceId, Snapshot
             continue;
         };
         let mut snapshot = Snapshot::default();
+        let mut tabs_frames = VecDeque::new();
         plan.visit_surface_program(|step| {
             match step {
+                Step::Operation {
+                    operation: Operation::Tabs(tabs),
+                    ..
+                } => {
+                    tabs_frames.push_back((tabs.bounds(), tabs.content_bounds()));
+                }
                 Step::Operation {
                     operation: Operation::Tab(tab),
                     ..
@@ -187,9 +195,16 @@ fn paint_present(session: &mut DockspaceSession) -> BTreeMap<SurfaceId, Snapshot
                     operation: Operation::Pane(pane),
                     ..
                 } => {
-                    if let Some(item) = pane.selected() {
-                        snapshot.panes.insert(item, pane.bounds());
-                    }
+                    snapshot.panes.insert(pane.item(), pane.bounds());
+                    let (frame, content) = tabs_frames
+                        .pop_front()
+                        .expect("each fixture pane belongs to one plain Tabs container");
+                    assert_eq!(
+                        pane.bounds(),
+                        content,
+                        "the content must occupy its exact Tabs slot even when its header has no area"
+                    );
+                    snapshot.pane_frames.insert(pane.item(), frame);
                 }
                 Step::Operation {
                     operation: Operation::Splitter(splitter),
@@ -226,6 +241,10 @@ fn paint_present(session: &mut DockspaceSession) -> BTreeMap<SurfaceId, Snapshot
             Ok::<(), ()>(())
         })
         .unwrap();
+        assert!(
+            tabs_frames.is_empty(),
+            "each plain Tabs fixture must emit its content"
+        );
         let (recording, receipt) = RecordingRenderer::execute(plan).unwrap();
         for record in recording.records {
             match record {
@@ -260,14 +279,7 @@ fn assert_items(session: &DockspaceSession, expected: &[ItemId]) {
             .into_iter()
             .chain(surface.contained().filter_map(|floating| floating.root()))
         {
-            let mut nodes = vec![root.content().unwrap()];
-            while let Some(node) = nodes.pop() {
-                if let Some(tabs) = node.tabs() {
-                    actual.extend(tabs.items());
-                } else {
-                    nodes.extend(node.split().unwrap().children());
-                }
-            }
+            actual.extend(root.items());
         }
     }
     actual.sort();
@@ -275,8 +287,90 @@ fn assert_items(session: &DockspaceSession, expected: &[ItemId]) {
     expected.sort();
     assert_eq!(
         actual, expected,
-        "every item must have exactly one owning leaf"
+        "every item must have exactly one real owner"
     );
+}
+
+#[test]
+fn composed_grid_owned_items_survive_public_layout_roundtrip_and_a_bare_item_move() {
+    use dockspace::model::{DockAnchor, DockPlacement, DockspaceGridShape, DockspaceTabView};
+
+    let bare = ItemId::new(11);
+    let hidden = ItemId::new(12);
+    let inactive = ItemId::new(13);
+    let grid = Node::grid(
+        DockspaceGridShape::Auto,
+        [Node::pane(bare), Node::tabs([hidden, inactive])],
+    )
+    .unwrap()
+    .named("Tools");
+    let mut original = session(&[], Node::composed_tabs([Node::pane(TARGET_ANCHOR), grid]));
+    let expected = [SOURCE_ANCHOR, TARGET_ANCHOR, bare, hidden, inactive];
+    let mut frame = original.begin_host_frame().unwrap();
+    frame.set_item_visibility_current(hidden, false).unwrap();
+    assert!(commit(frame).workspace_changed());
+    assert_items(&original, &expected);
+
+    let layout = original.view().to_layout();
+    let mut restored = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+    assert_items(&restored, &expected);
+    let view = restored.view();
+    let root = view.root(RootId::new(2)).unwrap();
+    let content = root.content().unwrap();
+    assert_eq!(
+        root.items().collect::<Vec<_>>(),
+        [TARGET_ANCHOR, bare, hidden, inactive]
+    );
+    assert_eq!(root.active_items().collect::<Vec<_>>(), [TARGET_ANCHOR]);
+    assert_eq!(
+        content.items().collect::<Vec<_>>(),
+        [TARGET_ANCHOR, bare, hidden, inactive]
+    );
+    let tabs = content.tabs().unwrap();
+    assert_eq!(tabs.items().collect::<Vec<_>>(), [TARGET_ANCHOR]);
+    let Some(DockspaceTabView::Layout(tools)) = tabs.children().nth(1) else {
+        panic!("the grid must remain one real layout tab");
+    };
+    let tools_key = tools.key();
+    assert_eq!(tools.layout_title(), Some("Tools"));
+    assert_eq!(tools.grid().unwrap().child_count(), 2);
+    assert!(view.item(bare).unwrap().tabs().is_none());
+    assert!(view.item(hidden).unwrap().is_hidden());
+    assert!(!view.item(inactive).unwrap().is_active());
+
+    let mut frame = restored.begin_host_frame().unwrap();
+    frame
+        .dock_item_current(bare, DockPlacement::Center(DockAnchor::Item(SOURCE_ANCHOR)))
+        .unwrap();
+    assert!(commit(frame).workspace_changed());
+    assert_items(&restored, &expected);
+    let view = restored.view();
+    assert_eq!(view.item(bare).unwrap().surface(), SOURCE);
+    assert!(view.item(bare).unwrap().is_active());
+    assert_eq!(
+        view.root(RootId::new(1))
+            .unwrap()
+            .items()
+            .collect::<Vec<_>>(),
+        [SOURCE_ANCHOR, bare]
+    );
+    let root = view.root(RootId::new(2)).unwrap();
+    assert_eq!(
+        root.items().collect::<Vec<_>>(),
+        [TARGET_ANCHOR, hidden, inactive]
+    );
+    assert_eq!(root.active_items().collect::<Vec<_>>(), [TARGET_ANCHOR]);
+    let Some(DockspaceTabView::Layout(tools)) =
+        root.content().unwrap().tabs().unwrap().children().nth(1)
+    else {
+        panic!("removing one grid child must preserve its layout tab");
+    };
+    assert_eq!(tools.key(), tools_key);
+    assert_eq!(tools.layout_title(), Some("Tools"));
+    assert_eq!(tools.grid().unwrap().shape(), DockspaceGridShape::Auto);
+    assert_eq!(tools.grid().unwrap().child_count(), 1);
+    assert_eq!(tools.items().collect::<Vec<_>>(), [hidden, inactive]);
+    assert!(view.item(hidden).unwrap().is_hidden());
 }
 
 fn press(session: &mut DockspaceSession, descriptor: DockspaceReceiverDescriptor) {
@@ -395,12 +489,25 @@ fn repeated_splits_and_merges(policy: PaneOverflowPolicy) {
                 "the selected overflowing tab must remain reachable: merge={index}",
             );
         } else {
-            assert!(
-                snapshots[&TARGET]
-                    .panes
-                    .values()
-                    .all(|rect| { rect.width() > 0.0 && rect.height() > 0.0 })
-            );
+            for (item, content) in &snapshots[&TARGET].panes {
+                let frame = snapshots[&TARGET].pane_frames[item];
+                assert!(frame.width() > 0.0 && frame.height() > 0.0);
+                let header = session
+                    .presentation_config()
+                    .tab_bar_height()
+                    .min(frame.height());
+                assert_eq!(
+                    *content,
+                    LogicalRect::new(
+                        frame.x(),
+                        frame.y() + header,
+                        frame.width(),
+                        frame.height() - header
+                    )
+                    .unwrap(),
+                    "compressed content must occupy the exact slot below its surviving tab chrome: {item:?}"
+                );
+            }
         }
         assert_items(&session, &expected);
         // Nine compressed panes can be smaller than their tab chrome. Enlarging
@@ -420,6 +527,7 @@ fn repeated_splits_and_merges(policy: PaneOverflowPolicy) {
             .item(TARGET_ANCHOR)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>()
             .len(),
@@ -632,6 +740,7 @@ fn zero_area_target_revokes_drop_preview_and_recovers_without_losing_the_drag_so
             .item(item)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         [second, item]

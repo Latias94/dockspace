@@ -258,14 +258,26 @@ Covers R1, R5, R8, R9; implements KTD2, KTD4 and KTD6.
 
 Covers R6, R8; implements KTD4 and KTD5.
 
-- Files: splitter_geometry, pointer_splitter, splitter_restoration, resize_contact,
+- Files: splitter_geometry, pointer_splitter, splitter_restoration, resize_geometry,
   public resize configuration and existing splitter regressions.
 - One piecewise plan evaluates every input path; preserve cheap linear cases.
   Authorize every affected owner and keep junction batches atomic.
+- Reuse exact numeric compiler inputs only for Auto roots after merging both
+  resize axes. Ancestor-only reflow may proceed when all captured boundaries stay
+  exact; a changed direct Grid map or minimum-induced boundary drift rejects the
+  whole proposal. Keep old-shape limits conservative. Advertise a public Auto
+  range only when the common evaluator proves both endpoints; do not search for
+  replacement limits.
+- Preferred and Equalize invert the real incident pair through cap contacts.
+  Ordered Auto keyboard atoms retain only geometrically accepted steps and
+  reverse from the last accepted displacement; source or policy failure aborts.
+  A retained pointer proposal requires fresh source, policy and coordinate checks
+  at release.
 - Test scenarios: capped/slack contact crossings; three-sibling nearest-first
   outward capacity; saturation and reversal to zero; denied farther owner; hidden
   and inactive branch; preferred/equalize after reversal; batched/separate action
-  equivalence; policy or Auto shape change during gesture revokes old preparation.
+  equivalence across an infeasible atom; public Auto endpoint refusal; policy or
+  Auto shape change during gesture revokes old preparation.
 
 ### U6 — Replace persistence and migrate all consumers
 
@@ -330,3 +342,127 @@ retain measured acceptable costs; obsolete implementations are removed; examples
 API documentation and ADRs describe the resulting contract; independent review has
 no unresolved correctness finding. A plan file or partial identity migration alone
 does not satisfy this definition.
+
+## Execution evidence
+
+U1 was committed as `0c5b04d3`. U2–U7 are implemented and validated. The comparison baseline
+is `03f9464f`. No migration reader or alternative layout reducer was retained.
+
+Independent review covered graph scope/close/persistence, exact resize geometry,
+egui entry points and the final selection-reuse changes. New deterministic
+regressions cover same-parent layout-tab gap semantics and reorder barriers,
+nested guide precedence, source exclusion, fractional bounds, Auto resize
+release, same-title UI sources and partly occluded gesture sources. A small
+independent labelled model checks activation, subtree transfer, direct order,
+hidden bare content and complete ownership across two logical surfaces.
+
+### Performance checkpoint
+
+All conditions used the same macOS ARM64 machine and Rust 1.100.0. Layout and
+docking probes used the production profile; the complete host used release.
+Immutable old/new executables ran sequentially in old/old, ABBA and BAAB blocks,
+without overlapping Cargo or another benchmark. Geometry and owned-state
+validation remained enabled. Layout retained 13,824 samples and docking retained
+24,192; these isolated probes do not include complete host frame work.
+
+| Ordinary workload | Old | New | Interpretation |
+| --- | --- | --- | --- |
+| Full layout, 16 panes, ABBA p50 | 792 ns | 875 ns | Near timer resolution; BAAB measured 792/916 ns. |
+| Full layout, 128 panes, ABBA p50 | 6.75 µs | 7.25 µs | BAAB measured 6.75/7.33 µs. |
+| Full layout, 1024 panes, ABBA p50 | 59.71 µs | 67.96 µs | BAAB measured 59.42/66.96 µs. |
+| Cross-view move, 1024 panes / 4 views, ABBA p50 | 85.46 µs | 96.25 µs | Includes owned mutation, layout and export. |
+| Edge split, 1024 panes / 4 views, ABBA p50 | 101.50 µs | 112.71 µs | Same validated ordinary workload. |
+
+The existing complete-host probe revealed an additional selection regression
+that the layout probe could not expose: 1024-pane selection initially took
+7.91 ms versus the earlier 1.45 ms sample. Changing a real Pane identity forced
+touch repartitioning and deep cloning of unchanged chrome. Exact identity
+rebinding now preserves touch geometry, and content bindings have their own
+copy-on-write fact group. Tests prove zero new touch compilations, canonical and
+emission permutations equal to a full compile, old-plan immutability, and old
+receiver rejection after the replacement presentation.
+
+The final timing-only host block used 48 samples and eight warmups per process.
+Each cell below compares the median of two per-process p50 values, separately
+for ABBA and BAAB; it is not a pooled raw-sample percentile.
+
+| Host update, 1024 panes | ABBA old/new | BAAB old/new |
+| --- | --- | --- |
+| Painted idle | 1.329/1.591 ms | 1.327/1.603 ms |
+| Select one real item | 1.378/2.647 ms | 1.378/2.564 ms |
+| Active divider update | 12.417/14.030 ms | 12.581/14.065 ms |
+| Changed measurements | 11.893/13.983 ms | 11.971/13.911 ms |
+| Three older outputs retained | 8.712/10.123 ms | 8.816/10.300 ms |
+
+The four old/old selection medians ranged from 1.346 to 1.400 ms, so the remaining
+selection cost is a demonstrated regression, not explained by that noise floor.
+Its final heap pass measured 3,170 allocation events and 27,488,656 requested bytes
+per update, versus 2,960 and 18,391,776 in the baseline. The new path still copies
+the region arena and content execution bindings, updates identity permutations
+and relinks the paint program. These are confirmed extra operations; their
+individual share of the remaining elapsed time has not been measured. This
+checkpoint accepts that explicit cost for exact real-content identities rather
+than claiming ordinary selection performance parity. It does not establish a
+whole-product or Rust-versus-C++ performance ratio.
+
+Actual Grid composition is measured separately: a 1024-cell shared Grid stores
+1025 real nodes and projects in a 30.52 µs p50 sample; an inactive layout-tab
+fixture stores 1026 nodes and projects in 20.08 µs. Their preparation costs remain
+visible at 19.71 and 19.54 µs respectively. These are different workloads, not
+improvements over the ordinary binary-tree sample.
+
+Raw CSVs, executable/source digests and process logs are retained outside the
+source tree in `/tmp/dockspace-composable-paired-final`,
+`/tmp/dockspace-composable-host-paired-final`, and the
+`/tmp/dockspace-composable-final-host.*` files. The final task inventory is
+`/tmp/dockspace-composable-final-dirty-inventory.json`.
+
+### Deliberate limitations
+
+Bare Pane, Grid and nested layout-tab roots currently settle layout transitions
+for their entire surface; ordinary roots sharing that surface also settle.
+Flat Tabs/Split-only surfaces retain configurable layout motion and decorative
+feedback retains its own settings. Auto resize ranges remain conservative and
+are omitted when the common evaluator cannot prove both endpoints. These limits
+are documented in the public guides and the integration skill.
+
+Godot source comparison is recorded in
+[Godot docking design](../research/godot-docking-design.md). Its tool recovery and
+source-aware placement are useful application-shell references. Its fixed editor
+slot selector is not a shared-track Grid and does not justify adding another
+persistent identity registry to core.
+
+### Final validation
+
+| Gate | Result |
+| --- | --- |
+| Workspace, every feature and target | 3123 passed; 4 opt-in probes skipped |
+| Core without default features | 2452 passed; 4 opt-in probes skipped |
+| Independent host on Rust 1.95, serde and motion | 490 passed |
+| Official egui consumer, all targets/features | 51 passed |
+| Product interaction harness, serde | 148 passed |
+| Native fork workspace, all targets/features | 833 passed; 2 opt-in probes skipped |
+| GPUI consumer, all targets/features | 34 passed |
+| Clippy correctness and suspicious | Passed |
+| Strict rustdoc and workspace doc tests | Passed |
+| WebAssembly demo, all features | Passed |
+| New composable/shared Grid examples | Built; both rendered and closed through real macOS windows |
+| Maintained macOS editor input qualification | All 16 real-input journeys passed |
+
+The extra native `basic --command-smoke` initially failed after a style commit:
+its cached pane top was still 24 while its final target was 44. The smoke treated
+configuration commit and general presentation availability as proof of settled
+geometry, although an old callback or a valid animation sample could still carry
+the earlier rectangle. It now waits for the exact required top, preserving the
+60-second deadline and physical-window identity checks. The complete eleven
+commands/four styles journey passed. Closing the owned window before completion
+also returned the required nonzero status; a zero process exit can no longer
+hide an unfinished command journey. No production style or authority check was
+relaxed to resolve that observation error.
+
+Logs and command metadata for the 13 serial build/test gates are retained at
+`/tmp/dockspace-composable-final-validation-results.json`. The maintained physical
+input run is `/tmp/dockspace-composable-phase3-native-macos-final.log`, with its
+individual operation logs in the temporary artifact directory printed there.
+These qualify this macOS backend and desktop, not Windows, X11, Wayland, mixed
+monitor DPI or remote-disconnect behavior.

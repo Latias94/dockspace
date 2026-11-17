@@ -390,13 +390,25 @@ fn assert_complete_content(view: DockspaceView<'_>) -> ContentIdentities {
                 (pane.surface(), pane.root(), pane.contained()),
                 (surface, root, contained)
             );
-            assert_eq!(pane.tabs().items().collect::<Vec<_>>(), &items);
             assert_eq!(
-                pane.tabs().selected().and_then(|tab| tab.item()),
+                pane.tabs()
+                    .expect("item is an inline tab")
+                    .items()
+                    .collect::<Vec<_>>(),
+                &items
+            );
+            assert_eq!(
+                pane.tabs()
+                    .expect("item is an inline tab")
+                    .selected()
+                    .and_then(|tab| tab.item()),
                 Some(selected)
             );
-            assert_eq!(pane.tabs().is_central(), central);
-            assert_eq!(pane.is_selected(), item == selected);
+            assert_eq!(
+                pane.tabs().expect("item is an inline tab").is_central(),
+                central
+            );
+            assert_eq!(pane.is_active(), item == selected);
         }
     }
     assert!(view.item(HISTORICAL).is_none());

@@ -81,7 +81,7 @@ fn constraints(fixture: &OverrideFixture) -> BTreeMap<NodeId, Constraints> {
 
 fn rejected_by_both_paths(
     fixture: &OverrideFixture,
-    overrides: &[SplitWeightOverride<'_>],
+    overrides: &[TrackWeightOverride<'_>],
 ) -> [LayoutError; 2] {
     let metrics = LayoutMetrics::new(1.0).unwrap();
     let version = WorkspaceVersion::initial();
@@ -126,10 +126,10 @@ fn override_batches_verify_owner_references_without_building_fingerprints() {
                 reference: prototype.reference().clone(),
             })
             .collect::<Vec<_>>();
-        let weights = SplitWeight::normalize([0.4, 0.6]).unwrap();
+        let weights = TrackWeights::Split(SplitWeight::normalize([0.4, 0.6]).unwrap());
         let overrides = sources
             .iter()
-            .map(|source| SplitWeightOverride::new(source, &weights))
+            .map(|source| TrackWeightOverride::new(source, &weights))
             .collect::<Vec<_>>();
         let version = WorkspaceVersion::initial();
         let index = WorkspaceIndex::build(&fixture.workspace, version).unwrap();
@@ -195,16 +195,16 @@ fn shared_owner_references_remain_valid_and_stale_duplicates_fail_before_duplica
         .capture_node_source(fixture.root, fixture.splits[1])
         .unwrap();
     assert_eq!(current.reference(), other.reference());
-    let weights = SplitWeight::normalize([0.4, 0.6]).unwrap();
+    let weights = TrackWeights::Split(SplitWeight::normalize([0.4, 0.6]).unwrap());
     let distinct = [
-        SplitWeightOverride::new(&current, &weights),
-        SplitWeightOverride::new(&other, &weights),
+        TrackWeightOverride::new(&current, &weights),
+        TrackWeightOverride::new(&other, &weights),
     ];
     let version = WorkspaceVersion::initial();
     let index = WorkspaceIndex::build(&fixture.workspace, version).unwrap();
     for authority in [None, Some((&index, version))] {
         assert!(
-            validate_split_weight_overrides(
+            validate_track_weight_overrides(
                 &fixture.workspace,
                 fixture.root,
                 &distinct,
@@ -216,13 +216,13 @@ fn shared_owner_references_remain_valid_and_stale_duplicates_fail_before_duplica
     for error in rejected_by_both_paths(
         &fixture,
         &[
-            SplitWeightOverride::new(&current, &weights),
-            SplitWeightOverride::new(&stale, &weights),
+            TrackWeightOverride::new(&current, &weights),
+            TrackWeightOverride::new(&stale, &weights),
         ],
     ) {
         assert!(matches!(
             error,
-            LayoutError::InvalidSplitWeightOverrideSource {
+            LayoutError::InvalidTrackWeightOverrideSource {
                 source: CommandError::StaleNode { node: rejected, .. },
             } if rejected == node
         ));
@@ -236,7 +236,7 @@ fn shared_owner_references_never_authorize_missing_or_foreign_nodes() {
         .workspace
         .capture_node_source(fixture.root, fixture.splits[0])
         .unwrap();
-    let weights = SplitWeight::normalize([0.4, 0.6]).unwrap();
+    let weights = TrackWeights::Split(SplitWeight::normalize([0.4, 0.6]).unwrap());
     for node in [NodeId::default(), fixture.other_split] {
         let foreign = NodeSource {
             root: fixture.root,
@@ -246,15 +246,15 @@ fn shared_owner_references_never_authorize_missing_or_foreign_nodes() {
         for error in rejected_by_both_paths(
             &fixture,
             &[
-                SplitWeightOverride::new(&current, &weights),
-                SplitWeightOverride::new(&foreign, &weights),
+                TrackWeightOverride::new(&current, &weights),
+                TrackWeightOverride::new(&foreign, &weights),
             ],
         ) {
             match error {
-                LayoutError::InvalidSplitWeightOverrideSource {
+                LayoutError::InvalidTrackWeightOverrideSource {
                     source: CommandError::MissingNode { node: rejected, .. },
                 } => assert_eq!(rejected, NodeId::default()),
-                LayoutError::InvalidSplitWeightOverrideSource {
+                LayoutError::InvalidTrackWeightOverrideSource {
                     source: CommandError::NodeOutsideRoot { node: rejected, .. },
                 } => assert_eq!(rejected, fixture.other_split),
                 other => panic!("membership must be checked for every source: {other}"),
@@ -274,44 +274,50 @@ fn batch_validation_preserves_root_duplicate_and_weight_error_priority() {
         .workspace
         .capture_node_source(fixture.other_root, fixture.other_split)
         .unwrap();
-    let valid = SplitWeight::normalize([0.4, 0.6]).unwrap();
+    let valid = TrackWeights::Split(SplitWeight::normalize([0.4, 0.6]).unwrap());
     let short = SplitWeight::normalize([1.0]).unwrap();
     let unnormalized = [SplitWeight::new(0.8).unwrap(); 2];
 
-    for error in rejected_by_both_paths(&fixture, &[SplitWeightOverride::new(&foreign, &short)]) {
+    for error in rejected_by_both_paths(
+        &fixture,
+        &[TrackWeightOverride::new(
+            &foreign,
+            &TrackWeights::Split(short.clone()),
+        )],
+    ) {
         assert!(matches!(
             error,
-            LayoutError::SplitWeightOverrideRootMismatch { .. }
+            LayoutError::TrackWeightOverrideRootMismatch { .. }
         ));
     }
     for error in rejected_by_both_paths(
         &fixture,
         &[
-            SplitWeightOverride::new(&current, &valid),
-            SplitWeightOverride::new(&current, &short),
+            TrackWeightOverride::new(&current, &valid),
+            TrackWeightOverride::new(&current, &TrackWeights::Split(short.clone())),
         ],
     ) {
         assert!(matches!(
             error,
-            LayoutError::DuplicateSplitWeightOverride { .. }
+            LayoutError::DuplicateTrackWeightOverride { .. }
         ));
     }
     for weights in [&short[..], &unnormalized[..]] {
         for error in rejected_by_both_paths(
             &fixture,
             &[
-                SplitWeightOverride::new(&current, weights),
-                SplitWeightOverride::new(&foreign, &valid),
+                TrackWeightOverride::new(&current, &TrackWeights::Split(weights.to_vec())),
+                TrackWeightOverride::new(&foreign, &valid),
             ],
         ) {
             match weights.len() {
                 1 => assert!(matches!(
                     error,
-                    LayoutError::SplitWeightOverrideLengthMismatch { .. }
+                    LayoutError::TrackWeightOverrideLengthMismatch { .. }
                 )),
                 _ => assert!(matches!(
                     error,
-                    LayoutError::SplitWeightOverrideNotNormalized { .. }
+                    LayoutError::TrackWeightOverrideNotNormalized { .. }
                 )),
             }
         }

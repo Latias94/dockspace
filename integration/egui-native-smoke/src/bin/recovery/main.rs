@@ -193,6 +193,7 @@ fn exercise() -> Result<(), Box<dyn Error>> {
             .item(ITEMS[0])
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>();
         items.sort_unstable();

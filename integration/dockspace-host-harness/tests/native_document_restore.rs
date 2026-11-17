@@ -507,13 +507,30 @@ fn assert_content_on_root(view: DockspaceView<'_>, root_surface: SurfaceId) -> C
                 (item_view.surface(), item_view.root(), item_view.contained()),
                 (surface, root, contained)
             );
-            assert_eq!(item_view.tabs().items().collect::<Vec<_>>(), items);
             assert_eq!(
-                item_view.tabs().selected().and_then(|tab| tab.item()),
+                item_view
+                    .tabs()
+                    .expect("item is an inline tab")
+                    .items()
+                    .collect::<Vec<_>>(),
+                items
+            );
+            assert_eq!(
+                item_view
+                    .tabs()
+                    .expect("item is an inline tab")
+                    .selected()
+                    .and_then(|tab| tab.item()),
                 Some(selected)
             );
-            assert_eq!(item_view.tabs().is_central(), central);
-            assert_eq!(item_view.is_selected(), item == selected);
+            assert_eq!(
+                item_view
+                    .tabs()
+                    .expect("item is an inline tab")
+                    .is_central(),
+                central
+            );
+            assert_eq!(item_view.is_active(), item == selected);
         }
     }
     for (root, axis, weights) in [
@@ -800,9 +817,7 @@ impl NativeDocumentHost {
             .records
             .iter()
             .filter_map(|record| match record {
-                OwnedRecord::PaneContent {
-                    item: Some(item), ..
-                } => Some(*item),
+                OwnedRecord::PaneContent { item, .. } => Some(*item),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -1768,7 +1783,7 @@ fn invalid_hosting_declarations_reject_atomically_and_ordinary_restore_remains_i
         );
         assert_eq!(frame.version(), prefix);
         assert_eq!(frame.view().surfaces().count(), 1);
-        assert!(frame.view().item(HOST_DETAIL).unwrap().is_selected());
+        assert!(frame.view().item(HOST_DETAIL).unwrap().is_active());
         assert_eq!(frame.external_key_for_item(HISTORICAL), None);
         drop(frame);
         assert_eq!(host.session.version(), before);

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::motion::{MotionFrame, RectMotion, Transition};
-use crate::presentation::layout::SplitWeightOverride;
+use crate::presentation::layout::TrackWeightOverride;
 use crate::presentation::scene::{ContainedLayoutProjection, SurfacePlanScene};
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -92,7 +92,7 @@ impl DockEngine {
         token: SurfaceContributionToken,
         measurements: &SurfaceMeasurements,
         contained: Option<ContainedLayoutProjection>,
-        resize: &[SplitWeightOverride<'_>],
+        resize: &[TrackWeightOverride<'_>],
     ) -> Option<Arc<PresentationPlan>> {
         // Local tab-strip edits invalidate Ready without changing measurements.
         // Reuse only while the scene still retains that prepared geometry.
@@ -124,7 +124,7 @@ impl DockEngine {
                 .iter()
                 .zip(resize)
                 .all(|(old, current)| {
-                    old.split() == current.source() && old.weights() == current.weights()
+                    old.source() == current.source() && old.weights() == current.weights()
                 }))
         .then(|| Arc::clone(target))
     }
@@ -152,6 +152,13 @@ impl DockEngine {
             .and_then(SurfaceScene::confirmed_presentation)
             .filter(|scene| scene.coordinate_capture() == coordinates)
             .filter(|scene| scene.plan().bounds() == target.bounds());
+        let has_composition = |plan: &PresentationPlan| {
+            plan.layout_facts().is_some_and(|facts| {
+                facts
+                    .roots()
+                    .any(|root| root.projection().nodes.topology_has_composition())
+            })
+        };
         let transition = if self
             .presentation_authority
             .motion
@@ -162,9 +169,11 @@ impl DockEngine {
             || target.popup().visual_for_surface(surface).is_some()
             || target.contained_projection().is_some()
             || !target.resize_projection().is_empty()
+            || has_composition(target)
             || prior.is_some_and(|scene| {
                 scene.plan().contained_projection().is_some()
                     || !scene.plan().resize_projection().is_empty()
+                    || has_composition(scene.plan())
             }) {
             Transition::Instant
         } else {
@@ -199,9 +208,7 @@ impl DockEngine {
         let mut geometry_changed = false;
         let count = target.pane_records().len();
         for (ordinal, pane) in target.pane_records().iter().enumerate() {
-            let Some(item) = target.pane_selected(pane) else {
-                continue;
-            };
+            let item = pane.id().item;
             let mut motion = continuing
                 .and_then(|state| state.tracks.get(&item))
                 .filter(|track| track.root == pane.id().root)
@@ -274,12 +281,7 @@ fn presented_panes(scene: &SurfacePlanScene) -> BTreeMap<ItemId, (RootId, Logica
         .plan()
         .pane_records()
         .iter()
-        .filter_map(|pane| {
-            scene
-                .plan()
-                .pane_selected(pane)
-                .map(|item| (item, (pane.id().root, pane.bounds())))
-        })
+        .map(|pane| (pane.id().item, (pane.id().root, pane.bounds())))
         .collect()
 }
 

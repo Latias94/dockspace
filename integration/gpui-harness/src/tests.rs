@@ -207,9 +207,7 @@ impl Fixture {
                         );
                     }
                     Operation::Pane(pane) => {
-                        if let Some(item) = pane.selected() {
-                            geometry.panes.insert(item, pane.content_bounds());
-                        }
+                        geometry.panes.insert(pane.item(), pane.content_bounds());
                     }
                     Operation::Splitter(splitter) => geometry.splitters.push(splitter.hit_bounds()),
                     Operation::ContainedControls(contained) => {
@@ -233,7 +231,7 @@ impl Fixture {
             .view()
             .item(ItemId::new(item))
             .expect("open item")
-            .is_selected()
+            .is_active()
     }
 
     fn clicks(&self, item: u64) -> usize {
@@ -723,6 +721,7 @@ fn real_tab_drag_merges_into_another_pane(cx: &mut TestAppContext) {
     assert!(
         target
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>()
             .contains(&ItemId::new(2)),
@@ -733,6 +732,7 @@ fn real_tab_drag_merges_into_another_pane(cx: &mut TestAppContext) {
             .item(ItemId::new(1))
             .expect("source item")
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>()
             .contains(&ItemId::new(2))
@@ -1113,7 +1113,7 @@ fn publication_loss_with_outer_transaction_rollback_retires_the_pending_candidat
             .view()
             .item(ItemId::new(1))
             .unwrap()
-            .is_selected()
+            .is_active()
     );
     assert_eq!(
         host.session
@@ -1121,7 +1121,7 @@ fn publication_loss_with_outer_transaction_rollback_retires_the_pending_candidat
             .item(ItemId::new(2))
             .unwrap()
             .tab_index(),
-        1
+        Some(1)
     );
 }
 
@@ -1248,7 +1248,7 @@ fn platform_cancel_covers_a_down_retained_by_a_rejected_candidate(cx: &mut TestA
             .item(ItemId::new(2))
             .unwrap()
             .tab_index(),
-        1
+        Some(1)
     );
 }
 

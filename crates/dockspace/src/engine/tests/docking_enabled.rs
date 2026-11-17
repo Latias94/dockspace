@@ -121,7 +121,7 @@ fn contained_geometry(frame: &mut DockspaceHostFrame<'_>) -> ContainedGeometry {
                 ..
             } if pane.root() == SOURCE_ROOT => {
                 assert_eq!(paint, SurfacePaintDisposition::Visible);
-                panes.push((pane.selected().unwrap(), pane.content_bounds()));
+                panes.push((pane.item(), pane.content_bounds()));
             }
             _ => {}
         }
@@ -292,6 +292,156 @@ fn child_preview(frame: &mut DockspaceHostFrame<'_>) -> Option<DockspacePreviewV
 }
 
 #[test]
+fn group_mode_changes_keep_the_drag_source_and_release_the_previewed_composition() {
+    use crate::model::{TabGroupDockMode, TabKey};
+    for final_mode in [
+        TabGroupDockMode::MergeTabs,
+        TabGroupDockMode::PreserveLayout,
+    ] {
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            HOST,
+            DockspaceRootLayout::new(
+                HOST_ROOT,
+                DockspaceNode::equal_split(
+                    DockspaceAxis::Horizontal,
+                    [
+                        DockspaceNode::tabs([FIRST, SECOND]).named("Editors"),
+                        DockspaceNode::central_tabs([TARGET]),
+                    ],
+                )
+                .unwrap(),
+            ),
+        )])
+        .unwrap();
+        let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+        session.enable_host_pointer().unwrap();
+        measure_and_present(&mut session);
+        let group = session
+            .capture_tabs_group(crate::model::DockAnchor::Item(FIRST))
+            .unwrap();
+        let group_key = TabKey::for_layout(group.source.node());
+        let mut inspect = session.begin_host_frame().unwrap();
+        let plan = inspect.paint_plan(HOST).unwrap().unwrap();
+        let source_bar = plan
+            .tab_bars()
+            .find(|bar| bar.selected() == Some(FIRST.into()))
+            .unwrap();
+        let grip = source_bar
+            .group_drag_region(crate::runtime::TabGroupDragRegionKind::LeadingGrip)
+            .unwrap();
+        let start = center(grip.bounds());
+        let target = plan.panes().find(|pane| pane.item() == TARGET).unwrap();
+        let point = LogicalPoint::new(
+            target.bounds().x() + target.bounds().width() * 0.65,
+            target.bounds().y() + target.bounds().height() * 0.65,
+        )
+        .unwrap();
+        commit(inspect);
+        let hit = session.host_pointer_hit(HOST, start).unwrap();
+        let source = hit.drag_delivery().unwrap();
+        let surface = hit.surface();
+        let from = HostPointerRoute::new(surface, start);
+        let to = HostPointerRoute::new(surface, point);
+        let mut drag = session.begin_host_frame().unwrap();
+        drag.submit_host_pointer_batch([
+            HostPointerInput::new(
+                SurfacePointerId::new(1),
+                SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary),
+                from,
+                from,
+                SurfacePointerCapture::ProviderEndpoint,
+                SurfacePointerReceiverFacts::delivery(&source).with_clear_hover_lane(&surface),
+            ),
+            HostPointerInput::new(
+                SurfacePointerId::new(1),
+                SurfacePointerEvent::Moved,
+                to,
+                to,
+                SurfacePointerCapture::ProviderEndpoint,
+                SurfacePointerReceiverFacts::unknown().with_clear_hover_lane(&surface),
+            ),
+        ])
+        .unwrap();
+        commit(drag);
+        assert!(session.has_active_gesture());
+        for mode in [
+            TabGroupDockMode::PreserveLayout,
+            TabGroupDockMode::MergeTabs,
+            final_mode,
+        ] {
+            let before = session.version();
+            let mut update = session.begin_host_frame().unwrap();
+            update
+                .submit_host_pointer(HostPointerInput::new(
+                    SurfacePointerId::new(1),
+                    SurfacePointerEvent::GroupDockModeChanged { mode },
+                    HostPointerRoute::Unknown,
+                    HostPointerRoute::Unknown,
+                    SurfacePointerCapture::Unknown,
+                    SurfacePointerReceiverFacts::unknown(),
+                ))
+                .unwrap();
+            commit(update);
+            assert_eq!(
+                session.version(),
+                before,
+                "modifier-only changes are not graph edits"
+            );
+            let mut update = session.begin_host_frame().unwrap();
+            update
+                .submit_host_pointer(HostPointerInput::new(
+                    SurfacePointerId::new(1),
+                    SurfacePointerEvent::Moved,
+                    to,
+                    to,
+                    SurfacePointerCapture::ProviderEndpoint,
+                    SurfacePointerReceiverFacts::unknown().with_clear_hover_lane(&surface),
+                ))
+                .unwrap();
+            let plan = update.paint_plan(HOST).unwrap().unwrap();
+            let mut incoming = Vec::new();
+            plan.visit_surface_program(|step| {
+                if let Step::DragPreview(preview) = step {
+                    incoming.extend(
+                        preview
+                            .tabs()
+                            .filter(|tab| tab.is_payload())
+                            .map(|tab| tab.key()),
+                    );
+                }
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+            let expected = match mode {
+                TabGroupDockMode::MergeTabs => vec![FIRST.into(), SECOND.into()],
+                TabGroupDockMode::PreserveLayout => vec![group_key],
+            };
+            assert_eq!(incoming, expected);
+            commit(update);
+        }
+        let mut release = session.begin_host_frame().unwrap();
+        release
+            .submit_host_pointer(HostPointerInput::new(
+                SurfacePointerId::new(1),
+                SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary),
+                to,
+                to,
+                SurfacePointerCapture::ProviderEndpoint,
+                SurfacePointerReceiverFacts::unknown().with_clear_hover_lane(&surface),
+            ))
+            .unwrap();
+        assert!(commit(release).workspace_changed());
+        assert!(!session.has_active_gesture());
+        let tabs = session.view().item(TARGET).unwrap().tabs().unwrap();
+        let expected = match final_mode {
+            TabGroupDockMode::MergeTabs => vec![TARGET.into(), FIRST.into(), SECOND.into()],
+            TabGroupDockMode::PreserveLayout => vec![TARGET.into(), group_key],
+        };
+        assert_eq!(tabs.tabs(), expected);
+    }
+}
+
+#[test]
 fn focused_root_controls_child_magnetism_but_unfocused_binding_is_inert() {
     let layout = DockspaceLayout::new([
         DockspaceSurfaceLayout::new(
@@ -392,7 +542,7 @@ fn focused_root_controls_child_magnetism_but_unfocused_binding_is_inert() {
             Step::Operation {
                 operation: Operation::Pane(pane),
                 ..
-            } if pane.selected() == Some(TARGET) => {
+            } if Some(pane.item()) == Some(TARGET) => {
                 let bounds = pane.content_bounds();
                 magnetic = Some(
                     LogicalPoint::new(

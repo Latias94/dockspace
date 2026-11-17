@@ -197,13 +197,19 @@ impl Fixture {
             );
         }
         assert_eq!(
-            view.item(A).unwrap().tabs().items().collect::<Vec<_>>(),
+            view.item(A)
+                .unwrap()
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
             &[A, B]
         );
         assert_eq!(
             view.item(A)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .selected()
                 .and_then(|tab| tab.item()),
             Some(B)
@@ -340,7 +346,13 @@ fn execute_paint(
     session: &mut DockspaceSession,
     binding: NativeSurfaceBinding,
 ) -> (PaintedSurfaceOutput, Vec<OwnedRecord>) {
-    let mut frame = native_frame(session);
+    execute_paint_frame(native_frame(session), binding)
+}
+
+fn execute_paint_frame(
+    mut frame: DockspaceHostFrame<'_>,
+    binding: NativeSurfaceBinding,
+) -> (PaintedSurfaceOutput, Vec<OwnedRecord>) {
     #[cfg(feature = "motion")]
     let prospective_child = frame.view().surface(binding.surface()).is_none();
     let plan = frame.paint_plan(binding.surface()).unwrap().unwrap();
@@ -450,11 +462,20 @@ fn item_group_and_root_transfer_only_after_exact_first_live() {
         }
         if kind == 0 {
             assert_eq!(
-                view.item(A).unwrap().tabs().items().collect::<Vec<_>>(),
+                view.item(A)
+                    .unwrap()
+                    .tabs()
+                    .expect("item is an inline tab")
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[A]
             );
         } else {
-            let tabs = view.item(A).unwrap().tabs();
+            let tabs = view
+                .item(A)
+                .unwrap()
+                .tabs()
+                .expect("fixture item is an inline tab");
             assert_eq!(tabs.items().collect::<Vec<_>>(), &[A, B]);
             assert_eq!(tabs.selected().and_then(|tab| tab.item()), Some(B));
         }
@@ -484,6 +505,7 @@ fn captured_group_never_retargets_its_anchor_or_refreshes_its_version() {
             .item(A)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[SIBLING, A]
@@ -530,6 +552,7 @@ fn captured_group_never_retargets_its_anchor_or_refreshes_its_version() {
             .item(B)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[B]
@@ -541,6 +564,7 @@ fn captured_group_never_retargets_its_anchor_or_refreshes_its_version() {
             .item(A)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[SIBLING, A]
@@ -866,7 +890,7 @@ fn paint_distinct_minima(
     binding: NativeSurfaceBinding,
     bounds: PhysicalRect,
 ) -> (PaintedSurfaceOutput, Vec<OwnedRecord>) {
-    let mut frame = native_frame(session);
+    let mut frame = settled_native_frame(session);
     frame
         .measure_surface_with(binding.surface(), |request| {
             Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
@@ -896,7 +920,27 @@ fn paint_distinct_minima(
         })
         .unwrap();
     finish(frame);
-    execute_paint(session, binding)
+    execute_paint_frame(settled_native_frame(session), binding)
+}
+
+fn settled_native_frame(session: &mut DockspaceSession) -> DockspaceHostFrame<'_> {
+    let frame = native_frame(session);
+    #[cfg(feature = "motion")]
+    let frame = {
+        let mut frame = frame;
+        frame
+            .set_motion(dockspace::motion::MotionFrame {
+                now: std::time::Duration::from_millis(1000),
+                settings: dockspace::motion::MotionSettings {
+                    layout: dockspace::motion::Transition::Instant,
+                    ..Default::default()
+                },
+                preference: dockspace::motion::MotionPreference::Full,
+            })
+            .unwrap();
+        frame
+    };
+    frame
 }
 
 fn selected_pane_geometry(records: &[OwnedRecord], item: ItemId) -> (LogicalRect, LogicalRect) {
@@ -905,7 +949,7 @@ fn selected_pane_geometry(records: &[OwnedRecord], item: ItemId) -> (LogicalRect
         .find_map(|record| match record {
             OwnedRecord::PaneContent {
                 visual,
-                item: Some(selected),
+                item: selected,
                 bounds,
                 ..
             } if *selected == item => Some((*visual, *bounds)),
@@ -923,6 +967,10 @@ fn selected_pane_geometry(records: &[OwnedRecord], item: ItemId) -> (LogicalRect
             _ => None,
         })
         .unwrap();
+    assert_eq!(
+        bounds, content,
+        "the pane visual contains only real content"
+    );
     (bounds, content)
 }
 
@@ -946,7 +994,25 @@ fn assert_partial_default_geometry(source_contained: bool) {
         }
         let (output, records) =
             paint_distinct_minima(&mut fixture.session, fixture.root, root_bounds());
-        let (pane, content) = selected_pane_geometry(&records, B);
+        let (_, content) = selected_pane_geometry(&records, B);
+        let frames = records
+            .iter()
+            .filter_map(|record| match record {
+                OwnedRecord::Geometry { visual, bounds, .. }
+                    if visual.kind() == dockspace::runtime::DockspaceVisualKind::Tabs
+                        && bounds.x() == content.x()
+                        && bounds.width() == content.width()
+                        && bounds.max().y() == content.max().y()
+                        && bounds.y() < content.y() =>
+                {
+                    Some(*bounds)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let [pane] = frames.as_slice() else {
+            panic!("the selected fixture content must have one exact Tabs source frame");
+        };
         assert!(
             pane.width() < 700.0,
             "the inactive item must exceed its currently selected sibling's pane"
@@ -965,8 +1031,8 @@ fn assert_partial_default_geometry(source_contained: bool) {
         };
         let minimum_width = (measured.0.max(config.minimum_pane_size().width()) + border)
             .max(config.minimum_floating_size().width());
-        let minimum_height = (measured.1.max(config.minimum_pane_size().height()) + content.y()
-            - pane.y()
+        let minimum_height = (measured.1.max(config.minimum_pane_size().height())
+            + config.tab_bar_height()
             + config.floating_title_height()
             + border)
             .max(config.minimum_floating_size().height());
@@ -1021,11 +1087,19 @@ fn assert_partial_default_geometry(source_contained: bool) {
             (request.root, request.binding.surface())
         );
         assert_eq!(
-            moved.tabs().items().collect::<Vec<_>>(),
+            moved
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
             if group { &[A, B][..] } else { &[A][..] }
         );
         assert_eq!(
-            moved.tabs().selected().and_then(|tab| tab.item()),
+            moved
+                .tabs()
+                .expect("item is an inline tab")
+                .selected()
+                .and_then(|tab| tab.item()),
             Some(if group { B } else { A })
         );
         assert_eq!(view.item(SIBLING).unwrap().surface(), HOST);

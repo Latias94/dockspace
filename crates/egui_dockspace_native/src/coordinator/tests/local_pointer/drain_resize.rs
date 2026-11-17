@@ -139,6 +139,7 @@ fn encode(native: &mut NativeCoordinator) -> (EditorScene, HostFrameReport) {
         .item(FIRST)
         .unwrap()
         .tabs()
+        .expect("item is an inline tab")
         .selected()
         .and_then(|tab| tab.item());
     let mut frame = native
@@ -152,7 +153,9 @@ fn encode(native: &mut NativeCoordinator) -> (EditorScene, HostFrameReport) {
     plan.visit_surface_program(|step| {
         if let SurfacePaintProgramStep::Operation { operation, .. } = step {
             match operation {
-                SurfacePaintProgramOperation::Pane(pane) if pane.selected() == outline_selected => {
+                SurfacePaintProgramOperation::Pane(pane)
+                    if Some(pane.item()) == outline_selected =>
+                {
                     let bounds = pane.content_bounds();
                     outline = Some(
                         LogicalPoint::new(
@@ -250,14 +253,7 @@ fn assert_inventory(native: &NativeCoordinator, contained: usize) {
         .into_iter()
         .chain(surface.contained().map(|window| window.root().unwrap()))
     {
-        let mut pending = vec![root.content().unwrap()];
-        while let Some(node) = pending.pop() {
-            if let Some(tabs) = node.tabs() {
-                items.extend(tabs.items());
-            } else {
-                pending.extend(node.split().unwrap().children());
-            }
-        }
+        items.extend(root.items());
     }
     items.sort_by_key(|item| item.get());
     assert_eq!(items, (1..=8).map(ItemId::new).collect::<Vec<_>>());

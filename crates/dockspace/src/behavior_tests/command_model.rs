@@ -2,7 +2,7 @@ use crate::ids::TabKey;
 use std::collections::BTreeSet;
 
 use dockspace::graph::command::{
-    DockFraction, DockTarget, Edge, MovePayload, SplitResize, WorkspaceCommand,
+    DockFraction, DockTarget, Edge, MovePayload, TrackResize, WorkspaceCommand,
 };
 use dockspace::graph::transaction::WorkspaceTransaction;
 use dockspace::graph::{Axis, Node, RootRecord, SplitWeight, SurfacePresentation, Workspace};
@@ -151,7 +151,7 @@ fn tabs(workspace: &Workspace) -> Vec<(NodeId, Vec<ItemId>)> {
             Node::Tabs { items, .. } => {
                 Some((node, items.iter().filter_map(|tab| tab.item()).collect()))
             }
-            Node::Split { .. } => None,
+            Node::Pane { .. } | Node::Split { .. } | Node::Grid { .. } => None,
         })
         .collect()
 }
@@ -161,7 +161,7 @@ fn splits(workspace: &Workspace) -> Vec<(NodeId, usize)> {
         .nodes()
         .filter_map(|(node, value)| match value {
             Node::Split { children, .. } => Some((node, children.len())),
-            Node::Tabs { .. } => None,
+            Node::Pane { .. } | Node::Tabs { .. } | Node::Grid { .. } => None,
         })
         .collect()
 }
@@ -218,7 +218,9 @@ fn select_item_command(
         .expect("fresh selection source must be valid");
     (
         WorkspaceCommand::Select {
-            source: source.as_tab_source(),
+            source: source
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
         ModelDelta::Select { tabs, item },
     )
@@ -276,7 +278,9 @@ fn reorder_item_command(
         .expect("fresh reorder source must be valid");
     (
         WorkspaceCommand::Reorder {
-            source: source.as_tab_source(),
+            source: source
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
             insertion_index,
         },
         ModelDelta::Reorder {
@@ -403,7 +407,9 @@ fn resize_split_command(
         .expect("fresh split source must be valid");
     let current_first = match workspace.node(split).expect("selected split must exist") {
         Node::Split { weights, .. } => weights[0].get(),
-        Node::Tabs { .. } => unreachable!("selected node came from split_nodes"),
+        Node::Pane { .. } | Node::Tabs { .. } | Node::Grid { .. } => {
+            unreachable!("selected node came from split_nodes")
+        }
     };
     let first_weight = if current_first > 0.5 { 0.25 } else { 0.75 };
     let remaining_count = u16::try_from(child_count - 1)
@@ -414,8 +420,8 @@ fn resize_split_command(
     )
     .expect("model resize weights must normalize");
     (
-        WorkspaceCommand::ResizeSplits {
-            splits: vec![SplitResize::new(source, weights.clone())],
+        WorkspaceCommand::ResizeTracks {
+            tracks: vec![TrackResize::split(source, weights.clone())],
         },
         ModelDelta::Resize { split, weights },
     )
@@ -474,7 +480,7 @@ fn open_item_command(
 fn item_tabs(workspace: &Workspace, item: ItemId) -> Option<NodeId> {
     workspace.nodes().find_map(|(node, value)| match value {
         Node::Tabs { items, .. } if items.contains(&TabKey::for_item(item)) => Some(node),
-        Node::Tabs { .. } | Node::Split { .. } => None,
+        Node::Pane { .. } | Node::Tabs { .. } | Node::Split { .. } | Node::Grid { .. } => None,
     })
 }
 
@@ -488,6 +494,7 @@ fn direct_split_children(
             axis,
             children,
             weights,
+            ..
         } = node
         else {
             return None;
@@ -661,10 +668,10 @@ fn assert_success_postcondition(
         ModelDelta::Resize { split, weights } => {
             assert!(matches!(
                 report.outcomes(),
-                [dockspace::graph::command::CommandOutcome::SplitsResized {
-                    splits,
+                [dockspace::graph::command::CommandOutcome::TracksResized {
+                    tracks,
                     changed: true,
-                }] if splits == &[*split]
+                }] if tracks == &[*split]
             ));
             assert!(matches!(
                 after.node(*split),

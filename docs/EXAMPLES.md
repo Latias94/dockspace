@@ -14,6 +14,8 @@ need a desktop session and a working graphics backend.
 | Try full docking with official egui | [Workbench](../crates/egui_dockspace/examples/workbench.rs) | Drag docking, splitters, contained Inspector, themes and retained document data |
 | Try docking in a browser | [Web workbench](../integration/egui-web-demo) | The same panes and configurable motion in one WebAssembly canvas |
 | Start a small winit editor | [Winit editor](../crates/egui_dockspace/examples/winit.rs) | Application panes with the optional complete-output runner; no custom event-loop code |
+| Resize shared Grid tracks | [Shared grid](../crates/egui_dockspace/examples/shared_grid.rs) | Shared row/column dividers, intersection dragging, bare cells and a nested layout tab |
+| Explore named layout tabs | [Composable](../crates/egui_dockspace/examples/composable.rs) | Nested selection and content activation through an ordinary eframe callback |
 | Start from an eframe callback | [Basic](../crates/egui_dockspace/examples/basic.rs) | Pane rendering, close decisions and theme/font/density controls; callback capabilities |
 | Save before closing a tab | [Background save](../crates/egui_dockspace/examples/background_save.rs) | Background worker, exact deferred token, failure recovery and stale completion |
 | Save and restore editor layouts | [Workspace persistence](../crates/egui_dockspace/examples/workspace_persistence.rs) | JSON file across launches, presets, closed-pane inventory and layout locking |
@@ -21,8 +23,8 @@ need a desktop session and a working graphics backend.
 | Exercise moving OS windows | [Solar system](../crates/egui_dockspace_native/examples/solar_system.rs) | Three orbiting child windows, pause, recovery and recreation |
 | Try another UI framework | [GPUI workbench](../integration/gpui-harness/README.md) | Retained GPUI views and single-window docking using a local open-gpui checkout |
 
-Start with the **workbench** for draggable egui docking. The three
-packaged eframe examples use an ordinary `App::ui` callback: selection, close,
+Start with the **workbench** for draggable egui docking. The packaged eframe
+examples use an ordinary `App::ui` callback: selection, close,
 menus and keyboard resizing work, while drag docking and pane-focus confirmation
 are unavailable because eframe owns the surrounding output. Their purpose is to
 teach those application workflows; the complete-output editor demonstrates the
@@ -82,7 +84,7 @@ presentation result. This is a single OS-window example. Its application code
 lives in [editor.rs](../crates/egui_dockspace/examples/workbench/editor.rs), separate
 from the public runner and opt-in measurement exercise. The independent
 official harness compiles the same example against its own locked dependencies.
-Use **Tab style** to compare Dockspace, ImGui-inspired and egui_tiles-inspired
+Use **Tab style** to compare Dockspace, Rounded and egui_tiles-inspired
 tabs in either theme. Enable **Custom tabs** to layer per-tab icons and rounded
 backgrounds, fixed group counts and **Tint** buttons over the selected preset.
 The [tab callbacks](../crates/egui_dockspace/examples/workbench/tabs.rs)
@@ -96,12 +98,24 @@ window to float it. A tab bar's dotted grip moves its tab group; a floating
 window's dotted title grip moves or docks the entire window, including internal
 splits. These gestures also work with **Custom tabs** disabled.
 
+For shared-track resizing and composed layout tabs in a complete-output host:
+
+```sh
+cargo run -p egui_dockspace --example shared_grid --features wgpu --locked
+```
+
+Columns resize across all rows, rows across all columns, and their intersection
+controls both axes. Bare cells have no implicit tab bar; **Layout actions →
+Active Panes** exposes their scoped commands. Nested layout and Grid transitions
+currently settle immediately; flat Tabs/Split layouts retain configured motion.
+
 Smaller eframe examples:
 
 ```sh
 cargo run -p egui_dockspace --example basic --features example-app --locked
 cargo run -p egui_dockspace --example background_save --features example-app --locked
 cargo run -p egui_dockspace --example workspace_persistence --features example-app,serde --locked
+cargo run -p egui_dockspace --example composable --features example-app --locked
 ```
 
 In **background_save**, edit the document and close its tab. The application

@@ -61,7 +61,7 @@ fn pane(marker: usize) -> PresentationHitRegion {
         SurfaceId::new(1),
         PresentationHitRegionKind::PaneBody(PaneSceneId {
             root: RootId::new(u64::try_from(marker + 1).unwrap()),
-            tabs: NodeId::default(),
+            item: crate::ids::ItemId::new(1),
         }),
         marker,
     )
@@ -140,7 +140,7 @@ fn mixed_full_identities_and_junction_arms_match_record_sort_bitwise() {
     let floating = FloatingPresentationId::new(4);
     let splitter = |index| SplitterSceneId {
         root,
-        split: tabs,
+        owner: crate::presentation::scene::SplitterOwner::Split(tabs),
         index,
     };
     let kinds = [
@@ -160,7 +160,10 @@ fn mixed_full_identities_and_junction_arms_match_record_sort_bitwise() {
         PresentationHitRegionKind::TabStripControl(TabStripControlId::TabListMenu(bar)),
         PresentationHitRegionKind::SplitterHandle(splitter(0)),
         PresentationHitRegionKind::TabListMenuBackdrop(menu),
-        PresentationHitRegionKind::PaneBody(PaneSceneId { root, tabs }),
+        PresentationHitRegionKind::PaneBody(PaneSceneId {
+            root,
+            item: crate::ids::ItemId::new(1),
+        }),
         PresentationHitRegionKind::SplitterJunction(SplitterJunctionId::new(
             Some(splitter(0)),
             Some(splitter(1)),

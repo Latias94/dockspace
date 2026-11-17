@@ -84,7 +84,8 @@ def main() -> None:
                      "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "crates/dockspace", "scripts",
                      "integration/product-comparison"]).split("\0")
     sources = {name: digest(ROOT / name) for name in paths
-               if name and Path(name).suffix in (".rs", ".toml", ".lock", ".py", ".cpp")}
+               if name and Path(name).suffix in (".rs", ".toml", ".lock", ".py", ".cpp")
+               and (ROOT / name).is_file()}
     metadata = {
         "started_utc": utc_now(), "source_commit": capture(["git", "rev-parse", "HEAD"]),
         "scope": "Renderer-free balanced binary layout; no NewFrame, Begin/End, text or tessellation.",

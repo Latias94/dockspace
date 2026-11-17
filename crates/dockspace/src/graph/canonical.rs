@@ -36,6 +36,12 @@ pub struct CanonicalizationReport {
 /// Failure to canonicalize a workspace without losing or inventing state.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum CanonicalizationError {
+    /// A supplied grid roster, dimension, or shared track value is invalid.
+    #[error("invalid grid {node:?}: {source}")]
+    InvalidGrid {
+        node: NodeId,
+        source: crate::model::DockspaceGridError,
+    },
     /// A split or root references a stale or missing node identity.
     #[error("node {owner:?} references missing child {child:?}")]
     MissingChild {
@@ -134,14 +140,9 @@ pub enum CanonicalizationError {
         /// Tabs node with invalid or missing history.
         node: NodeId,
     },
-    /// A layout child requires the composable graph implementation.
-    #[error("tabs node {node:?} contains unsupported layout tab {tab:?}")]
-    UnsupportedLayoutTab {
-        /// Owning tabs container.
-        node: NodeId,
-        /// Rejected direct-child identity.
-        tab: TabKey,
-    },
+    /// A layout tab must own an actual structural container.
+    #[error("tabs node {node:?} layout child {child:?} is a bare pane")]
+    LayoutTabIsPane { node: NodeId, child: NodeId },
     /// A central-region identity does not name a tabs leaf.
     #[error("root {root} central node {central:?} is not a tabs leaf")]
     CentralNotTabs {
@@ -401,10 +402,10 @@ fn rewrite_local_split(
     }
     let flattened = children.iter().filter_map(|&child| {
         let next = results.get(child).copied().flatten()?;
-        matches!(storage.nodes.get(next), Some(Node::Split { axis: child_axis, .. }) if *child_axis == axis)
+        matches!(storage.nodes.get(next), Some(Node::Split { axis: child_axis, layout_title: None, .. }) if *child_axis == axis)
             .then_some(next)
     }).collect::<Vec<_>>();
-    let (next, _) = rewrite_split(storage, parent, results)?;
+    let (next, _) = rewrite_split(storage, parent, results, false)?;
     results.insert(parent, next);
     if next == Some(parent) {
         output_splits.push(parent);
@@ -482,10 +483,22 @@ fn canonicalize_validated_draft(
         .map(|(root, record)| (*root, record.node))
         .collect();
 
+    let layout_boundaries: HashSet<_> = workspace
+        .nodes
+        .values()
+        .filter(|node| matches!(node, Node::Tabs { .. }))
+        .flat_map(|node| node.child_nodes().map(|(_, child)| child))
+        .collect();
     let mut effects = CanonicalEffects::default();
     let mut rewritten = SecondaryMap::with_capacity(workspace.nodes.capacity());
     for (root, node) in roots {
-        let (next, changed) = rewrite_subtree(workspace, node, &protected_central, &mut rewritten)?;
+        let (next, changed) = rewrite_subtree(
+            workspace,
+            node,
+            &protected_central,
+            &layout_boundaries,
+            &mut rewritten,
+        )?;
         let next = next.ok_or(CanonicalizationError::EmptyRoot { root })?;
         if changed {
             effects.changed_roots.push(root);
@@ -554,6 +567,7 @@ fn rewrite_subtree(
     workspace: &mut WorkspaceData,
     node_id: NodeId,
     protected_central: &HashSet<NodeId>,
+    layout_boundaries: &HashSet<NodeId>,
     results: &mut SecondaryMap<NodeId, Option<NodeId>>,
 ) -> Result<(Option<NodeId>, bool), CanonicalizationError> {
     let mut stack = vec![(node_id, false)];
@@ -571,21 +585,20 @@ fn rewrite_subtree(
 
         if !exiting {
             stack.push((current_id, true));
-            if let Node::Split { children, .. } = current {
-                stack.extend(children.iter().rev().copied().map(|child| (child, false)));
-            }
+            stack.extend(current.child_nodes().rev().map(|(_, child)| (child, false)));
             continue;
         }
 
         let (result, local_changed) = match current {
-            Node::Tabs { items, .. } => {
-                if items.is_empty() && !protected_central.contains(&current_id) {
-                    (None, true)
-                } else {
-                    (Some(current_id), false)
-                }
-            }
-            Node::Split { .. } => rewrite_split(workspace, current_id, results)?,
+            Node::Pane { .. } => (Some(current_id), false),
+            Node::Tabs { .. } => rewrite_tabs(workspace, current_id, protected_central, results)?,
+            Node::Grid { .. } => rewrite_grid(workspace, current_id, results)?,
+            Node::Split { .. } => rewrite_split(
+                workspace,
+                current_id,
+                results,
+                layout_boundaries.contains(&current_id),
+            )?,
         };
         changed |= local_changed;
         results.insert(current_id, result);
@@ -601,15 +614,156 @@ fn rewrite_subtree(
     Ok((next, changed))
 }
 
+fn rewrite_grid(
+    workspace: &mut WorkspaceData,
+    node: NodeId,
+    results: &SecondaryMap<NodeId, Option<NodeId>>,
+) -> Result<(Option<NodeId>, bool), CanonicalizationError> {
+    let Some(Node::Grid {
+        shape,
+        children,
+        shares,
+        layout_title,
+    }) = workspace.node(node)
+    else {
+        return Err(CanonicalizationError::MissingChild {
+            owner: None,
+            child: node,
+        });
+    };
+    let next: Vec<_> = children
+        .iter()
+        .map(|child| {
+            results
+                .get(*child)
+                .copied()
+                .ok_or(CanonicalizationError::MissingChild {
+                    owner: Some(node),
+                    child: *child,
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect();
+    if next == *children {
+        return Ok((Some(node), false));
+    }
+    if next.is_empty() {
+        return Ok((None, true));
+    }
+    let mut replacement = Node::Grid {
+        shape: *shape,
+        children: next,
+        shares: shares.clone(),
+        layout_title: layout_title.clone(),
+    };
+    replacement
+        .repair_grid_tracks()
+        .map_err(|source| CanonicalizationError::InvalidGrid { node, source })?;
+    workspace
+        .nodes
+        .replace(node, replacement)
+        .ok_or(CanonicalizationError::MissingChild {
+            owner: None,
+            child: node,
+        })?;
+    Ok((Some(node), true))
+}
+
+fn rewrite_tabs(
+    workspace: &mut WorkspaceData,
+    id: NodeId,
+    protected: &HashSet<NodeId>,
+    results: &SecondaryMap<NodeId, Option<NodeId>>,
+) -> Result<(Option<NodeId>, bool), CanonicalizationError> {
+    let Some(Node::Tabs {
+        items,
+        selected,
+        mru,
+        layout_title,
+    }) = workspace.node(id)
+    else {
+        unreachable!("tabs rewrite")
+    };
+    let mut changed = false;
+    let mut replacements = BTreeMap::new();
+    for tab in items {
+        let Some(child) = tab.layout() else {
+            continue;
+        };
+        let result = results
+            .get(child)
+            .copied()
+            .ok_or(CanonicalizationError::MissingChild {
+                owner: Some(id),
+                child,
+            })?;
+        let replacement = result.map(|child| match workspace.node(child) {
+            Some(Node::Pane { item }) => TabKey::for_item(*item),
+            _ => TabKey::for_layout(child),
+        });
+        changed |= replacement != Some(*tab);
+        replacements.insert(*tab, replacement);
+    }
+    let replace = |tab: TabKey| replacements.get(&tab).copied().unwrap_or(Some(tab));
+    let next_items: Vec<_> = items.iter().copied().filter_map(replace).collect();
+    if next_items.is_empty() && !protected.contains(&id) {
+        return Ok((None, true));
+    }
+    let mut next_mru: Vec<_> = mru.iter().copied().filter_map(replace).collect();
+    let mut next_selected = selected
+        .and_then(replace)
+        .or_else(|| next_mru.first().copied());
+    if next_selected.is_some_and(|tab| !super::validation::tab_is_visible_in_data(workspace, tab)) {
+        let visible =
+            match next_selected.and_then(|tab| next_items.iter().position(|entry| *entry == tab)) {
+                Some(index) => next_items[index + 1..]
+                    .iter()
+                    .chain(next_items[..index].iter().rev())
+                    .copied()
+                    .find(|tab| super::validation::tab_is_visible_in_data(workspace, *tab)),
+                None => next_items
+                    .iter()
+                    .copied()
+                    .find(|tab| super::validation::tab_is_visible_in_data(workspace, *tab)),
+            };
+        if visible.is_some() {
+            next_selected = visible;
+        }
+    }
+    changed |= next_selected != *selected;
+    if !changed {
+        return Ok((Some(id), false));
+    }
+    if let Some(selected) = next_selected {
+        next_mru.retain(|tab| *tab != selected);
+        next_mru.insert(0, selected);
+    }
+    let title = layout_title.clone();
+    workspace.nodes.replace(
+        id,
+        Node::Tabs {
+            items: next_items,
+            selected: next_selected,
+            mru: next_mru,
+            layout_title: title,
+        },
+    );
+    Ok((Some(id), true))
+}
+
 fn rewrite_split(
     workspace: &mut WorkspaceData,
     node_id: NodeId,
     results: &SecondaryMap<NodeId, Option<NodeId>>,
+    preserve_boundary: bool,
 ) -> Result<(Option<NodeId>, bool), CanonicalizationError> {
     let Some(Node::Split {
         axis,
         children,
         weights,
+        layout_title,
     }) = workspace.nodes.get(node_id)
     else {
         return Err(CanonicalizationError::TraversalInvariant {
@@ -617,6 +771,7 @@ fn rewrite_split(
         });
     };
     let axis = *axis;
+    let layout_title = layout_title.clone();
     let mut topology_changed = false;
     let mut needs_flattening = false;
     let mut retained_children = 0;
@@ -636,12 +791,22 @@ fn rewrite_split(
             only_child = Some(child);
             needs_flattening |= matches!(
                 workspace.nodes.get(child),
-                Some(Node::Split { axis: child_axis, .. }) if *child_axis == axis
+                Some(Node::Split { axis: child_axis, layout_title: None, .. }) if *child_axis == axis
             );
         }
     }
 
     if retained_children < 2 {
+        if preserve_boundary && let Some(child) = only_child {
+            let tab = match workspace.node(child) {
+                Some(Node::Pane { item }) => TabKey::for_item(*item),
+                _ => TabKey::for_layout(child),
+            };
+            let mut replacement = Node::tabs_from_keys(vec![tab], Some(tab));
+            replacement.set_layout_title(layout_title);
+            workspace.nodes.replace(node_id, replacement);
+            return Ok((Some(node_id), true));
+        }
         return Ok((only_child, true));
     }
 
@@ -660,6 +825,7 @@ fn rewrite_split(
             axis: child_axis,
             children: grandchildren,
             weights: child_weights,
+            layout_title: None,
         }) = workspace.nodes.get(child)
             && *child_axis == axis
         {
@@ -699,6 +865,7 @@ fn rewrite_split(
                 axis,
                 children,
                 weights,
+                layout_title,
             },
         )
         .ok_or(CanonicalizationError::MissingChild {
@@ -753,6 +920,7 @@ fn validate_nodes(
                 items,
                 selected,
                 mru,
+                ..
             } => {
                 let selection_is_valid = if items.is_empty() {
                     selected.is_none()
@@ -770,17 +938,20 @@ fn validate_nodes(
                 }
 
                 for tab in items {
-                    let item = tab
-                        .item()
-                        .ok_or(CanonicalizationError::UnsupportedLayoutTab {
+                    if let Some(item) = tab.item() {
+                        if let Some(first) = item_owners.insert(item, node_id) {
+                            return Err(CanonicalizationError::DuplicateItem {
+                                item,
+                                first,
+                                second: node_id,
+                            });
+                        }
+                    } else if let Some(child) = tab.layout()
+                        && matches!(workspace.node(child), Some(Node::Pane { .. }))
+                    {
+                        return Err(CanonicalizationError::LayoutTabIsPane {
                             node: node_id,
-                            tab: *tab,
-                        })?;
-                    if let Some(first) = item_owners.insert(item, node_id) {
-                        return Err(CanonicalizationError::DuplicateItem {
-                            item,
-                            first,
-                            second: node_id,
+                            child,
                         });
                     }
                 }
@@ -789,18 +960,44 @@ fn validate_nodes(
                 children, weights, ..
             } => {
                 validate_split_weights(node_id, children, weights)?;
-
-                for child in children {
-                    if !workspace.nodes.contains_key(*child) {
-                        return Err(CanonicalizationError::MissingChild {
-                            owner: Some(node_id),
-                            child: *child,
-                        });
-                    }
-                    if parents.insert(*child, node_id).is_some() {
-                        return Err(CanonicalizationError::SharedNode { node: *child });
-                    }
+            }
+            Node::Grid {
+                shape,
+                children,
+                shares,
+                ..
+            } => {
+                shape
+                    .validate_children(children.len())
+                    .and_then(|()| {
+                        shares
+                            .as_ref()
+                            .map_or(Ok(()), |shares| shares.validate_for(*shape, children.len()))
+                    })
+                    .map_err(|source| CanonicalizationError::InvalidGrid {
+                        node: node_id,
+                        source,
+                    })?;
+            }
+            Node::Pane { item } => {
+                if let Some(first) = item_owners.insert(*item, node_id) {
+                    return Err(CanonicalizationError::DuplicateItem {
+                        item: *item,
+                        first,
+                        second: node_id,
+                    });
                 }
+            }
+        }
+        for (_, child) in node.child_nodes() {
+            if !workspace.nodes.contains_key(child) {
+                return Err(CanonicalizationError::MissingChild {
+                    owner: Some(node_id),
+                    child,
+                });
+            }
+            if parents.insert(child, node_id).is_some() {
+                return Err(CanonicalizationError::SharedNode { node: child });
             }
         }
     }
@@ -870,15 +1067,11 @@ fn validate_acyclic(workspace: &WorkspaceData) -> Result<(), CanonicalizationErr
     let mut in_degree: SecondaryMap<NodeId, usize> =
         workspace.nodes.keys().map(|node| (node, 0)).collect();
     for node in workspace.nodes.values() {
-        if let Node::Split { children, .. } = node {
-            for child in children {
-                let degree =
-                    in_degree
-                        .get_mut(*child)
-                        .ok_or(CanonicalizationError::MissingChild {
-                            owner: None,
-                            child: *child,
-                        })?;
+        {
+            for (_, child) in node.child_nodes() {
+                let degree = in_degree
+                    .get_mut(child)
+                    .ok_or(CanonicalizationError::MissingChild { owner: None, child })?;
                 *degree += 1;
             }
         }
@@ -891,14 +1084,14 @@ fn validate_acyclic(workspace: &WorkspaceData) -> Result<(), CanonicalizationErr
     let mut visited = 0_usize;
     while let Some(node_id) = ready.pop_front() {
         visited += 1;
-        if let Some(Node::Split { children, .. }) = workspace.nodes.get(node_id) {
-            for child in children {
+        if let Some(node) = workspace.nodes.get(node_id) {
+            for (_, child) in node.child_nodes() {
                 let degree =
                     in_degree
-                        .get_mut(*child)
+                        .get_mut(child)
                         .ok_or(CanonicalizationError::MissingChild {
                             owner: Some(node_id),
-                            child: *child,
+                            child,
                         })?;
                 *degree =
                     degree
@@ -907,7 +1100,7 @@ fn validate_acyclic(workspace: &WorkspaceData) -> Result<(), CanonicalizationErr
                             stage: "cycle detection",
                         })?;
                 if *degree == 0 {
-                    ready.push_back(*child);
+                    ready.push_back(child);
                 }
             }
         }
@@ -946,9 +1139,7 @@ fn reachable_from_roots(
                     child: node,
                 })?;
             reachable.insert(node, ());
-            if let Node::Split { children, .. } = current {
-                stack.extend(children.iter().rev().copied());
-            }
+            stack.extend(current.child_nodes().rev().map(|(_, child)| child));
         }
     }
     Ok(reachable)
@@ -981,9 +1172,7 @@ fn collect_reachable(
                     owner: None,
                     child: current_id,
                 })?;
-        if let Node::Split { children, .. } = current {
-            stack.extend(children.iter().rev().copied());
-        }
+        stack.extend(current.child_nodes().rev().map(|(_, child)| child));
     }
     Ok(())
 }
@@ -1005,6 +1194,7 @@ mod tests {
             axis: Axis::Horizontal,
             children: vec![leaf],
             weights: vec![SplitWeight::new(1.0).expect("unit weight is valid")],
+            layout_title: None,
         });
         builder.set_root(ROOT, crate::graph::RootRecord::new(wrapper));
         (builder, leaf, wrapper)

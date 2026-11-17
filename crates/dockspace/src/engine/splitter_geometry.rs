@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::geometry::{LogicalPoint, LogicalRect, LogicalSize};
-use crate::graph::command::{NodeSource, SplitResize};
+use crate::graph::command::{NodeSource, TrackResize};
 use crate::graph::{Axis, Node, SplitWeight, Workspace};
 use crate::ids::{NodeId, RootId};
 use crate::interaction::{
@@ -12,10 +12,13 @@ use crate::interaction::{
 use crate::presentation::layout::{LayoutProjection, SplitProjection};
 use crate::presentation::scene::{PresentationPlan, SplitterRecord};
 
+pub(crate) mod piecewise;
+pub(crate) use piecewise::FrozenPiecewiseAxis;
+
 pub(super) fn split_resize_updates(
     resize: &ActiveResize,
     current_pointer: LogicalPoint,
-) -> Option<Vec<SplitResize>> {
+) -> Option<Vec<TrackResize>> {
     resize_axis_group_updates(
         &resize.axis_groups,
         [
@@ -32,6 +35,20 @@ pub(super) fn prepare_resize_axis_groups(
     plan: &PresentationPlan,
     handles: Vec<(NodeSource, SplitterRecord)>,
 ) -> Option<Vec<FrozenResizeAxisGroup>> {
+    if plan.layout_facts()?.config().resize_propagation()
+        == crate::presentation::config::ResizePropagation::Adjacent
+        && let Some(groups) = prepare_linear_resize_axis_groups(workspace, plan, &handles)
+    {
+        return Some(groups);
+    }
+    piecewise::prepare(workspace, plan, &handles)
+}
+
+fn prepare_linear_resize_axis_groups(
+    workspace: &Workspace,
+    plan: &PresentationPlan,
+    handles: &[(NodeSource, SplitterRecord)],
+) -> Option<Vec<FrozenResizeAxisGroup>> {
     if handles.is_empty() {
         return None;
     }
@@ -42,7 +59,7 @@ pub(super) fn prepare_resize_axis_groups(
     let mut incidents = BTreeMap::<Axis, BTreeMap<(RootId, NodeId), Vec<Option<f64>>>>::new();
     for (source, record) in handles {
         let id = *record.id();
-        if source.root() != id.root || source.node() != id.split || !record.operable() {
+        if source.root() != id.root || source.node() != id.node() || !record.operable() {
             return None;
         }
         match roots.entry(id.root) {
@@ -50,7 +67,7 @@ pub(super) fn prepare_resize_axis_groups(
                 workspace
                     .verify_reference(
                         id.root,
-                        id.split,
+                        id.node(),
                         source.reference(),
                         crate::graph::error::ReferenceRole::Source,
                     )
@@ -68,11 +85,12 @@ pub(super) fn prepare_resize_axis_groups(
             axis,
             children,
             weights,
-        } = workspace.node(id.split)?
+            ..
+        } = workspace.node(id.node())?
         else {
             return None;
         };
-        let split = projection.splits.get(&id.split)?;
+        let split = projection.splits.get(&id.node())?;
         if *axis != record.axis()
             || split.axis != *axis
             || id.index >= children.len().checked_sub(1)?
@@ -94,7 +112,7 @@ pub(super) fn prepare_resize_axis_groups(
         let edges = incidents
             .entry(*axis)
             .or_default()
-            .entry((id.root, id.split))
+            .entry((id.root, id.node()))
             .or_insert_with(|| vec![None; children.len() + 1]);
         for index in id.index + 1..=record.after_index() {
             merge_edge(edges.get_mut(index)?, 1.0)?;
@@ -107,6 +125,7 @@ pub(super) fn prepare_resize_axis_groups(
             let mut group = FrozenResizeAxisGroup {
                 axis,
                 splits: Vec::new(),
+                piecewise: None,
                 common_delta: ResizeDeltaInterval {
                     minimum: f64::NEG_INFINITY,
                     maximum: f64::INFINITY,
@@ -123,7 +142,7 @@ pub(super) fn prepare_resize_axis_groups(
                 let projection = root_facts.projection();
                 let root_node = workspace.root(root)?.node;
                 if projection.nodes.get(&root_node).map(|result| result.slot)
-                    != Some(root_facts.bounds())
+                    != Some(root_facts.content_bounds())
                 {
                     return None;
                 }
@@ -142,19 +161,21 @@ pub(super) fn prepare_resize_axis_groups(
                         if incidents.contains_key(&(root, node)) {
                             return None;
                         }
-                        if let Node::Split { children, .. } = workspace.node(node)? {
-                            pending.extend(
-                                children
-                                    .iter()
-                                    .rev()
-                                    .map(|&child| (child, [0.0, 0.0], false)),
-                            );
-                        }
+                        pending.extend(
+                            workspace
+                                .node(node)?
+                                .child_nodes()
+                                .rev()
+                                .map(|(_, child)| (child, [0.0, 0.0], false)),
+                        );
                         continue;
                     }
                     let rect = result.rect;
                     let incident = incidents.get(&(root, node));
                     let affected = outer_edges != [0.0, 0.0] || incident.is_some();
+                    if affected && matches!(workspace.node(node), Some(Node::Grid { .. })) {
+                        return None;
+                    }
                     if affected || check_extent {
                         // A capped frame inside a larger slot does not share its
                         // moving edge. This frozen linear frontier cannot cross
@@ -179,11 +200,25 @@ pub(super) fn prepare_resize_axis_groups(
                         axis: split_axis,
                         children,
                         weights,
+                        ..
                     } = workspace.node(node)?
                     else {
                         if incident.is_some() {
                             return None;
                         }
+                        pending.extend(workspace.node(node)?.child_nodes().rev().map(
+                            |(_, child)| {
+                                let visible = projection
+                                    .nodes
+                                    .get(&child)
+                                    .is_some_and(|result| result.visible);
+                                (
+                                    child,
+                                    if visible { outer_edges } else { [0.0, 0.0] },
+                                    affected && visible,
+                                )
+                            },
+                        ));
                         continue;
                     };
                     let mut edges = vec![0.0; children.len() + 1];
@@ -302,7 +337,7 @@ pub(super) fn prepare_resize_axis_groups(
 pub(super) fn resize_axis_group_updates(
     groups: &[FrozenResizeAxisGroup],
     delta: [f64; 2],
-) -> Option<Vec<SplitResize>> {
+) -> Option<Vec<TrackResize>> {
     resize_axis_group_updates_with_history(groups, delta, None)
 }
 
@@ -312,7 +347,7 @@ pub(super) fn resize_axis_group_adjustment_updates(
     groups: &[FrozenResizeAxisGroup],
     axis: Axis,
     adjustment: ResizeAdjustment,
-) -> Option<Vec<SplitResize>> {
+) -> Option<Vec<TrackResize>> {
     let delta = match axis {
         Axis::Horizontal => [adjustment.delta(), 0.0],
         Axis::Vertical => [0.0, adjustment.delta()],
@@ -324,7 +359,7 @@ fn resize_axis_group_updates_with_history(
     groups: &[FrozenResizeAxisGroup],
     delta: [f64; 2],
     history: Option<(Axis, ResizeDeltaInterval)>,
-) -> Option<Vec<SplitResize>> {
+) -> Option<Vec<TrackResize>> {
     if groups.is_empty()
         || delta.iter().any(|value| !value.is_finite())
         || history.is_some_and(|(_, visited)| {
@@ -354,6 +389,43 @@ fn resize_axis_group_updates_with_history(
                     .maximum
                     .clamp(group.common_delta.minimum, group.common_delta.maximum),
             });
+        if let Some(piecewise) = &group.piecewise {
+            for update in piecewise.updates(shared, visited)? {
+                let key = (update.source().root(), update.source().node());
+                if let Some(previous) = updates.remove(&key) {
+                    // Orthogonal Grid axes share one actual owner and commit both
+                    // track vectors in the same graph update.
+                    let previous: TrackResize = previous;
+                    if previous.grid_basis() != update.grid_basis() {
+                        return None;
+                    }
+                    let previous_grid = previous.grid_shares()?;
+                    let grid = update.grid_shares()?;
+                    let shares = match group.axis {
+                        Axis::Horizontal => crate::model::DockspaceGridShares::from_normalized(
+                            previous_grid.row_weights().to_vec(),
+                            grid.column_weights().to_vec(),
+                        ),
+                        Axis::Vertical => crate::model::DockspaceGridShares::from_normalized(
+                            grid.row_weights().to_vec(),
+                            previous_grid.column_weights().to_vec(),
+                        ),
+                    }
+                    .ok()?;
+                    updates.insert(
+                        key,
+                        TrackResize::grid_resolved(
+                            update.source().clone(),
+                            update.grid_basis()?.clone(),
+                            shares,
+                        ),
+                    );
+                } else {
+                    updates.insert(key, update);
+                }
+            }
+            continue;
+        }
         for split in group.splits.iter().filter(|split| split.axis == group.axis) {
             let update = split_update(split, shared, visited)?;
             if updates
@@ -364,7 +436,49 @@ fn resize_axis_group_updates_with_history(
             }
         }
     }
+    validate_auto_reflow(groups, delta, &updates)?;
     Some(updates.into_values().collect())
+}
+
+fn validate_auto_reflow(
+    groups: &[FrozenResizeAxisGroup],
+    delta: [f64; 2],
+    updates: &BTreeMap<(RootId, NodeId), TrackResize>,
+) -> Option<()> {
+    let mut checked = BTreeSet::new();
+    for frozen in groups.iter().filter_map(|group| group.piecewise.as_ref()) {
+        for (root, node, layout) in frozen.auto_reflow_roots() {
+            if !checked.insert(root) {
+                continue;
+            }
+            let weights = updates
+                .iter()
+                .filter_map(|(&(owner_root, node), update)| {
+                    (owner_root == root).then_some((node, update.weights().clone()))
+                })
+                .collect();
+            let projection = layout.project(&weights).ok()?;
+            let geometry = crate::presentation::layout::measure_resize_geometry(
+                &projection,
+                layout.splitter_thickness(),
+            );
+            if !geometry.root_is_feasible(node) {
+                return None;
+            }
+            for group in groups {
+                let frozen = group.piecewise.as_ref()?;
+                let requested = match group.axis {
+                    Axis::Horizontal => delta[0],
+                    Axis::Vertical => delta[1],
+                }
+                .clamp(group.common_delta.minimum, group.common_delta.maximum);
+                if !frozen.reflow_preserves_drivers(root, &projection, requested) {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(())
 }
 
 fn merge_edge(edge: &mut Option<f64>, movement: f64) -> Option<()> {
@@ -583,7 +697,7 @@ fn split_update(
     split: &FrozenResizeSplit,
     delta: f64,
     visited: Option<ResizeDeltaInterval>,
-) -> Option<SplitResize> {
+) -> Option<TrackResize> {
     let extents = split
         .child_extents
         .iter()
@@ -603,7 +717,7 @@ fn split_update(
     // Pointer motion retains its frozen intent on return to the press boundary.
     // Discrete inputs retain intermediate commits only where extents changed.
     if extents == split.child_extents && !moved_before {
-        return Some(SplitResize::new(
+        return Some(TrackResize::split(
             split.source.clone(),
             split.weights.clone(),
         ));
@@ -631,25 +745,39 @@ fn split_update(
             0.0,
         )?;
     }
+    let weights = weights_for_extents(
+        &split.weights,
+        &split.child_extents,
+        &extents,
+        split.central_index,
+    )?;
+    Some(TrackResize::split(split.source.clone(), weights))
+}
+
+fn weights_for_extents(
+    weights: &[SplitWeight],
+    old_extents: &[f64],
+    extents: &[f64],
+    central: Option<usize>,
+) -> Option<Vec<SplitWeight>> {
     let total = extents.iter().sum::<f64>();
     if !total.is_finite() || total <= 0.0 {
         return None;
     }
-    let visible_share = if split.child_extents.iter().all(|&extent| extent > 0.0) {
+    let visible_share = if old_extents.iter().all(|&extent| extent > 0.0) {
         1.0
     } else {
         crate::graph::normalized_weight_sum(
-            split
-                .weights
+            weights
                 .iter()
-                .zip(&split.child_extents)
+                .zip(old_extents)
                 .filter_map(|(weight, &extent)| (extent > 0.0).then_some(weight.get())),
         )
     };
     let mut shares = extents
         .iter()
-        .zip(&split.child_extents)
-        .zip(&split.weights)
+        .zip(old_extents)
+        .zip(weights)
         .map(|((&extent, &old_extent), weight)| {
             if old_extent > 0.0 {
                 extent / total * visible_share
@@ -658,10 +786,10 @@ fn split_update(
             }
         })
         .collect::<Vec<_>>();
-    if let Some(central) = split.central_index {
+    if let Some(central) = central {
         let mut siblings = 0.0;
         for (index, share) in shares.iter_mut().enumerate() {
-            if index != central && split.child_extents[index] > 0.0 {
+            if index != central && old_extents[index] > 0.0 {
                 siblings += *share;
             }
         }
@@ -673,8 +801,7 @@ fn split_update(
             *central_share = residual;
         }
     }
-    let weights = shares.into_iter().map(weight).collect::<Option<Vec<_>>>()?;
-    Some(SplitResize::new(split.source.clone(), weights))
+    shares.into_iter().map(weight).collect::<Option<Vec<_>>>()
 }
 
 fn weight(value: f64) -> Option<SplitWeight> {

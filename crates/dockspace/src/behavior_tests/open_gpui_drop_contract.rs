@@ -263,7 +263,7 @@ fn tabs_containing(workspace: &Workspace, item: ItemId) -> NodeId {
         .nodes()
         .find_map(|(node, record)| match record {
             Node::Tabs { items, .. } if items.contains(&TabKey::for_item(item)) => Some(node),
-            Node::Tabs { .. } | Node::Split { .. } => None,
+            Node::Pane { .. } | Node::Tabs { .. } | Node::Split { .. } | Node::Grid { .. } => None,
         })
         .expect("moved item must remain owned by exactly one tabs node")
 }

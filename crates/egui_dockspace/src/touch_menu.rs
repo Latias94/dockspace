@@ -1,6 +1,6 @@
-//! Single-use touch requests for the existing root presentation menu.
+//! Single-use touch requests for exact root or typed-tab presentation menus.
 
-use dockspace::model::{RootId, SurfaceId};
+use dockspace::model::{RootId, SurfaceId, TabKey};
 use dockspace::runtime::DockspaceContextMenuRequest;
 use egui::{Id, Ui, ViewportId};
 
@@ -35,6 +35,7 @@ pub(crate) fn take_touch_context_menu(
     instance: Id,
     surface: SurfaceId,
     root: RootId,
+    tab: Option<TabKey>,
 ) -> Option<DockspaceContextMenuRequest> {
     let viewport = ui.ctx().viewport_id();
     let pass = ui.ctx().cumulative_pass_nr();
@@ -48,7 +49,10 @@ pub(crate) fn take_touch_context_menu(
             data.remove::<StagedTouchContextMenu>(id);
             return None;
         }
-        if staged.request.surface() != surface || staged.request.root() != root {
+        if staged.request.surface() != surface
+            || staged.request.root() != root
+            || staged.request.tab() != tab
+        {
             return None;
         }
         data.remove::<StagedTouchContextMenu>(id);

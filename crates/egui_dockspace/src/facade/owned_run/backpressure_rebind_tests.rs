@@ -117,7 +117,7 @@ fn a_backpressured_context_rebind_cannot_keep_old_touch_contacts_and_suppress_mo
             .unwrap();
         point = present(output);
     }
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
 
     // Keep the contact live while filling the public facade's default 64 slots.
     // These frames finish before the contact's long-press deadline.
@@ -150,7 +150,7 @@ fn a_backpressured_context_rebind_cannot_keep_old_touch_contacts_and_suppress_mo
         output.drop_without_applying_deltas();
         retained.push(receipt);
     }
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
     let before_rebind = dockspace.version();
     let original_input = input(2.0, vec![Event::PointerMoved(point)]);
     let error = dockspace
@@ -188,7 +188,7 @@ fn a_backpressured_context_rebind_cannot_keep_old_touch_contacts_and_suppress_mo
             .unwrap();
         point = present(output);
     }
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
 
     let (output, _) = dockspace
         .run_single_surface(
@@ -207,7 +207,7 @@ fn a_backpressured_context_rebind_cannot_keep_old_touch_contacts_and_suppress_mo
         .unwrap();
     present(output);
     assert!(
-        dockspace.view().item(SECOND).unwrap().is_selected(),
+        dockspace.view().item(SECOND).unwrap().is_active(),
         "the new context's mouse must select its presented tab without an old Touch End"
     );
 }

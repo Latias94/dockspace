@@ -328,7 +328,18 @@ impl NativeApplicationAction {
                 Err(error) => return Err(error),
             },
             NativeApplicationCommand::Close(request) => {
-                frame.submit_prepared_close_request(request)?
+                let target = request.target();
+                match frame.submit_prepared_close_request(request) {
+                    Ok(submitted) => submitted,
+                    Err(error) if error.is_foreign_prepared_close_request() => {
+                        return Ok(NativeApplicationSubmission::Terminal(
+                            NativeActionStatus::CloseRejected(
+                                DockspaceCloseRequestRejection::Conflict { target },
+                            ),
+                        ));
+                    }
+                    Err(error) => return Err(error),
+                }
             }
             NativeApplicationCommand::DecideClose {
                 request,
@@ -808,6 +819,9 @@ impl NativeApplicationActions {
                     NativeActionStatus::Dock(DockspaceActionStatus::Rejected(
                         DockspaceActionRejection::Conflict,
                     )) => matches!(kind, NativeActionExpectation::Dock),
+                    NativeActionStatus::CloseRejected(
+                        DockspaceCloseRequestRejection::Conflict { .. },
+                    ) => matches!(kind, NativeActionExpectation::Close),
                     NativeActionStatus::Stale {
                         expected: stale, ..
                     } => expected == stale && kind.is_replacement(),

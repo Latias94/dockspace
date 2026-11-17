@@ -399,8 +399,8 @@ fn unbounded_sizing_matches_the_minimum_only_primitive_and_resize_overrides() {
             .map(|(&node, &minimum)| (node, PaneSizing::from_minimum(minimum)))
             .collect();
         let source = workspace.capture_node_source(ROOT, inner).unwrap();
-        let weights = SplitWeight::normalize([0.4, 0.6]).unwrap();
-        let overrides = [SplitWeightOverride::new(&source, &weights)];
+        let weights = TrackWeights::Split(SplitWeight::normalize([0.4, 0.6]).unwrap());
+        let overrides = [TrackWeightOverride::new(&source, &weights)];
         for policy in [PaneOverflowPolicy::Clip, PaneOverflowPolicy::Compress] {
             let metrics = LayoutMetrics::new(3.0)
                 .unwrap()

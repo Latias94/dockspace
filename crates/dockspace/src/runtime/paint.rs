@@ -48,9 +48,11 @@ mod drop_feedback;
 mod guides;
 #[cfg(test)]
 mod junction_query_tests;
+mod pane_commands;
 mod preview_tabs;
 mod splitter_range;
 mod tab_chrome;
+mod tab_commands;
 mod tabs;
 mod tabs_group_commands;
 pub use actions::ContainedResizeDirection;
@@ -71,7 +73,7 @@ pub use tab_chrome::{
 };
 pub use tabs::{
     PanePaintRecord, TabBarPaintRecord, TabGroupDragRegionPaintRecord, TabPaintRecord,
-    TabStripMemberPaintRecord, TabStripMemberVisibility,
+    TabStripMemberPaintRecord, TabStripMemberVisibility, TabsPaintRecord,
 };
 pub use tabs_group_commands::DockspaceTabsGroupCommandKind;
 
@@ -132,6 +134,7 @@ enum VisualIdentity {
     Pane(crate::presentation::scene::PaneSceneId),
     Tab(TabSceneId),
     TabBar(TabBarSceneId),
+    Tabs(TabBarSceneId),
     TabGroupDragRegion {
         bar: TabBarSceneId,
         region: TabGroupDragRegionKind,
@@ -163,8 +166,10 @@ enum VisualIdentity {
 /// Public semantic class of one opaque visual identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DockspaceVisualKind {
-    /// One tabs leaf and selected pane body.
+    /// One real application content placement.
     Pane,
+    /// One independent Tabs container background.
+    Tabs,
     /// One visible tab.
     Tab,
     /// One tab strip.
@@ -237,6 +242,7 @@ impl DockspaceVisualId {
     pub const fn kind(self) -> DockspaceVisualKind {
         match self.0 {
             VisualIdentity::Pane(_) => DockspaceVisualKind::Pane,
+            VisualIdentity::Tabs(_) => DockspaceVisualKind::Tabs,
             VisualIdentity::Tab(_) => DockspaceVisualKind::Tab,
             VisualIdentity::TabBar(_) => DockspaceVisualKind::TabBar,
             VisualIdentity::TabGroupDragRegion { .. } => DockspaceVisualKind::TabGroupDragRegion,
@@ -298,6 +304,8 @@ impl DockspacePaintLayer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DockspaceReceiverRole {
     PaneBody,
+    /// Empty Tabs container chrome; never application Pane content.
+    TabsBackground,
     TabBody,
     TabClose,
     TabStripControl,
@@ -706,6 +714,8 @@ pub struct ContainedResizePaintRecord {
 pub enum DockspacePresentationMenuAnchorKind {
     /// The sole core-selected tab bar of a main or native-main root.
     TabBar,
+    /// An independent band outside a main root's application content.
+    RootControls,
     /// The title chrome of a contained-floating root.
     ContainedTitle,
 }
@@ -749,6 +759,9 @@ impl PresentationMenuAnchorPaintRecord<'_> {
     pub const fn kind(self) -> DockspacePresentationMenuAnchorKind {
         match self.record.host() {
             PresentationMenuAnchorHost::TabBar(_) => DockspacePresentationMenuAnchorKind::TabBar,
+            PresentationMenuAnchorHost::RootControls => {
+                DockspacePresentationMenuAnchorKind::RootControls
+            }
             PresentationMenuAnchorHost::ContainedTitle(_) => {
                 DockspacePresentationMenuAnchorKind::ContainedTitle
             }
@@ -759,6 +772,7 @@ impl PresentationMenuAnchorPaintRecord<'_> {
     #[must_use]
     pub const fn host_visual_id(self) -> DockspaceVisualId {
         match self.record.host() {
+            PresentationMenuAnchorHost::RootControls => self.visual_id(),
             PresentationMenuAnchorHost::TabBar(bar) => {
                 DockspaceVisualId(VisualIdentity::TabBar(bar))
             }
@@ -772,6 +786,12 @@ impl PresentationMenuAnchorPaintRecord<'_> {
     #[must_use]
     pub const fn bounds(self) -> LogicalRect {
         self.bounds
+    }
+
+    /// Returns the independent control band's allocation, absent for tab/title anchors.
+    #[must_use]
+    pub const fn reserved_bounds(self) -> Option<LogicalRect> {
+        self.record.reserved_bounds()
     }
 
     /// Returns the roster-derived paint layer.
@@ -829,6 +849,15 @@ impl<'plan> ContainedPaintRecord<'plan> {
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::Contained(self.record.floating()))
+    }
+
+    /// Returns this root's frozen content or container descriptor.
+    #[must_use]
+    pub fn label(self) -> crate::graph::TabLabel<'plan> {
+        self.record
+            .label()
+            .or_else(|| self.plan.root_label(self.record.root()))
+            .unwrap_or(crate::graph::TabLabel::Layout { title: "Layout" })
     }
 
     #[must_use]
@@ -1149,6 +1178,8 @@ pub enum SurfacePaintProgramRootKind<'frame> {
 pub enum SurfacePaintProgramOperation<'frame> {
     /// Paint one pane background and content host.
     Pane(PanePaintRecord<'frame>),
+    /// Paint one independent Tabs container background.
+    Tabs(TabsPaintRecord<'frame>),
     /// Paint one tab strip.
     TabBar(TabBarPaintRecord<'frame>),
     /// Paint one visible tab.
@@ -1171,6 +1202,7 @@ impl SurfacePaintProgramOperation<'_> {
     pub const fn visual_id(self) -> DockspaceVisualId {
         match self {
             Self::Pane(record) => record.visual_id(),
+            Self::Tabs(record) => record.visual_id(),
             Self::TabBar(record) => record.visual_id(),
             Self::Tab(record) => record.visual_id(),
             Self::Splitter(record) => record.visual_id(),
@@ -1187,10 +1219,10 @@ impl SurfacePaintProgramOperation<'_> {
 pub struct SurfacePaintProgramRoot<'frame> {
     root: RootId,
     kind: SurfacePaintProgramRootKind<'frame>,
-    title_item: Option<ItemId>,
+    label: crate::graph::TabLabel<'frame>,
 }
 
-impl SurfacePaintProgramRoot<'_> {
+impl<'frame> SurfacePaintProgramRoot<'frame> {
     /// Returns the stable root identity.
     #[must_use]
     pub const fn root(&self) -> RootId {
@@ -1212,10 +1244,10 @@ impl SurfacePaintProgramRoot<'_> {
         }
     }
 
-    /// Returns the first selected item in core traversal order.
+    /// Returns this root's own frozen descriptor, never a representative descendant.
     #[must_use]
-    pub const fn title_item(&self) -> Option<ItemId> {
-        self.title_item
+    pub const fn label(&self) -> crate::graph::TabLabel<'frame> {
+        self.label
     }
 }
 
@@ -1659,11 +1691,22 @@ impl<'frame> SurfacePaintPlan<'frame> {
                             );
                         }
                     }
+                    ResolvedSurfaceProgramStep::RootBegin(root) => {
+                        if let Some(crate::graph::TabLabel::Item(item)) = root.label() {
+                            visitor(
+                                DockspaceVisualId::from_pane_scene(
+                                    crate::presentation::scene::PaneSceneId {
+                                        root: root.root(),
+                                        item,
+                                    },
+                                ),
+                                TabKey::for_item(item),
+                            );
+                        }
+                    }
                     ResolvedSurfaceProgramStep::DragDecoration => {
-                        if let Some(decoration) = self.drag_decoration()
-                            && let Some(item) = decoration.ghost_item()
-                        {
-                            visitor(decoration.source_visual(), TabKey::for_item(item));
+                        if let Some(decoration) = self.drag_decoration() {
+                            visitor(decoration.source_visual(), decoration.key());
                         }
                     }
                     ResolvedSurfaceProgramStep::DragPreview => {
@@ -1687,8 +1730,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
                             }
                         }
                     }
-                    ResolvedSurfaceProgramStep::RootBegin(_)
-                    | ResolvedSurfaceProgramStep::Operation { .. }
+                    ResolvedSurfaceProgramStep::Operation { .. }
                     | ResolvedSurfaceProgramStep::RootEnd(_)
                     | ResolvedSurfaceProgramStep::PopupBackdrop(_)
                     | ResolvedSurfaceProgramStep::DropTarget(_)
@@ -1884,6 +1926,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
                     .ok_or(())?;
                 let menu = TabListMenuPaintRecord {
                     record,
+                    plan: self.plan,
                     surface: self.surface,
                     backdrop,
                 };
@@ -1959,7 +2002,9 @@ impl<'frame> SurfacePaintPlan<'frame> {
         SurfacePaintProgramRoot {
             root: root.root(),
             kind,
-            title_item: root.title_item(),
+            label: root
+                .label()
+                .unwrap_or(crate::graph::TabLabel::Layout { title: "Layout" }),
         }
     }
 
@@ -1970,20 +2015,22 @@ impl<'frame> SurfacePaintPlan<'frame> {
     ) -> Option<SurfacePaintProgramOperation<'frame>> {
         Some(match operation {
             ResolvedSurfaceProgramOperation::Pane(record) => {
-                SurfacePaintProgramOperation::Pane(PanePaintRecord {
-                    record,
-                    selected: self.plan.pane_selected(record),
-                })
+                SurfacePaintProgramOperation::Pane(PanePaintRecord { record })
+            }
+            ResolvedSurfaceProgramOperation::Tabs(record) => {
+                SurfacePaintProgramOperation::Tabs(TabsPaintRecord { record })
             }
             ResolvedSurfaceProgramOperation::TabBar(record) => {
                 SurfacePaintProgramOperation::TabBar(TabBarPaintRecord {
                     record,
+                    plan: self.plan,
                     selected: self.plan.selected_in_tabs(record.id().tabs),
                 })
             }
             ResolvedSurfaceProgramOperation::Tab(record) => {
                 SurfacePaintProgramOperation::Tab(TabPaintRecord {
                     record,
+                    plan: self.plan,
                     selected: self.plan.tab_selected(record),
                     operable: self.tab_is_operable(record),
                 })
@@ -2302,7 +2349,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         let tab = self.tab_record(item.into())?;
         self.tab_is_operable(tab).then_some(())?;
         self.candidate
-            .item_close_is_available(tab.id().tab.item()?)
+            .tab_close_is_available(*tab.id())
             .then_some(())?;
         Some(super::PreparedSurfaceAction::close(
             self.authority_domain,
@@ -2360,10 +2407,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self.plan
             .pane_records()
             .iter()
-            .map(move |record| PanePaintRecord {
-                record,
-                selected: self.plan.pane_selected(record),
-            })
+            .map(move |record| PanePaintRecord { record })
     }
 
     #[cfg(test)]
@@ -2373,6 +2417,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
             .iter()
             .map(move |record| TabPaintRecord {
                 record,
+                plan: self.plan,
                 selected: self.plan.tab_selected(record),
                 operable: self.tab_is_operable(record),
             })
@@ -2385,6 +2430,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
             .iter()
             .map(|record| TabBarPaintRecord {
                 record,
+                plan: self.plan,
                 selected: self.plan.selected_in_tabs(record.id().tabs),
             })
     }
@@ -2435,6 +2481,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
                     .find(|backdrop| backdrop.session() == record.session())?;
                 Some(TabListMenuPaintRecord {
                     record,
+                    plan: self.plan,
                     surface,
                     backdrop,
                 })
@@ -2509,6 +2556,72 @@ impl<'frame> SurfacePaintPlan<'frame> {
         let tab = self.tab_record(item.into())?;
         self.tab_is_operable(tab).then_some(())?;
         self.receiver(PresentationHitRegionKind::TabBody(*tab.id()))
+    }
+
+    /// Returns the frozen label of one direct tab represented by this output or preview.
+    #[must_use]
+    pub fn tab_label(&self, key: TabKey) -> Option<crate::graph::TabLabel<'frame>> {
+        if let Some(decoration) = self
+            .drag_decoration()
+            .filter(|decoration| decoration.key() == key)
+        {
+            return Some(decoration.label());
+        }
+        if let Some(item) = key.item().filter(|item| {
+            self.plan
+                .pane_records()
+                .iter()
+                .any(|pane| pane.item() == *item)
+        }) {
+            return Some(crate::graph::TabLabel::Item(item));
+        }
+
+        if let Some(tab) = self
+            .plan
+            .tab_records()
+            .iter()
+            .find(|tab| tab.id().tab == key)
+        {
+            return self.plan.tab_label(*tab.id());
+        }
+        if let Some(bar) = self
+            .plan
+            .tab_bar_records()
+            .iter()
+            .find(|bar| bar.members().iter().any(|member| member.tab().tab == key))
+        {
+            return self.plan.tab_label(TabSceneId {
+                root: bar.id().root,
+                tabs: bar.id().tabs,
+                tab: key,
+            });
+        }
+        let preview = self.drag_preview?;
+        let tab = preview
+            .tab_strip()?
+            .tabs
+            .iter()
+            .find(|tab| tab.key == key)?;
+        match key.item() {
+            Some(item) => Some(crate::graph::TabLabel::Item(item)),
+            None => tab
+                .layout_title
+                .as_deref()
+                .map(|title| crate::graph::TabLabel::Layout { title }),
+        }
+    }
+
+    /// Returns a container background receiver only when this Tabs has no active child.
+    #[must_use]
+    pub fn receiver_for_tabs(
+        &self,
+        tabs: TabsPaintRecord<'frame>,
+    ) -> Option<DockspaceReceiverDescriptor> {
+        let id = tabs.record.id();
+        if self.plan.selected_in_tabs(id.tabs).is_some() {
+            return None;
+        }
+        self.receiver(PresentationHitRegionKind::TabsBackground(id))
     }
 
     /// Returns the exact receiver for one painted pane body.
@@ -2867,6 +2980,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
 const fn receiver_role(kind: PresentationHitRegionKind) -> Option<DockspaceReceiverRole> {
     Some(match kind {
         PresentationHitRegionKind::PaneBody(_) => DockspaceReceiverRole::PaneBody,
+        PresentationHitRegionKind::TabsBackground(_) => DockspaceReceiverRole::TabsBackground,
         PresentationHitRegionKind::TabBody(_) => DockspaceReceiverRole::TabBody,
         PresentationHitRegionKind::TabClose(_) => DockspaceReceiverRole::TabClose,
         PresentationHitRegionKind::TabStripControl(_) => DockspaceReceiverRole::TabStripControl,
@@ -2955,6 +3069,17 @@ mod tests {
         let mut expected_resources = Vec::new();
         let full_visit = plan.visit_surface_program(|step| {
             match step {
+                SurfacePaintProgramStep::RootBegin { root, .. } => {
+                    if let crate::graph::TabLabel::Item(item) = root.label() {
+                        expected_resources.push((
+                            DockspaceVisualId::from_pane_scene(PaneSceneId {
+                                root: root.root(),
+                                item,
+                            }),
+                            TabKey::for_item(item),
+                        ));
+                    }
+                }
                 SurfacePaintProgramStep::Operation {
                     operation: SurfacePaintProgramOperation::Tab(tab),
                     ..
@@ -2964,10 +3089,7 @@ mod tests {
                         .extend(menu.rows().map(|row| (row.tab_visual_id(), row.key())));
                 }
                 SurfacePaintProgramStep::DragDecoration(decoration) => {
-                    if let Some(item) = decoration.ghost_item() {
-                        expected_resources
-                            .push((decoration.source_visual(), TabKey::for_item(item)));
-                    }
+                    expected_resources.push((decoration.source_visual(), decoration.key()));
                 }
                 SurfacePaintProgramStep::DropTarget(target) => {
                     let descriptor = target.receiver();
@@ -3121,7 +3243,7 @@ mod tests {
         malformed
             .push_surface_program_root_operation(SurfaceProgramRootOperation::Pane(PaneSceneId {
                 root,
-                tabs,
+                item,
             }))
             .expect("the missing record identity enters the program");
         malformed

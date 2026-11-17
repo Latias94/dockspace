@@ -1,7 +1,8 @@
 use dockspace::geometry::PhysicalRect;
 use dockspace::model::{
-    DockAnchor, DockPlacement, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
-    DockspaceSurfaceLayout, ItemId, NativeTearOffSource, NativeWindowPlacement, RootId, SurfaceId,
+    DockAnchor, DockPlacement, DockspaceGridShape, DockspaceLayout, DockspaceNode,
+    DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, NativeTearOffSource,
+    NativeWindowPlacement, RootId, SurfaceId,
 };
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::DockspaceSession;
@@ -150,7 +151,13 @@ fn stored_native_payload_commands_and_group_capture_share_the_public_slot() {
         );
         assert!(app.take_action_status().is_none());
         assert_eq!(
-            app.with_view(|view| view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>()),
+            app.with_view(|view| view
+                .item(FIRST)
+                .unwrap()
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>()),
             [FIRST, SECOND]
         );
         assert_eq!(
@@ -191,4 +198,81 @@ fn another_apps_captured_group_uses_the_same_public_command_slot() {
     );
     assert!(destination.take_action_status().is_none());
     assert!(destination.error_kind().is_none());
+}
+
+#[test]
+fn public_layout_tab_capture_is_read_only_and_busy_admission_returns_the_exact_command() {
+    let bare = ItemId::new(3);
+    let hidden = ItemId::new(4);
+    let tools = DockspaceNode::grid(
+        DockspaceGridShape::Auto,
+        [
+            DockspaceNode::tabs([SECOND, hidden]),
+            DockspaceNode::pane(bare),
+        ],
+    )
+    .unwrap()
+    .named("Tools");
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(
+            RootId::new(1),
+            DockspaceNode::composed_tabs([DockspaceNode::pane(FIRST), tools]),
+        ),
+    )])
+    .unwrap()
+    .with_hidden_items([hidden])
+    .unwrap();
+    let style = DockStyle::default();
+    let session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        style.presentation_config().unwrap(),
+    )
+    .unwrap();
+    let app = NativeDockspaceApp::new(
+        egui::Id::unique("public-composite-tab-command"),
+        session,
+        SURFACE,
+        Panes("unsaved application text".to_owned()),
+        style,
+    )
+    .unwrap();
+    let key = app.with_view(|view| {
+        view.root(RootId::new(1))
+            .unwrap()
+            .content()
+            .unwrap()
+            .tabs()
+            .unwrap()
+            .tabs()[1]
+    });
+    let tab = app.capture_tab(key).unwrap();
+    assert_eq!(tab.key(), key);
+    assert!(app.capture_tab(bare.into()).is_none());
+    assert!(app.capture_tab(FIRST.into()).is_some());
+    assert!(app.take_action_status().is_none());
+    app.request_command(NativeCommand::FloatTab {
+        tab: tab.clone(),
+        surface: SURFACE,
+    })
+    .unwrap();
+    let command = NativeCommand::CloseTab { tab: tab.clone() };
+    let error = app.request_command(command.clone()).unwrap_err();
+    assert_eq!(error.reason(), NativeActionRequestError::Busy);
+    assert_eq!(error.into_command(), command);
+    assert_eq!(app.capture_tab(key), Some(tab));
+    assert_eq!(
+        app.with_view(|view| view
+            .root(RootId::new(1))
+            .unwrap()
+            .items()
+            .collect::<Vec<_>>()),
+        [FIRST, SECOND, hidden, bare]
+    );
+    assert!(app.with_view(|view| view.item(hidden).unwrap().is_hidden()));
+    assert_eq!(
+        app.with_panes(|panes| panes.0.clone()),
+        "unsaved application text"
+    );
 }

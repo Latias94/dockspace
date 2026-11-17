@@ -228,8 +228,8 @@ fn presented_tabs(id: &'static str) -> (Context, Dockspace, RunPanes, Pos2) {
         .and_then(|hit| hit.delivery())
         .expect("the stable rendered position hits a real presented receiver");
     assert_eq!(hit.descriptor().role(), DockspaceReceiverRole::TabBody);
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
-    assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
+    assert!(!dockspace.view().item(SECOND).unwrap().is_active());
     assert!(!dockspace.session.has_active_gesture());
     panes.calls.clear();
     (context, dockspace, panes, position)
@@ -337,7 +337,7 @@ fn discarded_focus_keeps_the_core_request_without_reapplying_framework_focus() {
     let selected = dockspace.select_item_current(SECOND).unwrap();
     assert!(matches!(
         selected.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(SECOND)));
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated { item: selected_tab, .. }) if *selected_tab == SECOND));
     let request = dockspace.session.pane_focus_request(SURFACE).unwrap();
     let (mut output, receipt) = crate::run_ui(&context, input(1.0, Vec::new()), |ui| {
         if ui.ctx().current_pass_index() < 2 {
@@ -373,7 +373,7 @@ fn discarded_focus_keeps_the_core_request_without_reapplying_framework_focus() {
     let selected = dockspace.select_item_current(SECOND).unwrap();
     assert!(matches!(
         selected.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(SECOND)));
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated { item: selected_tab, .. }) if *selected_tab == SECOND));
     assert_ne!(dockspace.session.pane_focus_request(SURFACE), Some(request));
     for time in [1.3, 1.4] {
         let (output, _) = dockspace
@@ -677,7 +677,7 @@ fn keyboard_navigation_keeps_tab_focus_after_editable_pane_selection_commits() {
                 "{key:?} must retain {title} tab focus at step {step}, pass {pass}",
             );
             if pass > 0 {
-                assert!(dockspace.view().item(item).unwrap().is_selected());
+                assert!(dockspace.view().item(item).unwrap().is_active());
             }
             output.drop_without_applying_deltas();
             receipt.report(SurfacePresentationResult::Presented);
@@ -753,7 +753,7 @@ fn activating_an_overflow_menu_row_focuses_its_editable_content() {
             assert!(menu_button.is_some());
         }
         if phase == 10 {
-            assert!(dockspace.view().item(SECOND).unwrap().is_selected());
+            assert!(dockspace.view().item(SECOND).unwrap().is_active());
             assert_eq!(
                 context.memory(egui::Memory::focused),
                 panes.focus_target(SECOND),
@@ -849,7 +849,7 @@ fn escaping_an_overflow_menu_returns_focus_to_its_button_for_keyboard_reopening(
         }
         if phase == 10 {
             assert!(!menu_visible, "Escape must dismiss the menu");
-            assert!(dockspace.view().item(FIRST).unwrap().is_selected());
+            assert!(dockspace.view().item(FIRST).unwrap().is_active());
             assert_eq!(
                 context.memory(egui::Memory::focused).map(|id| id.value()),
                 Some(menu_button.unwrap().0),
@@ -971,8 +971,8 @@ fn an_overflow_menu_yields_focus_and_keyboard_activation_to_an_application_modal
                 "the modal editor must retain focus without another request, pass {pass}"
             );
         }
-        assert!(dockspace.view().item(FIRST).unwrap().is_selected());
-        assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+        assert!(dockspace.view().item(FIRST).unwrap().is_active());
+        assert!(!dockspace.view().item(SECOND).unwrap().is_active());
         output.drop_without_applying_deltas();
         receipt.report(SurfacePresentationResult::Presented);
     }
@@ -1046,10 +1046,10 @@ fn an_application_modal_blocks_accessible_tab_activation() {
                 second_tab = Some(*id);
             }
             assert!(
-                dockspace.view().item(FIRST).unwrap().is_selected(),
+                dockspace.view().item(FIRST).unwrap().is_active(),
                 "{action:?} must not select a tab behind the modal, pass {pass}"
             );
-            assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+            assert!(!dockspace.view().item(SECOND).unwrap().is_active());
             if pass == 5 || pass >= 7 {
                 assert_eq!(
                     context.memory(egui::Memory::focused),
@@ -1078,10 +1078,10 @@ fn a_pending_pane_focus_request_does_not_steal_focus_from_an_application_modal()
             let selected = dockspace.select_item_current(FIRST).unwrap();
             assert!(matches!(
                 selected.status(),
-                DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
-                    tab: selected_tab,
+                DockspaceActionStatus::Applied(DockspaceActionOutcome::ItemActivated {
+                    item: selected_tab,
                     ..
-                }) if selected_tab.item() == Some(FIRST)));
+                }) if *selected_tab == FIRST));
         }
         let events = if pass == 6 {
             vec![Event::Text("modal input".to_owned())]
@@ -1115,8 +1115,8 @@ fn a_pending_pane_focus_request_does_not_steal_focus_from_an_application_modal()
                 "the modal must retain focus before and after the pane request, pass {pass}"
             );
         }
-        assert!(dockspace.view().item(FIRST).unwrap().is_selected());
-        assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+        assert!(dockspace.view().item(FIRST).unwrap().is_active());
+        assert!(!dockspace.view().item(SECOND).unwrap().is_active());
         output.drop_without_applying_deltas();
         receipt.report(SurfacePresentationResult::Presented);
     }
@@ -1176,8 +1176,8 @@ fn a_tab_press_does_not_replace_a_new_application_modals_focus_after_publication
                 "the original presented tab press must actually reach the core"
             );
         }
-        assert!(dockspace.view().item(SECOND).unwrap().is_selected());
-        assert!(!dockspace.view().item(FIRST).unwrap().is_selected());
+        assert!(dockspace.view().item(SECOND).unwrap().is_active());
+        assert!(!dockspace.view().item(FIRST).unwrap().is_active());
         assert_eq!(
             context.memory(egui::Memory::focused),
             Some(modal_editor),
@@ -1245,8 +1245,8 @@ fn a_tab_press_does_not_focus_a_tab_disabled_by_the_terminal_pass() {
             tab.is_disabled(),
             "the docking scope must inherit ui.disable()"
         );
-        assert!(dockspace.view().item(SECOND).unwrap().is_selected());
-        assert!(!dockspace.view().item(FIRST).unwrap().is_selected());
+        assert!(dockspace.view().item(SECOND).unwrap().is_active());
+        assert!(!dockspace.view().item(FIRST).unwrap().is_active());
         assert_eq!(
             context.memory(egui::Memory::focused),
             Some(editor),
@@ -1341,8 +1341,8 @@ fn escaping_a_presentation_menu_returns_focus_to_its_button_for_keyboard_reopeni
         if phase == 10 {
             assert!(!menu_visible, "Escape must dismiss the presentation menu");
         }
-        assert!(dockspace.view().item(FIRST).unwrap().is_selected());
-        assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+        assert!(dockspace.view().item(FIRST).unwrap().is_active());
+        assert!(!dockspace.view().item(SECOND).unwrap().is_active());
         assert!(dockspace.view().item(FIRST).unwrap().contained().is_none());
         output.drop_without_applying_deltas();
         receipt.report(SurfacePresentationResult::Presented);
@@ -1415,7 +1415,7 @@ fn presentation_menu_count(output: &FullOutput) -> usize {
         .unwrap()
         .nodes
         .iter()
-        .filter(|(_, node)| node.role() == Role::Menu && node.label() == Some("Layout actions"))
+        .filter(|(_, node)| node.role() == Role::Menu && node.label() == Some("Tab actions"))
         .count()
 }
 
@@ -1493,8 +1493,8 @@ fn owned_touch_menu_escape_survives_late_discards_and_a_new_long_press_can_reope
             );
         }
         assert_eq!(dockspace.version(), before);
-        assert!(dockspace.view().item(FIRST).unwrap().is_selected());
-        assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+        assert!(dockspace.view().item(FIRST).unwrap().is_active());
+        assert!(!dockspace.view().item(SECOND).unwrap().is_active());
     }
 }
 
@@ -1522,8 +1522,8 @@ fn owned_touch_menu_request_survives_an_output_hook_failure() {
         assert_eq!(presentation_menu_count(&output), 1);
     }
     assert_eq!(dockspace.version(), before);
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
-    assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
+    assert!(!dockspace.view().item(SECOND).unwrap().is_active());
 }
 
 #[test]
@@ -1732,7 +1732,7 @@ fn late_discards_paint_once_per_actual_pass_and_publish_one_selection_and_output
     assert_eq!(response.mutation().after(), dockspace.version());
     assert!(response.mutation().workspace_changed());
     assert_ne!(dockspace.version(), before);
-    assert!(dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(dockspace.view().item(SECOND).unwrap().is_active());
     assert!(dockspace.session.has_active_gesture());
     {
         let mut probe = dockspace.session.begin_host_frame().unwrap();
@@ -1824,7 +1824,7 @@ fn queued_accessibility_event_survives_a_later_update_hook_panic_until_publicati
     let (output, receipt) = output.into_parts();
     output.drop_without_applying_deltas();
     receipt.report(SurfacePresentationResult::Presented);
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
     assert!(
         !dockspace.ui_actions.is_empty(),
         "the real UI event entered deferred ingress"
@@ -1841,7 +1841,7 @@ fn queued_accessibility_event_survives_a_later_update_hook_panic_until_publicati
     );
     assert!(panes.calls.iter().any(|(item, _)| *item == SECOND));
     assert_eq!(dockspace.version(), before);
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
     assert!(
         !dockspace.ui_actions.is_empty(),
         "an unpublished attempt cannot acknowledge the queued event"
@@ -1853,7 +1853,7 @@ fn queued_accessibility_event_survives_a_later_update_hook_panic_until_publicati
     output.drop_without_applying_deltas();
     receipt.report(SurfacePresentationResult::Presented);
     assert!(response.mutation().workspace_changed());
-    assert!(dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(dockspace.view().item(SECOND).unwrap().is_active());
     assert!(dockspace.ui_actions.is_empty());
     let selected = dockspace.version();
     let (output, response) = dockspace
@@ -1944,13 +1944,7 @@ fn real_ui_action_ingress_accepts_64_events_and_rejects_65_without_partial_publi
                 .run_single_surface(&context, wide_input(2.0, Vec::new()), SURFACE, &mut panes)
                 .unwrap();
             output.into_parts().0.drop_without_applying_deltas();
-            assert!(
-                dockspace
-                    .view()
-                    .item(ItemId::new(64))
-                    .unwrap()
-                    .is_selected()
-            );
+            assert!(dockspace.view().item(ItemId::new(64)).unwrap().is_active());
             assert!(dockspace.ui_actions.is_empty());
         }
     }
@@ -1986,8 +1980,8 @@ fn output_hook_panic_rolls_back_a_real_selection_and_never_replays_its_raw_press
         "the real inactive-tab press must select and paint before the hook panics"
     );
     assert_eq!(dockspace.version(), before);
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
-    assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
+    assert!(!dockspace.view().item(SECOND).unwrap().is_active());
     assert!(!dockspace.session.has_active_gesture());
     assert!(presented.is_some());
     assert!(
@@ -2034,7 +2028,7 @@ fn output_hook_panic_rolls_back_a_real_selection_and_never_replays_its_raw_press
     assert_eq!(response.mutation().after(), before);
     assert!(!response.mutation().workspace_changed());
     assert_eq!(dockspace.version(), before);
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
     assert!(!dockspace.session.has_active_gesture());
     assert!(dockspace.ui_actions.is_empty());
     receipt.report(SurfacePresentationResult::Presented);
@@ -2075,8 +2069,8 @@ fn removing_real_pane_geometry_rejects_the_run_before_core_publication() {
         "the failed output must contain the real newly selected pane"
     );
     assert_eq!(dockspace.version(), before);
-    assert!(dockspace.view().item(FIRST).unwrap().is_selected());
-    assert!(!dockspace.view().item(SECOND).unwrap().is_selected());
+    assert!(dockspace.view().item(FIRST).unwrap().is_active());
+    assert!(!dockspace.view().item(SECOND).unwrap().is_active());
     assert!(!dockspace.session.has_active_gesture());
     assert!(presented.is_some());
     assert!(

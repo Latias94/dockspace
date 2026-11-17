@@ -29,7 +29,7 @@ fn locked_commands_reject_without_mutation_and_work_again_after_unlock() {
         .capture_node_source(CONTAINED_A, workspace.root(CONTAINED_A).unwrap().node)
         .unwrap();
     let target = workspace
-        .capture_tab_target(CONTAINED_B, source.tabs())
+        .capture_tab_target(CONTAINED_B, source.owner_node())
         .unwrap();
     let survivor_target = workspace
         .capture_tab_target(SURVIVOR_ROOT, workspace.root(SURVIVOR_ROOT).unwrap().node)
@@ -40,7 +40,10 @@ fn locked_commands_reject_without_mutation_and_work_again_after_unlock() {
             target: DockTarget::Center(target),
         },
         WorkspaceCommand::Reorder {
-            source: source.clone().as_tab_source(),
+            source: source
+                .clone()
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
             insertion_index: 2,
         },
         WorkspaceCommand::Move {
@@ -128,14 +131,14 @@ fn locked_resize_and_empty_root_removal_reject_even_without_item_changes() {
     builder.set_surface(SURVIVOR, SurfacePresentation::with_main(SURVIVOR_ROOT));
     let workspace = builder.build().unwrap();
     let commands = [
-        WorkspaceCommand::ResizeSplits {
-            splits: vec![SplitResize::new(
+        WorkspaceCommand::ResizeTracks {
+            tracks: vec![TrackResize::split(
                 workspace.capture_node_source(MAIN, split).unwrap(),
                 SplitWeight::normalize([0.25, 0.75]).unwrap(),
             )],
         },
-        WorkspaceCommand::ResizeSplits {
-            splits: vec![SplitResize::new(
+        WorkspaceCommand::ResizeTracks {
+            tracks: vec![TrackResize::split(
                 workspace.capture_node_source(MAIN, split).unwrap(),
                 SplitWeight::normalize([0.5, 0.5]).unwrap(),
             )],
@@ -175,7 +178,8 @@ fn rejected_mutation_rolls_back_an_earlier_allowed_selection() {
                 .capture_item_source_by_id(ItemId::new(5))
                 .unwrap()
                 .unwrap()
-                .as_tab_source(),
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
         WorkspaceCommand::UpdateContainedRect {
             surface: SOURCE,
@@ -223,7 +227,10 @@ fn locked_selection_and_raise_remain_available_with_exact_roster_preconditions()
     let policy = policy.snapshot(PolicyRevision::new(1));
     let report = WorkspaceTransaction::from_commands([
         WorkspaceCommand::Select {
-            source: source.clone().as_tab_source(),
+            source: source
+                .clone()
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
         raise.clone(),
     ])
@@ -237,7 +244,7 @@ fn locked_selection_and_raise_remain_available_with_exact_roster_preconditions()
         ]
     ));
     assert!(
-        matches!(workspace.node(source.tabs()), Some(Node::Tabs { selected: Some(item), .. }) if item.item() == Some(source.item()))
+        matches!(workspace.node(source.owner_node()), Some(Node::Tabs { selected: Some(item), .. }) if item.item() == Some(source.item()))
     );
     assert_eq!(
         workspace.surface(SOURCE).unwrap().contained,

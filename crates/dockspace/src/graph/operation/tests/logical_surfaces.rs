@@ -344,7 +344,7 @@ fn an_attached_central_remains_after_its_last_item_moves_out_until_explicit_reti
         .capture_item_source_by_id(ItemId::new(2))
         .unwrap()
         .unwrap();
-    let original_tabs = source.tabs();
+    let original_tabs = source.owner_node();
     let target = workspace
         .capture_tab_target(ATTACHED_ROOT, central)
         .unwrap();
@@ -355,7 +355,7 @@ fn an_attached_central_remains_after_its_last_item_moves_out_until_explicit_reti
     .apply(&mut workspace, &default_policy())
     .unwrap();
     assert_eq!(
-        workspace.locate_item_by_id(ItemId::new(2)).unwrap().0,
+        workspace.locate_item_by_id(ItemId::new(2)).unwrap().root,
         ATTACHED_ROOT
     );
 

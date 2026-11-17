@@ -495,7 +495,7 @@ impl Harness {
                 self.dockspace
                     .view()
                     .item(item)
-                    .is_some_and(|item| item.is_selected())
+                    .is_some_and(|item| item.is_active())
             })
             .ok_or_else(|| "the first pane has no selected tab".into())
     }

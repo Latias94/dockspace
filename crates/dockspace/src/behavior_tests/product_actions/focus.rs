@@ -5,8 +5,6 @@ use crate::runtime::{
     NativeGlobalFocus,
 };
 
-const SECOND_TAB: TabKey = TabKey::for_item(SECOND);
-
 const OTHER_SURFACE: SurfaceId = SurfaceId::new(40);
 const OTHER_ROOT: RootId = RootId::new(400);
 
@@ -214,8 +212,15 @@ fn cross_surface_float_item_from_idle_focuses_the_exact_destination_pane() {
     assert_eq!(moved.surface(), ROOTLESS_SURFACE);
     assert_eq!(moved.root(), root);
     assert_eq!(moved.contained(), Some(floating));
-    assert!(moved.is_selected());
-    assert_eq!(moved.tabs().items().collect::<Vec<_>>(), &[SECOND]);
+    assert!(moved.is_active());
+    assert_eq!(
+        moved
+            .tabs()
+            .expect("fixture item belongs to a tabs container")
+            .items()
+            .collect::<Vec<_>>(),
+        &[SECOND]
+    );
     assert_eq!(
         session.view().item(FIRST).map(|item| item.surface()),
         Some(MAIN_SURFACE)
@@ -264,9 +269,13 @@ fn cross_surface_dock_item_from_idle_focuses_the_exact_destination_pane() {
     assert_eq!(moved.surface(), MAIN_SURFACE);
     assert_eq!(moved.root(), MAIN_ROOT);
     assert_eq!(moved.contained(), None);
-    assert!(moved.is_selected());
+    assert!(moved.is_active());
     assert_eq!(
-        moved.tabs().items().collect::<Vec<_>>(),
+        moved
+            .tabs()
+            .expect("fixture item belongs to a tabs container")
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND, FLOATING]
     );
     assert!(session.view().root(CONTAINED_ROOT).is_none());
@@ -308,9 +317,13 @@ fn root_float_and_dock_back_from_idle_focus_the_current_selected_pane() {
         assert_eq!(selected.surface(), target_surface);
         assert_eq!(selected.root(), MAIN_ROOT);
         assert_eq!(selected.contained(), Some(floating));
-        assert!(selected.is_selected());
+        assert!(selected.is_active());
         assert_eq!(
-            selected.tabs().items().collect::<Vec<_>>(),
+            selected
+                .tabs()
+                .expect("fixture item belongs to a tabs container")
+                .items()
+                .collect::<Vec<_>>(),
             &[FIRST, SECOND]
         );
 
@@ -358,13 +371,20 @@ fn root_float_and_dock_back_from_idle_focus_the_current_selected_pane() {
         assert_eq!(selected.surface(), target_surface);
         assert_eq!(selected.root(), target_root);
         assert_eq!(selected.contained(), None);
-        assert!(selected.is_selected());
+        assert!(selected.is_active());
         let expected_items: &[ItemId] = if target_surface == MAIN_SURFACE {
             &[FIRST, SECOND]
         } else {
             &[FLOATING, FIRST, SECOND]
         };
-        assert_eq!(selected.tabs().items().collect::<Vec<_>>(), expected_items);
+        assert_eq!(
+            selected
+                .tabs()
+                .expect("fixture item belongs to a tabs container")
+                .items()
+                .collect::<Vec<_>>(),
+            expected_items
+        );
 
         present_surfaces(&mut session, &surfaces);
         let docked_request = assert_pane_focus_lifecycle(&mut session, target_surface, SECOND);
@@ -404,8 +424,8 @@ fn public_select_changed_and_already_selected_both_request_pane_focus() {
             assert_eq!(
                 report.inputs(),
                 &[HostInputOutcome::ProductActionApplied(
-                    DockspaceActionOutcome::Selected {
-                        tab: SECOND_TAB,
+                    DockspaceActionOutcome::ItemActivated {
+                        item: SECOND,
                         changed,
                     }
                 )]
@@ -417,9 +437,13 @@ fn public_select_changed_and_already_selected_both_request_pane_focus() {
                 assert!(!report.workspace_changed());
             }
             let selected = session.view().item(SECOND).expect("selected pane survives");
-            assert!(selected.is_selected());
+            assert!(selected.is_active());
             assert_eq!(
-                selected.tabs().items().collect::<Vec<_>>(),
+                selected
+                    .tabs()
+                    .expect("fixture item belongs to a tabs container")
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FIRST, SECOND]
             );
 
@@ -476,8 +500,8 @@ fn dock_back_after_focusing_a_and_selecting_b_focuses_b_instead_of_focus_history
     assert_eq!(
         selected.inputs(),
         &[HostInputOutcome::ProductActionApplied(
-            DockspaceActionOutcome::Selected {
-                tab: SECOND_TAB,
+            DockspaceActionOutcome::ItemActivated {
+                item: SECOND,
                 changed: true,
             }
         )]
@@ -519,9 +543,13 @@ fn dock_back_after_focusing_a_and_selecting_b_focuses_b_instead_of_focus_history
     );
     let selected = session.view().item(SECOND).expect("B survives dock-back");
     assert_eq!(selected.contained(), None);
-    assert!(selected.is_selected());
+    assert!(selected.is_active());
     assert_eq!(
-        selected.tabs().items().collect::<Vec<_>>(),
+        selected
+            .tabs()
+            .expect("fixture item belongs to a tabs container")
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
     present_surfaces(&mut session, &[MAIN_SURFACE, OTHER_SURFACE]);

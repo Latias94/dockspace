@@ -92,7 +92,7 @@ fn an_inactive_items_complete_sizing_follows_it_into_a_center_preview_and_commit
     let pane = committed
         .pane_records()
         .iter()
-        .find(|pane| committed.pane_selected(pane) == Some(MOVED))
+        .find(|pane| pane.item() == MOVED)
         .unwrap();
     assert_eq!(pane.content_bounds(), resolved.visual().rect());
     assert_eq!(
@@ -102,7 +102,7 @@ fn an_inactive_items_complete_sizing_follows_it_into_a_center_preview_and_commit
 }
 
 #[test]
-fn an_existing_empty_central_anchor_keeps_its_measured_cap_in_future_layout() {
+fn an_empty_central_anchor_uses_core_baseline_without_an_application_measurement() {
     let mut builder = Workspace::builder();
     let anchor = builder.insert_node(Node::tabs([]));
     let second = builder.insert_node(Node::tabs([ItemId::new(2)]));
@@ -132,10 +132,31 @@ fn an_existing_empty_central_anchor_keeps_its_measured_cap_in_future_layout() {
         super::super::project_future_root(&workspace, &workspace, &policy, &plan, None, ROOT)
             .unwrap()
             .unwrap();
-    let sibling = (1000.0 - 2.0 * config.splitter_thickness() - 200.0) / 2.0;
-    assert_eq!(future.nodes[&anchor].rect.width(), 200.0);
+    let available = 1000.0 - 2.0 * config.splitter_thickness();
+    let sibling = available * 0.25;
+    assert_eq!(future.nodes[&anchor].rect.width(), available * 0.5);
     assert_eq!(future.nodes[&second].rect.width(), sibling);
     assert_eq!(future.nodes[&third].rect.width(), sibling);
+    assert_eq!(
+        plan.layout_facts()
+            .unwrap()
+            .root(ROOT)
+            .unwrap()
+            .pane_sizings()
+            .count(),
+        2
+    );
+    assert!(
+        !plan
+            .pane_records()
+            .iter()
+            .any(|pane| pane.owner_node() == anchor)
+    );
+    assert!(
+        plan.tabs_records()
+            .iter()
+            .any(|tabs| tabs.id().tabs == anchor)
+    );
     assert_eq!(
         &future,
         plan.layout_facts()

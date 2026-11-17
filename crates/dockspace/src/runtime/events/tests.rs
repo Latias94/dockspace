@@ -95,7 +95,7 @@ fn events_keep_intermediate_versions_order_and_session_scoped_identity() {
         assert_eq!(report.notification().events(), report.events());
         assert_eq!(
             report.events()[0].kind(),
-            &DockspaceEventKind::SelectionCommitted { tab: SECOND.into() }
+            &DockspaceEventKind::ItemActivated { item: SECOND }
         );
         assert_eq!(report.events()[0].version(), selected);
         let opened = report
@@ -145,7 +145,7 @@ fn unchanged_rejected_stale_and_abandoned_actions_do_not_replay_changes() {
         let mut abandoned = session.begin_host_frame().unwrap();
         abandoned.select_item_current(SECOND).unwrap();
     }
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     let mut frame = session.begin_host_frame().unwrap();
     frame.select_item_current(SECOND).unwrap();
     assert_eq!(commit(frame).events().len(), 1);

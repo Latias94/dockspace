@@ -180,7 +180,7 @@ fn assert_geometry_close(first: &mut DockspaceSession, second: &mut DockspaceSes
     let panes = |session: &mut DockspaceSession| {
         inspect_surface(session, |plan| {
             plan.panes()
-                .map(|pane| (pane.selected(), pane.bounds()))
+                .map(|pane| (pane.item(), pane.bounds()))
                 .collect::<Vec<_>>()
         })
     };

@@ -70,7 +70,7 @@ fn middle_click(editor: &mut Editor, point: LogicalPoint) -> Vec<EguiSurfaceActi
                 .view()
                 .item(INSPECTOR)
                 .unwrap()
-                .is_selected()
+                .is_active()
         );
         assert!(
             !editor
@@ -79,7 +79,7 @@ fn middle_click(editor: &mut Editor, point: LogicalPoint) -> Vec<EguiSurfaceActi
                 .view()
                 .item(THIRD)
                 .unwrap()
-                .is_selected()
+                .is_active()
         );
         let actions = present_events(
             editor,
@@ -102,6 +102,7 @@ fn middle_click(editor: &mut Editor, point: LogicalPoint) -> Vec<EguiSurfaceActi
                 .item(THIRD)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .selected(),
             Some(INSPECTOR.into()),
             "the shared renderer must not select the middle-clicked tab"
@@ -165,7 +166,7 @@ fn request_close(editor: &mut Editor, action: EguiSurfaceAction) -> DockspaceClo
             .view()
             .item(INSPECTOR)
             .unwrap()
-            .is_selected()
+            .is_active()
     );
     plan.clone()
 }
@@ -288,7 +289,7 @@ fn native_middle_body_close_keeps_selection_and_the_deferred_decision_workflow()
                 .view()
                 .item(INSPECTOR)
                 .unwrap()
-                .is_selected()
+                .is_active()
         );
         for id in (1..=8).filter(|id| *id != THIRD.get()) {
             assert!(editor.native.session.view().item(ItemId::new(id)).is_some());

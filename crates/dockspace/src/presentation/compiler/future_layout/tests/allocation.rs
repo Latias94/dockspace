@@ -87,7 +87,7 @@ fn central_preview_uses_the_explicit_allocation_and_matches_committed_geometry()
         let pane = committed
             .pane_records()
             .iter()
-            .find(|pane| committed.pane_selected(pane) == Some(MOVED))
+            .find(|pane| pane.item() == MOVED)
             .unwrap();
         assert_eq!(resolved.visual().rect(), pane.content_bounds());
         assert_eq!(workspace.root(ROOT).unwrap().central, Some(anchor));

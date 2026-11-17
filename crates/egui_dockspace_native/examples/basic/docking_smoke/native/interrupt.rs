@@ -327,8 +327,12 @@ fn placements(app: &NativeExampleApp) -> Placements {
                     surface: pane.surface(),
                     root: pane.root(),
                     contained: pane.contained(),
-                    items: pane.tabs().items().collect::<Vec<_>>(),
-                    selected: pane.tabs().selected(),
+                    items: pane
+                        .tabs()
+                        .expect("item is an inline tab")
+                        .items()
+                        .collect::<Vec<_>>(),
+                    selected: pane.tabs().expect("item is an inline tab").selected(),
                 },
             )
         })

@@ -68,6 +68,7 @@ pub struct ContainedRecord {
     resize: [ContainedResizeRecord; 8],
     minimum_size: LogicalSize,
     layer: SceneLayerKey,
+    label: Option<super::FrozenTabLabel>,
 }
 
 impl ContainedRecord {
@@ -103,7 +104,16 @@ impl ContainedRecord {
             resize,
             minimum_size,
             layer,
+            label: None,
         }
+    }
+
+    pub(crate) fn with_label(mut self, label: super::FrozenTabLabel) -> Self {
+        self.label = Some(label);
+        self
+    }
+    pub(crate) fn label(&self) -> Option<crate::graph::TabLabel<'_>> {
+        self.label.as_ref().map(super::FrozenTabLabel::as_label)
     }
 
     /// Returns the stable contained presentation identity.

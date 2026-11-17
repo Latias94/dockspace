@@ -2564,7 +2564,9 @@ fn terminal_replacement_cleanup_consumes_the_recovery_obligation() {
         EngineInput::WorkspaceCommand {
             expected,
             command: WorkspaceCommand::Select {
-                source: selection.as_tab_source(),
+                source: selection
+                    .as_tab_source()
+                    .expect("fixture owns an inline item tab"),
             },
         },
     )

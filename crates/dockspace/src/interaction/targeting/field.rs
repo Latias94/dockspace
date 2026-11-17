@@ -276,8 +276,9 @@ impl MagneticTargetField {
 
     /// Selects one magnetic geometry winner after direct-hit and occlusion resolution.
     ///
-    /// `permits` removes source-suppressed identities only. Availability and policy
-    /// remain the responsibility of the canonical target preflight.
+    /// The deepest pane owns its geometry even when its candidate is suppressed.
+    /// This keeps an origin pane from falling through to an ancestor's center.
+    /// Availability and policy remain the canonical target preflight's responsibility.
     pub(crate) fn candidate_at(
         &self,
         point: LogicalPoint,
@@ -298,19 +299,14 @@ impl MagneticTargetField {
         self.panes
             .iter()
             .filter(|field| field.layer == layer && field.content.contains(point))
-            .filter_map(|field| {
-                field
-                    .candidate_at(point)
-                    .filter(|candidate| permits(candidate.target))
-                    .map(|candidate| (field.depth, field.root, field.tabs, candidate))
-            })
             .max_by(|left, right| {
-                left.0
-                    .cmp(&right.0)
-                    .then_with(|| right.1.cmp(&left.1))
-                    .then_with(|| right.2.cmp(&left.2))
+                left.depth
+                    .cmp(&right.depth)
+                    .then_with(|| right.root.cmp(&left.root))
+                    .then_with(|| right.tabs.cmp(&left.tabs))
             })
-            .map(|(_, _, _, candidate)| candidate)
+            .and_then(|field| field.candidate_at(point))
+            .filter(|candidate| permits(candidate.target))
     }
 
     pub(crate) fn canonicalize(&mut self) {
@@ -599,6 +595,57 @@ mod tests {
                 .map(MagneticTargetCandidate::target),
             Some(target(tabs, Edge::Right))
         );
+    }
+
+    #[test]
+    fn a_suppressed_nested_origin_does_not_fall_through_to_its_ancestor() {
+        let mut workspace = Workspace::builder();
+        let inner = workspace.insert_node(Node::tabs([ItemId::new(1)]));
+        let outer = workspace.insert_node(Node::tabs([ItemId::new(2)]));
+        let surface = SurfaceId::new(1);
+        let root = RootId::new(2);
+        let layer = SceneLayerKey::surface_base();
+        let center = |tabs| DropTargetId::Center {
+            surface,
+            root,
+            tabs,
+        };
+        for reverse in [false, true] {
+            let mut field = MagneticTargetField::default();
+            let mut panes = [
+                (outer, 1, LogicalRect::new(0.0, 0.0, 200.0, 200.0).unwrap()),
+                (inner, 2, LogicalRect::new(0.0, 24.0, 200.0, 176.0).unwrap()),
+            ];
+            if reverse {
+                panes.reverse();
+            }
+            for (tabs, depth, bounds) in panes {
+                field
+                    .push_pane(
+                        root,
+                        tabs,
+                        layer,
+                        depth,
+                        bounds,
+                        center(tabs),
+                        edges(tabs),
+                        &DockPresentationConfig::default(),
+                    )
+                    .unwrap();
+            }
+            let point = LogicalPoint::new(130.0, 130.0).unwrap();
+            assert_eq!(
+                field
+                    .candidate_at(point, layer, |_| true)
+                    .map(MagneticTargetCandidate::target),
+                Some(center(inner)),
+            );
+            assert_eq!(
+                field.candidate_at(point, layer, |target| target != center(inner)),
+                None,
+                "an excluded origin does not implicitly promote its content to a parent tab",
+            );
+        }
     }
 
     #[test]

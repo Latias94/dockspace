@@ -251,7 +251,7 @@ fn item_local_state_and_focus_survive_moving_between_tab_groups() {
 
         assert_eq!(harness.documents.groups[&EDITOR], destination_group);
         assert_eq!(harness.documents.groups[&SIBLING], source_group);
-        assert!(harness.dock.view().item(EDITOR).unwrap().is_selected());
+        assert!(harness.dock.view().item(EDITOR).unwrap().is_active());
         harness.assert_editor_state(before);
         let sibling = harness.snapshot(SIBLING);
         assert_ne!(sibling.editor, before.editor);

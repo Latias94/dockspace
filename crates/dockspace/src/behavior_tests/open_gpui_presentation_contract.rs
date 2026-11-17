@@ -509,7 +509,7 @@ fn splitter_records_keep_draw_hit_and_adjacent_geometry_in_one_plan() {
     let records = ready
         .splitter_records()
         .iter()
-        .filter(|record| record.id().split == split)
+        .filter(|record| record.id().node() == split)
         .collect::<Vec<_>>();
 
     assert_eq!(records.len(), 2);
@@ -545,7 +545,7 @@ fn active_resize_override_is_the_geometry_compiled_into_the_plan() {
         .plan()
         .splitter_records()
         .iter()
-        .find(|record| record.id().split == split)
+        .find(|record| record.id().node() == split)
         .expect("splitter is painted");
     let press = LogicalPoint::new(
         initial.draw_bounds().x() + initial.draw_bounds().width() * 0.5,
@@ -593,7 +593,7 @@ fn active_resize_override_is_the_geometry_compiled_into_the_plan() {
     let splitter = plan
         .splitter_records()
         .iter()
-        .find(|record| record.id().split == split)
+        .find(|record| record.id().node() == split)
         .expect("splitter record exists");
     assert_eq!(splitter.weights(), override_weights);
     assert!((splitter.before_bounds().width() - 99.75).abs() <= 1.0e-9);
@@ -635,7 +635,7 @@ fn pointer_keyboard_and_accessibility_resize_share_the_scene_bound_evaluator() {
         .plan()
         .splitter_records()
         .iter()
-        .find(|record| record.id().split == split)
+        .find(|record| record.id().node() == split)
         .expect("splitter is painted");
     let splitter = *record.id();
     let press = LogicalPoint::new(
@@ -835,8 +835,8 @@ fn junction_resize_updates_and_commits_both_axes_atomically() {
     let InteractionOutcome::ResizeDelivered {
         session: actual,
         outcome:
-            dockspace::graph::command::CommandOutcome::SplitsResized {
-                splits: committed,
+            dockspace::graph::command::CommandOutcome::TracksResized {
+                tracks: committed,
                 changed: true,
             },
         changed: true,
@@ -909,7 +909,7 @@ fn perpendicular_splitter_records_preserve_one_exact_junction_intersection() {
         }
     );
     assert!(
-        [north_south.id().split, west_east.id().split]
+        [north_south.id().node(), west_east.id().node()]
             .into_iter()
             .all(|split| split == horizontal || split == vertical)
     );

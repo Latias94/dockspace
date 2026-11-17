@@ -132,7 +132,8 @@ fn resolve_action(
                         source: workspace
                             .capture_item_source(ROOT, tabs, item)
                             .expect("fresh source")
-                            .as_tab_source(),
+                            .as_tab_source()
+                            .expect("fixture owns an inline item tab"),
                         insertion_index: insertion,
                     },
                     None,
@@ -168,7 +169,10 @@ fn resolve_action(
                     Node::Split { children, .. } if children.contains(&tabs) => {
                         Some((node, children.len()))
                     }
-                    Node::Split { .. } | Node::Tabs { .. } => None,
+                    Node::Pane { .. }
+                    | Node::Split { .. }
+                    | Node::Grid { .. }
+                    | Node::Tabs { .. } => None,
                 })
                 .expect("multiple modeled groups require a containing split");
             resize_split_command(workspace, split, child_count)

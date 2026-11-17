@@ -61,7 +61,9 @@ fn select(workspace: &mut Workspace, item: u64) {
     apply(
         workspace,
         WorkspaceCommand::Select {
-            source: source.as_tab_source(),
+            source: source
+                .as_tab_source()
+                .expect("fixture owns an inline item tab"),
         },
     );
 }
@@ -189,7 +191,9 @@ fn an_all_hidden_selected_item_is_rejected_even_by_the_unchanged_selection_fast_
         .prepare_transaction(
             &DockPolicySnapshot::default(),
             &[WorkspaceCommand::Select {
-                source: source.as_tab_source(),
+                source: source
+                    .as_tab_source()
+                    .expect("fixture owns an inline item tab"),
             }],
         )
         .unwrap_err();
@@ -321,7 +325,7 @@ fn merging_hidden_tabs_retains_the_destination_selection_and_all_hidden_members(
     for item in 1..=5 {
         assert!(workspace.item_is_hidden(ItemId::new(item)));
         assert_eq!(
-            workspace.locate_item_by_id(ItemId::new(item)).unwrap().0,
+            workspace.locate_item_by_id(ItemId::new(item)).unwrap().root,
             OTHER
         );
     }

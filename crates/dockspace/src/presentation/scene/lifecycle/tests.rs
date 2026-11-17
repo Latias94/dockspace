@@ -178,7 +178,7 @@ fn raw_interaction_authority(
 }
 
 #[test]
-fn shared_hit_geometry_keeps_new_output_and_rejects_an_old_receiver_receipt() {
+fn changed_content_rebuilds_exact_receivers_and_rejects_an_old_receiver_receipt() {
     use crate::input::journal::{PointerEdgeSequence, PointerInputLease, PointerProviderScope};
     use crate::input::receiver::{
         PointerReceiverAttemptIssuer, PointerReceiverCandidateRoster, PointerReceiverCandidateSpec,
@@ -190,6 +190,11 @@ fn shared_hit_geometry_keeps_new_output_and_rejects_an_old_receiver_receipt() {
     use crate::presentation::scene::SurfaceProgramRootPresentation;
 
     fn plan(ticket: SurfaceMeasurementTicket, selected: u64) -> PresentationPlan {
+        use crate::geometry::{Constraints, LogicalSize};
+        use crate::presentation::config::DockPresentationConfig;
+        use crate::presentation::layout::{LayoutMetrics, project_root};
+        use crate::presentation::manifest::{Measurement, SurfaceMeasurements};
+
         let bounds = LogicalRect::new(0.0, 0.0, 640.0, 480.0).unwrap();
         let mut plan = PresentationPlan::from_measurements(
             ticket,
@@ -208,18 +213,60 @@ fn shared_hit_geometry_keeps_new_output_and_rejects_an_old_receiver_receipt() {
             ticket.surface(),
             crate::graph::SurfacePresentation::with_main(root),
         );
-        builder.build().unwrap();
-        let pane = PaneSceneId { root, tabs };
-        plan.push_pane_record(PaneRecord::new(
-            pane,
+        let workspace = builder.build().unwrap();
+        let requirements = SurfaceRequirements::new(
+            ticket,
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap();
+        let mut measurements = SurfaceMeasurements::new(ticket);
+        measurements
+            .set_bounds(requirements.bounds(), Measurement::Measured(bounds))
+            .unwrap();
+        let measured = requirements
+            .validate(&measurements)
+            .unwrap()
+            .require_authoritative()
+            .unwrap();
+        let config = DockPresentationConfig::default();
+        let constraints =
+            Constraints::new(LogicalSize::new(0.0, 0.0).unwrap(), bounds.size()).unwrap();
+        let projection = project_root(
+            &workspace,
+            root,
             bounds,
+            |_| Some(constraints),
+            LayoutMetrics::new(config.splitter_thickness()).unwrap(),
+        )
+        .unwrap();
+        plan.install_layout_facts(config, measured);
+        plan.push_root_layout_facts(RootLayoutFacts::new(
+            root,
             bounds,
-            SceneLayerKey::surface_base(),
+            Default::default(),
+            Arc::new(projection),
         ));
+        let bar = TabBarSceneId { root, tabs };
+        let selected = ItemId::new(selected);
+        plan.push_tabs_record(
+            TabsRecord::new(bar, bounds, bounds, SceneLayerKey::surface_base(), None),
+            Some(selected.into()),
+        );
+        let ancestry = Some(plan.push_active_tab_choice(None, tabs, selected.into()));
+        let pane = PaneSceneId {
+            root,
+            item: selected,
+        };
+        plan.push_pane_record(
+            PaneRecord::new(pane, tabs, bounds, bounds, SceneLayerKey::surface_base())
+                .with_context(bounds, Some(bar), ancestry),
+        );
         plan.begin_surface_program_root(pane.root, SurfaceProgramRootPresentation::Main)
             .unwrap();
-        plan.push_surface_program_pane_operation(pane, Some(ItemId::new(selected).into()))
-            .unwrap();
+        plan.push_surface_program_pane_operation(pane).unwrap();
         plan.end_surface_program_root(pane.root).unwrap();
         plan.finish_surface_program().unwrap();
         plan.link_surface_program().unwrap();
@@ -241,7 +288,11 @@ fn shared_hit_geometry_keeps_new_output_and_rejects_an_old_receiver_receipt() {
     acknowledge(&mut scenes, old_output, 1).unwrap();
     let old = scenes.ready_surface(surface).unwrap().clone();
     let projection = scenes.interaction_projection(surface).unwrap();
-    let region = old.hit_manifest().regions()[0].id();
+    let old_pane = crate::presentation::hit::PresentationHitRegionKind::PaneBody(PaneSceneId {
+        root: RootId::new(1),
+        item: ItemId::new(1),
+    });
+    let region = old.hit_manifest().region_for_kind(old_pane).unwrap().id();
     let old_delivery =
         PointerReceiverDelivery::new(projection, PointerReceiverDeliveryDisposition::Dock(region))
             .unwrap();
@@ -274,6 +325,7 @@ fn shared_hit_geometry_keeps_new_output_and_rejects_an_old_receiver_receipt() {
     .unwrap();
     roster.validate(batch.clone()).unwrap();
 
+    let touch_compilations = crate::presentation::hit::touch_compilation_count();
     let (_, new_output) = scenes
         .install_ready(
             plan(ticket, 2),
@@ -282,6 +334,11 @@ fn shared_hit_geometry_keeps_new_output_and_rejects_an_old_receiver_receipt() {
             PresentationOutputSerial::new_for_test(2),
         )
         .unwrap();
+    assert_eq!(
+        crate::presentation::hit::touch_compilation_count(),
+        touch_compilations,
+        "direct selection reuses touch geometry through receiver retirement",
+    );
     let candidate = scenes
         .surface(surface)
         .unwrap()
@@ -290,9 +347,30 @@ fn shared_hit_geometry_keeps_new_output_and_rejects_an_old_receiver_receipt() {
         .candidate();
     assert_ne!(new_output, old_output);
     assert_eq!(candidate.hit_manifest().output(), new_output);
-    assert_eq!(
+    assert_ne!(
         candidate.hit_manifest().regions().as_ptr(),
         old.hit_manifest().regions().as_ptr()
+    );
+    let new_regions = candidate.hit_manifest().regions().as_ptr();
+    assert_eq!(
+        candidate.hit_manifest().regions().len(),
+        old.hit_manifest().regions().len()
+    );
+    let new_pane = crate::presentation::hit::PresentationHitRegionKind::PaneBody(PaneSceneId {
+        root: RootId::new(1),
+        item: ItemId::new(2),
+    });
+    let new_region = candidate.hit_manifest().region_for_kind(new_pane).unwrap();
+    let old_region = old.hit_manifest().region_for_kind(old_pane).unwrap();
+    assert!(candidate.hit_manifest().region_for_kind(old_pane).is_none());
+    assert_eq!(new_region.hit(), old_region.hit());
+    assert_ne!(new_region.id(), old_region.id());
+    assert_eq!(
+        new_region.id().kind(),
+        crate::presentation::hit::PresentationHitRegionKind::PaneBody(PaneSceneId {
+            root: RootId::new(1),
+            item: ItemId::new(2),
+        })
     );
     acknowledge(&mut scenes, new_output, 2).unwrap();
     let current = scenes.interaction_projection(surface).unwrap();
@@ -330,10 +408,7 @@ fn shared_hit_geometry_keeps_new_output_and_rejects_an_old_receiver_receipt() {
         .candidate();
     assert_ne!(rebound_output, new_output);
     assert_eq!(candidate.hit_manifest().output(), rebound_output);
-    assert_eq!(
-        candidate.hit_manifest().regions().as_ptr(),
-        old.hit_manifest().regions().as_ptr()
-    );
+    assert_eq!(candidate.hit_manifest().regions().as_ptr(), new_regions);
 }
 
 #[test]

@@ -8,15 +8,88 @@ use crate::ids::{NodeId, RootId};
 use crate::interaction::targeting::targets::SceneLayerKey;
 use crate::presentation::hit::region::HitRegion;
 
-/// Structural identity of one rendered splitter rectangle.
+/// Real structural owner of one shared track boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SplitterOwner {
+    /// One axis of an ordinary Split.
+    Split(NodeId),
+    /// One shared row or column axis of a Grid.
+    Grid { node: NodeId, axis: Axis },
+}
+
+impl SplitterOwner {
+    /// Returns the actual structural owner.
+    #[must_use]
+    pub const fn node(self) -> NodeId {
+        match self {
+            Self::Split(node) | Self::Grid { node, .. } => node,
+        }
+    }
+}
+
+/// Structural identity of one rendered track boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SplitterSceneId {
     /// Owning root.
     pub root: RootId,
-    /// Split node owning the separator.
-    pub split: NodeId,
-    /// Persistent index of the visible child preceding this separator.
+    /// Actual Split or Grid axis owning the separator.
+    pub owner: SplitterOwner,
+    /// Persistent preceding Split child or shared Grid track index.
     pub index: usize,
+}
+
+impl SplitterSceneId {
+    /// Creates the identity of an ordinary Split boundary.
+    #[must_use]
+    pub const fn split(root: RootId, node: NodeId, index: usize) -> Self {
+        Self {
+            root,
+            owner: SplitterOwner::Split(node),
+            index,
+        }
+    }
+
+    /// Creates the identity of a shared Grid boundary.
+    #[must_use]
+    pub const fn grid(root: RootId, node: NodeId, axis: Axis, index: usize) -> Self {
+        Self {
+            root,
+            owner: SplitterOwner::Grid { node, axis },
+            index,
+        }
+    }
+
+    /// Returns the actual structural owner.
+    #[must_use]
+    pub const fn node(self) -> NodeId {
+        self.owner.node()
+    }
+}
+
+/// Exact resolved dimensions and structural cell map for a Grid boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridBoundaryProof {
+    rows: usize,
+    columns: usize,
+    children: Arc<[NodeId]>,
+}
+
+impl GridBoundaryProof {
+    /// Returns the frozen shared row count.
+    #[must_use]
+    pub const fn rows(&self) -> usize {
+        self.rows
+    }
+    /// Returns the frozen shared column count.
+    #[must_use]
+    pub const fn columns(&self) -> usize {
+        self.columns
+    }
+    /// Borrows the exact row-major structural roster, including hidden cells.
+    #[must_use]
+    pub fn children(&self) -> &[NodeId] {
+        &self.children
+    }
 }
 
 /// Core-compiled draw, hit, and resize semantics for one splitter.
@@ -24,6 +97,7 @@ pub struct SplitterSceneId {
 pub struct SplitterRecord {
     id: SplitterSceneId,
     after_index: usize,
+    active_ancestry: Option<usize>,
     draw_bounds: LogicalRect,
     hit: HitRegion,
     axis: Axis,
@@ -36,6 +110,7 @@ pub struct SplitterRecord {
     child_extents: Arc<[f64]>,
     central_index: Option<usize>,
     weights: Arc<[SplitWeight]>,
+    grid: Option<GridBoundaryProof>,
     layer: SceneLayerKey,
     operable: bool,
 }
@@ -249,6 +324,7 @@ impl SplitterRecord {
         Self {
             id,
             after_index: id.index + 1,
+            active_ancestry: None,
             draw_bounds,
             hit,
             axis,
@@ -261,9 +337,36 @@ impl SplitterRecord {
             child_extents: child_extents.into(),
             central_index,
             weights: weights.into(),
+            grid: None,
             layer,
             operable,
         }
+    }
+
+    pub(crate) fn with_grid_proof(
+        mut self,
+        shape: (usize, usize),
+        children: Arc<[NodeId]>,
+    ) -> Self {
+        self.grid = Some(GridBoundaryProof {
+            rows: shape.0,
+            columns: shape.1,
+            children,
+        });
+        self
+    }
+
+    /// Borrows the frozen shape and cell map for an actual Grid boundary.
+    pub(crate) const fn grid(&self) -> Option<&GridBoundaryProof> {
+        self.grid.as_ref()
+    }
+
+    pub(crate) fn with_active_ancestry(mut self, ancestry: Option<usize>) -> Self {
+        self.active_ancestry = ancestry;
+        self
+    }
+    pub(crate) const fn active_ancestry(&self) -> Option<usize> {
+        self.active_ancestry
     }
 
     pub(crate) fn with_after_index(mut self, after_index: usize) -> Self {

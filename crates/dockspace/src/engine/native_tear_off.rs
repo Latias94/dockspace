@@ -76,7 +76,7 @@ impl DockEngine {
         plan: &crate::presentation::scene::PresentationPlan,
     ) -> Result<(Option<LogicalRect>, LogicalSize), DockspaceActionRejection> {
         let (root, node) = match payload {
-            MovePayload::Item(source) => (source.root(), source.tabs()),
+            MovePayload::Item(source) => (source.root(), source.owner_node()),
             MovePayload::Tabs(source) | MovePayload::Subtree(source) => {
                 (source.root(), source.node())
             }
@@ -92,21 +92,23 @@ impl DockEngine {
             let pane_sizing = match payload {
                 MovePayload::Item(source) => {
                     let measured = root_facts
-                        .pane_sizing(PaneSizingKey::new(root, node, Some(source.item())))
+                        .pane_sizing(PaneSizingKey::new(root, source.item()))
                         .ok_or(unavailable)?;
-                    let visibility = self
-                        .presentation_requirements()
-                        .surface(surface)
-                        .and_then(|requirements| {
-                            requirements.tab_bar(crate::presentation::scene::TabBarSceneId {
-                                root,
-                                tabs: node,
-                            })
-                        })
-                        // A partial item becomes a fresh single-member leaf;
-                        // it cannot inherit the source group's temporary reveal.
-                        .map(|bar| bar.policy().resolved(1, false).visibility())
-                        .ok_or(unavailable)?;
+                    let visibility = match source.tabs() {
+                        Some(tabs) => {
+                            self.presentation_requirements()
+                                .surface(surface)
+                                .and_then(|requirements| {
+                                    requirements.tab_bar(
+                                        crate::presentation::scene::TabBarSceneId { root, tabs },
+                                    )
+                                })
+                                // An extracted tab cannot inherit its group's temporary reveal.
+                                .map(|bar| bar.policy().resolved(1, false).visibility())
+                                .ok_or(unavailable)?
+                        }
+                        None => crate::policy::TabBarVisibility::Hidden,
+                    };
                     pane_outer_sizing(measured, facts.config(), visibility)
                         .map_err(|_| DockspaceActionRejection::Conflict)?
                         .minimum_size()
@@ -120,15 +122,17 @@ impl DockEngine {
             };
             let minimum = contained_minimum_size(facts.config(), pane_sizing)
                 .map_err(|_| DockspaceActionRejection::Conflict)?;
-            let pane = plan
-                .pane_records()
-                .iter()
-                .find(|pane| {
-                    pane.id() == (crate::presentation::scene::PaneSceneId { root, tabs: node })
-                })
+            let projected = root_facts
+                .projection()
+                .nodes
+                .get(&node)
                 .ok_or(unavailable)?;
-            let bounds = pane.bounds();
-            // A partial payload uses its pane and measured recovery minimum,
+            let bounds = if projected.rect.width() > 0.0 && projected.rect.height() > 0.0 {
+                projected.rect
+            } else {
+                root_facts.bounds()
+            };
+            // A partial payload uses its layout and measured recovery minimum,
             // independently of the enclosing floating window and its siblings.
             let rect = LogicalRect::new(
                 bounds.x(),
@@ -215,6 +219,7 @@ impl DockEngine {
                 .map_err(|_| DockspaceActionRejection::Conflict)?
                 .map(|source| (MovePayload::Item(source), vec![*item]))
                 .ok_or(DockspaceActionRejection::ItemUnavailable { item: *item }),
+            NativeTearOffSource::Tab(tab) => self.capture_product_tab(tab),
             NativeTearOffSource::Tabs(group) => {
                 let (source, items) = self.capture_product_tabs(group)?;
                 Ok((MovePayload::Tabs(source), items))

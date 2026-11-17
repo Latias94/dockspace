@@ -274,6 +274,7 @@ fn disappearing_source_preview_names_the_original_destination_pane() {
             .item(THIRD)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[THIRD, FIRST],
@@ -285,6 +286,7 @@ fn disappearing_source_preview_names_the_original_destination_pane() {
             .item(SECOND)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[SECOND]

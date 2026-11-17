@@ -1,5 +1,9 @@
 //! Finite public-command journey in the real native editor host.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 
 use dockspace::model::{DockAnchor, DockPlacement};
@@ -44,10 +48,11 @@ pub(super) struct CommandSmoke {
     style_step: usize,
     style_waiting: bool,
     style_window: Option<u64>,
+    completed: Arc<AtomicBool>,
 }
 
 impl CommandSmoke {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(completed: Arc<AtomicBool>) -> Self {
         Self {
             started: Instant::now(),
             step: 0,
@@ -58,6 +63,7 @@ impl CommandSmoke {
             style_step: 0,
             style_waiting: false,
             style_window: None,
+            completed,
         }
     }
 
@@ -74,9 +80,12 @@ impl CommandSmoke {
             result => {
                 self.done = true;
                 match result {
-                    Ok(true) => eprintln!(
-                        "command-smoke: complete; eleven docking commands, four style updates, two singleton native-child round trips, drained central contained root, eight stable panes and retained document data; presented and quiescent"
-                    ),
+                    Ok(true) => {
+                        self.completed.store(true, Ordering::Relaxed);
+                        eprintln!(
+                            "command-smoke: complete; eleven docking commands, four style updates, two singleton native-child round trips, drained central contained root, eight stable panes and retained document data; presented and quiescent"
+                        );
+                    }
                     Err(error) => eprintln!("command-smoke: FAIL {error}"),
                     Ok(false) => unreachable!(),
                 }
@@ -92,9 +101,13 @@ impl CommandSmoke {
     ) -> Result<bool, String> {
         if self.started.elapsed() > Duration::from_secs(60) {
             return Err(format!(
-                "timed out at command {} (waiting={}, pending={:?}, outputs={:?})",
+                "timed out at command {} (waiting={}, style={}, content_top={:?}, pending={:?}, outputs={:?})",
                 self.step,
                 self.waiting,
+                self.style_step,
+                app.with_panes(|panes| panes.panes[&EDITOR]
+                    .content
+                    .map(|(bounds, _)| bounds.top())),
                 app.pending_work(),
                 app.output_backlog()
             ));
@@ -158,11 +171,20 @@ impl CommandSmoke {
                 if self.step == 0 {
                     let extracted = app.with_view(|view| {
                         view.item(INSPECTOR).is_some_and(|pane| {
-                            pane.root() == INSPECTOR_ROOT && pane.tabs().items().eq([INSPECTOR])
+                            pane.root() == INSPECTOR_ROOT
+                                && pane
+                                    .tabs()
+                                    .expect("item is an inline tab")
+                                    .items()
+                                    .eq([INSPECTOR])
                         }) && view.item(EDITOR).is_some_and(|pane| {
                             pane.root() != INSPECTOR_ROOT
                                 && pane.contained().is_some()
-                                && pane.tabs().items().eq([EDITOR])
+                                && pane
+                                    .tabs()
+                                    .expect("item is an inline tab")
+                                    .items()
+                                    .eq([EDITOR])
                         })
                     });
                     if !extracted {
@@ -224,10 +246,12 @@ impl CommandSmoke {
                 DockStyle::default().tab_bar_height
             };
             if top.is_none_or(|top| (top - height).abs() > 0.1) {
-                return Err(format!(
-                    "style {} did not repaint the live child: content top={top:?}, expected {height}",
-                    self.style_step
-                ));
+                // StyleChanged confirms configuration commit. The actual Child
+                // callback can still describe an old output or a valid motion
+                // sample between the old and target rectangles.
+                // Wait for the required geometry; the journey deadline catches
+                // a missing repaint without treating an old observation as fresh.
+                return Ok(false);
             }
             if self.style_step < 4 {
                 if matches!(self.style_step, 2 | 3) {

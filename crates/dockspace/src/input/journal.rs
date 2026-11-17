@@ -60,6 +60,7 @@ pub struct PointerEventMetadata {
     device: PointerDeviceKind,
     observed_at: Option<Duration>,
     docking_enabled: Option<bool>,
+    group_dock_mode: Option<crate::model::TabGroupDockMode>,
 }
 
 impl PointerEventMetadata {
@@ -76,6 +77,7 @@ impl PointerEventMetadata {
             device,
             observed_at: None,
             docking_enabled: None,
+            group_dock_mode: None,
         }
     }
 
@@ -86,6 +88,7 @@ impl PointerEventMetadata {
             device,
             observed_at: Some(observed_at),
             docking_enabled: None,
+            group_dock_mode: None,
         }
     }
 
@@ -99,6 +102,20 @@ impl PointerEventMetadata {
     pub const fn with_docking_enabled(mut self, enabled: bool) -> Self {
         self.docking_enabled = Some(enabled);
         self
+    }
+
+    /// Sets whole-group center insertion for this edge in the provider's order.
+    /// Missing metadata retains the gesture's mode; a new gesture starts merging.
+    #[must_use]
+    pub const fn with_group_dock_mode(mut self, mode: crate::model::TabGroupDockMode) -> Self {
+        self.group_dock_mode = Some(mode);
+        self
+    }
+
+    /// Returns the optional whole-group insertion directive for this edge.
+    #[must_use]
+    pub const fn group_dock_mode(self) -> Option<crate::model::TabGroupDockMode> {
+        self.group_dock_mode
     }
 
     /// Returns the optional targeting directive carried by this edge.

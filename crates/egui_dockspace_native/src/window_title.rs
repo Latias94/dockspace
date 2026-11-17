@@ -1,8 +1,6 @@
 //! Descriptive OS captions derived from the committed product view.
 
-use dockspace::model::{
-    DockspaceNodeView, DockspaceRootView, DockspaceTabsView, DockspaceView, SurfaceId,
-};
+use dockspace::model::{DockspaceView, SurfaceId};
 use egui_dockspace::PaneView;
 
 pub(crate) fn window_title(
@@ -12,30 +10,7 @@ pub(crate) fn window_title(
 ) -> String {
     let mut title = String::new();
     if let Some(surface) = view.surface(surface) {
-        if let Some(node) = surface.main_root().and_then(DockspaceRootView::content) {
-            append_selected_titles(&mut title, node, panes);
-        }
-        for contained in surface.contained() {
-            if let Some(node) = contained.root().and_then(DockspaceRootView::content) {
-                append_selected_titles(&mut title, node, panes);
-            }
-        }
-    }
-    if title.is_empty() {
-        format!("Panel {}", surface.get())
-    } else {
-        title
-    }
-}
-
-fn append_selected_titles(title: &mut String, node: DockspaceNodeView<'_>, panes: &impl PaneView) {
-    let mut pending = vec![node];
-    while let Some(node) = pending.pop() {
-        if let Some(item) = node
-            .tabs()
-            .and_then(DockspaceTabsView::visible_selected)
-            .and_then(|tab| tab.item())
-        {
+        for item in surface.active_items() {
             if !title.is_empty() {
                 title.push_str(" · ");
             }
@@ -48,11 +23,12 @@ fn append_selected_titles(title: &mut String, node: DockspaceNodeView<'_>, panes
                 use std::fmt::Write as _;
                 let _ = write!(title, "Pane {}", item.get());
             }
-        } else if let Some(split) = node.split() {
-            let base = pending.len();
-            pending.extend(split.children());
-            pending[base..].reverse();
         }
+    }
+    if title.is_empty() {
+        format!("Panel {}", surface.get())
+    } else {
+        title
     }
 }
 
@@ -111,6 +87,45 @@ mod tests {
         frame.commit().unwrap();
         assert_eq!(window_title(session.view(), &Panes, SURFACE), "预览");
         assert_eq!(session.view().surface(SURFACE).unwrap().id(), SURFACE);
+    }
+
+    #[test]
+    fn composed_caption_includes_active_bare_content_and_omits_inactive_descendants() {
+        let bare = ItemId::new(9);
+        let alternate = ItemId::new(10);
+        let tools = DockspaceNode::equal_split(
+            DockspaceAxis::Horizontal,
+            [
+                DockspaceNode::tabs([FIRST, SECOND]),
+                DockspaceNode::pane(bare),
+            ],
+        )
+        .unwrap()
+        .named("Tools");
+        let mut session = session(DockspaceNode::composed_tabs([
+            DockspaceNode::pane(alternate),
+            tools,
+        ]));
+        assert_eq!(window_title(session.view(), &Panes, SURFACE), "Pane 10");
+
+        let mut frame = session.begin_host_frame().unwrap();
+        frame.select_item_current(bare).unwrap();
+        frame
+            .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+            .unwrap();
+        frame.commit().unwrap();
+        assert_eq!(
+            window_title(session.view(), &Panes, SURFACE),
+            "Inspector · Pane 9"
+        );
+
+        let mut frame = session.begin_host_frame().unwrap();
+        frame.select_item_current(alternate).unwrap();
+        frame
+            .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+            .unwrap();
+        frame.commit().unwrap();
+        assert_eq!(window_title(session.view(), &Panes, SURFACE), "Pane 10");
     }
 
     #[test]

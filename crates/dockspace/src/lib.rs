@@ -1,6 +1,6 @@
 //! Renderer-neutral docking layouts for Rust editor UIs.
 //!
-//! Build tabs, nested splits and floating groups while keeping pane content in
+//! Compose panes, tabs, splits, shared-track grids and floating groups while keeping pane content in
 //! your application. Dockspace owns layout and interaction state; your host
 //! supplies measurements, drawing, input and presentation results.
 //!

@@ -356,7 +356,7 @@ fn fixture(with_origin: bool) -> (DockspaceSession, NativeSurfaceBinding, Scene)
     let (scene, output) = paint(&mut session, binding);
     assert!(!present(&mut session, output).workspace_changed());
     assert!(session.native_local_coordinates(binding).is_some());
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert!(!session.has_pending_native_input());
     (session, binding, scene)
 }
@@ -516,6 +516,7 @@ fn order(session: &DockspaceSession) -> Vec<ItemId> {
         .item(FIRST)
         .unwrap()
         .tabs()
+        .expect("item is an inline tab")
         .items()
         .collect::<Vec<_>>()
 }
@@ -631,12 +632,12 @@ fn native_hover_dwell_is_read_only_and_retries_the_recorded_due_sample_once() {
                 current.answer(query)
             })
             .unwrap();
-        assert!(abandoned.view().item(SECOND).unwrap().is_selected());
+        assert!(abandoned.view().item(SECOND).unwrap().is_active());
         measure(&mut abandoned, 800.0);
         drop(abandoned);
         assert_eq!(session.version(), version);
-        assert!(session.view().item(FIRST).unwrap().is_selected());
-        assert!(!session.view().item(SECOND).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
+        assert!(!session.view().item(SECOND).unwrap().is_active());
         assert!(session.has_pending_native_input());
         assert!(session.native_pointer_continuation().is_none());
         assert_eq!(session.native_input_recorded_count(), recorded);
@@ -896,7 +897,7 @@ fn native_touch_taps_inside_slop_and_yields_beyond_it_before_the_real_contact_en
                 .record_native_pointer(input(&session, lane, binding, PRESS, point, metadata(0)))
                 .unwrap();
             assert!(reduce(&mut session, &scene).inputs().is_empty());
-            assert!(session.view().item(FIRST).unwrap().is_selected());
+            assert!(session.view().item(FIRST).unwrap().is_active());
             assert_eq!(session.native_pointer_continuation().is_some(), timed);
             let moved = LogicalPoint::new(point.x() + distance, point.y()).unwrap();
             assert!(scene.tab(SECOND).receiver.bounds().contains(moved));
@@ -940,7 +941,7 @@ fn native_touch_taps_inside_slop_and_yields_beyond_it_before_the_real_contact_en
                 if yielded { vec![] } else { vec![SECOND] }
             );
             assert_eq!(terminal.workspace_changed(), !yielded);
-            assert_eq!(session.view().item(SECOND).unwrap().is_selected(), !yielded);
+            assert_eq!(session.view().item(SECOND).unwrap().is_active(), !yielded);
             assert!(!session.has_active_gesture());
             assert!(!session.has_pending_native_input());
             assert!(session.native_pointer_continuation().is_none());
@@ -974,8 +975,8 @@ fn native_dwell_unknown_delivery_preserves_the_held_gesture_for_rearm_and_releas
             assert!(!observed.workspace_changed(), "{lane:?}/{capture:?}");
             assert!(observed.inputs().is_empty());
             assert_eq!(session.version(), version);
-            assert!(session.view().item(FIRST).unwrap().is_selected());
-            assert!(!session.view().item(SECOND).unwrap().is_selected());
+            assert!(session.view().item(FIRST).unwrap().is_active());
+            assert!(!session.view().item(SECOND).unwrap().is_active());
             assert!(session.native_pointer_continuation().is_none());
             assert!(session.has_active_gesture(), "{lane:?}/{capture:?}");
             assert!(!session.has_pending_native_input());
@@ -1100,8 +1101,8 @@ fn native_dwell_known_owner_loss_still_cancels_with_the_other_owner_unknown() {
                 assert!(!report.workspace_changed());
                 assert!(selections(&report).is_empty());
                 assert_eq!(session.version(), version);
-                assert!(session.view().item(FIRST).unwrap().is_selected());
-                assert!(!session.view().item(SECOND).unwrap().is_selected());
+                assert!(session.view().item(FIRST).unwrap().is_active());
+                assert!(!session.view().item(SECOND).unwrap().is_active());
                 assert!(
                     !session.has_active_gesture(),
                     "{lane:?}/{delivery:?}/{capture:?}"
@@ -1171,8 +1172,8 @@ fn native_dwell_revokes_unknown_capture_or_receiver_and_cancels_foreign_capture(
             );
             assert!(!report.workspace_changed(), "{lane:?}/{failure}");
             assert_eq!(session.version(), version);
-            assert!(session.view().item(FIRST).unwrap().is_selected());
-            assert!(!session.view().item(SECOND).unwrap().is_selected());
+            assert!(session.view().item(FIRST).unwrap().is_active());
+            assert!(!session.view().item(SECOND).unwrap().is_active());
             assert!(session.native_pointer_continuation().is_none());
             assert_eq!(session.has_active_gesture(), failure != "foreign-capture");
             if failure != "foreign-capture" {
@@ -1186,7 +1187,7 @@ fn native_dwell_revokes_unknown_capture_or_receiver_and_cancels_foreign_capture(
                     .unwrap();
                 assert!(!idle(&mut session).workspace_changed());
                 assert!(session.native_pointer_continuation().is_none());
-                assert!(!session.view().item(SECOND).unwrap().is_selected());
+                assert!(!session.view().item(SECOND).unwrap().is_active());
             }
             session
                 .record_native_pointer(input(
@@ -1257,7 +1258,7 @@ fn wrong_native_receiver_winner_rolls_back_the_due_input_and_retries_with_curren
         assert_eq!(session.native_input_recorded_count(), recorded);
         assert!(session.has_pending_native_input());
         assert!(session.has_active_gesture());
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
         let mut retry = session
             .begin_native_host_frame(|query| current.answer(query))
             .unwrap();
@@ -1417,8 +1418,8 @@ fn non_primary_native_capture_edges_revoke_the_old_wake_and_cancel_known_loss() 
                 ))
                 .unwrap();
             assert!(!idle(&mut session).workspace_changed());
-            assert!(session.view().item(FIRST).unwrap().is_selected());
-            assert!(!session.view().item(SECOND).unwrap().is_selected());
+            assert!(session.view().item(FIRST).unwrap().is_active());
+            assert!(!session.view().item(SECOND).unwrap().is_active());
             assert_eq!(session.version(), version);
             session
                 .record_native_pointer(input(
@@ -1536,7 +1537,7 @@ fn native_continuation_cannot_borrow_another_pointer_or_reused_stream() {
                 assert!(session.has_pending_native_input());
                 assert!(session.has_active_gesture());
                 assert_eq!(order(&session), [FIRST, SECOND, THIRD]);
-                assert!(!session.view().item(SECOND).unwrap().is_selected());
+                assert!(!session.view().item(SECOND).unwrap().is_active());
             }
         }
     }
@@ -1582,7 +1583,7 @@ fn native_local_placement_rebase_revokes_the_wake_and_drains_the_old_sample_term
     );
     assert!(!terminal.workspace_changed());
     assert_eq!(session.version(), version);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert_eq!(order(&session), [FIRST, SECOND, THIRD]);
     assert!(!session.has_active_gesture());
     assert!(!session.has_pending_native_input());
@@ -1974,8 +1975,8 @@ fn native_capture_acquisition_restarts_overdue_dwell_without_executing_it() {
     assert_eq!(session.native_input_recorded_count(), recorded + 1);
     assert!(session.has_active_gesture());
     assert!(!session.has_pending_native_input());
-    assert!(session.view().item(FIRST).unwrap().is_selected());
-    assert!(!session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
+    assert!(!session.view().item(SECOND).unwrap().is_active());
     assert_eq!(order(&session), [FIRST, SECOND, THIRD]);
 
     let restarted = session.native_pointer_continuation().unwrap();
@@ -2036,7 +2037,7 @@ fn native_capture_acquisition_restarts_overdue_dwell_without_executing_it() {
             assert_eq!(session.version(), version);
         }
     }
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert_eq!(order(&session), [FIRST, SECOND, THIRD]);
     assert!(session.has_active_gesture());
     assert!(session.native_pointer_continuation().is_none());
@@ -2107,7 +2108,7 @@ fn native_capture_acquisition_from_an_older_challenge_restarts_the_current_targe
         assert!(duplicate.manipulation_feedback().is_empty());
         assert!(!duplicate.workspace_changed());
         assert_eq!(session.version(), version);
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
         assert_eq!(session.native_pointer_continuation(), Some(restarted));
     }
     session
@@ -2121,8 +2122,8 @@ fn native_capture_acquisition_from_an_older_challenge_restarts_the_current_targe
     let selected = reduce(&mut session, &scene);
     assert_eq!(selections(&selected), [THIRD]);
     assert!(selected.workspace_changed());
-    assert!(!session.view().item(SECOND).unwrap().is_selected());
-    assert!(session.view().item(THIRD).unwrap().is_selected());
+    assert!(!session.view().item(SECOND).unwrap().is_active());
+    assert!(session.view().item(THIRD).unwrap().is_active());
     assert_eq!(order(&session), [FIRST, SECOND, THIRD]);
     assert!(session.has_active_gesture());
     assert!(session.native_pointer_continuation().is_none());
@@ -2179,12 +2180,12 @@ fn native_capture_acquisition_retries_dropped_frames_and_rejects_foreign_or_stal
     let abandoned = session
         .begin_native_host_frame(|_| panic!("capture acquisition must not query receivers"))
         .unwrap();
-    assert!(abandoned.view().item(FIRST).unwrap().is_selected());
-    assert!(!abandoned.view().item(SECOND).unwrap().is_selected());
+    assert!(abandoned.view().item(FIRST).unwrap().is_active());
+    assert!(!abandoned.view().item(SECOND).unwrap().is_active());
     drop(abandoned);
     assert_eq!(session.version(), version);
     assert_eq!(session.presented_surface(SURFACE), presented);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert!(session.has_active_gesture());
     assert!(session.has_pending_native_input());
     assert_eq!(session.native_input_recorded_count(), recorded);
@@ -2383,7 +2384,7 @@ fn native_capture_acquisition_restarts_edge_scroll_and_waits_for_the_exact_outpu
     assert!(acquired.inputs().is_empty());
     assert!(acquired.manipulation_feedback().is_empty());
     assert!(!acquired.workspace_changed());
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert_eq!(session.version(), version);
     assert!(!session.native_pointer_continuation_awaits_presentation(SURFACE));
     let restarted = session.native_pointer_continuation().unwrap();
@@ -2439,7 +2440,7 @@ fn native_capture_acquisition_restarts_edge_scroll_and_waits_for_the_exact_outpu
     assert!(!report.workspace_changed());
     assert!(selections(&report).is_empty());
     assert!(report.manipulation_feedback().is_empty());
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     let exact = take_output(&mut report, &scrolled, binding);
     assert!(session.native_pointer_continuation().is_none());
     assert!(session.native_pointer_continuation_awaits_presentation(SURFACE));
@@ -2505,7 +2506,7 @@ fn native_capture_acquisition_after_unknown_capture_does_not_restore_a_cleared_t
     assert!(report.manipulation_feedback().is_empty());
     assert!(!report.workspace_changed());
     assert_eq!(session.version(), version);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert!(session.has_active_gesture());
     assert!(session.native_pointer_continuation().is_none());
     session
@@ -2595,7 +2596,7 @@ fn native_capture_acquisition_with_missing_facts_only_clears_the_timer() {
         assert!(!unknown.workspace_changed());
         assert_eq!(session.version(), version);
         assert!(session.has_active_gesture(), "{delivery:?}/{capture:?}");
-        assert!(session.view().item(FIRST).unwrap().is_selected());
+        assert!(session.view().item(FIRST).unwrap().is_active());
         assert!(session.native_pointer_continuation().is_none());
         assert!(!session.has_pending_native_input());
 
@@ -2672,7 +2673,7 @@ fn native_capture_acquisition_with_known_owner_loss_cancels_the_gesture() {
             assert!(!session.has_active_gesture(), "{delivery:?}/{capture:?}");
             assert!(session.native_pointer_continuation().is_none());
             assert!(!session.has_pending_native_input());
-            assert!(session.view().item(FIRST).unwrap().is_selected());
+            assert!(session.view().item(FIRST).unwrap().is_active());
             assert_eq!(order(&session), [FIRST, SECOND, THIRD]);
 
             session
@@ -2860,7 +2861,7 @@ fn a_local_capture_token_cannot_authorize_acquisition_after_desktop_handoff() {
     assert_eq!(session.native_pointer_continuation(), Some(desktop));
     assert!(session.has_active_gesture());
     assert_eq!(session.version(), version);
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert_eq!(order(&session), [FIRST, SECOND, THIRD]);
     session
         .record_native_pointer(input(

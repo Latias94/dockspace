@@ -11,15 +11,15 @@ use crate::graph::canonical::canonicalize_draft;
 use crate::graph::command::{
     CloseCommitOutcome, CommandOutcome, ContainedPosition, ContainedRosterSource, DockTarget, Edge,
     EdgeTarget, EdgeTargetScope, ItemSource, MovePayload, NodeSource, RootContent,
-    RootPresentationTarget, SplitResize, SurfaceRosterSource, TabSource, TabTarget,
+    RootPresentationTarget, SurfaceRosterSource, TabSource, TabTarget, TrackResize, TrackWeights,
     WorkspaceCommand,
 };
 use crate::graph::error::{
     CommandError, ReferenceRole, TransactionError, TransactionPreconditionError,
 };
 use crate::graph::transaction::{TransactionReport, clone_workspace_draft};
-use crate::graph::workspace::RootPresentationOwner;
 use crate::graph::workspace::WorkspaceIndex;
+use crate::graph::workspace::{ItemPlace, RootPresentationOwner};
 use crate::graph::{
     Axis, ContainedFloating, NORMALIZED_WEIGHT_TOLERANCE, Node, RootRecord, SplitWeight,
     SurfacePresentation, Workspace,
@@ -44,6 +44,7 @@ use authorization::{check_move, evaluate_policy};
 pub(crate) use close::{
     PreparedContentClose, PreparedContentCloseCommit, PreparedSurfaceContentClose,
     prepare_content_close, prepare_surface_content_close, prepare_surface_content_closes,
+    validate_layout_tab_close,
 };
 use references::{
     ReferenceAuthority, validate_item_source, validate_move_payload, validate_move_payload_with,
@@ -51,14 +52,15 @@ use references::{
     validate_target, validate_target_with,
 };
 use root_lifecycle::{
-    cleanup_empty_source_root, detach_root, detach_root_presentation, retire_root,
+    cleanup_empty_source_root, detach_root, detach_root_presentation, remove_subtree_nodes,
+    retire_root,
 };
-pub(crate) use topology::validate_split_resizes;
+pub(crate) use topology::validate_track_resizes;
 #[cfg(test)]
-use topology::validate_split_resizes_structure;
+use topology::validate_track_resizes_structure;
 use topology::{
-    apply_command, floating_presentation_mismatch, moves_central_tab_contents, remove_item, select,
-    validate_contained,
+    apply_command, detach_node, floating_presentation_mismatch, moves_central_tab_contents,
+    remove_item, select, select_item, validate_contained,
 };
 
 /// A completed candidate paired with the report frozen by its prepare owner.
@@ -89,6 +91,19 @@ impl PreparedTransaction {
                 vec![CommandOutcome::Selected {
                     tab: source.tab(),
                     tabs: source.tabs(),
+                    changed: false,
+                }],
+                false,
+            ),
+        }
+    }
+
+    fn unchanged_item_activation(candidate: WorkspaceSnapshot, item: ItemId) -> Self {
+        Self {
+            candidate: PreparedWorkspace::Unchanged(candidate),
+            report: TransactionReport::new(
+                vec![CommandOutcome::ItemActivated {
+                    item,
                     changed: false,
                 }],
                 false,
@@ -184,6 +199,26 @@ impl WorkspaceSnapshot {
             return Ok(PreparedTransaction::unchanged_selection(
                 self.clone(),
                 source,
+            ));
+        }
+        if let [command @ WorkspaceCommand::SelectItem { source }] = commands
+            && let Some(tabs) = source.tabs()
+            && self
+                .root_structure(source.root())
+                .is_some_and(|structure| !structure.has_composition())
+            && matches!(self.node(tabs), Some(Node::Tabs { selected, .. })
+                if *selected == Some(TabKey::for_item(source.item())))
+        {
+            #[cfg(test)]
+            crate::interaction::targeting::resolver::structural_work::record_transaction_prepare(
+                commands.len(),
+            );
+            authorize_workspace_command(self, policy, command)
+                .and_then(|()| validate_item_source(self, source))
+                .map_err(|source| TransactionError::Command { index: 0, source })?;
+            return Ok(PreparedTransaction::unchanged_item_activation(
+                self.clone(),
+                source.item(),
             ));
         }
         prepare_transaction(self, policy, commands)
@@ -307,6 +342,20 @@ fn prepare_transaction_inner(
             changed,
         ));
     }
+    if let [command @ WorkspaceCommand::SelectItem { source }] = commands
+        && let TransactionAuthority::Policy(policy) = authority
+    {
+        authorize_workspace_command(&candidate, policy, command)
+            .map_err(|source| TransactionError::Command { index: 0, source })?;
+        let applied = select_item(&mut candidate, source)
+            .map_err(|source| TransactionError::Command { index: 0, source })?;
+        let changed = applied.outcome.changes_workspace();
+        return Ok(PreparedTransaction::new(
+            candidate,
+            vec![applied.outcome],
+            changed,
+        ));
+    }
     if let [
         command @ WorkspaceCommand::Move {
             payload: MovePayload::Item(source),
@@ -314,6 +363,13 @@ fn prepare_transaction_inner(
         },
     ] = commands
         && matches!(authority, TransactionAuthority::Policy(_))
+        && source.tabs().is_some()
+        && !workspace
+            .root_structure(source.root())
+            .is_some_and(|structure| structure.has_composition())
+        && !workspace
+            .root_structure(target_root(target))
+            .is_some_and(|structure| structure.has_composition())
     {
         let (applied, effects) = apply_command(&mut candidate, authority, command)
             .map_err(|source| TransactionError::Command { index: 0, source })?;
@@ -325,7 +381,7 @@ fn prepare_transaction_inner(
         super::canonical::finish_item_move(
             &mut candidate,
             source.root(),
-            source.tabs(),
+            source.owner_node(),
             target_root(target),
             match target {
                 DockTarget::OuterEdge(edge) => Some(edge.root()),
@@ -575,7 +631,10 @@ fn prune_vacant_surface(workspace: &mut Workspace, surface: SurfaceId) {
 fn tabs_len(workspace: &Workspace, tabs: NodeId) -> Result<usize, CommandError> {
     match workspace.storage.nodes.get(tabs) {
         Some(Node::Tabs { items, .. }) => Ok(items.len()),
-        Some(Node::Split { .. }) => Err(CommandError::NodeIsNotTabs { node: tabs }),
+        Some(Node::Pane { .. }) => Ok(1),
+        Some(Node::Split { .. } | Node::Grid { .. }) => {
+            Err(CommandError::NodeIsNotTabs { node: tabs })
+        }
         None => Err(CommandError::MissingNode {
             role: ReferenceRole::Target,
             node: tabs,

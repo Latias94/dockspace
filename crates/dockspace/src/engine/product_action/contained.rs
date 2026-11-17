@@ -16,6 +16,7 @@ struct ProductContainedSource {
 enum ProductFloatSource {
     Item(ItemId),
     Tabs {
+        tab: Option<TabKey>,
         source_root: RootId,
         items: Vec<ItemId>,
     },
@@ -36,7 +37,12 @@ impl ProductFloatSource {
         floating: FloatingPresentationId,
     ) -> ProductCommandContext {
         match self {
-            Self::Tabs { source_root, items } => ProductCommandContext::FloatTabs {
+            Self::Tabs {
+                tab,
+                source_root,
+                items,
+            } => ProductCommandContext::FloatTabs {
+                tab,
                 source_root,
                 root,
                 surface,
@@ -359,7 +365,6 @@ impl DockEngine {
         self.compile_product_float_payload(
             MovePayload::Item(item_source),
             ProductFloatSource::Item(item),
-            item,
             surface,
             rect,
         )
@@ -372,15 +377,34 @@ impl DockEngine {
     ) -> Result<ProductActionPlan, DockspaceActionRejection> {
         let (source, items) = self.capture_product_tabs(group)?;
         let source_root = source.root();
-        let anchor = items
-            .first()
-            .copied()
-            .ok_or(DockspaceActionRejection::Conflict)?;
         let rect = self.derive_product_root_float_rect(source_root, surface)?;
         self.compile_product_float_payload(
             MovePayload::Tabs(source),
-            ProductFloatSource::Tabs { source_root, items },
-            anchor,
+            ProductFloatSource::Tabs {
+                tab: None,
+                source_root,
+                items,
+            },
+            surface,
+            rect,
+        )
+    }
+
+    pub(super) fn compile_product_tab_float(
+        &self,
+        tab: &PreparedTab,
+        surface: SurfaceId,
+    ) -> Result<ProductActionPlan, DockspaceActionRejection> {
+        let (payload, items) = self.capture_product_tab(tab)?;
+        let source_root = tab.source.root();
+        let rect = self.derive_product_root_float_rect(source_root, surface)?;
+        self.compile_product_float_payload(
+            payload,
+            ProductFloatSource::Tabs {
+                tab: Some(tab.key()),
+                source_root,
+                items,
+            },
             surface,
             rect,
         )
@@ -390,7 +414,6 @@ impl DockEngine {
         &self,
         payload: MovePayload,
         source: ProductFloatSource,
-        anchor: ItemId,
         surface: SurfaceId,
         rect: LogicalRect,
     ) -> Result<ProductActionPlan, DockspaceActionRejection> {
@@ -424,7 +447,7 @@ impl DockEngine {
                 surface: current_surface,
                 floating,
             } if current_surface == surface => {
-                let contained = self.capture_product_contained(anchor)?;
+                let contained = self.capture_product_contained_root(source_root)?;
                 Ok(ProductActionPlan::Command {
                     command: WorkspaceCommand::UpdateContainedPresentation {
                         source: contained.source,
@@ -551,13 +574,20 @@ impl DockEngine {
         item: ItemId,
     ) -> Result<ProductContainedSource, DockspaceActionRejection> {
         let item_source = self.capture_product_item(item)?;
-        let root = item_source.root();
+        self.capture_product_contained_root(item_source.root())
+            .map_err(|_| DockspaceActionRejection::ItemNotContained { item })
+    }
+
+    fn capture_product_contained_root(
+        &self,
+        root: RootId,
+    ) -> Result<ProductContainedSource, DockspaceActionRejection> {
         let crate::graph::workspace::RootPresentationOwner::Contained { surface, floating } = self
             .workspace
             .presentation_for_root(root)
             .ok_or(DockspaceActionRejection::Conflict)?
         else {
-            return Err(DockspaceActionRejection::ItemNotContained { item });
+            return Err(DockspaceActionRejection::Conflict);
         };
         let root_record = self
             .workspace

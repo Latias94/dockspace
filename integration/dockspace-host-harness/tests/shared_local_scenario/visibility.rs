@@ -14,6 +14,7 @@ struct RecordedVisibility {
 }
 
 fn record_visibility(session: &mut DockspaceSession) -> RecordedVisibility {
+    let header = session.presentation_config().tab_bar_height();
     let mut frame = session.begin_host_frame().unwrap();
     let view = frame.view();
     let visible = [FIRST, SECOND, THIRD, CONTAINED]
@@ -26,6 +27,7 @@ fn record_visibility(session: &mut DockspaceSession) -> RecordedVisibility {
             view.item(item)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .visible_selected()
                 .and_then(|tab| tab.item())
         })
@@ -80,8 +82,16 @@ fn record_visibility(session: &mut DockspaceSession) -> RecordedVisibility {
         if let Step::Operation { operation, .. } = step {
             match operation {
                 Operation::Tab(tab) => painted_tabs.extend(tab.item()),
-                Operation::Pane(pane) if group_hidden && pane.selected() == Some(THIRD) => {
-                    assert_eq!(pane.bounds(), bounds);
+                Operation::Pane(pane) if group_hidden && pane.item() == THIRD => {
+                    assert_eq!(
+                        pane.bounds(),
+                        LogicalRect::new(0.0, header, bounds.width(), bounds.height() - header)
+                            .unwrap()
+                    );
+                    assert_eq!(pane.content_bounds(), pane.bounds());
+                }
+                Operation::Tabs(tabs) if group_hidden && tabs.root() == ROOT => {
+                    assert_eq!(tabs.bounds(), bounds);
                 }
                 Operation::ContainedControls(_) => contained_count += 1,
                 Operation::Splitter(_) => splitter_count += 1,
@@ -113,7 +123,7 @@ fn record_visibility(session: &mut DockspaceSession) -> RecordedVisibility {
         .filter_map(|record| match record {
             OwnedRecord::PaneContent { item, paint, .. } => {
                 assert_eq!(*paint, SurfacePaintDisposition::Visible);
-                Some(item.expect("an entirely hidden group has no content record"))
+                Some(*item)
             }
             _ => None,
         })
@@ -210,10 +220,11 @@ fn shared_l08_visibility_executes_through_independent_recording_and_public_actio
                 let report = commit(frame);
                 assert!(report.workspace_changed());
                 let current = session.view().item(item(target)).unwrap();
-                assert!(current.is_selected());
+                assert!(current.is_active());
                 SemanticObservation::ItemSelected(alias(
                     current
                         .tabs()
+                        .expect("item is an inline tab")
                         .visible_selected()
                         .and_then(|tab| tab.item())
                         .unwrap(),
@@ -245,7 +256,12 @@ fn shared_l08_visibility_executes_through_independent_recording_and_public_actio
             unsupported => panic!("unsupported visibility scenario step: {unsupported:?}"),
         };
         observations.push(observed);
-        let tabs = session.view().item(FIRST).unwrap().tabs();
+        let tabs = session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .expect("fixture item is an inline tab");
         assert_eq!(tabs.items().collect::<Vec<_>>(), [FIRST, SECOND]);
         assert_eq!(
             tabs.selected().and_then(|tab| tab.item()),
@@ -272,6 +288,7 @@ fn shared_l08_visibility_executes_through_independent_recording_and_public_actio
                 .item(THIRD)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             [THIRD]
@@ -282,6 +299,7 @@ fn shared_l08_visibility_executes_through_independent_recording_and_public_actio
                 .item(CONTAINED)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             [CONTAINED]
@@ -332,6 +350,7 @@ fn retained_outputs_cannot_reauthorize_a_hidden_receiver_and_fresh_show_actions_
                 .item(SECOND)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .visible_selected()
                 .and_then(|tab| tab.item()),
             Some(SECOND)
@@ -342,6 +361,7 @@ fn retained_outputs_cannot_reauthorize_a_hidden_receiver_and_fresh_show_actions_
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             [FIRST, SECOND]
@@ -393,12 +413,28 @@ fn document_restore_keeps_hidden_groups_and_rebuilds_only_visible_public_output(
         assert_eq!(after.contained(), before.contained());
         assert_eq!(after.tab_index(), before.tab_index());
         assert_eq!(
-            after.tabs().items().collect::<Vec<_>>(),
-            before.tabs().items().collect::<Vec<_>>()
+            after
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>(),
+            before
+                .tabs()
+                .expect("item is an inline tab")
+                .items()
+                .collect::<Vec<_>>()
         );
         assert_eq!(
-            after.tabs().selected().and_then(|tab| tab.item()),
-            before.tabs().selected().and_then(|tab| tab.item())
+            after
+                .tabs()
+                .expect("item is an inline tab")
+                .selected()
+                .and_then(|tab| tab.item()),
+            before
+                .tabs()
+                .expect("item is an inline tab")
+                .selected()
+                .and_then(|tab| tab.item())
         );
         assert_eq!(after.is_visible(), before.is_visible());
     }
@@ -412,6 +448,7 @@ fn document_restore_keeps_hidden_groups_and_rebuilds_only_visible_public_output(
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         [FIRST, SECOND]
@@ -422,6 +459,7 @@ fn document_restore_keeps_hidden_groups_and_rebuilds_only_visible_public_output(
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .visible_selected()
             .and_then(|tab| tab.item()),
         None
@@ -443,6 +481,7 @@ fn document_restore_keeps_hidden_groups_and_rebuilds_only_visible_public_output(
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .visible_selected()
             .and_then(|tab| tab.item()),
         Some(SECOND)

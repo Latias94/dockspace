@@ -12,6 +12,8 @@ use super::TabBarSceneId;
 pub enum PresentationMenuAnchorHost {
     /// The sole selected tab bar of a main or native-main root.
     TabBar(TabBarSceneId),
+    /// An independent controls band outside a main root's content allocation.
+    RootControls,
     /// The title chrome of one contained-floating presentation.
     ContainedTitle(FloatingPresentationId),
 }
@@ -22,6 +24,7 @@ pub struct PresentationMenuAnchorRecord {
     root: RootId,
     host: PresentationMenuAnchorHost,
     bounds: Option<LogicalRect>,
+    reserved_bounds: Option<LogicalRect>,
     hit: Option<HitRegion>,
     layer: SceneLayerKey,
 }
@@ -37,6 +40,7 @@ impl PresentationMenuAnchorRecord {
             root,
             host,
             bounds: Some(bounds),
+            reserved_bounds: None,
             hit: Some(HitRegion::new(bounds)),
             layer,
         }
@@ -51,9 +55,21 @@ impl PresentationMenuAnchorRecord {
             root,
             host,
             bounds: None,
+            reserved_bounds: None,
             hit: None,
             layer,
         }
+    }
+
+    pub(crate) const fn with_reserved_bounds(mut self, reserved: LogicalRect) -> Self {
+        self.reserved_bounds = Some(reserved);
+        self
+    }
+
+    /// Returns an independent control band's allocation, when this anchor owns one.
+    #[must_use]
+    pub const fn reserved_bounds(self) -> Option<LogicalRect> {
+        self.reserved_bounds
     }
 
     /// Returns the root whose presentation commands this anchor opens.

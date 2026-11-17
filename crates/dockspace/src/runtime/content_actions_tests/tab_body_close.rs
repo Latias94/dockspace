@@ -150,6 +150,7 @@ fn clipped_tab_body_close_uses_the_existing_deferred_decision_workflow() {
                 .item(FIRST)
                 .unwrap()
                 .tabs()
+                .expect("fixture item is an inline tab")
                 .items()
                 .collect::<Vec<_>>(),
             &[FIRST]
@@ -188,6 +189,7 @@ fn tab_body_close_requests_are_rollbackable_and_veto_keeps_the_item() {
             .item(SECOND)
             .unwrap()
             .tabs()
+            .expect("fixture item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND]

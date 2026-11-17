@@ -90,17 +90,16 @@ fn paint(
             let mut receiver = None;
             plan.visit_surface_program(|step| {
                 if let Step::Operation {
-                    operation: Operation::Pane(pane),
+                    operation: Operation::Tabs(tabs),
                     ..
                 } = step
                 {
-                    assert!(pane.selected().is_none());
-                    receiver = plan.receiver_for_pane(pane);
+                    receiver = plan.receiver_for_tabs(tabs);
                 }
                 Ok::<(), ()>(())
             })
             .unwrap();
-            receiver.expect("the empty central leaf must expose its pane receiver")
+            receiver.expect("the empty central Tabs must expose its background receiver")
         }
     };
     let (recording, receipt) = RecordingRenderer::execute(plan).unwrap();
@@ -234,16 +233,20 @@ fn logical_surface_journey_preserves_unaffected_presented_authority() {
     assert_preserved(&session, before_attach, second_receiver);
 
     let (empty, _, output) = paint(&mut session, S2, None);
+    assert!(empty.records.iter().any(
+        |record| matches!(record, OwnedRecord::Geometry { visual, .. }
+                if visual.kind() == dockspace::runtime::DockspaceVisualKind::Tabs)
+    ));
     assert!(
-        empty
+        !empty
             .records
             .iter()
-            .any(|record| matches!(record, OwnedRecord::PaneContent { item: None, .. }))
+            .any(|record| matches!(record, OwnedRecord::PaneContent { .. }))
     );
     present(&mut session, output);
     assert_preserved(&session, before_attach, second_receiver);
     assert!(click(&mut session, before_attach, second_receiver).workspace_changed());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
     assert!(!session.has_active_gesture());
 
     let mut frame = session.begin_host_frame().unwrap();
@@ -311,13 +314,14 @@ fn logical_surface_journey_preserves_unaffected_presented_authority() {
     assert!(retired.take_native_effects().is_empty());
     assert_preserved(&session, before_retire, first_receiver);
     assert!(click(&mut session, before_retire, first_receiver).workspace_changed());
-    assert!(session.view().item(FIRST).unwrap().is_selected());
+    assert!(session.view().item(FIRST).unwrap().is_active());
     assert_eq!(
         session
             .view()
             .item(FIRST)
             .unwrap()
             .tabs()
+            .expect("item is an inline tab")
             .items()
             .collect::<Vec<_>>(),
         &[FIRST, SECOND]

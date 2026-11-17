@@ -140,7 +140,7 @@ fn select(session: &mut DockspaceSession, item: ItemId) -> DockspacePaneFocusReq
             .iter()
             .any(|recording| recording.records.iter().any(|record| {
                 matches!(record, OwnedRecord::PaneContent {
-            item: Some(painted), paint: SurfacePaintDisposition::Visible, ..
+            item: painted, paint: SurfacePaintDisposition::Visible, ..
         } if *painted == item)
             }))
     );
@@ -247,7 +247,7 @@ fn restore_relocates_stable_focus_and_prefers_pending_over_other_surface_history
         let restored = session.view().item(SECOND).unwrap();
         assert_eq!(restored.surface(), SURFACE);
         assert_eq!(restored.root(), RootId::new(1));
-        assert!(restored.is_selected());
+        assert!(restored.is_active());
         let request = requests(&mut session);
         assert_eq!(request.len(), 1);
         assert_eq!(request[0].surface(), SURFACE);
@@ -346,7 +346,7 @@ fn restore_fallback_is_central_then_visual_then_front_contained_then_workspace()
         }
         if let Some(hidden) = session.view().item(THIRD) {
             assert!(
-                !hidden.is_selected(),
+                !hidden.is_active(),
                 "restore must preserve the saved background tab"
             );
         }
@@ -461,8 +461,8 @@ fn review_closing_a_background_pane_preserves_confirmed_focus_on_another_surface
         .unwrap();
     commit_measured(frame);
     assert!(session.view().item(FIRST).is_none());
-    assert!(session.view().item(SECOND).unwrap().is_selected());
-    assert!(session.view().item(THIRD).unwrap().is_selected());
+    assert!(session.view().item(SECOND).unwrap().is_active());
+    assert!(session.view().item(THIRD).unwrap().is_active());
     paint_and_present(&mut session);
     let pending = requests(&mut session);
     assert!(

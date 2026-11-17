@@ -1470,12 +1470,38 @@ fn point_without_hover_receiver(
     away_from: LogicalPoint,
 ) -> LogicalPoint {
     let bounds = projection.plan().bounds();
-    let source_pane = projection
+    let (root, owner, layer, content_bounds) = if let Some(bar) = projection
         .plan()
-        .pane_records()
+        .tab_bar_records()
         .iter()
-        .find(|pane| pane.bounds().contains(away_from))
-        .expect("the sample origin belongs to one source pane");
+        .find(|bar| bar.bounds().contains(away_from))
+    {
+        let tabs = projection
+            .plan()
+            .tabs_records()
+            .iter()
+            .find(|tabs| tabs.id().root == bar.id().root && tabs.id().tabs == bar.id().tabs)
+            .expect("the source grip belongs to its actual tabs container");
+        (
+            tabs.id().root,
+            tabs.id().tabs,
+            tabs.layer(),
+            tabs.content_bounds(),
+        )
+    } else {
+        let pane = projection
+            .plan()
+            .pane_records()
+            .iter()
+            .find(|pane| pane.bounds().contains(away_from))
+            .expect("the sample origin belongs to actual content or a tabs header");
+        (
+            pane.id().root,
+            pane.owner_node(),
+            pane.layer(),
+            pane.content_bounds(),
+        )
+    };
     for y_step in 1..10 {
         for x_step in 1..10 {
             let point = LogicalPoint::new(
@@ -1495,19 +1521,18 @@ fn point_without_hover_receiver(
                 .tab_bar_records()
                 .iter()
                 .any(|bar| bar.bounds().contains(point));
-            let magnetic_target =
-                projection
-                    .plan()
-                    .magnetic_target_at(point, source_pane.layer(), |target| {
-                        target
-                            != (DropTargetId::Center {
-                                surface: SURFACE,
-                                root: source_pane.id().root,
-                                tabs: source_pane.id().tabs,
-                            })
-                    });
+            let magnetic_target = projection
+                .plan()
+                .magnetic_target_at(point, layer, |target| {
+                    target
+                        != (DropTargetId::Center {
+                            surface: SURFACE,
+                            root,
+                            tabs: owner,
+                        })
+                });
             if delta_x * delta_x + delta_y * delta_y > 64.0
-                && source_pane.content_bounds().contains(point)
+                && content_bounds.contains(point)
                 && !has_hover_receiver
                 && !in_tab_strip
                 && magnetic_target.is_none()
@@ -1616,7 +1641,7 @@ fn point_inside_splitter(
         .find(|region| {
             matches!(
                 region.id().kind(),
-                PresentationHitRegionKind::SplitterHandle(splitter) if splitter.split == split
+                PresentationHitRegionKind::SplitterHandle(splitter) if splitter.node() == split
             )
         })
         .expect("splitter has an exact delivery region");
@@ -2315,9 +2340,10 @@ fn surface_local_splitter_press_move_release_commits_stream_owned_resize() {
         [InteractionOutcome::ResizeBegan { .. }]
     ));
     let move_weights = match transition.reduced_pointer_edges()[1].interaction_outcomes() {
-        [InteractionOutcome::ResizeUpdated { splits, .. }] if splits.len() == 1 => {
-            splits[0].weights().to_vec()
-        }
+        [InteractionOutcome::ResizeUpdated { splits, .. }] if splits.len() == 1 => splits[0]
+            .split_weights()
+            .expect("the fixture resizes a split owner")
+            .to_vec(),
         outcomes => panic!("move must publish one resize proposal, got {outcomes:?}"),
     };
     assert!(matches!(
@@ -4302,12 +4328,10 @@ fn journal_contained_release_commits_the_release_edge_preview_immediately() {
     let (source_group, press) = point_inside_tab_group(projection, ItemId::new(1));
     let source_bounds = projection
         .plan()
-        .pane_records()
+        .tabs_records()
         .iter()
-        .find(|pane| {
-            pane.id().root == ROOT && projection.plan().pane_selected(pane) == Some(ItemId::new(1))
-        })
-        .expect("the dragged group has one source pane")
+        .find(|tabs| tabs.id().root == ROOT && tabs.bounds().contains(press))
+        .expect("the dragged group has its actual tabs frame including the header")
         .bounds();
     let first_target = point_without_hover_receiver(projection, press);
 
@@ -4342,6 +4366,7 @@ fn journal_contained_release_commits_the_release_edge_preview_immediately() {
             nodes: 3,
             tab_items: 3,
             split_child_edges: 2,
+            grid_child_edges: 0,
             tab_mru_items: 3,
             roots: 1,
             surfaces: 1,

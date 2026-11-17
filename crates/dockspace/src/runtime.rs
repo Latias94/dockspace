@@ -61,11 +61,11 @@ use native::NativePlatformError;
 pub use crate::input::journal::{PointerDeviceKind, PointerEventMetadata};
 pub use crate::model::{
     LogicalSurfaceRejection, NativeTearOffSource, NativeWindowPlacement, PreparedDockAction,
-    PreparedTabsGroup, WorkspaceVersion,
+    PreparedTab, PreparedTabsGroup, WorkspaceVersion,
 };
 pub use crate::presentation::config::{
     DockPresentationConfig, DockPresentationConfigBuilder, DockPresentationConfigError,
-    PaneOverflowPolicy, PresentationConfigRevision,
+    PaneOverflowPolicy, PresentationConfigRevision, ResizePropagation,
 };
 use close::PreparedCloseRequestAuthorityMismatch;
 pub use close::{
@@ -145,6 +145,7 @@ pub use paint::{
     TabGroupDragRegionKind, TabGroupDragRegionPaintRecord, TabListMenuBackdropPaintRecord,
     TabListMenuPaintRecord, TabListMenuRowPaintRecord, TabPaintRecord, TabStripControlKind,
     TabStripControlPaintRecord, TabStripMemberPaintRecord, TabStripMemberVisibility,
+    TabsPaintRecord,
 };
 #[cfg(feature = "serde")]
 pub use persistence::{
@@ -224,6 +225,15 @@ pub enum DockspaceCloseOutcome {
         /// Removed items in the close plan's original order.
         items: Vec<crate::ids::ItemId>,
     },
+    /// One layout tab and every real descendant were removed atomically.
+    TabClosed {
+        /// Root which owned the direct tab before close.
+        root: crate::ids::RootId,
+        /// Closed direct layout tab.
+        tab: crate::ids::TabKey,
+        /// Removed items in the close plan's original order.
+        items: Vec<crate::ids::ItemId>,
+    },
     /// One complete surface roster and all of its items were removed atomically.
     SurfaceClosed {
         /// Closed surface.
@@ -284,8 +294,14 @@ pub enum HostInputOutcome {
         /// Complete binding incarnation whose pointer and scroll dependencies ended.
         binding: NativeSurfaceBinding,
     },
+    /// A whole-group insertion directive updated the exact active gesture.
+    GroupDockModeUpdated {
+        /// Requested insertion mode.
+        mode: crate::model::TabGroupDockMode,
+        /// Whether the matching live gesture changed.
+        changed: bool,
+    },
     /// Managed input ended at this frame's terminal overload boundary.
-    ///
     /// The provider and all previously accepted release obligations remain live.
     NativeInputCancelledForOverload,
     /// One validated document atomically replaced the complete workspace.
@@ -995,6 +1011,19 @@ impl DockspaceRuntimeError {
         matches!(
             &self.source,
             DockspaceRuntimeErrorSource::PreparedActionAuthorityMismatch(_)
+        )
+    }
+
+    /// Returns whether this prepared close request belongs to another session.
+    ///
+    /// [`DockspaceHostFrame::submit_prepared_close_request`] rejects this exact
+    /// error before appending input. It does not invalidate the current frame
+    /// or convert another protocol or publication failure into a recoverable action.
+    #[must_use]
+    pub const fn is_foreign_prepared_close_request(&self) -> bool {
+        matches!(
+            &self.source,
+            DockspaceRuntimeErrorSource::PreparedCloseRequestAuthorityMismatch(_)
         )
     }
 

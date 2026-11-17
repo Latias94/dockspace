@@ -469,6 +469,11 @@ pub enum SurfacePointerEvent {
         /// Whether explicit and magnetic docking targets may be acquired.
         enabled: bool,
     },
+    /// Changes whole-group center insertion without inventing pointer motion.
+    GroupDockModeChanged {
+        /// Logical mode for this provider's exact active pointer.
+        mode: crate::model::TabGroupDockMode,
+    },
     /// Pointer motion while the provider owns the stream.
     Moved,
     /// Rechecks one core-issued stationary action with fresh receiver facts.
@@ -1485,6 +1490,7 @@ impl DockspaceHostFrame<'_> {
             if matches!(
                 input.event,
                 SurfacePointerEvent::DockingEnabledChanged { .. }
+                    | SurfacePointerEvent::GroupDockModeChanged { .. }
             ) {
                 prepared.push((None, input));
                 continue;
@@ -1518,20 +1524,31 @@ impl DockspaceHostFrame<'_> {
         }
         for (prepared_edge, input) in prepared {
             let Some((edge_sequence, journal)) = prepared_edge else {
-                let SurfacePointerEvent::DockingEnabledChanged { enabled } = input.event else {
-                    unreachable!("only targeting directives omit a pointer journal");
-                };
                 let provider = self
                     .session
                     .pointer
                     .as_ref()
                     .map(|pointer| pointer.provider().lease())
                     .ok_or(DockspaceInteractionError::PointerProviderUnavailable)?;
-                self.append(crate::engine::EngineInput::UpdatePointerDockingEnabled {
-                    provider,
-                    pointer: PointerId::new(input.pointer.get()),
-                    enabled,
-                })?;
+                let pointer = PointerId::new(input.pointer.get());
+                let command = match input.event {
+                    SurfacePointerEvent::DockingEnabledChanged { enabled } => {
+                        crate::engine::EngineInput::UpdatePointerDockingEnabled {
+                            provider,
+                            pointer,
+                            enabled,
+                        }
+                    }
+                    SurfacePointerEvent::GroupDockModeChanged { mode } => {
+                        crate::engine::EngineInput::UpdatePointerGroupDockMode {
+                            provider,
+                            pointer,
+                            mode,
+                        }
+                    }
+                    _ => unreachable!("only gesture directives omit pointer journals"),
+                };
+                self.append(command)?;
                 continue;
             };
             self.submit_runtime_pointer_journal(journal)?;
@@ -1561,7 +1578,8 @@ impl DockspaceHostFrame<'_> {
         event: SurfacePointerEvent,
     ) -> Result<PointerEdgeKind, DockspaceRuntimeError> {
         Ok(match event {
-            SurfacePointerEvent::DockingEnabledChanged { .. } => {
+            SurfacePointerEvent::DockingEnabledChanged { .. }
+            | SurfacePointerEvent::GroupDockModeChanged { .. } => {
                 unreachable!("targeting directives are semantic inputs, not pointer edges")
             }
             SurfacePointerEvent::Moved => PointerEdgeKind::Moved,

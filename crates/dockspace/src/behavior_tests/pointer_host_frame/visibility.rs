@@ -517,7 +517,7 @@ fn contained_group_edge_drag_previews_only_visible_members_but_moves_every_owned
         let committed = interaction(&engine);
         let pane = committed
             .plan()
-            .pane_records()
+            .tabs_records()
             .iter()
             .find(|pane| pane.id().tabs == visible_tabs)
             .unwrap();

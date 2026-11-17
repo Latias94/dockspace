@@ -149,7 +149,7 @@ impl DockEngine {
             // Preserve the full frozen root proof, including selection and ownership.
             let source_preserved = match prepared.payload() {
                 MovePayload::Item(source) => candidate
-                    .capture_item_source(source.root(), source.tabs(), source.item())
+                    .capture_item_source(source.root(), source.owner_node(), source.item())
                     .as_ref()
                     == Ok(source),
                 MovePayload::Tabs(source) | MovePayload::Subtree(source) => candidate
@@ -325,7 +325,7 @@ impl DockEngine {
                     source.root() == origin.root
                         && match &drag.payload {
                             MovePayload::Item(item) => {
-                                item.root() == source.root() && item.tabs() == source.node()
+                                item.root() == source.root() && item.owner_node() == source.node()
                             }
                             MovePayload::Tabs(payload) | MovePayload::Subtree(payload) => {
                                 payload == source
@@ -384,11 +384,12 @@ impl DockEngine {
             WorkspaceCommand::CreateContainedRoot { .. }
             | WorkspaceCommand::UpdateContainedRect { .. }
             | WorkspaceCommand::Select { .. }
+            | WorkspaceCommand::SelectItem { .. }
             | WorkspaceCommand::SetItemVisibility { .. }
             | WorkspaceCommand::Reorder { .. }
             | WorkspaceCommand::Open { .. }
             | WorkspaceCommand::Move { .. }
-            | WorkspaceCommand::ResizeSplits { .. }
+            | WorkspaceCommand::ResizeTracks { .. }
             | WorkspaceCommand::AttachEmptySurface { .. }
             | WorkspaceCommand::RetireEmptySurface { .. }
             | WorkspaceCommand::CreateSurfaceRoot { .. }
@@ -429,15 +430,15 @@ impl DockEngine {
         };
         let surface = self.payload_surface(payload)?;
         let is_visible_source = |item: &ItemId| {
-            !self.workspace.item_is_hidden(*item)
+            self.workspace.item_is_active(*item)
                 && self
                     .workspace
                     .locate_item_by_id(*item)
-                    .is_some_and(|(root, tabs, _)| {
-                        root == source.root()
-                            && self.workspace.subtree_contains(source.node(), tabs)
-                            && self.workspace.visible_tab_selection(tabs)
-                                == Some(TabKey::for_item(*item))
+                    .is_some_and(|location| {
+                        location.root == source.root()
+                            && self
+                                .workspace
+                                .subtree_contains(source.node(), location.owner_node())
                     })
         };
         self.viewport_focus
@@ -604,19 +605,19 @@ impl DockEngine {
         };
         match payload {
             MovePayload::Item(source) => {
-                verify(source.root(), source.tabs(), source.reference())?;
+                verify(source.root(), source.owner_node(), source.reference())?;
                 if let Some(index) = index {
                     index.capture_item_source(
                         &self.workspace,
                         self.version,
                         source.root(),
-                        source.tabs(),
+                        source.owner_node(),
                         source.item(),
                     )?;
                 } else {
                     self.workspace.capture_item_source(
                         source.root(),
-                        source.tabs(),
+                        source.owner_node(),
                         source.item(),
                     )?;
                 }
@@ -630,7 +631,11 @@ impl DockEngine {
                             node: source.node(),
                         });
                     }
-                    Some(crate::graph::Node::Split { .. }) => {
+                    Some(
+                        crate::graph::Node::Pane { .. }
+                        | crate::graph::Node::Split { .. }
+                        | crate::graph::Node::Grid { .. },
+                    ) => {
                         return Err(crate::graph::error::CommandError::NodeIsNotTabs {
                             node: source.node(),
                         });

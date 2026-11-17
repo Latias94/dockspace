@@ -1,14 +1,16 @@
 use super::*;
 use crate::geometry::LogicalPoint;
 use crate::graph::SplitWeight;
-use crate::presentation::layout::{ChildProjection, measure_resize_contacts};
+use crate::presentation::layout::{ChildProjection, measure_resize_geometry};
 
 mod contained;
 mod error;
+mod grid;
 mod guides;
 mod measurement;
 #[cfg(feature = "motion")]
 mod motion;
+mod root_controls;
 mod tabs;
 
 use contained::compile_contained_record;
@@ -16,15 +18,16 @@ pub use error::{PresentationCompilationError, SceneCompilationError};
 #[cfg(test)]
 pub(super) use guides::edge_preview;
 use guides::{
-    compile_outer_targets_and_guide, compile_outer_targets_without_guide,
+    compile_content_targets, compile_outer_targets_and_guide, compile_outer_targets_without_guide,
     compile_surface_background, outer_guide_geometry,
 };
 use measurement::{RootLayoutMeasurement, measure_root_layout};
 pub(crate) use measurement::{
-    contained_minimum_size, pane_outer_sizing, selection_geometry_unchanged,
+    compose_root_sizing, contained_minimum_size, pane_outer_sizing, selection_geometry_unchanged,
 };
 #[cfg(feature = "motion")]
 pub(crate) use motion::materialize_presentation_sample;
+pub(crate) use root_controls::root_controls_layout;
 use tabs::{compile_tabs_leaf, select_presentation_menu_tab_bar};
 pub(super) use tabs::{operable_tab_chrome, tab_strip_optional_chrome_layout};
 #[cfg(test)]
@@ -68,7 +71,7 @@ fn compile_surface_scene(
     measurements: AuthoritativeSurfaceMeasurements<'_>,
     popup: PopupPlaneRequirement,
     tab_strip_states: &TabStripStateStore,
-    resize_overrides: &[SplitWeightOverride<'_>],
+    resize_overrides: &[TrackWeightOverride<'_>],
     contained_projection: Option<ContainedLayoutProjection>,
     emit_guides: bool,
 ) -> Result<PresentationPlan, SceneCompilationError> {
@@ -105,6 +108,7 @@ fn compile_surface_scene(
     let fraction = dock_fraction(config)?;
     let mut ready = PresentationPlan::from_measurements(actual, popup, bounds, popup_plane_bounds);
     ready.install_layout_facts(config.clone(), measurements);
+    ready.install_tab_requirements(requirements);
     ready.set_contained_projection(contained_projection);
     ready.set_contained_order(&presentation.contained);
     if tab_strip_states.popup_requirement() != popup {
@@ -404,7 +408,7 @@ pub(crate) fn compile_surface_plan<'a>(
     manifest: &'a SceneRequirementManifest,
     measurements: &SurfaceMeasurements,
     tab_strip_states: &TabStripStateStore,
-    resize_overrides: &[SplitWeightOverride<'_>],
+    resize_overrides: &[TrackWeightOverride<'_>],
     contained_projection: Option<ContainedLayoutProjection>,
 ) -> Result<CompiledSurfacePlan<'a>, PresentationCompilationError> {
     let plan = compile_surface_measurements_with_guide_emission(
@@ -438,7 +442,7 @@ pub(crate) fn compile_surface_measurements(
     manifest: &SceneRequirementManifest,
     measurements: &SurfaceMeasurements,
     tab_strip_states: &TabStripStateStore,
-    resize_overrides: &[SplitWeightOverride<'_>],
+    resize_overrides: &[TrackWeightOverride<'_>],
     contained_projection: Option<ContainedLayoutProjection>,
 ) -> Result<PresentationPlan, PresentationCompilationError> {
     compile_surface_measurements_with_guide_emission(
@@ -464,7 +468,7 @@ pub(crate) fn compile_surface_measurements_without_guides(
     manifest: &SceneRequirementManifest,
     measurements: &SurfaceMeasurements,
     tab_strip_states: &TabStripStateStore,
-    resize_overrides: &[SplitWeightOverride<'_>],
+    resize_overrides: &[TrackWeightOverride<'_>],
     contained_projection: Option<ContainedLayoutProjection>,
 ) -> Result<PresentationPlan, PresentationCompilationError> {
     compile_surface_measurements_with_guide_emission(
@@ -490,7 +494,7 @@ fn compile_surface_measurements_with_guide_emission(
     manifest: &SceneRequirementManifest,
     measurements: &SurfaceMeasurements,
     tab_strip_states: &TabStripStateStore,
-    resize_overrides: &[SplitWeightOverride<'_>],
+    resize_overrides: &[TrackWeightOverride<'_>],
     contained_projection: Option<ContainedLayoutProjection>,
     emit_guides: bool,
 ) -> Result<PresentationPlan, PresentationCompilationError> {
@@ -542,7 +546,7 @@ fn compile_root(
     layer: SceneLayerKey,
     fraction: DockFraction,
     tab_strip_states: &TabStripStateStore,
-    resize_overrides: &[SplitWeightOverride<'_>],
+    resize_overrides: &[TrackWeightOverride<'_>],
     publish_presentation_menu_in_tab_bar: bool,
     emit_guides: bool,
     ready: &mut PresentationPlan,
@@ -559,26 +563,56 @@ fn compile_root(
         .copied()
         .filter(|override_| override_.source().root() == root)
         .collect::<Vec<_>>();
+    let controls = root_controls_layout(workspace, root, bounds, config)?;
+    let content_bounds = controls
+        .as_ref()
+        .map_or(bounds, |controls| controls.content);
+    if let Some(controls) = &controls {
+        let host = PresentationMenuAnchorHost::RootControls;
+        let anchor = match controls.menu {
+            Some(menu) => PresentationMenuAnchorRecord::ready(root, host, menu, layer),
+            None => PresentationMenuAnchorRecord::compacted(root, host, layer),
+        }
+        .with_reserved_bounds(controls.reserved);
+        ready.push_presentation_menu_anchor_record(anchor);
+        if controls.menu.is_some() {
+            ready.push_surface_program_root_operation(
+                SurfaceProgramRootOperation::PresentationMenuAnchor(root),
+            )?;
+        }
+    }
     let projection = Arc::new(layout.project_with_index(
-        bounds,
+        content_bounds,
         &root_overrides,
         workspace_index,
         workspace_version,
     )?);
-    let resize_contacts =
-        measure_resize_contacts(workspace, &projection, config.splitter_thickness());
-    ready.push_root_layout_facts(RootLayoutFacts::new(
-        root,
-        bounds,
-        pane_sizings,
-        Arc::clone(&projection),
-    ));
-    let mut node_depths = BTreeMap::new();
-    let mut pending_depths = vec![(root_record.node, 0_usize)];
-    while let Some((node, depth)) = pending_depths.pop() {
-        if node_depths.insert(node, depth).is_some() {
+    let resize_contacts = measure_resize_geometry(&projection, config.splitter_thickness());
+    let labels = projection.nodes.try_map_values(|node, _| {
+        workspace
+            .node(node)
+            .map(crate::presentation::scene::FrozenTabLabel::from_node)
+            .ok_or(SceneCompilationError::MissingNode {
+                surface,
+                root,
+                node,
+            })
+    })?;
+    ready.push_root_layout_facts(
+        RootLayoutFacts::new(root, bounds, pane_sizings, Arc::clone(&projection))
+            .with_node_labels(labels),
+    );
+    let mut node_contexts = BTreeMap::new();
+    let mut pending_contexts = vec![(root_record.node, 0_usize, None, None)];
+    while let Some((node, depth, ancestors, containing_bar)) = pending_contexts.pop() {
+        if !projection
+            .nodes
+            .get(&node)
+            .is_some_and(|projected| projected.visible)
+        {
             continue;
         }
+        node_contexts.insert(node, (depth, ancestors, containing_bar));
         match workspace
             .node(node)
             .ok_or(SceneCompilationError::MissingNode {
@@ -586,13 +620,25 @@ fn compile_root(
                 root,
                 node,
             })? {
-            Node::Tabs { .. } => {}
-            Node::Split { children, .. } => pending_depths.extend(
-                children
-                    .iter()
+            Node::Pane { .. } => {}
+            Node::Tabs { .. } => {
+                if let Some(selected) = workspace.visible_tab_selection(node) {
+                    if let Some(child) = selected.layout() {
+                        let branch = Some(ready.push_active_tab_choice(ancestors, node, selected));
+                        pending_contexts.push((
+                            child,
+                            depth + 1,
+                            branch,
+                            Some(TabBarSceneId { root, tabs: node }),
+                        ));
+                    }
+                }
+            }
+            value @ (Node::Split { .. } | Node::Grid { .. }) => pending_contexts.extend(
+                value
+                    .child_nodes()
                     .rev()
-                    .copied()
-                    .map(|child| (child, depth + 1)),
+                    .map(|(_, child)| (child, depth + 1, ancestors, containing_bar)),
             ),
         }
     }
@@ -627,11 +673,11 @@ fn compile_root(
     };
 
     let tab_measurements = measurements.snapshot();
-    for (node, projected) in &projection.nodes {
+    for (node, projected) in projection.nodes.iter_preorder() {
         if !projected.visible {
             continue;
         }
-        let rect = clip_rect(projected.rect, bounds)?;
+        let rect = clip_rect(projected.rect, content_bounds)?;
         match workspace
             .node(*node)
             .ok_or(SceneCompilationError::MissingNode {
@@ -639,20 +685,57 @@ fn compile_root(
                 root,
                 node: *node,
             })? {
+            Node::Pane { item } => {
+                let (depth, ancestors, containing_bar) =
+                    node_contexts
+                        .get(node)
+                        .copied()
+                        .ok_or(SceneCompilationError::MissingNode {
+                            surface,
+                            root,
+                            node: *node,
+                        })?;
+                let id = PaneSceneId { root, item: *item };
+                ready.push_pane_record(
+                    PaneRecord::new(id, *node, projected.slot, rect, layer).with_context(
+                        rect,
+                        containing_bar,
+                        ancestors,
+                    ),
+                );
+                ready.push_surface_program_pane_operation(id)?;
+                compile_content_targets(
+                    policy,
+                    config,
+                    surface,
+                    root,
+                    *node,
+                    depth,
+                    rect,
+                    rect,
+                    layer,
+                    fraction,
+                    root_record.node == *node && root_record.central == Some(*node),
+                    outer_guides,
+                    ready,
+                )?;
+            }
             Node::Tabs {
                 items: persistent_items,
                 ..
             } => {
                 let items = workspace.visible_tab_keys(*node);
                 let selected = workspace.visible_tab_selection(*node);
-                let depth = *node_depths
-                    .get(node)
-                    .ok_or(SceneCompilationError::MissingNode {
-                        surface,
-                        root,
-                        node: *node,
-                    })?;
-                compile_tabs_leaf(
+                let (depth, ancestors, _) =
+                    node_contexts
+                        .get(node)
+                        .copied()
+                        .ok_or(SceneCompilationError::MissingNode {
+                            surface,
+                            root,
+                            node: *node,
+                        })?;
+                let content = compile_tabs_leaf(
                     policy,
                     config,
                     requirements,
@@ -662,6 +745,7 @@ fn compile_root(
                     *node,
                     depth,
                     rect,
+                    None,
                     &items,
                     persistent_items,
                     selected,
@@ -672,6 +756,44 @@ fn compile_root(
                     presentation_menu_tabs == Some(*node),
                     outer_guides,
                     true,
+                    ancestors,
+                    ready,
+                )?;
+                if let Some(item) = selected.and_then(crate::ids::TabKey::item) {
+                    let branch = Some(ready.push_active_tab_choice(
+                        ancestors,
+                        *node,
+                        selected.expect("a selected item has a tab key"),
+                    ));
+                    let id = PaneSceneId { root, item };
+                    ready.push_pane_record(
+                        PaneRecord::new(id, *node, content, content, layer).with_context(
+                            content,
+                            Some(TabBarSceneId { root, tabs: *node }),
+                            branch,
+                        ),
+                    );
+                    ready.push_surface_program_pane_operation(id)?;
+                }
+            }
+            Node::Grid { .. } => {
+                let grid = projection
+                    .grids
+                    .get(node)
+                    .ok_or(SceneCompilationError::MissingSplitProjection { root, split: *node })?;
+                grid::compile_grid_boundaries(
+                    policy,
+                    config,
+                    surface,
+                    root,
+                    *node,
+                    grid,
+                    rect,
+                    layer,
+                    node_contexts
+                        .get(node)
+                        .and_then(|(_, ancestors, _)| *ancestors),
+                    &resize_contacts,
                     ready,
                 )?;
             }
@@ -679,6 +801,7 @@ fn compile_root(
                 axis,
                 children,
                 weights,
+                ..
             } => {
                 let split = projection
                     .splits
@@ -688,7 +811,7 @@ fn compile_root(
                     split.children,
                     *axis,
                     config.splitter_hit_extent(),
-                    bounds,
+                    content_bounds,
                 )?;
                 let mut resize_facts = None;
                 let split_operable = policy.splitter_resize_is_allowed(root, *axis, surface)
@@ -707,7 +830,7 @@ fn compile_root(
                         );
                     let id = SplitterSceneId {
                         root,
-                        split: *node,
+                        owner: crate::presentation::scene::SplitterOwner::Split(*node),
                         index,
                     };
                     let splitter = intersect_rect(bounds, splitter)?;
@@ -777,7 +900,13 @@ fn compile_root(
                             let effective_weights = root_overrides
                                 .iter()
                                 .find(|override_| override_.source().node() == *node)
-                                .map_or(weights.as_slice(), |override_| override_.weights());
+                                .and_then(|override_| match override_.weights() {
+                                    crate::graph::command::TrackWeights::Split(weights) => {
+                                        Some(weights.as_slice())
+                                    }
+                                    _ => None,
+                                })
+                                .unwrap_or(weights.as_slice());
                             (
                                 split
                                     .children
@@ -805,7 +934,12 @@ fn compile_root(
                             layer,
                             operable,
                         )
-                        .with_after_index(after_index),
+                        .with_after_index(after_index)
+                        .with_active_ancestry(
+                            node_contexts
+                                .get(node)
+                                .and_then(|(_, ancestors, _)| *ancestors),
+                        ),
                     );
                     ready.push_surface_program_root_operation(
                         SurfaceProgramRootOperation::Splitter(id),

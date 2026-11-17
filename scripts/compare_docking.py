@@ -99,7 +99,8 @@ def main() -> None:
         "integration/product-comparison",
     ]).split("\0")
     sources = {name: digest(ROOT / name) for name in paths
-               if name and Path(name).suffix in (".rs", ".toml", ".lock", ".py", ".cpp")}
+               if name and Path(name).suffix in (".rs", ".toml", ".lock", ".py", ".cpp")
+               and (ROOT / name).is_file()}
     environment = dict(os.environ, CARGO_BUILD_JOBS="1", DOCKSPACE_BENCH_NO_WORK_COUNTERS="1")
     metadata = {
         "started_utc": utc_now(), "source_commit": capture(["git", "rev-parse", "HEAD"]),

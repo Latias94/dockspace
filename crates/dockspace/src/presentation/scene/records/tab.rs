@@ -1,13 +1,57 @@
 //! Tab, tab-bar, pane, and tab-list presentation records.
 
+use std::sync::Arc;
+
 use crate::geometry::LogicalRect;
-use crate::ids::{NodeId, RootId, TabKey};
+use crate::ids::{ItemId, NodeId, RootId, TabKey};
 use crate::interaction::targeting::targets::SceneLayerKey;
 use crate::policy::TabBarInteraction;
 use crate::presentation::hit::region::HitRegion;
 use crate::presentation::tab_strip::{
     PopupRoutingRevision, TabListMenuSessionId, TabStripControlId,
 };
+
+/// Owned label facts retained with one immutable root projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FrozenTabLabel {
+    Item(ItemId),
+    Layout(Arc<str>),
+    LayoutFallback(&'static str),
+}
+
+impl FrozenTabLabel {
+    pub(crate) fn from_node(node: &crate::graph::Node) -> Self {
+        use crate::graph::Node;
+        match node {
+            Node::Pane { item } => Self::Item(*item),
+            Node::Tabs { layout_title, .. }
+            | Node::Split { layout_title, .. }
+            | Node::Grid { layout_title, .. } => {
+                let fallback = if matches!(node, Node::Tabs { .. }) {
+                    "Tabs"
+                } else if matches!(node, Node::Grid { .. }) {
+                    "Grid"
+                } else {
+                    "Split"
+                };
+                layout_title
+                    .as_ref()
+                    .filter(|title| !title.is_empty())
+                    .map_or(Self::LayoutFallback(fallback), |title| {
+                        Self::Layout(Arc::clone(title))
+                    })
+            }
+        }
+    }
+
+    pub(crate) fn as_label(&self) -> crate::graph::TabLabel<'_> {
+        match self {
+            Self::Item(item) => crate::graph::TabLabel::Item(*item),
+            Self::Layout(title) => crate::graph::TabLabel::Layout { title },
+            Self::LayoutFallback(title) => crate::graph::TabLabel::Layout { title },
+        }
+    }
+}
 
 /// Structural identity of a rendered tab-bar rectangle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -29,61 +73,168 @@ pub struct TabSceneId {
     pub tab: TabKey,
 }
 
-/// Stable identity of one rendered tabs leaf and its pane content.
+/// Stable identity of one real application content placement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PaneSceneId {
     /// Owning root.
     pub root: RootId,
-    /// Tabs node owning the content region.
-    pub tabs: NodeId,
+    /// Real application content.
+    pub item: ItemId,
 }
 
-/// Core-compiled tabs-leaf geometry; selection belongs to its current plan binding.
+/// Core-compiled placement of one active real application item.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PaneRecord {
     id: PaneSceneId,
+    owner_node: NodeId,
+    slot: LogicalRect,
     bounds: LogicalRect,
-    content_bounds: LogicalRect,
+    clip: LogicalRect,
     layer: SceneLayerKey,
+    containing_bar: Option<TabBarSceneId>,
+    active_ancestry: Option<usize>,
 }
 
 impl PaneRecord {
     pub(crate) const fn new(
         id: PaneSceneId,
+        owner_node: NodeId,
+        slot: LogicalRect,
+        bounds: LogicalRect,
+        layer: SceneLayerKey,
+    ) -> Self {
+        Self {
+            id,
+            owner_node,
+            slot,
+            bounds,
+            clip: bounds,
+            layer,
+            containing_bar: None,
+            active_ancestry: None,
+        }
+    }
+    pub(crate) const fn with_context(
+        mut self,
+        clip: LogicalRect,
+        containing_bar: Option<TabBarSceneId>,
+        active_ancestry: Option<usize>,
+    ) -> Self {
+        self.clip = clip;
+        self.containing_bar = containing_bar;
+        self.active_ancestry = active_ancestry;
+        self
+    }
+    pub(in crate::presentation::scene) fn rebind_item(&mut self, item: ItemId) {
+        self.id.item = item;
+    }
+
+    /// Returns the stable content placement identity.
+    #[must_use]
+    pub const fn id(&self) -> PaneSceneId {
+        self.id
+    }
+    /// Returns the actual immediate graph owner frozen with this placement.
+    #[must_use]
+    pub const fn owner_node(&self) -> NodeId {
+        self.owner_node
+    }
+
+    /// Returns the real application content.
+    #[must_use]
+    pub const fn item(&self) -> ItemId {
+        self.id.item
+    }
+    /// Returns the content allocation offered by the parent.
+    #[must_use]
+    pub(crate) const fn slot(&self) -> LogicalRect {
+        self.slot
+    }
+    /// Returns the actual content frame after applying its sizing caps.
+    #[must_use]
+    pub const fn bounds(&self) -> LogicalRect {
+        self.bounds
+    }
+    /// Returns the actual content frame.
+    #[must_use]
+    pub const fn content_bounds(&self) -> LogicalRect {
+        self.bounds
+    }
+    /// Returns the exact content clip.
+    #[must_use]
+    pub const fn clip(&self) -> LogicalRect {
+        self.clip
+    }
+    /// Returns the nearest active containing tab strip, when any.
+    #[must_use]
+    pub const fn containing_tab_bar(&self) -> Option<TabBarSceneId> {
+        self.containing_bar
+    }
+    pub(crate) const fn active_ancestry(&self) -> Option<usize> {
+        self.active_ancestry
+    }
+    /// Returns the roster-derived semantic layer.
+    #[must_use]
+    pub const fn layer(&self) -> SceneLayerKey {
+        self.layer
+    }
+}
+
+/// Independent background and content allocation of one active Tabs container.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TabsRecord {
+    id: TabBarSceneId,
+    bounds: LogicalRect,
+    content_bounds: LogicalRect,
+    clip: LogicalRect,
+    layer: SceneLayerKey,
+    active_ancestry: Option<usize>,
+}
+
+impl TabsRecord {
+    pub(crate) const fn new(
+        id: TabBarSceneId,
         bounds: LogicalRect,
         content_bounds: LogicalRect,
         layer: SceneLayerKey,
+        active_ancestry: Option<usize>,
     ) -> Self {
         Self {
             id,
             bounds,
             content_bounds,
+            clip: bounds,
             layer,
+            active_ancestry,
         }
     }
-
-    /// Returns the stable tabs-leaf identity.
+    /// Returns this exact container identity, shared by its optional header.
     #[must_use]
-    pub const fn id(&self) -> PaneSceneId {
+    pub const fn id(&self) -> TabBarSceneId {
         self.id
     }
-
-    /// Returns the complete tabs-leaf bounds, including its tab bar.
+    /// Returns the complete container bounds.
     #[must_use]
     pub const fn bounds(&self) -> LogicalRect {
         self.bounds
     }
-
-    /// Returns the exact pane-content bounds below the tab bar.
+    /// Returns the remaining slot below this container's own header.
     #[must_use]
     pub const fn content_bounds(&self) -> LogicalRect {
         self.content_bounds
     }
-
+    /// Returns the exact container clip.
+    #[must_use]
+    pub const fn clip(&self) -> LogicalRect {
+        self.clip
+    }
     /// Returns the roster-derived semantic layer.
     #[must_use]
     pub const fn layer(&self) -> SceneLayerKey {
         self.layer
+    }
+    pub(crate) const fn active_ancestry(&self) -> Option<usize> {
+        self.active_ancestry
     }
 }
 

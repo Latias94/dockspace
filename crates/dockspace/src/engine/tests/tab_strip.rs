@@ -566,7 +566,9 @@ fn direct_selection_reveals_the_new_priority_item_after_explicit_strip_scroll() 
         EngineInput::WorkspaceCommand {
             expected,
             command: WorkspaceCommand::Select {
-                source: source.as_tab_source(),
+                source: source
+                    .as_tab_source()
+                    .expect("fixture item is an inline tab"),
             },
         },
     )

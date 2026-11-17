@@ -25,6 +25,7 @@ fn split_session(central: bool) -> DockspaceSession {
 
 fn open_group_plan(session: &mut DockspaceSession) -> DockspaceClosePlan {
     let group = session.capture_tabs_group(DockAnchor::Item(FIRST)).unwrap();
+    let group_key = crate::ids::NodeKey(group.source.node());
     let prepared = session.prepare_close_tabs(group);
     let mut frame = session.begin_host_frame().unwrap();
     let submitted = frame.submit_prepared_close_request(prepared).unwrap();
@@ -34,7 +35,7 @@ fn open_group_plan(session: &mut DockspaceSession) -> DockspaceClosePlan {
         plan.target(),
         ClosePlanTarget::Tabs {
             root: ROOT,
-            anchor: FIRST
+            group: group_key
         }
     );
     assert_eq!(

@@ -114,11 +114,12 @@ pub use dockspace::geometry::{
 pub use dockspace::model::{
     DockAnchor, DockEdge, DockFraction, DockPlacement, DockspaceActionOutcome,
     DockspaceActionRejection, DockspaceAxis, DockspaceContainedLayout, DockspaceContainedView,
+    DockspaceGridError, DockspaceGridShape, DockspaceGridShares, DockspaceGridView,
     DockspaceLayout, DockspaceLayoutError, DockspaceNode, DockspaceNodeView, DockspaceRootLayout,
     DockspaceRootView, DockspaceSplitView, DockspaceSurfaceLayout, DockspaceSurfaceView,
-    DockspaceTabsView, DockspaceView, FloatingPresentationId, InvalidDockFraction, ItemId,
-    PreparedDockAction, PreparedTabsGroup, RootAllocation, RootId, SurfaceId, TabKey,
-    WorkspaceVersion,
+    DockspaceTabView, DockspaceTabsView, DockspaceView, FloatingPresentationId,
+    InvalidDockFraction, ItemId, NodeKey, PreparedDockAction, PreparedTabsGroup, RootAllocation,
+    RootId, SurfaceId, TabGroupDockMode, TabKey, WorkspaceVersion,
 };
 #[cfg(feature = "motion")]
 pub use dockspace::motion;
