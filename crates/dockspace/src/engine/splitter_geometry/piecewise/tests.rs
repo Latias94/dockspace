@@ -22,6 +22,7 @@ fn tracks() -> FrozenTracks {
     };
     FrozenTracks {
         source: workspace.capture_node_source(root, owner).unwrap(),
+        frame_extent: FAR_EXTENT + NEAR_EXTENT,
         children: children
             .into_iter()
             .enumerate()
@@ -153,6 +154,7 @@ fn outward_allocation_preserves_a_representable_spill_past_an_intermediate_cap()
         track.extent = 1.0;
         track.minimum = 0.25;
     }
+    tracks.frame_extent = 2.0;
     tracks.tracks[1].maximum = 1.0;
     let spill = 2.0_f64.powi(-50);
     let offered = 2.0 + spill;

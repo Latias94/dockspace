@@ -43,6 +43,7 @@ enum FrozenKind {
 #[derive(Debug, Clone, PartialEq)]
 struct FrozenTracks {
     source: NodeSource,
+    frame_extent: f64,
     children: Vec<(NodeId, usize)>,
     tracks: Vec<Track>,
     weights: Vec<SplitWeight>,
@@ -243,6 +244,7 @@ pub(super) fn prepare(
                                     node,
                                     reference: source.reference().clone(),
                                 },
+                                frame_extent: rect_extent(result.rect, axis),
                                 children: children
                                     .iter()
                                     .copied()
@@ -300,6 +302,7 @@ pub(super) fn prepare(
                                     node,
                                     reference: source.reference().clone(),
                                 },
+                                frame_extent: rect_extent(result.rect, axis),
                                 children: children
                                     .iter()
                                     .copied()
@@ -335,6 +338,21 @@ pub(super) fn prepare(
                         }
                     };
                     if let FrozenKind::Tracks(tracks) = &kind {
+                        let allocated = tracks
+                            .tracks
+                            .iter()
+                            .map(|track| track.extent + track.gap)
+                            .sum::<f64>();
+                        let frame = rect_extent(result.rect, axis);
+                        // The relative baseline can retain coordinate roundoff,
+                        // but must not conceal real overflow or unused space.
+                        if !allocated.is_finite()
+                            || (allocated - frame).abs()
+                                > tolerance(allocated, frame)
+                                    .max(rect_extent_tolerance(result.rect, axis))
+                        {
+                            return None;
+                        }
                         for track in &tracks.tracks {
                             if track.visible
                                 && (!track.extent.is_finite()
@@ -359,12 +377,14 @@ pub(super) fn prepare(
                 for (owner, index) in drivers {
                     frozen_drivers.entry(owner).or_default().push(index);
                 }
-                frozen.roots.push(FrozenRoot {
+                let mut root = FrozenRoot {
                     source,
                     nodes,
                     drivers: frozen_drivers,
                     auto_reflow: projection.auto_reflow().cloned(),
-                });
+                };
+                root.freeze_frame_extents(axis)?;
+                frozen.roots.push(root);
             }
             if maximum_span <= 0.0 || !maximum_span.is_finite() {
                 return None;
@@ -407,6 +427,41 @@ pub(super) fn prepare(
             })
         })
         .collect()
+}
+
+impl FrozenRoot {
+    fn freeze_frame_extents(&mut self, axis: Axis) -> Option<()> {
+        let root = self.source.node();
+        let mut pending = vec![(root, rect_extent(self.nodes.get(&root)?.result.slot, axis))];
+        while let Some((node, offered)) = pending.pop() {
+            let node = self.nodes.get_mut(&node)?;
+            let frame = offered.min(size_extent(node.result.constraints.max(), axis));
+            match &mut node.kind {
+                FrozenKind::Pane => {}
+                FrozenKind::Tabs { child, header } => {
+                    if let Some(child) = child {
+                        pending.push((*child, frame - *header));
+                    }
+                }
+                FrozenKind::Parallel(children) => {
+                    pending.extend(children.iter().rev().map(|child| (*child, frame)));
+                }
+                FrozenKind::Tracks(tracks) => {
+                    // Freeze the same numeric path used by sample(), rather
+                    // than reconstructing lengths from absolute rectangles.
+                    tracks.frame_extent = frame;
+                    pending.extend(
+                        tracks
+                            .children
+                            .iter()
+                            .rev()
+                            .map(|(child, track)| (*child, tracks.tracks[*track].extent)),
+                    );
+                }
+            }
+        }
+        Some(())
+    }
 }
 
 impl FrozenPiecewiseAxis {
@@ -683,8 +738,13 @@ impl FrozenTracks {
         for &index in &visible {
             prefix.push(prefix.last().copied().unwrap_or(0.0) + self.tracks[index].extent);
         }
-        let gaps = self.tracks.iter().map(|track| track.gap).sum::<f64>();
-        let total = frame.add(-gaps);
+        // Transport the change in the offered frame through the original track
+        // sum. Reconstructing that baseline from frame minus rounded gaps can
+        // otherwise invent a transfer even at zero displacement.
+        let total = Scalar {
+            value: prefix[visible.len()] + (frame.value - self.frame_extent),
+            slope: frame.slope,
+        };
         let mut pinned = BTreeMap::from([(0, Scalar::fixed(0.0)), (visible.len(), total)]);
         for &driver in drivers {
             let boundary = visible
@@ -698,7 +758,7 @@ impl FrozenTracks {
             pinned.insert(
                 boundary,
                 Scalar {
-                    value: prefix[boundary] + old_origin - origin.value + delta,
+                    value: prefix[boundary] + (old_origin - origin.value) + delta,
                     slope: 1.0 - origin.slope,
                 },
             );

@@ -4,6 +4,8 @@ use super::*;
 use crate::model::DockspaceGridShape;
 use crate::presentation::config::ResizePropagation;
 
+mod rounded_contacts;
+
 fn grid_handle(
     fixture: &Fixture,
     owner: NodeId,
