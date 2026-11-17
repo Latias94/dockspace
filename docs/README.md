@@ -37,6 +37,8 @@
 - [Docking reliability and ImGui design research](research/docking-testing-and-imgui.md):
   preserved source material, verified references, architecture comparison and
   test design proposals.
+- [Godot editor dock design](research/godot-docking-design.md): tool identity,
+  recovery, floating placement and the boundary between an editor shell and core.
 
 ## Architecture decisions
 
@@ -46,3 +48,5 @@
 - [Separate official and fork workspaces](adr/0004-isolate-native-forks.md)
 - [Motion and presentation geometry](adr/0005-motion-and-presentation-geometry.md)
 - [Complete source-root lifecycle](adr/0006-complete-root-lifecycle.md)
+- [Pane sizing and explicit preferences](adr/0007-pane-sizing-and-explicit-preferences.md)
+- [Composable content and shared Grid tracks](adr/0008-composable-layout-and-shared-grid-tracks.md)
