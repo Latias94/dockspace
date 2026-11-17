@@ -8,10 +8,17 @@ const percent = document.getElementById('demo-loading-percent');
 const progress = document.getElementById('demo-loading-progress');
 const hint = document.getElementById('demo-loading-hint');
 const retry = document.getElementById('demo-retry');
+const webgl = document.getElementById('demo-webgl');
 const canvas = document.getElementById('dockspace-canvas');
 const fullscreen = document.getElementById('demo-fullscreen');
+const build = document.querySelector('meta[name="dockspace-build"]').content;
+const pkg = new URL(`./pkg/${build}/`, import.meta.url);
 
 retry.addEventListener('click', () => window.location.reload());
+const webglUrl = new URL(window.location.href);
+const usingWebgl = webglUrl.searchParams.get('renderer') === 'webgl';
+webglUrl.searchParams.set('renderer', 'webgl');
+webgl.href = webglUrl.href;
 
 if (document.fullscreenEnabled) {
   fullscreen.hidden = false;
@@ -41,17 +48,21 @@ function setPhase(phase, label, description) {
   detail.textContent = description;
   hint.hidden = true;
   retry.hidden = true;
+  webgl.hidden = true;
   for (const step of loading.querySelectorAll('[data-step]')) {
     if (step.dataset.step === phase) step.setAttribute('aria-current', 'step');
     else step.removeAttribute('aria-current');
   }
   clearTimeout(slowTimer);
   slowTimer = setTimeout(() => {
-    hint.textContent = phase === 'download' || phase === 'bootstrap'
+    hint.textContent = phase === 'graphics'
+      ? 'Graphics startup is taking longer than usual. Try WebGL2, or check graphics acceleration in your browser settings.'
+      : phase === 'download' || phase === 'bootstrap'
       ? 'This is taking longer than usual. Check your connection, or try loading again.'
       : 'This is taking longer than usual. You can keep waiting, or try loading again.';
     hint.hidden = false;
     retry.hidden = false;
+    webgl.hidden = phase !== 'graphics' || usingWebgl;
   }, 15_000);
 }
 
@@ -62,6 +73,7 @@ function observeStatus() {
     stage.setAttribute('aria-busy', 'false');
   } else if (status.dataset.state === 'error') {
     clearTimeout(slowTimer);
+    if (loading.dataset.phase === 'graphics' && !usingWebgl) webgl.hidden = false;
     loading.hidden = false;
     loading.dataset.phase = 'error';
     title.textContent = 'Unable to open the workbench';
@@ -101,7 +113,7 @@ async function compileWasm() {
 
   setPhase('download', 'Downloading Wasm…', 'Connecting to the demo download…');
   updateProgress(false);
-  const response = await fetch(new URL('./pkg/egui_web_demo_bg.wasm', import.meta.url));
+  const response = await fetch(new URL('egui_web_demo_bg.wasm', pkg));
   if (!response.ok) throw new Error(`Wasm download failed (HTTP ${response.status}). Please try again.`);
   if (!response.body) {
     const bytes = await response.arrayBuffer();
@@ -127,7 +139,7 @@ async function compileWasm() {
 try {
   setPhase('bootstrap', 'Preparing the workbench…', 'Loading the app launcher…');
   if (typeof WebAssembly === 'undefined') throw new Error('This browser does not support WebAssembly. Please use a current browser.');
-  const { default: init } = await import('./pkg/egui_web_demo.js');
+  const { default: init } = await import(new URL('egui_web_demo.js', pkg));
   const module = await compileWasm();
   setPhase('graphics', 'Initializing graphics…', 'Wasm is ready. Starting the renderer and drawing the first frame.');
   await init({ module_or_path: module });

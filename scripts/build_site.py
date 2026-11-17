@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -45,18 +46,27 @@ def main() -> None:
         command.append("--release")
     subprocess.run(command, cwd=ROOT, check=True)
     wasm = target / "wasm32-unknown-unknown" / ("debug" if args.dev else "release") / "dockspace_egui_web_demo.wasm"
+    fingerprint = hashlib.sha256(wasm.read_bytes())
+    for source in [Path(__file__), ROOT / "site/demo/egui/index.html", ROOT / "site/demo/egui/loading.js"]:
+        fingerprint.update(source.read_bytes())
+    fingerprint.update(installed.encode())
+    build_id = fingerprint.hexdigest()[:16]
     destination = ROOT / "target/site"
     shutil.copytree(ROOT / "site", destination, dirs_exist_ok=True)
     (destination / ".nojekyll").touch()
     subprocess.run([
         "wasm-bindgen", str(wasm), "--target", "web", "--out-name", "egui_web_demo",
-        "--out-dir", str(destination / "demo/egui/pkg"),
+        "--out-dir", str(destination / "demo/egui/pkg" / build_id),
     ], cwd=ROOT, check=True)
-    wasm_bytes = (destination / "demo/egui/pkg/egui_web_demo_bg.wasm").stat().st_size
+    wasm_bytes = (destination / "demo/egui/pkg" / build_id / "egui_web_demo_bg.wasm").stat().st_size
+    shutil.copyfile(ROOT / "site/demo/egui/loading.js", destination / f"demo/egui/loading-{build_id}.js")
     demo_page = destination / "demo/egui/index.html"
     demo_page.write_text(demo_page.read_text(encoding="utf-8").replace(
         'name="dockspace-wasm-bytes" content=""',
         f'name="dockspace-wasm-bytes" content="{wasm_bytes}"',
+    ).replace(
+        'name="dockspace-build" content=""',
+        f'name="dockspace-build" content="{build_id}"',
     ), encoding="utf-8")
     print(f"Site built: {destination}")
     print("Preview: python3 -m http.server 8080 --directory target/site")

@@ -10,7 +10,9 @@ use egui::{Context, RawInput};
 use egui_dockspace::motion::MotionPreference;
 use egui_dockspace::{
     Dockspace, DockspaceOutput, DockspaceResponse, PaneView, SurfacePresentationResult,
-    winit::{AppResult, FrameControl, NativeApp, NativeFrameReport, WebOptions, run_web},
+    winit::{
+        AppResult, FrameControl, NativeApp, NativeFrameReport, WebOptions, WebRenderer, run_web,
+    },
 };
 use wasm_bindgen::{JsCast, prelude::*};
 
@@ -47,14 +49,15 @@ fn launch() -> Result<(), JsValue> {
         .ok_or_else(|| JsValue::from_str("The docking canvas is missing."))?
         .dyn_into::<web_sys::HtmlCanvasElement>()
         .map_err(|_| JsValue::from_str("dockspace-canvas must be a canvas element."))?;
-    let test_mode = web_sys::window()
+    let query = web_sys::window()
         .and_then(|window| window.location().search().ok())
-        .is_some_and(|query| {
-            query
-                .trim_start_matches('?')
-                .split('&')
-                .any(|part| part == "test=1")
-        });
+        .unwrap_or_default();
+    let parameters = || query.trim_start_matches('?').split('&');
+    let test_mode = parameters().any(|part| part == "test=1");
+    let mut options = WebOptions::new(canvas.clone());
+    if parameters().any(|part| part == "renderer=webgl") {
+        options.renderer = WebRenderer::WebGl;
+    }
     let context = editor::new_context();
     if test_mode {
         context.enable_accesskit();
@@ -75,7 +78,7 @@ fn launch() -> Result<(), JsValue> {
         #[cfg(feature = "motion")]
         system_motion,
     };
-    run_web(WebOptions::new(canvas), context, app, |error| {
+    run_web(options, context, app, |error| {
         status("error", &format!("The demo stopped: {error}"));
     })
     .map_err(|error| JsValue::from_str(&error.to_string()))
