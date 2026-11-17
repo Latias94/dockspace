@@ -10,7 +10,8 @@ multiview are outside this demo's scope.
 
 The `egui_dockspace/web` host owns the complete egui output and renderer
 settlement. Its WGPU initialization is asynchronous; it prefers WebGPU and
-falls back to WebGL2. Application panes and toolbar code are shared directly
+falls back to WebGL2 if WebGPU initialization fails or takes more than ten seconds.
+Application panes and toolbar code are shared directly
 with the desktop example. The demo observes live `prefers-reduced-motion`
 changes; manual toolbar choices persist until another system preference change.
 
@@ -18,6 +19,8 @@ Startup shows Wasm download progress, followed by compilation and graphics
 initialization. The byte total comes from the built Wasm, so compressed transfers
 still report accurate progress. Loading stays visible until the first presented
 frame; slow starts and failures offer a retry that reloads a fresh session.
+The launcher, JavaScript bindings and Wasm use one build fingerprint in their URLs
+so browser and CDN caches cannot mix runtime versions after a deployment.
 
 ## Build and preview
 
@@ -55,9 +58,17 @@ retirement, splitters, focus cancellation and recovery, retained edits,
 tab-style and theme changes, intermediate and disabled motion, live
 reduced-motion changes, streamed download progress, startup stages, retry after
 initialization failure and native device scale two.
+They also cover stalled WebGPU requests, late request completion after fallback,
+and explicit WebGL2 startup.
 `?test=1` enables read-only geometry and state diagnostics emitted after exact
 renderer presentation; it adds no input or layout mutation endpoint. Ordinary
 demo loads omit those diagnostics.
+
+If startup remains at **Initializing graphics**, use **Try WebGL2** after the slow
+startup hint appears, or open the demo with `?renderer=webgl`. This bypasses WebGPU
+without changing browser settings. The browser console records the selected
+renderer and the reason for an automatic fallback. If WebGL2 also fails, check
+graphics acceleration and the WebGL/WebGPU status in `edge://gpu` or `chrome://gpu`.
 
 The [Pages workflow](../../.github/workflows/pages.yml) builds and tests pull
 requests, and deploys successful main builds. Configure the repository's

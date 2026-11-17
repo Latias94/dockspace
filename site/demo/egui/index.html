@@ -6,6 +6,7 @@
     <meta name="description" content="Try Dockspace's egui docking workbench: move tabs, split panes, float groups, and configure layout motion in a browser canvas.">
     <meta name="theme-color" content="#f7f7f2">
     <meta name="dockspace-wasm-bytes" content="">
+    <meta name="dockspace-build" content="">
     <title>egui demo — Dockspace</title>
     <link rel="icon" href="../../icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="../../site.css">
@@ -39,6 +40,7 @@
           </ol>
           <p id="demo-loading-hint" class="demo-loading-hint" hidden></p>
           <button id="demo-retry" class="button button-primary" type="button" hidden>Retry loading</button>
+          <a id="demo-webgl" class="button" href="?renderer=webgl" hidden>Try WebGL2</a>
         </div>
       </section>
       <noscript><p class="demo-noscript">Enable JavaScript to load the WebAssembly workbench. <a href="../../">Return to Dockspace.</a></p></noscript>
@@ -49,7 +51,8 @@
     </footer>
     <script type="module">
       try {
-        await import('./loading.js');
+        const build = document.querySelector('meta[name="dockspace-build"]').content;
+        await import(`./loading-${build}.js`);
       } catch (error) {
         const status = document.getElementById('demo-status');
         status.textContent = `The workbench could not start: ${error instanceof Error ? error.message : String(error)}`;

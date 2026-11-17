@@ -387,4 +387,4 @@ pub use native::{NativeOptions, run_native};
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 mod web;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
-pub use web::{WebOptions, run_web};
+pub use web::{WebOptions, WebRenderer, run_web};

@@ -1,14 +1,17 @@
 //! Browser startup and asynchronous GPU initialization for a single canvas.
 
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{cell::RefCell, pin::pin, rc::Rc, sync::Arc};
 
 use egui::Context;
+use egui_wgpu::wgpu;
+use futures_util::future::{Either, select};
+use gloo_timers::future::TimeoutFuture;
 use web_sys::HtmlCanvasElement;
 use web_time::Instant;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy, OwnedDisplayHandle},
     platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys},
     window::{Window, WindowAttributes, WindowId},
 };
@@ -31,6 +34,18 @@ pub struct WebOptions {
     pub canvas: HtmlCanvasElement,
     /// Background under the complete egui output.
     pub clear_color: egui::Color32,
+    /// Graphics backend selection and fallback policy.
+    pub renderer: WebRenderer,
+}
+
+/// Browser graphics selection for a complete-output host.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WebRenderer {
+    /// Try WebGPU, then WebGL2 if initialization fails or takes over ten seconds.
+    #[default]
+    Auto,
+    /// Use WebGL2 directly, including when the browser advertises WebGPU.
+    WebGl,
 }
 
 impl WebOptions {
@@ -40,7 +55,51 @@ impl WebOptions {
         Self {
             canvas,
             clear_color: egui::Color32::from_rgb(24, 26, 30),
+            renderer: WebRenderer::Auto,
         }
+    }
+}
+
+async fn initialize_renderer(
+    display: OwnedDisplayHandle,
+    window: Arc<Window>,
+    clear_color: egui::Color32,
+    renderer: WebRenderer,
+) -> Result<WgpuRenderer, NativeError> {
+    if renderer == WebRenderer::Auto {
+        match initialize_backend(
+            display.clone(),
+            Arc::clone(&window),
+            clear_color,
+            wgpu::Backends::BROWSER_WEBGPU,
+            "WebGPU",
+        )
+        .await
+        {
+            Ok(renderer) => return Ok(renderer),
+            Err(error) => {
+                web_sys::console::warn_1(&format!("{error}. Trying WebGL2 instead.").into())
+            }
+        }
+    }
+    initialize_backend(display, window, clear_color, wgpu::Backends::GL, "WebGL2").await
+}
+
+async fn initialize_backend(
+    display: OwnedDisplayHandle,
+    window: Arc<Window>,
+    clear_color: egui::Color32,
+    backends: wgpu::Backends,
+    backend: &'static str,
+) -> Result<WgpuRenderer, NativeError> {
+    let initialization = WgpuRenderer::new_with_backends(display, window, clear_color, backends);
+    match select(pin!(initialization), pin!(TimeoutFuture::new(10_000))).await {
+        Either::Left((result, _)) => {
+            let renderer = result?;
+            web_sys::console::info_1(&format!("Dockspace renderer initialized: {backend}").into());
+            Ok(renderer)
+        }
+        Either::Right(((), _)) => Err(NativeError::RendererTimeout { backend }),
     }
 }
 
@@ -95,7 +154,7 @@ enum UserEvent {
 struct InitializingWindow {
     integration: WinitIntegration,
     window: Arc<Window>,
-    result: Rc<RefCell<Option<Result<WgpuRenderer, egui_wgpu::WgpuError>>>>,
+    result: Rc<RefCell<Option<Result<WgpuRenderer, NativeError>>>>,
 }
 
 enum WebWindow {
@@ -147,9 +206,10 @@ impl<A: NativeApp, E: FnMut(NativeError)> Runner<A, E> {
         }));
         let display = event_loop.owned_display_handle();
         let clear_color = self.options.clear_color;
+        let renderer = self.options.renderer;
         let proxy = self.proxy.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let renderer = WgpuRenderer::new(display, window, clear_color).await;
+            let renderer = initialize_renderer(display, window, clear_color, renderer).await;
             if let Some(completion) = completion.upgrade() {
                 completion.replace(Some(renderer));
                 let _ = proxy.send_event(UserEvent::GpuReady);
@@ -180,7 +240,7 @@ impl<A: NativeApp, E: FnMut(NativeError)> Runner<A, E> {
                 self.repaint.resume();
                 self.repaint.request(Instant::now());
             }
-            Some(Err(error)) => self.fail(event_loop, NativeError::Renderer(error)),
+            Some(Err(error)) => self.fail(event_loop, error),
             None => self.window = Some(WebWindow::Initializing(state)),
         }
     }

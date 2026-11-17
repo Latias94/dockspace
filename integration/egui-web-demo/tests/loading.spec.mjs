@@ -93,6 +93,7 @@ test('a complete download remains visibly compiling until compilation finishes',
 });
 
 test('graphics startup stays visible until the first frame is presented', async ({ page }) => {
+  await page.clock.install();
   await page.addInitScript(() => {
     const requestFrame = window.requestAnimationFrame.bind(window);
     const frames = [];
@@ -105,14 +106,84 @@ test('graphics startup stays visible until the first frame is presented', async 
       for (const callback of frames) requestFrame(callback);
     };
   });
-  await page.goto('demo/egui/', { waitUntil: 'domcontentloaded' });
+  await page.goto('demo/egui/?test=1', { waitUntil: 'domcontentloaded' });
   await expect(loading(page)).toHaveAttribute('data-phase', 'graphics');
   await expect(progress(page)).toHaveAttribute('value', '100');
   await expect(page.locator('#demo-loading-phase')).toContainText('graphics');
   await expect(loading(page)).toBeVisible();
+  const webgl = page.getByRole('link', { name: 'Try WebGL2' });
+  await expect(webgl).toBeHidden();
+  await page.clock.fastForward(15_000);
+  await expect(webgl).toBeVisible();
+  await expect(webgl).toHaveAttribute('href', /\?test=1&renderer=webgl$/);
   await page.evaluate(() => window.startDemoFrames());
   await expect(status(page)).toHaveAttribute('data-state', 'ready');
   await expect(loading(page)).toBeHidden();
+});
+
+test('a stalled WebGPU request falls back to WebGL2 and ignores late completion', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'gpu', {
+      value: {
+        requestAdapter: () => new Promise(resolve => { window.finishWebGpuRequest = resolve; }),
+      },
+    });
+    window.graphicsContexts = [];
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+      window.graphicsContexts.push(type);
+      return getContext.call(this, type, ...args);
+    };
+  });
+  await page.clock.install();
+  await page.goto('demo/egui/', { waitUntil: 'domcontentloaded' });
+  await expect.poll(() => page.evaluate(() => typeof window.finishWebGpuRequest)).toBe('function');
+  await page.clock.fastForward(11_000);
+  await expect(status(page)).toHaveAttribute('data-state', 'ready');
+  await expect(loading(page)).toBeHidden();
+  const contexts = await page.evaluate(() => window.graphicsContexts);
+  expect(contexts).toContain('webgl2');
+  expect(contexts).not.toContain('webgpu');
+  await page.evaluate(() => window.finishWebGpuRequest(null));
+  await expect(status(page)).toHaveAttribute('data-state', 'ready');
+  expect(errors).toEqual([]);
+});
+
+test('explicit WebGL2 startup bypasses WebGPU requests', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.webGpuRequests = 0;
+    Object.defineProperty(navigator, 'gpu', {
+      value: {
+        requestAdapter: () => {
+          window.webGpuRequests += 1;
+          return new Promise(() => {});
+        },
+      },
+    });
+  });
+  await page.goto('demo/egui/?renderer=webgl', { waitUntil: 'domcontentloaded' });
+  await expect(status(page)).toHaveAttribute('data-state', 'ready');
+  expect(await page.evaluate(() => window.webGpuRequests)).toBe(0);
+});
+
+test('unavailable graphics backends leave an error and recovery controls', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'gpu', {
+      value: { requestAdapter: async () => null },
+    });
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+      return type === 'webgl2' ? null : getContext.call(this, type, ...args);
+    };
+  });
+  await page.goto('demo/egui/');
+  await expect(status(page)).toHaveAttribute('data-state', 'error');
+  await expect(loading(page)).toHaveAttribute('data-phase', 'error');
+  await expect(page.locator('#demo-loading-detail')).toContainText('The demo stopped:');
+  await expect(page.getByRole('button', { name: 'Retry loading' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Try WebGL2' })).toBeVisible();
 });
 
 test('HTTP failures are readable and retrying starts a fresh successful load', async ({ page }) => {
@@ -157,8 +228,21 @@ test('unknown download sizes stay indeterminate and browsers without streaming c
   await expect(status(page)).toHaveAttribute('data-state', 'ready');
 });
 
+for (const resource of ['loading.js', 'pkg/egui_web_demo.js', 'pkg/egui_web_demo_bg.wasm']) {
+  test(`stale ${resource} from a previous deployment cannot mix with the current runtime`, async ({ page }) => {
+    let staleRequests = 0;
+    await page.route(`**/demo/egui/${resource}`, route => {
+      staleRequests += 1;
+      return route.fulfill({ contentType: 'text/javascript', body: 'throw new Error("Stale runtime from a previous deployment");' });
+    });
+    await page.goto('demo/egui/');
+    await expect(status(page)).toHaveAttribute('data-state', 'ready');
+    expect(staleRequests).toBe(0);
+  });
+}
+
 test('launcher failures also leave a readable error and retry control', async ({ page }) => {
-  await page.route('**/loading.js', route => route.abort('failed'));
+  await page.route('**/loading*.js', route => route.abort('failed'));
   await page.goto('demo/egui/');
   await expect(status(page)).toHaveAttribute('data-state', 'error');
   await expect(loading(page)).toHaveAttribute('data-phase', 'error');

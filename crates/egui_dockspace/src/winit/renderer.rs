@@ -66,19 +66,37 @@ impl WgpuRenderer {
         self.drop_reason.is_none() && self.needs_reconfigure
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) async fn new(
         display: OwnedDisplayHandle,
         window: Arc<Window>,
         clear_color: egui::Color32,
     ) -> Result<Self, egui_wgpu::WgpuError> {
-        let instance = wgpu::util::new_instance_with_webgpu_detection(
-            wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display)),
-        )
-        .await;
-        let surface = instance.create_surface(Arc::clone(&window))?;
+        Self::new_with_backends(display, window, clear_color, wgpu::Backends::all()).await
+    }
+
+    pub(super) async fn new_with_backends(
+        display: OwnedDisplayHandle,
+        window: Arc<Window>,
+        clear_color: egui::Color32,
+        backends: wgpu::Backends,
+    ) -> Result<Self, egui_wgpu::WgpuError> {
+        let mut descriptor = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display));
+        descriptor.backends = backends;
+        let instance = wgpu::Instance::new(descriptor);
+        #[cfg(not(target_arch = "wasm32"))]
+        let surface = Some(instance.create_surface(Arc::clone(&window))?);
+        // A browser canvas cannot change context type. WebGPU requests must
+        // succeed before claiming it; WebGL needs its canvas to select an adapter.
+        #[cfg(target_arch = "wasm32")]
+        let surface = if backends.contains(wgpu::Backends::GL) {
+            Some(instance.create_surface(Arc::clone(&window))?)
+        } else {
+            None
+        };
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                compatible_surface: Some(&surface),
+                compatible_surface: surface.as_ref(),
                 ..Default::default()
             })
             .await?;
@@ -95,6 +113,10 @@ impl WgpuRenderer {
                 ..Default::default()
             })
             .await?;
+        let surface = match surface {
+            Some(surface) => surface,
+            None => instance.create_surface(Arc::clone(&window))?,
+        };
         let size = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
