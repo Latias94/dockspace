@@ -460,7 +460,41 @@ impl DockEngine {
         }
 
         let (candidate, application) =
-            self.stage_workspace_command(input, policy, command, None)?;
+            self.stage_application_workspace_command(input, policy, command)?;
+        self.publish_application_command(
+            input,
+            command,
+            candidate,
+            application,
+            events,
+            interaction_events,
+        )
+    }
+
+    pub(super) fn stage_application_workspace_command(
+        &self,
+        input: InputSequence,
+        policy: &DockPolicySnapshot,
+        command: &WorkspaceCommand,
+    ) -> Result<(Option<StagedWorkspacePublication>, CommandApplication), EngineError> {
+        let staged = self.stage_workspace_command(input, policy, command, None)?;
+        if matches!(staged.1, CommandApplication::Applied { .. })
+            && let Err(error) = self.validate_application_command_identity_freshness(command)
+        {
+            return Ok((None, CommandApplication::Rejected(error)));
+        }
+        Ok(staged)
+    }
+
+    pub(super) fn publish_application_command(
+        &mut self,
+        input: InputSequence,
+        command: &WorkspaceCommand,
+        candidate: Option<StagedWorkspacePublication>,
+        application: CommandApplication,
+        events: &mut Vec<WorkspaceEvent>,
+        interaction_events: &mut Vec<InteractionEvent>,
+    ) -> Result<InputOutcome, EngineError> {
         let CommandApplication::Applied { outcome, changed } = application else {
             let CommandApplication::Rejected(error) = application else {
                 unreachable!("command application variants are exhaustive")
@@ -470,12 +504,6 @@ impl DockEngine {
                 version: self.version,
             });
         };
-        if let Err(error) = self.validate_application_command_identity_freshness(command) {
-            return Ok(InputOutcome::CommandRejected {
-                error,
-                version: self.version,
-            });
-        }
         self.adopt_application_command_identities(command);
         self.publish_workspace(candidate.ok_or(EngineError::MissingCommandOutcome { input })?);
         self.reconcile_viewport_focus_authority();

@@ -5,6 +5,7 @@ use super::*;
 use crate::model::{DockPlacement, DockspaceActionOutcome, DockspaceActionRejection};
 use crate::runtime::DockspaceSession;
 
+mod composable_rehome;
 mod source_recovery;
 mod source_reservation;
 mod staging_resource;

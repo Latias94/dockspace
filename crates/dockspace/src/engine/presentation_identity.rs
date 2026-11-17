@@ -394,6 +394,9 @@ impl DockEngine {
         let reservations = self.pending_native_identity_reservations();
         self.presentation_identity
             .observe_native_reservations(reservations);
+        if let Some(root) = self.pending_presentation_rehome_root() {
+            self.presentation_identity.observe_root(root);
+        }
         if let Some(floating) = self.pending_presentation_rehome_floating() {
             self.presentation_identity.observe_floating(floating);
         }
@@ -406,10 +409,27 @@ impl DockEngine {
             .and_then(|pending| pending.floating)
     }
 
+    fn pending_presentation_rehome_root(&self) -> Option<RootId> {
+        let pending = self.pending_mutation.as_ref()?.rehome()?;
+        let crate::interaction::PreviewProof::PresentationRehome { command } =
+            pending.preview.proof()
+        else {
+            return None;
+        };
+        match command {
+            WorkspaceCommand::CreateContainedRoot { root, .. }
+            | WorkspaceCommand::InstallMainRoot { root, .. } => Some(*root),
+            _ => None,
+        }
+    }
+
     fn observe_pending_presentation_rehome_identity(
         &self,
         authority: &mut PresentationIdentityAuthority,
     ) {
+        if let Some(root) = self.pending_presentation_rehome_root() {
+            authority.observe_root(root);
+        }
         if let Some(floating) = self.pending_presentation_rehome_floating() {
             authority.observe_floating(floating);
         }

@@ -704,25 +704,29 @@ impl DockEngine {
                 version: self.version,
             });
         }
-        if let Some(outcome) = self.reduce_native_product_rehome(
-            input,
-            cause,
-            focus_causal,
-            expected,
-            action.clone(),
-            command.clone(),
-            context.clone(),
-            policy,
-            events,
-        )? {
+        let (publication, application) =
+            self.stage_application_workspace_command(input, policy, &command)?;
+        if let Some(candidate) = &publication
+            && let Some(outcome) = self.reduce_native_product_rehome(
+                input,
+                cause,
+                focus_causal,
+                expected,
+                action.clone(),
+                command.clone(),
+                context.clone(),
+                &candidate.workspace,
+                policy,
+                events,
+            )?
+        {
             return Ok(outcome);
         }
-        match self.reduce_workspace_command(
+        match self.publish_application_command(
             input,
-            expected,
-            accepted_base,
             &command,
-            policy,
+            publication,
+            application,
             events,
             interaction_events,
         )? {

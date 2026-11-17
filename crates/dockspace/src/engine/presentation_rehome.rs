@@ -27,6 +27,13 @@ struct PreparedPresentationRehome {
     commit_authority: PresentationRehomeCommitAuthority,
 }
 
+fn payload_root(payload: &MovePayload) -> RootId {
+    match payload {
+        MovePayload::Item(source) => source.root(),
+        MovePayload::Tabs(source) | MovePayload::Subtree(source) => source.root(),
+    }
+}
+
 impl DockEngine {
     pub(super) fn validate_product_root_float_availability(
         &self,
@@ -255,11 +262,12 @@ impl DockEngine {
         action: ProductAction,
         command: WorkspaceCommand,
         context: ProductCommandContext,
+        candidate: &Workspace,
         policy: &DockPolicySnapshot,
         events: &mut Vec<WorkspaceEvent>,
     ) -> Result<Option<InputOutcome>, EngineError> {
         let Some((candidate_root, candidate_target_surface)) =
-            self.native_product_rehome_route(&command)?
+            self.native_product_rehome_route(&command, candidate)?
         else {
             return Ok(None);
         };
@@ -276,7 +284,7 @@ impl DockEngine {
             }
         };
         let (source, target_surface, floating, visual, target_root) =
-            match self.prepare_native_product_rehome_target(&command) {
+            match self.prepare_native_product_rehome_target(&command, candidate_root) {
                 Ok(Some(prepared)) => prepared,
                 Ok(None) => return Ok(None),
                 Err(reason) => {
@@ -307,7 +315,15 @@ impl DockEngine {
             }
         };
         let payload = match &command {
-            WorkspaceCommand::Move { payload, .. } => payload.clone(),
+            WorkspaceCommand::Move { payload, .. }
+            | WorkspaceCommand::CreateContainedRoot {
+                content: RootContent::Move(payload),
+                ..
+            }
+            | WorkspaceCommand::InstallMainRoot {
+                content: RootContent::Move(payload),
+                ..
+            } => payload.clone(),
             WorkspaceCommand::RehomeRoot { .. } => match self.capture_product_root_payload(root) {
                 Ok((_, payload, _)) => payload,
                 Err(reason) => {
@@ -328,21 +344,8 @@ impl DockEngine {
                 }));
             }
         };
-        match self.stage_journal_workspace_command_with_authority(
-            cause,
-            &command,
-            policy,
-            WorkspacePublicationAuthority::Ordinary,
-            JournalDeliveryActivation::None,
-        )? {
-            Ok(_) => {}
-            Err(error) => {
-                return Ok(Some(InputOutcome::ProductActionRejected {
-                    reason: super::product_action::product_command_rejection(action, &error)?,
-                    version: self.version,
-                }));
-            }
-        }
+        // The caller already staged this exact command. Its canonical candidate
+        // decides source exhaustion without widening the payload or preparing twice.
         let preview = self
             .interaction
             .prepare_presentation_rehome_preview(
@@ -355,24 +358,19 @@ impl DockEngine {
             )
             .map_err(|source| EngineError::Interaction { input, source })?;
         let items = self.workspace.collect_items_in_subtree(source.node());
-        let outcome = match action {
-            ProductAction::FloatItem { .. }
-            | ProductAction::FloatRoot { .. }
-            | ProductAction::FloatTabs { .. } => DockspaceActionOutcome::RootFloatRequested {
+        let outcome = match floating {
+            Some(_) => DockspaceActionOutcome::RootFloatRequested {
                 root,
                 source_surface: source_native.surface,
                 target_surface,
                 items: items.clone(),
             },
-            ProductAction::DockItem { .. }
-            | ProductAction::DockRoot { .. }
-            | ProductAction::DockTabs { .. } => DockspaceActionOutcome::RootDockRequested {
+            None => DockspaceActionOutcome::RootDockRequested {
                 root,
                 source_surface: source_native.surface,
                 target_root,
                 items: items.clone(),
             },
-            _ => return Ok(None),
         };
         self.pending_mutation = Some(PendingMutation::Rehome(PendingPresentationRehome {
             source_version: expected,
@@ -404,14 +402,37 @@ impl DockEngine {
     fn native_product_rehome_route(
         &self,
         command: &WorkspaceCommand,
+        candidate: &Workspace,
     ) -> Result<Option<(RootId, SurfaceId)>, EngineError> {
         match command {
-            WorkspaceCommand::Move { payload, target } => self
-                .capture_complete_root_payload(payload)
-                .map(|source| source.map(|source| (source.root(), target.surface())))
-                .map_err(|_| EngineError::ReductionCauseInvariant {
-                    detail: "compiled product move lost its complete-root source",
-                }),
+            WorkspaceCommand::Move { payload, target } => {
+                let root = payload_root(payload);
+                let complete = self.capture_complete_root_payload(payload).map_err(|_| {
+                    EngineError::ReductionCauseInvariant {
+                        detail: "compiled product move lost its complete-root source",
+                    }
+                })?;
+                let exhausted_across_surfaces = self.root_surface(root) != Some(target.surface())
+                    && candidate.root(root).is_none();
+                Ok((complete.is_some() || exhausted_across_surfaces)
+                    .then_some((root, target.surface())))
+            }
+            WorkspaceCommand::CreateContainedRoot {
+                surface,
+                content: RootContent::Move(payload),
+                ..
+            }
+            | WorkspaceCommand::InstallMainRoot {
+                surface,
+                content: RootContent::Move(payload),
+                ..
+            } => {
+                let root = payload_root(payload);
+                Ok(
+                    (self.root_surface(root) != Some(*surface) && candidate.root(root).is_none())
+                        .then_some((root, *surface)),
+                )
+            }
             WorkspaceCommand::RehomeRoot { source, target } => match target {
                 RootPresentationTarget::Main { surface }
                 | RootPresentationTarget::Contained { surface, .. } => {
@@ -426,6 +447,7 @@ impl DockEngine {
     fn prepare_native_product_rehome_target(
         &self,
         command: &WorkspaceCommand,
+        source_root: RootId,
     ) -> Result<
         Option<(
             crate::graph::command::NodeSource,
@@ -436,11 +458,9 @@ impl DockEngine {
         )>,
         DockspaceActionRejection,
     > {
+        let (source, _, _) = self.capture_product_root_payload(source_root)?;
         match command {
-            WorkspaceCommand::Move { payload, target } => {
-                let Some(source) = self.capture_complete_root_payload(payload)? else {
-                    return Ok(None);
-                };
+            WorkspaceCommand::Move { target, .. } => {
                 let surface = target.surface();
                 let projection = self
                     .interaction_projection(surface)
@@ -459,6 +479,54 @@ impl DockEngine {
                         rect: record.visual().rect(),
                     },
                     product_dock_target_root(target),
+                )))
+            }
+            WorkspaceCommand::CreateContainedRoot {
+                surface,
+                root,
+                floating,
+                rect,
+                content: RootContent::Move(_),
+                ..
+            } => Ok(Some((
+                source,
+                *surface,
+                Some(*floating),
+                PreviewVisual::Contained {
+                    surface: *surface,
+                    rect: *rect,
+                    fallback: false,
+                },
+                *root,
+            ))),
+            WorkspaceCommand::InstallMainRoot {
+                surface,
+                root,
+                content: RootContent::Move(_),
+            } => {
+                let projection = self.interaction_projection(*surface).ok_or(
+                    DockspaceActionRejection::PresentationUnavailable { surface: *surface },
+                )?;
+                let record = projection
+                    .plan()
+                    .drop_target(
+                        crate::interaction::targeting::targets::DropTargetId::SurfaceBackground {
+                            surface: *surface,
+                        },
+                    )
+                    .ok_or(DockspaceActionRejection::PresentationUnavailable {
+                        surface: *surface,
+                    })?;
+                Ok(Some((
+                    source,
+                    *surface,
+                    None,
+                    PreviewVisual::Dock {
+                        surface: *surface,
+                        target: record.id(),
+                        rect: record.visual().rect(),
+                    },
+                    *root,
                 )))
             }
             WorkspaceCommand::RehomeRoot { source, target } => match *target {
