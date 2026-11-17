@@ -5,9 +5,9 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::geometry::{GeometryError, LogicalRect};
-use crate::graph::Workspace;
-use crate::graph::command::{DockTarget, MovePayload, WorkspaceCommand};
+use crate::graph::command::{DockTarget, MovePayload, NodeSource, WorkspaceCommand};
 use crate::graph::error::CommandError;
+use crate::graph::{Node, Workspace};
 use crate::ids::{NodeId, RootId};
 use crate::interaction::targeting::targets::{DropTargetKind, DropTargetRecord, DropVisual};
 use crate::policy::DockPolicySnapshot;
@@ -53,6 +53,20 @@ pub(super) fn resolved_visual(
     let WorkspaceCommand::Move { payload, target } = command else {
         return Ok(target_record.visual().into());
     };
+    if let MovePayload::Subtree(source) = payload
+        && let DockTarget::Center(destination)
+        | DockTarget::TabGap {
+            target: destination,
+            ..
+        } = target
+        && source.root() == destination.root()
+        && source.node() == destination.tabs()
+        && matches!(original.node(source.node()), Some(Node::Tabs { .. }))
+    {
+        // Preflight proves that returning a whole group to itself is a no-op.
+        // Central targets remain queryable, but no nested layout tab is created.
+        return Ok(target_record.visual().into());
+    }
     let root = target_root(target);
     let Some(projection) = project_future_root(
         original,
@@ -129,8 +143,11 @@ pub(super) fn resolved_visual(
                         })?
                 }
             }
-            MovePayload::Tabs(_) | MovePayload::Subtree(_) => {
-                projected_payload_rect(original, candidate, root, payload, &projection.nodes)?
+            MovePayload::Tabs(source) => {
+                projected_tabs_rect(original, candidate, root, source, &projection.nodes)?
+            }
+            MovePayload::Subtree(source) => {
+                projected_subtree_rect(original, candidate, root, source, &projection.nodes)?
             }
         },
         DockTarget::TabGap { target, .. } => match tab_strip.as_ref() {
@@ -239,70 +256,100 @@ fn projected_center_rect(
     )?)
 }
 
-fn projected_payload_rect(
+fn projected_tabs_rect(
     original: &Workspace,
     candidate: &Workspace,
     target_root: RootId,
-    payload: &MovePayload,
+    source: &NodeSource,
     node_results: &NodeMap<NodeResult>,
 ) -> Result<LogicalRect, DropPreviewProjectionError> {
-    if let MovePayload::Subtree(source) = payload {
-        if candidate.node_root(source.node()) == Some(target_root) {
-            return node_results
-                .get(&source.node())
-                .filter(|result| result.visible)
-                .map(|result| result.rect)
-                .ok_or(DropPreviewProjectionError::PayloadProjectionMissing {
-                    root: target_root,
-                    node: source.node(),
-                });
-        }
-    }
-    let (source_root, source_node, items) = match payload {
-        MovePayload::Item(source) => (source.root(), source.owner_node(), vec![source.item()]),
-        MovePayload::Tabs(source) | MovePayload::Subtree(source) => (
-            source.root(),
-            source.node(),
-            original.collect_items_in_subtree(source.node()),
-        ),
+    let missing = || DropPreviewProjectionError::PayloadGroupMissing {
+        root: target_root,
+        source_node: source.node(),
     };
-    if items.is_empty() {
-        return Err(DropPreviewProjectionError::PayloadContainsNoItems {
-            root: source_root,
-            node: source_node,
-        });
-    }
-
-    let mut nodes = std::collections::BTreeSet::new();
-    // The command retains every owned member, including hidden descendants.
-    // Only visible members contribute geometric evidence for the drag preview.
-    for item in items
-        .into_iter()
-        .filter(|&item| candidate.item_is_active(item))
+    let Some(Node::Tabs { items, .. }) = original.node(source.node()) else {
+        return Err(missing());
+    };
+    // A central anchor stays in its original root while its complete roster
+    // moves to a new carrier. Direct tab identity locates that actual carrier;
+    // descendant pane geometry would omit the group's own tab bar.
+    let first = items.first().copied().ok_or_else(missing)?;
+    let carrier = if let Some(item) = first.item() {
+        let location = candidate.locate_item_by_id(item).ok_or_else(missing)?;
+        if location.root != target_root {
+            return Err(missing());
+        }
+        location.tabs().ok_or_else(missing)?
+    } else {
+        candidate
+            .parent_link(target_root, first.layout().ok_or_else(missing)?)
+            .ok_or_else(missing)?
+            .parent
+    };
+    if !matches!(candidate.node(carrier), Some(Node::Tabs { items: actual, .. }) if actual == items)
     {
-        nodes.insert(destination_item_node(candidate, target_root, item)?);
+        return Err(missing());
     }
-    let mut projected = nodes.into_iter().map(|node| {
-        node_results
-            .get(&node)
-            .filter(|result| result.visible)
-            .map(|result| result.rect)
-            .ok_or(DropPreviewProjectionError::PayloadProjectionMissing {
+    projected_node_rect(target_root, carrier, node_results)
+}
+
+fn projected_node_rect(
+    root: RootId,
+    node: NodeId,
+    node_results: &NodeMap<NodeResult>,
+) -> Result<LogicalRect, DropPreviewProjectionError> {
+    node_results
+        .get(&node)
+        .filter(|result| result.visible)
+        .map(|result| result.rect)
+        .ok_or(DropPreviewProjectionError::PayloadProjectionMissing { root, node })
+}
+
+fn projected_subtree_rect(
+    original: &Workspace,
+    candidate: &Workspace,
+    target_root: RootId,
+    source: &NodeSource,
+    node_results: &NodeMap<NodeResult>,
+) -> Result<LogicalRect, DropPreviewProjectionError> {
+    if candidate.node_root(source.node()) == Some(target_root) {
+        return projected_node_rect(target_root, source.node(), node_results);
+    }
+    let mut pending = vec![source.node()];
+    let mut bounds = None;
+    while let Some(node) = pending.pop() {
+        if candidate.node_root(node) != Some(target_root) {
+            // Canonicalization can flatten an unnamed same-axis Split into
+            // its destination. Its surviving child containers still carry
+            // the complete geometry, including any nested tab bars.
+            let Some(Node::Split { children, .. }) = original.node(node) else {
+                return Err(DropPreviewProjectionError::PayloadProjectionMissing {
+                    root: target_root,
+                    node,
+                });
+            };
+            pending.extend(children.iter().rev().copied());
+            continue;
+        }
+        let result = node_results.get(&node).ok_or(
+            DropPreviewProjectionError::PayloadProjectionMissing {
                 root: target_root,
                 node,
-            })
-    });
-    let mut bounds =
-        projected
-            .next()
-            .ok_or(DropPreviewProjectionError::PayloadContainsNoItems {
-                root: source_root,
-                node: source_node,
-            })??;
-    for next in projected {
-        bounds = union_rect(bounds, next?)?;
+            },
+        )?;
+        if !result.visible {
+            continue;
+        }
+        let rect = result.rect;
+        bounds = Some(match bounds {
+            None => rect,
+            Some(previous) => union_rect(previous, rect)?,
+        });
     }
-    Ok(bounds)
+    bounds.ok_or(DropPreviewProjectionError::PayloadProjectionMissing {
+        root: target_root,
+        node: source.node(),
+    })
 }
 
 fn union_rect(left: LogicalRect, right: LogicalRect) -> Result<LogicalRect, GeometryError> {
@@ -312,24 +359,6 @@ fn union_rect(left: LogicalRect, right: LogicalRect) -> Result<LogicalRect, Geom
         left.max().x().max(right.max().x()) - left.x().min(right.x()),
         left.max().y().max(right.max().y()) - left.y().min(right.y()),
     )
-}
-
-fn destination_item_node(
-    candidate: &Workspace,
-    target_root: RootId,
-    item: crate::ids::ItemId,
-) -> Result<NodeId, DropPreviewProjectionError> {
-    let source = candidate
-        .capture_item_source_by_id(item)?
-        .ok_or(DropPreviewProjectionError::PayloadItemMissing { item })?;
-    if source.root() != target_root {
-        return Err(DropPreviewProjectionError::PayloadItemOutsideTarget {
-            item,
-            expected: target_root,
-            actual: source.root(),
-        });
-    }
-    Ok(source.owner_node())
 }
 
 const fn target_root(target: &DockTarget) -> RootId {
@@ -345,23 +374,17 @@ pub(super) enum DropPreviewProjectionError {
     FutureLayout(#[from] FutureLayoutProjectionError),
     #[error(transparent)]
     Command(#[from] CommandError),
-    #[error("drag payload subtree {root}/{node:?} contains no item")]
-    PayloadContainsNoItems { root: RootId, node: NodeId },
     #[error("drag payload item {item} vanished from the transaction candidate")]
     PayloadItemMissing { item: crate::ids::ItemId },
     #[error(
-        "drag payload item {item} landed in root {actual}, but the resolved target root is {expected}"
+        "candidate root {root} omitted the complete roster of drag payload group {source_node:?}"
     )]
-    PayloadItemOutsideTarget {
-        item: crate::ids::ItemId,
-        expected: RootId,
-        actual: RootId,
-    },
+    PayloadGroupMissing { root: RootId, source_node: NodeId },
     #[error("candidate projection omitted drag payload node {root}/{node:?}")]
     PayloadProjectionMissing { root: RootId, node: NodeId },
     #[error("candidate projection omitted center target node {root}/{node:?}")]
     TargetProjectionMissing { root: RootId, node: NodeId },
-    #[error("candidate center target {root}/{node:?} is not a tabs leaf")]
+    #[error("candidate center target {root}/{node:?} is not a Tabs container")]
     ProjectedCenterIsNotTabs { root: RootId, node: NodeId },
     #[error("target presentation omitted retained layout facts")]
     TargetLayoutFactsMissing,

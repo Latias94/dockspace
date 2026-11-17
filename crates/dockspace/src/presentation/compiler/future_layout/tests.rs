@@ -37,6 +37,8 @@ const ROOT: RootId = RootId::new(1);
 const MOVED: ItemId = ItemId::new(1);
 
 mod allocation;
+mod candidate_scope;
+mod composable;
 mod sizing;
 mod visibility;
 

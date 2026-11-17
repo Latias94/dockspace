@@ -51,6 +51,120 @@ fn pane(plan: &PresentationPlan, tabs: NodeId) -> &crate::presentation::scene::T
 }
 
 #[test]
+fn bare_pane_feedback_keeps_real_content_distinct_from_its_selected_layout_ancestor() {
+    let mut builder = Workspace::builder();
+    let bare = builder.insert_node(Node::pane(B));
+    let sibling = builder.insert_node(Node::pane(C));
+    let layout = builder.insert_node(Node::equal_split(Axis::Horizontal, [bare, sibling]).unwrap());
+    let layout_tab = TabKey::for_layout(layout);
+    let outer = builder.insert_node(Node::tabs_from_keys(
+        vec![A.into(), layout_tab],
+        Some(layout_tab),
+    ));
+    builder.set_root(ROOT, RootRecord::new(outer));
+    builder.set_surface(SURFACE, SurfacePresentation::with_main(ROOT));
+    let workspace = builder.build().unwrap();
+    let session = measured_session(workspace.clone(), DockPolicy::default());
+    let plan = session
+        .engine
+        .scene()
+        .ready_candidate(SURFACE)
+        .unwrap()
+        .plan();
+    let record = plan
+        .pane_records()
+        .iter()
+        .find(|pane| pane.item() == B)
+        .unwrap();
+    assert_eq!(record.owner_node(), bare);
+    assert_eq!(
+        record.containing_tab_bar(),
+        Some(TabBarSceneId {
+            root: ROOT,
+            tabs: outer
+        })
+    );
+    assert!(
+        plan.tabs_records()
+            .iter()
+            .all(|tabs| tabs.id().tabs != bare)
+    );
+    assert!(
+        plan.tab_records()
+            .iter()
+            .all(|tab| tab.id().tab != B.into())
+    );
+
+    let mut targets = vec![(
+        DropTargetId::Center {
+            surface: SURFACE,
+            root: ROOT,
+            tabs: bare,
+        },
+        DockspaceDropAction::Merge,
+    )];
+    targets.extend(
+        [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom].map(|edge| {
+            (
+                DropTargetId::InnerEdge {
+                    surface: SURFACE,
+                    root: ROOT,
+                    node: bare,
+                    edge,
+                },
+                DockspaceDropAction::Split {
+                    edge: public_edge(edge),
+                },
+            )
+        }),
+    );
+    for (target, action) in targets {
+        let feedback = resolve(plan, target, None, &workspace).unwrap();
+        assert_eq!(feedback.selected_tab(), None);
+        assert_eq!(feedback.selected_item(), Some(B));
+        assert_eq!(feedback.bounds(), record.bounds());
+        assert_eq!(feedback.action(), action);
+        assert_eq!(feedback.scope(), DockspaceDropTargetScope::Pane);
+        assert_eq!(feedback.root(), Some(ROOT));
+        assert_eq!(feedback.surface(), SURFACE);
+        assert_eq!(
+            feedback.visual_id(),
+            DockspaceVisualId(VisualIdentity::DropTarget(target))
+        );
+    }
+    let ancestor = resolve(
+        plan,
+        DropTargetId::Center {
+            surface: SURFACE,
+            root: ROOT,
+            tabs: outer,
+        },
+        None,
+        &workspace,
+    )
+    .unwrap();
+    assert_eq!(ancestor.selected_tab(), Some(layout_tab));
+    assert_eq!(ancestor.selected_item(), None);
+    assert_eq!(ancestor.bounds(), pane(plan, outer).bounds());
+    assert_ne!(ancestor.bounds(), record.bounds());
+    assert!(
+        resolve(
+            plan,
+            DropTargetId::TabGap {
+                surface: SURFACE,
+                root: ROOT,
+                tabs: bare,
+                index: 0
+            },
+            None,
+            &workspace,
+        )
+        .is_none(),
+        "a bare Pane has no tab gap"
+    );
+}
+
+#[test]
 fn resolved_center_keeps_the_presented_target_when_its_future_rect_covers_a_neighbor() {
     let mut builder = Workspace::builder();
     let source = builder.insert_node(Node::tabs([A]));
@@ -545,6 +659,109 @@ fn paint_feedback_reads_presented_bounds_and_shapes_hidden_target_titles() {
     assert!(
         resources.contains(&(feedback.visual_id(), C.into())),
         "the hidden target's label still needs a text resource"
+    );
+}
+
+#[test]
+fn bare_pane_paint_feedback_keeps_presented_bounds_during_an_unpresented_resize() {
+    let mut builder = Workspace::builder();
+    let source = builder.insert_node(Node::tabs([A]));
+    let target = builder.insert_node(Node::pane(B));
+    let split = builder.insert_node(Node::equal_split(Axis::Horizontal, [source, target]).unwrap());
+    builder.set_root(ROOT, RootRecord::new(split));
+    builder.set_surface(SURFACE, SurfacePresentation::with_main(ROOT));
+    let mut session = measured_session(builder.build().unwrap(), DockPolicy::default());
+    session.enable_host_pointer().unwrap();
+    publish(&mut session);
+    let presented = session
+        .engine
+        .scene()
+        .interaction_projection(SURFACE)
+        .unwrap();
+    let presented_bounds = presented
+        .plan()
+        .pane_records()
+        .iter()
+        .find(|pane| pane.item() == B)
+        .unwrap()
+        .bounds();
+    let source_point = center(
+        presented
+            .plan()
+            .tab_records()
+            .iter()
+            .find(|tab| tab.id().tab == A.into())
+            .unwrap()
+            .drag_hit()
+            .rect(),
+    );
+    let target_id = DropTargetId::Center {
+        surface: SURFACE,
+        root: ROOT,
+        tabs: target,
+    };
+    let target_point = center(
+        presented
+            .plan()
+            .drop_target(target_id)
+            .unwrap()
+            .region()
+            .rect(),
+    );
+    input(
+        &mut session,
+        SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary),
+        source_point,
+    );
+    input(
+        &mut session,
+        SurfacePointerEvent::Moved,
+        LogicalPoint::new(source_point.x() + 20.0, source_point.y() + 12.0).unwrap(),
+    );
+    input(&mut session, SurfacePointerEvent::Moved, target_point);
+    assert!(session.has_active_gesture());
+
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .measure_surface(
+            SURFACE,
+            UniformSurfaceMetrics::new(
+                LogicalRect::new(0.0, 0.0, 1800.0, 600.0).unwrap(),
+                LogicalSize::new(32.0, 24.0).unwrap(),
+                96.0,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+    let fresh_bounds = plan
+        .plan
+        .pane_records()
+        .iter()
+        .find(|pane| pane.item() == B)
+        .unwrap()
+        .bounds();
+    assert_ne!(fresh_bounds, presented_bounds);
+    let preview = plan.drag_preview().unwrap();
+    let feedback = preview
+        .target()
+        .expect("a real bare target retains destination feedback");
+    assert_eq!(feedback.selected_tab(), None);
+    assert_eq!(feedback.selected_item(), Some(B));
+    assert_eq!(feedback.bounds(), presented_bounds);
+    assert_eq!(feedback.action(), DockspaceDropAction::Merge);
+    assert_eq!(feedback.scope(), DockspaceDropTargetScope::Pane);
+    assert_eq!(
+        preview.tabs().count(),
+        0,
+        "the bare target has no measured tab strip"
+    );
+    let mut resources = Vec::new();
+    plan.visit_tab_resources(|visual, key| resources.push((visual, key)))
+        .unwrap();
+    assert!(
+        !resources.contains(&(feedback.visual_id(), B.into())),
+        "real bare content does not create a tab-title resource"
     );
 }
 

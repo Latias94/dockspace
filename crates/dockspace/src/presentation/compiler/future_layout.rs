@@ -252,7 +252,10 @@ pub(crate) fn project_future_tab_strip(
     }
     let original_selected = match original.node(target.tabs()) {
         Some(Node::Tabs { .. }) => original.visible_tab_selection(target.tabs()),
-        Some(Node::Pane { .. } | Node::Split { .. } | Node::Grid { .. }) => {
+        // Center docking promotes a bare destination to Tabs in place. The
+        // retained Pane had no tab selection or measured strip to inherit.
+        Some(Node::Pane { .. }) => None,
+        Some(Node::Split { .. } | Node::Grid { .. }) => {
             return Err(FutureLayoutProjectionError::TargetIsNotTabs {
                 root: target.root(),
                 node: target.tabs(),
@@ -595,7 +598,7 @@ pub(crate) enum FutureLayoutProjectionError {
     MissingNode { root: RootId, node: NodeId },
     #[error("candidate projection omitted node {root}/{node:?}")]
     MissingNodeProjection { root: RootId, node: NodeId },
-    #[error("candidate target {root}/{node:?} is not a tabs leaf")]
+    #[error("candidate target {root}/{node:?} is not a Tabs container")]
     TargetIsNotTabs { root: RootId, node: NodeId },
     #[error("pane sizing for item {item} in {root}/{tabs:?} was not presented")]
     PaneSizingUnavailable {

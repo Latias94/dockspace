@@ -3,10 +3,10 @@
 use crate::geometry::LogicalRect;
 use crate::graph::command::{Edge, MovePayload};
 use crate::graph::{Node, Workspace};
-use crate::ids::{ItemId, RootId, SurfaceId, TabKey};
+use crate::ids::{ItemId, NodeId, RootId, SurfaceId, TabKey};
 use crate::interaction::targeting::targets::DropTargetId;
 use crate::model::DockEdge;
-use crate::presentation::scene::{PresentationPlan, TabBarSceneId};
+use crate::presentation::scene::{PaneRecord, PaneSceneId, PresentationPlan, TabBarSceneId};
 
 use super::{DockspaceVisualId, VisualIdentity};
 
@@ -16,7 +16,7 @@ mod tests;
 /// Current presented region addressed by one resolved docking action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DockspaceDropTargetScope {
-    /// Merge with or split one tabs leaf.
+    /// Merge with or split one presented Pane or Tabs region.
     Pane,
     /// Split the complete root at an outer edge.
     Root,
@@ -27,7 +27,7 @@ pub enum DockspaceDropTargetScope {
 /// Semantic result of the already resolved target, without command authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DockspaceDropAction {
-    /// Merge the payload into the target tabs stack.
+    /// Merge the payload into existing Tabs or promote a bare Pane to Tabs.
     Merge,
     /// Insert at an exact gap in the target's persistent tab sequence.
     InsertTab {
@@ -55,9 +55,15 @@ pub enum DockspaceDropAction {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DockspaceDropTargetFeedback {
     target: DropTargetId,
-    selected: Option<TabKey>,
+    content: Option<TargetContent>,
     bounds: LogicalRect,
     action: DockspaceDropAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TargetContent {
+    Tab(TabKey),
+    Pane(ItemId),
 }
 
 impl DockspaceDropTargetFeedback {
@@ -91,19 +97,27 @@ impl DockspaceDropTargetFeedback {
         DockspaceVisualId(VisualIdentity::DropTarget(self.target))
     }
 
-    /// Returns the item representing the presented pane, before the payload is selected.
+    /// Returns the selected direct tab of the presented Tabs target before the move.
     ///
-    /// Empty central panes, complete-root edges and empty surfaces have no unique item.
+    /// Bare Panes, empty central Tabs, complete-root edges and empty surfaces
+    /// have no selected tab. A bare Pane does not borrow its ancestor's selection.
     #[must_use]
     pub const fn selected_tab(self) -> Option<TabKey> {
-        self.selected
+        match self.content {
+            Some(TargetContent::Tab(tab)) => Some(tab),
+            Some(TargetContent::Pane(_)) | None => None,
+        }
     }
 
-    /// Returns content only when the selected tab directly contains one item.
+    /// Returns the bare Pane's item or the directly selected content tab's item.
+    ///
+    /// A selected layout tab has no representative descendant item. Empty Tabs,
+    /// complete-root edges and empty surfaces also return `None`.
     #[must_use]
     pub const fn selected_item(self) -> Option<ItemId> {
-        match self.selected {
-            Some(tab) => tab.item(),
+        match self.content {
+            Some(TargetContent::Pane(item)) => Some(item),
+            Some(TargetContent::Tab(tab)) => tab.item(),
             None => None,
         }
     }
@@ -128,11 +142,8 @@ pub(super) fn resolve(
     workspace: &Workspace,
 ) -> Option<DockspaceDropTargetFeedback> {
     plan.drop_target(target)?;
-    let (pane, action) = match target {
-        DropTargetId::Center { root, tabs, .. } => (
-            Some(TabBarSceneId { root, tabs }),
-            DockspaceDropAction::Merge,
-        ),
+    let (node, action) = match target {
+        DropTargetId::Center { root, tabs, .. } => (Some((root, tabs)), DockspaceDropAction::Merge),
         DropTargetId::TabGap {
             root, tabs, index, ..
         } => {
@@ -165,7 +176,7 @@ pub(super) fn resolve(
                 .copied()
                 .find(|item| workspace.tab_is_visible(*item) && !excludes(*item));
             (
-                Some(TabBarSceneId { root, tabs }),
+                Some((root, tabs)),
                 DockspaceDropAction::InsertTab {
                     index,
                     previous,
@@ -176,7 +187,7 @@ pub(super) fn resolve(
         DropTargetId::InnerEdge {
             root, node, edge, ..
         } => (
-            Some(TabBarSceneId { root, tabs: node }),
+            Some((root, node)),
             DockspaceDropAction::Split {
                 edge: public_edge(edge),
             },
@@ -189,12 +200,8 @@ pub(super) fn resolve(
         ),
         DropTargetId::SurfaceBackground { .. } => (None, DockspaceDropAction::InstallRoot),
     };
-    let (selected, bounds) = match pane {
-        Some(id) => {
-            let panes = plan.tabs_records();
-            let pane = &panes[panes.binary_search_by_key(&id, |pane| pane.id()).ok()?];
-            (plan.selected_in_tabs(id.tabs), pane.bounds())
-        }
+    let (content, bounds) = match node {
+        Some((root, node)) => presented_content(plan, root, node)?,
         None => (
             None,
             match target.root() {
@@ -205,10 +212,35 @@ pub(super) fn resolve(
     };
     Some(DockspaceDropTargetFeedback {
         target,
-        selected,
+        content,
         bounds,
         action,
     })
+}
+
+fn presented_content(
+    plan: &PresentationPlan,
+    root: RootId,
+    node: NodeId,
+) -> Option<(Option<TargetContent>, LogicalRect)> {
+    // Use the presented projection's owner, not the current workspace or a containing bar.
+    let item = plan
+        .layout_facts()
+        .and_then(|facts| facts.root(root)?.projection().nodes.pane_item(&node));
+    if let Some(item) = item {
+        let id = PaneSceneId { root, item };
+        let panes = plan.pane_records();
+        let pane = &panes[panes.binary_search_by_key(&id, PaneRecord::id).ok()?];
+        return (pane.owner_node() == node)
+            .then_some((Some(TargetContent::Pane(item)), pane.bounds()));
+    }
+    let id = TabBarSceneId { root, tabs: node };
+    let tabs = plan.tabs_records();
+    let tabs = &tabs[tabs.binary_search_by_key(&id, |tabs| tabs.id()).ok()?];
+    Some((
+        plan.selected_in_tabs(node).map(TargetContent::Tab),
+        tabs.bounds(),
+    ))
 }
 
 const fn public_edge(edge: Edge) -> DockEdge {

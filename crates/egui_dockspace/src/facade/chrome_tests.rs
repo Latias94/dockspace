@@ -18,6 +18,7 @@ mod contained_keyboard;
 mod group_menu;
 mod menu_keyboard;
 mod presentation_keyboard;
+mod preview_drag;
 mod scroll;
 mod splitters;
 mod tab_menu;
