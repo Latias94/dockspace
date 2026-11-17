@@ -476,11 +476,35 @@ impl SurfacePaintPlan<'_> {
             .plan
             .splitter_record(id)
             .filter(|record| record.operable() && self.plan.partition_available(id.root))?;
+        let mut adjustments = adjustments.into_iter().peekable();
+        let first = adjustments.next()?;
+        let reset = if adjustments.peek().is_none() {
+            match first {
+                SurfaceSplitterAdjustment::Equalize => Some(crate::engine::SplitterReset::Equalize),
+                SurfaceSplitterAdjustment::Preferred => {
+                    Some(crate::engine::SplitterReset::Preferred)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
         let adjustment = self.splitter_adjustment_sequence(
             crate::presentation::scene::SplitterResizeTarget::Handle(id),
             record.axis(),
-            adjustments,
+            std::iter::once(first).chain(adjustments),
         )?;
+        if let Some(reset) = reset {
+            return Some(PreparedSurfaceAction::reset_splitter(
+                self.authority_domain,
+                self.version,
+                self.scene,
+                self.frozen_action_witness()?,
+                id,
+                reset,
+                adjustment,
+            ));
+        }
         Some(PreparedSurfaceAction::adjust_splitter(
             self.authority_domain,
             self.version,

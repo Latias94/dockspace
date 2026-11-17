@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use crate::engine::{
     EngineInput, LocalSurfaceAction as SurfaceAction, LocalTabChromeAction, LocalTabSelection,
+    SplitterReset,
 };
 use crate::ids::{EngineAuthorityDomainId, FloatingPresentationId, ItemId, SurfaceId};
 use crate::input::intent::CloseSceneTarget;
@@ -227,6 +228,29 @@ impl PreparedSurfaceAction {
         }
     }
 
+    pub(super) fn reset_splitter(
+        authority_domain: EngineAuthorityDomainId,
+        expected: WorkspaceVersion,
+        scene: SurfaceSceneStamp,
+        witness: Arc<crate::presentation::scene::SurfacePlanScene>,
+        splitter: SplitterSceneId,
+        reset: SplitterReset,
+        adjustment: ResizeAdjustment,
+    ) -> Self {
+        Self {
+            authority_domain,
+            expected,
+            surface: scene.surface(),
+            witness,
+            action: SurfaceAction::ResetSplitter {
+                scene,
+                splitter,
+                reset,
+                adjustment,
+            },
+        }
+    }
+
     pub(super) fn adjust_splitter_junction(
         authority_domain: EngineAuthorityDomainId,
         expected: WorkspaceVersion,
@@ -347,6 +371,7 @@ impl PreparedSurfaceAction {
             | SurfaceAction::PresentationCommand { .. }
             | SurfaceAction::TabChrome { .. }
             | SurfaceAction::AdjustSplitter { .. }
+            | SurfaceAction::ResetSplitter { .. }
             | SurfaceAction::AdjustSplitterJunction { .. }
             | SurfaceAction::AdjustContainedResize { .. }
             | SurfaceAction::CancelGesture { .. } => None,
@@ -411,6 +436,17 @@ impl PreparedSurfaceAction {
                 scene,
                 splitter,
                 adjustment,
+            } => EngineInput::AdjustLocalSplitterResize {
+                expected: self.expected,
+                scene,
+                splitter,
+                adjustment,
+            },
+            SurfaceAction::ResetSplitter {
+                scene,
+                splitter,
+                adjustment,
+                ..
             } => EngineInput::AdjustLocalSplitterResize {
                 expected: self.expected,
                 scene,

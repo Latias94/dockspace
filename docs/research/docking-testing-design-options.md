@@ -24,8 +24,8 @@ predicts valid success/no-op, expected rejection and `changed` before the
 Every ordered group, selection/history and hidden set is compared after each
 step, including unaffected groups and visible-selection fallback.
 
-The action grammar now includes visibility alongside select, reorder, open,
-center/edge moves and resize. Rejections cover hidden selection, duplicate open
+The action grammar now includes visibility and item/group close alongside select,
+reorder, open, center/edge moves and resize. Rejections cover hidden selection, duplicate open
 and out-of-range insertion, with the predicted error class/parameters. Model
 prerequisites removed by shrinking may yield `Skipped`; a modeled item missing
 from the SUT cannot. Coverage distinguishes skipped, expected rejection, applied
@@ -38,6 +38,47 @@ This closes the measured blanket-rejection gap below. It is still a deliberately
 small default-policy semantic model, not a second docking/native engine. The
 long command journey, explicit edge geometry checks, named MRU regressions,
 frozen traversal comparisons and ordered native schedules remain useful.
+
+### Closing and deferred approval schedules
+
+The 2026-11-17 follow-up adds close to the same flat model. Group close removes
+the complete member set in one semantic step; item close predicts selection and
+history without consulting production close results. The executor uses the
+public session approval workflow rather than raw graph removal. It compares
+the decision roster with the independent prediction, requires every non-final
+vote to leave ownership unchanged, and checks the final workspace against the
+model. Closed logical item IDs can be reopened later in a generated command
+sequence. The constructive center-move property retains its original nonclosing
+grammar so that its always-owned source and target remain a real guarantee.
+
+A separate shrinkable schedule holds one initial vote or deferred continuation
+while applying selection, visibility, reorder, cross-group movement, open,
+unrelated close and policy round trips. Its scope oracle is a small sticky
+invalidation rule, not a copy of the production plan registry: moving a requested
+member away or changing its close capability revokes the old approval even if
+the original state later returns. Adding a member revokes a group approval;
+unrelated edits and local reorder do not. Success checks the exact original
+request and decision roster; veto/stale decisions preserve the complete current
+workspace. Replaying original tokens after reopening cannot acquire authority
+over that later item lifetime.
+
+Named schedules protect move-away-and-back, capability round trips and valid
+reorder/hide/unrelated-close combinations for item/group and pending/deferred
+requests. A generated schedule may skip an edit whose model prerequisite no
+longer holds, but cannot skip the final decision or accept a failed eligible
+edit as success. A policy replacement changes the reported workspace version;
+the separate topology comparison still requires that replacement to leave
+layout membership unchanged. Test validation for this follow-up is separate
+from the historical gate counts below.
+
+Follow-up validation on 2026-11-17 used serial Cargo invocations, two build jobs
+and two nextest threads. Workspace all-target/all-feature tests passed 2,963
+tests with three existing skips (`1c887069-8a93-4898-b53b-b080c7d3c393`). The
+no-default-feature command and sizing model selection passed all 12 selected
+tests (`1136402b-591f-476f-95f9-0a474aebdbed`). The core correctness/suspicious
+Clippy gate passed; its existing advisory warning backlog remains. Formatting
+and local links in the changed research documents were checked. These gates
+do not add physical native-platform qualification.
 
 ### Required real-widget outcomes
 

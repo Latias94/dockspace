@@ -270,6 +270,23 @@ extent in the hinted ratio; no hints fall back to equal extents. The full touchi
 layout constrains the result. Restoration updates ordinary weights once, so
 subsequent manual resizes and saved weights keep their meaning.
 
+A single `Preferred` or `Equalize` adjustment converted with `into_deferred()`
+retains its absolute intent until the reducer executes it. Its original
+paint-plan witness authorizes the exact splitter; a pointer resize that changes
+only weights does not expire the deferred reset. Ordinary `submit_surface_action`
+keeps the precomputed displacement and requires the original scene and workspace
+version to remain current.
+Core still checks the epoch, surface and root owner, ordered topology and
+visibility, selection, policy, configuration, measurements, coordinates and
+occlusion. The surface retains its latest accepted measurement observation
+independently of painted fallbacks and scene readiness. Newer unpainted measurements
+and explicit measurement unavailability cannot be discarded by a later weight
+update to authorize an older reset. After those checks, it projects the current
+weights and shares the ordinary restoration calculation and touching-frontier
+solver. Relative steps,
+endpoints, junction adjustments and sequences with multiple steps retain their
+original geometry-bound displacement contract.
+
 An upper bound may leave background in a larger host. That background is not a
 pane hit target; root docking guides remain available. Infeasible minima retain
 the configured `Clip`/`Compress` behavior. A resize that would cross a capped

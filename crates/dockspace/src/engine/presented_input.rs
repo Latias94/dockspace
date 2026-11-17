@@ -44,15 +44,20 @@ impl DockEngine {
     }
 
     pub(crate) fn presented_transient_geometry_is_current(&self, plan: &PresentationPlan) -> bool {
+        self.presented_contained_geometry_is_current(plan)
+            && plan.resize_projection().iter().all(|update| {
+                self.presented_split_weights_are_current(
+                    update.split().root(),
+                    update.split().node(),
+                    update.weights(),
+                )
+            })
+    }
+
+    pub(super) fn presented_contained_geometry_is_current(&self, plan: &PresentationPlan) -> bool {
         plan.contained_projection().is_none_or(|projection| {
             self.current_presented_contained_rect(projection.surface, projection.floating)
                 == Some(projection.rect)
-        }) && plan.resize_projection().iter().all(|update| {
-            self.presented_split_weights_are_current(
-                update.split().root(),
-                update.split().node(),
-                update.weights(),
-            )
         })
     }
 
@@ -106,6 +111,19 @@ impl DockEngine {
                     })
                 })
         })
+    }
+
+    pub(super) fn presented_root_topology_is_current(
+        &self,
+        plan: &PresentationPlan,
+        root: RootId,
+    ) -> bool {
+        self.presented_root_owner_is_current(plan, root)
+            && plan.command_basis(root).is_some_and(|frozen| {
+                self.workspace
+                    .root_fingerprint(root)
+                    .is_ok_and(|current| frozen.presentation_topology_eq(&current))
+            })
     }
 
     fn presented_root_owner_is_current(&self, plan: &PresentationPlan, root: RootId) -> bool {
