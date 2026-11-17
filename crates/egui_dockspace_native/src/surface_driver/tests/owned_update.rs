@@ -548,12 +548,14 @@ fn run_owned_update(style_change: bool) {
         DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([FIRST, SECOND])),
     )])
     .unwrap();
+    let style = DockStyle {
+        tab_bar_height: 28.0,
+        ..DockStyle::default()
+    };
     let session = DockspaceSession::from_layout_with_presentation_config(
         layout.clone(),
         dockspace::policy::DockPolicy::default(),
-        egui_dockspace::DockStyle::default()
-            .presentation_config()
-            .unwrap(),
+        style.presentation_config().unwrap(),
     )
     .unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
@@ -566,7 +568,7 @@ fn run_owned_update(style_change: bool) {
             calls: Arc::clone(&calls),
             expected_content_top: None,
         },
-        DockStyle::default(),
+        style.clone(),
         NativeWindowClosePolicy::RetainLayout,
     )
     .unwrap();
@@ -578,9 +580,7 @@ fn run_owned_update(style_change: bool) {
             DockspaceSession::from_layout_with_presentation_config(
                 layout,
                 dockspace::policy::DockPolicy::default(),
-                egui_dockspace::DockStyle::default()
-                    .presentation_config()
-                    .unwrap(),
+                style.presentation_config().unwrap(),
             )
             .unwrap(),
             dockspace::runtime::NativeMonotonicClock::new(move || {
