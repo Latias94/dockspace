@@ -187,7 +187,7 @@ impl Expected {
         let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
         let splitter = outer_splitter(plan);
         let stale = plan
-            .prepare_splitter_adjustment(splitter.visual_id(), SurfaceSplitterAdjustment::Preferred)
+            .prepare_splitter_adjustment(splitter.visual_id(), SurfaceSplitterAdjustment::Increment)
             .expect("fresh exact partition grants the adjustment");
         match action {
             Action::HostWidth(width) => self.width = f64::from(width),

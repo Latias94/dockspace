@@ -131,6 +131,16 @@ impl Semantics {
         self.group(item).is_some() && self.groups.len() > 1
     }
 
+    pub(super) fn items_to_close(&self, item: ItemId, group: bool) -> Vec<ItemId> {
+        if group {
+            self.groups[self.group(item).expect("modeled close group exists")]
+                .items
+                .clone()
+        } else {
+            vec![item]
+        }
+    }
+
     pub(super) fn predict(&self, action: ModelAction) -> Option<Prediction> {
         let mut next = self.clone();
         let changed = match action {
@@ -207,6 +217,37 @@ impl Semantics {
                     next.groups[group].repair_visibility(&next.hidden);
                 }
                 changed
+            }
+            ModelAction::Close { item, group } => {
+                let index = self.group(item)?;
+                let source = &mut next.groups[index];
+                if group {
+                    for item in source.items.drain(..) {
+                        next.hidden.remove(&item);
+                    }
+                    source.selected = None;
+                    source.mru.clear();
+                } else {
+                    let successor = (source.selected == Some(item))
+                        .then(|| {
+                            let index = source
+                                .items
+                                .iter()
+                                .position(|candidate| *candidate == item)?;
+                            source.items[index + 1..]
+                                .iter()
+                                .chain(source.items[..index].iter().rev())
+                                .copied()
+                                .find(|candidate| !self.hidden.contains(candidate))
+                        })
+                        .flatten();
+                    source.remove(item, &self.hidden);
+                    next.hidden.remove(&item);
+                    if let Some(successor) = successor {
+                        source.select(successor);
+                    }
+                }
+                true
             }
         };
         next.groups

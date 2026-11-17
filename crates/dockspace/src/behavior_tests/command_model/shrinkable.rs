@@ -2,6 +2,7 @@ use super::*;
 use proptest::prelude::*;
 use proptest::test_runner::FileFailurePersistence;
 
+mod close_schedules;
 mod semantics;
 use semantics::{Prediction, Semantics};
 
@@ -35,6 +36,10 @@ enum ModelAction {
         item: ItemId,
         visible: bool,
     },
+    Close {
+        item: ItemId,
+        group: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,7 +70,7 @@ impl Coverage {
     }
 }
 
-fn action_strategy() -> impl Strategy<Value = ModelAction> {
+fn nonclosing_action_strategy() -> impl Strategy<Value = ModelAction> {
     let item = (1..=ITEM_COUNT).prop_map(ItemId::new);
     let max_insertion = usize::try_from(ITEM_COUNT).expect("model item count fits usize");
     prop_oneof![
@@ -93,6 +98,16 @@ fn action_strategy() -> impl Strategy<Value = ModelAction> {
         item.clone()
             .prop_map(|item| ModelAction::ResizeContaining { item }),
         (item, any::<bool>()).prop_map(|(item, visible)| ModelAction::Visibility { item, visible }),
+    ]
+}
+
+fn action_strategy() -> impl Strategy<Value = ModelAction> {
+    prop_oneof![
+        4 => nonclosing_action_strategy(),
+        1 => (1..=ITEM_COUNT, any::<bool>()).prop_map(|(item, group)| ModelAction::Close {
+            item: ItemId::new(item),
+            group,
+        }),
     ]
 }
 
@@ -168,6 +183,7 @@ fn resolve_action(
                 None,
             );
         }
+        ModelAction::Close { .. } => unreachable!("close uses the public approval workflow"),
     };
     (resolved.0, Some(resolved.1))
 }
@@ -178,6 +194,25 @@ fn apply_action(action: ModelAction, workspace: &mut Workspace, expected: &mut S
         return Step::Skipped;
     };
     expected.assert_workspace(workspace, action);
+    if let ModelAction::Close { item, group } = action {
+        let Prediction::Success {
+            next,
+            changed: true,
+        } = prediction
+        else {
+            panic!("a model-owned close must remove content");
+        };
+        close_schedules::close_immediately(
+            workspace,
+            &expected.items_to_close(item, group),
+            item,
+            group,
+        );
+        *expected = next;
+        expected.assert_workspace(workspace, action);
+        workspace.validate().expect("approved close remains strict");
+        return Step::Applied { changed: true };
+    }
     let (command, delta) = resolve_action(action, workspace, expected);
     let before = workspace.clone();
     let result = WorkspaceTransaction::from_commands([command])
@@ -238,7 +273,7 @@ proptest! {
 
     #[test]
     fn constructive_sequences_require_legal_center_moves(
-        prefix in prop::collection::vec(action_strategy(), 0..32),
+        prefix in prop::collection::vec(nonclosing_action_strategy(), 0..32),
     ) {
         let mut workspace = initial_workspace();
         let mut expected = Semantics::initial();
