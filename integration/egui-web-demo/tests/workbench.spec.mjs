@@ -216,16 +216,31 @@ test('a menu-floated layout moves over blank canvas and docks through an explici
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await open(page);
-  const original = topology(await state(page));
+  const initial = await state(page);
+  const original = topology(initial);
+  const titleLabels = snapshot => snapshot.controls
+    .filter(node => node.role === 'TitleBar').map(node => node.label).sort();
+  const originalTitles = titleLabels(initial);
+  expect(originalTitles).toEqual(['Inspector']);
+  expect(initial.panes.filter(pane => pane.root === 1).map(pane => pane.item))
+    .toEqual([1, 2, 3, 5, 6, 7, 8]);
+  // The unnamed split root owns its label; Outline remains one descendant tab.
+  const layoutTitles = snapshot => snapshot.controls
+    .filter(node => node.role === 'TitleBar' && node.label === 'Split');
   await clickControl(page, 'Layout actions');
   await expect.poll(async () => (await state(page)).controls.some(node => node.label === 'Float Layout')).toBe(true);
   await clickControl(page, 'Float Layout');
-  const title = snapshot => snapshot.controls.find(node => node.role === 'TitleBar' && node.label === 'Outline');
-  await expect.poll(async () => Boolean(title(await state(page)))).toBe(true);
+  await expect.poll(async () => layoutTitles(await state(page)).length).toBe(1);
+  const floated = await state(page);
+  expect(titleLabels(floated)).toEqual([...originalTitles, 'Split'].sort());
+  expect(topology(floated), 'floating the complete root retains all groups, selections and item ownership')
+    .toEqual(original);
 
   const blank = await point(page, [150, 500, 150, 500]);
   const dragWindow = async () => {
-    const source = await point(page, title(await state(page)).rect);
+    const titles = layoutTitles(await state(page));
+    expect(titles, 'drag the complete split layout, leaving the Inspector window alone').toHaveLength(1);
+    const source = await point(page, titles[0].rect);
     await page.mouse.move(source.x, source.y);
     await presentedPointer(page, source, false);
     await page.mouse.down();
@@ -240,7 +255,8 @@ test('a menu-floated layout moves over blank canvas and docks through an explici
   await page.mouse.up();
   await presentedPointer(page, blank, false);
   await expect.poll(async () => (await state(page)).activeGesture).toBe(false);
-  expect(title(await state(page)), 'blank canvas keeps the complete layout floating').toBeTruthy();
+  expect(layoutTitles(await state(page)), 'blank canvas keeps the complete layout floating').toHaveLength(1);
+  expect(titleLabels(await state(page))).toEqual([...originalTitles, 'Split'].sort());
   expect(topology(await state(page))).toEqual(original);
 
   await dragWindow();
@@ -250,7 +266,8 @@ test('a menu-floated layout moves over blank canvas and docks through an explici
   await page.mouse.up();
   await presentedPointer(page, guide, false);
   await expect.poll(async () => (await state(page)).activeGesture).toBe(false);
-  await expect.poll(async () => Boolean(title(await state(page)))).toBe(false);
+  await expect.poll(async () => layoutTitles(await state(page)).length).toBe(0);
+  expect(titleLabels(await state(page))).toEqual(originalTitles);
   expect(topology(await state(page))).toEqual(original);
   expect(errors).toEqual([]);
 });

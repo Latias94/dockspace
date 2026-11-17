@@ -52,7 +52,7 @@ impl PaneView for CountingPanes {
             // Pane child bounds are rounded inward to egui's layout grid.
             assert!(
                 (actual - expected).abs() <= egui::emath::GUI_ROUNDING,
-                "each style pass must place content below the new 44-point bar: expected {expected}, actual {actual}"
+                "each style pass must use its frozen geometry: expected {expected}, actual {actual}"
             );
         }
         ui.label("Each actual pass paints this pane exactly once.");
@@ -73,6 +73,7 @@ struct Probe {
     rejected: Option<NativeOutputToken>,
     previous: Option<PresentedDockspaceSurface>,
     rejection_finalized: bool,
+    settled_style_seen: bool,
     done: bool,
     #[cfg(feature = "motion")]
     frozen_motion: Option<dockspace::motion::MotionFrame>,
@@ -429,6 +430,10 @@ impl eframe::App for DriverApp {
         let token = eframe::current_native_output_token().unwrap();
         let mut state = lock(&self.state);
         let mut probe = lock(&self.probe);
+        #[cfg(feature = "motion")]
+        if probe.style_change && probe.published {
+            self.clock.store(1_000, Ordering::SeqCst);
+        }
         if probe.token.is_none() && state.is_surface_presented(SURFACE) {
             #[cfg(feature = "motion")]
             self.clock.store(100, Ordering::SeqCst);
@@ -449,9 +454,14 @@ impl eframe::App for DriverApp {
             probe.reports_before = self.reports.load(Ordering::SeqCst);
             probe.callbacks_before = self.calls.load(Ordering::SeqCst);
         }
+        let surface_top = ui.available_rect_before_wrap().top();
         state.panes.expected_content_top =
-            (probe.style_change && probe.token == Some(token) && !probe.published)
-                .then(|| ui.available_rect_before_wrap().top() + 44.0);
+            (probe.style_change && probe.token == Some(token)).then(|| {
+                // At the frozen transition start, motion keeps the old bar.
+                // A terminal style commit does not imply settled geometry.
+                let height = if cfg!(feature = "motion") { 28.0 } else { 44.0 };
+                surface_top + height
+            });
         let update = state.update_surface(ui, SURFACE).unwrap();
         if probe.token == Some(token) && !probe.published {
             #[cfg(feature = "motion")]
@@ -518,6 +528,37 @@ impl eframe::App for DriverApp {
             && update == NativeSurfaceUpdate::Semantic
             && state.is_surface_presented(SURFACE)
         {
+            if probe.style_change {
+                // Observe a fresh core candidate after advancing the clock;
+                // the original output remains private through both passes.
+                let owned = state.owned_update.take().unwrap();
+                let mut host = state.coordinator.resume_host_update(owned.host).unwrap();
+                let plan = host.frame.paint_plan(SURFACE).unwrap().unwrap();
+                let mut top = None;
+                plan.visit_surface_program(|step| {
+                    if let dockspace::runtime::SurfacePaintProgramStep::Operation {
+                        operation: dockspace::runtime::SurfacePaintProgramOperation::Pane(pane),
+                        ..
+                    } = step
+                    {
+                        assert_eq!(pane.item(), FIRST);
+                        assert!(top.replace(pane.content_bounds().y()).is_none());
+                    }
+                    Ok::<(), std::convert::Infallible>(())
+                })
+                .unwrap();
+                assert_eq!(
+                    top,
+                    Some(f64::from(surface_top + 44.0)),
+                    "a fresh settled candidate must use the committed bar height"
+                );
+                state.owned_update = Some(super::super::NativeOwnedUpdate {
+                    host: host.suspend(),
+                    run: owned.run,
+                    publication: owned.publication,
+                });
+                probe.settled_style_seen = true;
+            }
             probe.rejected = Some(token);
             probe.previous = state.coordinator.session().presented_surface(SURFACE);
         }
@@ -652,6 +693,7 @@ fn run_owned_update(style_change: bool) {
     )
     .unwrap();
     assert!(lock(&completed).done);
+    assert_eq!(lock(&completed).settled_style_seen, style_change);
     #[cfg(feature = "motion")]
     assert!(lock(&completed).motion_terminal_seen);
 }

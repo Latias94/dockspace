@@ -466,3 +466,37 @@ input run is `/tmp/dockspace-composable-phase3-native-macos-final.log`, with its
 individual operation logs in the temporary artifact directory printed there.
 These qualify this macOS backend and desktop, not Windows, X11, Wayland, mixed
 monitor DPI or remote-disconnect behavior.
+
+### Post-push platform regression checks
+
+The first remote run passed the workspace, independent host, official/product
+consumers and macOS/Windows compile jobs. Its real X11 style test exposed an old
+assumption that every pass must already use the target 44-point bar. The frozen
+100 ms motion sample correctly retained the old 28-point geometry. The test now
+checks both repeated passes against that start, advances the injected clock and
+requires a fresh core candidate to reach 44. The original output-hook ordering,
+single publication, private style state and rejection checks remain intact.
+The later candidate is deliberately invalidated by the original hook test; its
+target geometry is not claimed as a successfully presented frame.
+
+Docker/Xvfb/Openbox reproduced the original failure, then passed the corrected
+test with motion enabled and disabled. The four real X11 publication, focus-idle
+and backpressure cases also passed in independent processes. Logs are retained
+at `/tmp/dockspace-composable-native-style-x11-red.log`,
+`/tmp/dockspace-composable-native-style-x11-green3.log`,
+`/tmp/dockspace-composable-native-style-x11-no-motion.log` and
+`/tmp/dockspace-composable-native-x11-four-gates.log`. These are real renderer
+checks, not physical multiwindow input qualification.
+
+The browser run passed 23 cases but failed its complete-root float case because
+the test still located that root by its descendant Outline title. The unnamed
+Split root now uses its own Split label. The corrected case requires exactly
+one Split title, checks the original seven main-root members and independent
+Inspector window, and preserves every pane's root, group and selection through
+blank-canvas movement and explicit-guide redocking. The current-source site
+build reproduced the original timeout before the edit; three focused cases and
+all 24 browser cases then passed. Logs are retained at
+`/tmp/dockspace-pages-composable-current-red.log`,
+`/tmp/dockspace-pages-composable-focused-green.log` and
+`/tmp/dockspace-pages-composable-full-green.log`. Both post-push fixes change
+tests only; no production title, geometry or authority check was relaxed.
