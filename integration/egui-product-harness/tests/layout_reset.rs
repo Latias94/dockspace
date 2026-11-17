@@ -90,8 +90,7 @@ fn application_default_reset_preserves_semantic_identities_pane_data_and_rules()
     let selected = dockspace.select_item_current(SECOND).unwrap();
     assert!(matches!(
         selected.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: SECOND, .. })
-    ));
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(SECOND)));
     frame(&context, &mut dockspace, &mut panes);
     assert!(context.memory(|memory| memory.has_focus(panes.focus_target(SECOND).unwrap())));
     let close = dockspace.request_close_root_current(ROOT).unwrap();
@@ -128,7 +127,10 @@ fn application_default_reset_preserves_semantic_identities_pane_data_and_rules()
     let restored = dockspace.view().item(FIRST).unwrap();
     assert_eq!(restored.surface(), SURFACE);
     assert_eq!(restored.root(), ROOT);
-    assert_eq!(restored.tabs().items(), &[FIRST, SECOND]);
+    assert_eq!(
+        restored.tabs().items().collect::<Vec<_>>(),
+        &[FIRST, SECOND]
+    );
     assert!(
         restored.is_selected(),
         "the declared default selection is retained"

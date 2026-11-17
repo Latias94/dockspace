@@ -186,7 +186,10 @@ fn application_closed_catalog_reopens_the_same_item_and_requests_its_pane_focus(
     let reopened = session.view().item(item).unwrap();
     assert_eq!(reopened.surface(), SURFACE);
     assert_eq!(reopened.root(), ROOT);
-    assert_eq!(reopened.tabs().items(), &[FIRST, SECOND]);
+    assert_eq!(
+        reopened.tabs().items().collect::<Vec<_>>(),
+        &[FIRST, SECOND]
+    );
     assert!(reopened.is_selected());
 
     let recordings = paint_and_present(&mut session);
@@ -249,7 +252,16 @@ fn missing_default_anchor_rejects_open_without_implicit_fallback_or_focus_change
     assert!(!report.workspace_changed());
     assert!(session.view().item(SECOND).is_none());
     assert!(session.view().item(FIRST).is_none());
-    assert_eq!(session.view().item(THIRD).unwrap().tabs().items(), &[THIRD]);
+    assert_eq!(
+        session
+            .view()
+            .item(THIRD)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
+        &[THIRD]
+    );
     assert_eq!(focus_request(&mut session, OTHER_SURFACE), Some(focus));
 }
 
@@ -288,10 +300,22 @@ fn opening_an_existing_item_preserves_location_selection_and_pending_or_settled_
         let existing = session.view().item(SECOND).unwrap();
         assert_eq!(existing.surface(), SURFACE);
         assert_eq!(existing.root(), ROOT);
-        assert_eq!(existing.tabs().items(), &[FIRST, SECOND]);
+        assert_eq!(
+            existing.tabs().items().collect::<Vec<_>>(),
+            &[FIRST, SECOND]
+        );
         assert!(!existing.is_selected());
         assert!(session.view().item(FIRST).unwrap().is_selected());
-        assert_eq!(session.view().item(THIRD).unwrap().tabs().items(), &[THIRD]);
+        assert_eq!(
+            session
+                .view()
+                .item(THIRD)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
+            &[THIRD]
+        );
         assert_eq!(focus_request(&mut session, SURFACE), expected_focus);
         assert_eq!(focus_request(&mut session, OTHER_SURFACE), None);
         if let Some(request) = expected_focus {

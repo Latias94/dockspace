@@ -17,6 +17,7 @@
 //! the final topology mutation an all-or-none reducer transaction.
 
 use super::support;
+use crate::ids::TabKey;
 
 use support::TestPresentationHost;
 
@@ -87,7 +88,7 @@ fn selected(workspace: &Workspace, tabs: NodeId) -> Option<ItemId> {
     let Some(Node::Tabs { selected, .. }) = workspace.node(tabs) else {
         panic!("fixture node must remain a tabs stack");
     };
-    *selected
+    selected.and_then(TabKey::item)
 }
 
 fn main_workspace() -> (Workspace, NodeId) {
@@ -452,7 +453,7 @@ fn tab_close_fact(engine: &DockEngine, item: ItemId) -> TabCloseFact {
         .plan()
         .tab_records()
         .iter()
-        .find(|tab| tab.id().item == item)
+        .find(|tab| tab.id().tab == TabKey::for_item(item))
         .expect("fixture tab is painted");
     let region = engine
         .interaction_projection(SURFACE)
@@ -686,7 +687,7 @@ fn scene_bound_tab_close_waits_for_allow_then_commits_once_with_visual_predecess
     assert_eq!(selected(fixture.engine.workspace(), tabs), Some(SECOND));
     assert_eq!(
         fixture.engine.workspace().tab_mru(tabs),
-        Some([SECOND, FIRST].as_slice())
+        Some([SECOND, FIRST].map(TabKey::for_item).as_slice())
     );
 
     let after_first_commit = fixture.engine.workspace().clone();
@@ -716,7 +717,7 @@ fn focused_tab_close_prefers_the_next_visual_tab_over_mru_and_requires_observati
     fixture.observe_focus(focused, PaneFocusRequestObservationState::Focused);
     assert_eq!(
         fixture.engine.workspace().tab_mru(tabs),
-        Some([SECOND, FIRST, SELECTED].as_slice())
+        Some([SECOND, FIRST, SELECTED].map(TabKey::for_item).as_slice())
     );
 
     let requested = fixture.submit(EngineInput::RequestContentClose {
@@ -746,7 +747,7 @@ fn focused_tab_close_prefers_the_next_visual_tab_over_mru_and_requires_observati
     assert_eq!(selected(fixture.engine.workspace(), tabs), Some(SELECTED));
     assert_eq!(
         fixture.engine.workspace().tab_mru(tabs),
-        Some([SELECTED, FIRST].as_slice())
+        Some([SELECTED, FIRST].map(TabKey::for_item).as_slice())
     );
     let successor = fixture
         .engine

@@ -28,7 +28,8 @@ fn selection(workspace: &Workspace, item: u64) -> WorkspaceCommand {
         source: workspace
             .capture_item_source_by_id(ItemId::new(item))
             .unwrap()
-            .unwrap(),
+            .unwrap()
+            .as_tab_source(),
     }
 }
 
@@ -92,7 +93,7 @@ fn stale_wrong_root_missing_and_recycled_sources_keep_general_rejections() {
     let mut wrong_root = source.clone();
     wrong_root.root = CONTAINED_B;
     let mut absent_item = source.clone();
-    absent_item.item = ItemId::new(99);
+    absent_item.tab = TabKey::for_item(ItemId::new(99));
     let mut missing_root = source.clone();
     missing_root.root = RootId::new(99);
     let mut arena = snapshot.storage().nodes.clone();

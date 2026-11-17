@@ -193,7 +193,10 @@ impl PaneView for Panes {
     }
 
     fn tab_ui(&mut self, ui: &mut Ui, tab: &Tab<'_>) -> TabVisuals {
-        if tab.item == SETTINGS {
+        let Some(item) = tab.item() else {
+            return tab.paint(ui);
+        };
+        if item == SETTINGS {
             self.settings_tab = Some(tab.content_rect.intersect(tab.visible_rect));
         }
         tab.paint(ui)
@@ -330,10 +333,16 @@ impl Harness {
         assert_eq!(split.axis(), DockspaceAxis::Horizontal);
         let children = split.children().collect::<Vec<_>>();
         assert_eq!(children.len(), 2);
-        assert_eq!(children[0].tabs().unwrap().items(), [ASSETS, SETTINGS]);
+        assert_eq!(
+            children[0].tabs().unwrap().items().collect::<Vec<_>>(),
+            [ASSETS, SETTINGS]
+        );
         let inspector = children[1].tabs().unwrap();
-        assert_eq!(inspector.items(), [INSPECTOR]);
-        assert_eq!(inspector.selected(), Some(INSPECTOR));
+        assert_eq!(inspector.items().collect::<Vec<_>>(), [INSPECTOR]);
+        assert_eq!(
+            inspector.selected().and_then(|tab| tab.item()),
+            Some(INSPECTOR)
+        );
         assert!(inspector.is_central());
     }
 }

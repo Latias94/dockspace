@@ -121,10 +121,16 @@ fn assert_default_content(
     assert_eq!(first.root(), second.root());
     assert_eq!(third.root(), fourth.root());
     assert_ne!(first.root(), third.root());
-    assert_eq!(first.tabs().items(), &[FIRST, SECOND]);
-    assert_eq!(third.tabs().items(), &[THIRD, FOURTH]);
-    assert_eq!(first.tabs().selected(), Some(SECOND));
-    assert_eq!(third.tabs().selected(), Some(FOURTH));
+    assert_eq!(first.tabs().items().collect::<Vec<_>>(), &[FIRST, SECOND]);
+    assert_eq!(third.tabs().items().collect::<Vec<_>>(), &[THIRD, FOURTH]);
+    assert_eq!(
+        first.tabs().selected().and_then(|tab| tab.item()),
+        Some(SECOND)
+    );
+    assert_eq!(
+        third.tabs().selected().and_then(|tab| tab.item()),
+        Some(FOURTH)
+    );
     assert!(!first.is_selected());
     assert!(!third.is_selected());
     assert!(second.is_selected());
@@ -298,10 +304,16 @@ fn reset_preserves_both_retired_and_fresh_declared_identities() {
     assert_eq!(first.root(), ROOT);
     assert_eq!(third.root(), FLOATING_ROOT);
     assert_ne!(first.root(), third.root());
-    assert_eq!(first.tabs().items(), &[FIRST, SECOND]);
-    assert_eq!(first.tabs().selected(), Some(SECOND));
-    assert_eq!(third.tabs().items(), &[THIRD, FOURTH]);
-    assert_eq!(third.tabs().selected(), Some(FOURTH));
+    assert_eq!(first.tabs().items().collect::<Vec<_>>(), &[FIRST, SECOND]);
+    assert_eq!(
+        first.tabs().selected().and_then(|tab| tab.item()),
+        Some(SECOND)
+    );
+    assert_eq!(third.tabs().items().collect::<Vec<_>>(), &[THIRD, FOURTH]);
+    assert_eq!(
+        third.tabs().selected().and_then(|tab| tab.item()),
+        Some(FOURTH)
+    );
     let floating = third.contained().unwrap();
     assert_eq!(floating, FLOATING);
     assert_eq!(view.contained(floating).unwrap().rect(), durable_rect());

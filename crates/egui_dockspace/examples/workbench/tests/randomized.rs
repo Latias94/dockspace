@@ -288,7 +288,13 @@ impl Replay {
             "begin {item} at {source:?}: active={}, selected={}, group={:?}",
             self.dock.has_active_gesture(),
             self.dock.view().item(item).unwrap().is_selected(),
-            self.dock.view().item(item).unwrap().tabs().items(),
+            self.dock
+                .view()
+                .item(item)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
         ));
         assert!(
             self.dock.has_active_gesture(),
@@ -531,10 +537,10 @@ impl Replay {
                 while let Some(node) = pending.pop() {
                     if let Some(tabs) = node.tabs() {
                         assert!(
-                            !tabs.items().is_empty(),
+                            !tabs.tabs().is_empty(),
                             "the workbench must not retain an unlabelled empty group"
                         );
-                        for &item in tabs.items() {
+                        for item in tabs.items() {
                             assert!(actual.insert(item), "one item cannot occupy two groups");
                         }
                     } else if let Some(split) = node.split() {

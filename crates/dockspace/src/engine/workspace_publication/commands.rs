@@ -229,11 +229,13 @@ impl DockEngine {
                         })?;
                 if matches!(
                     workspace.node(source.tabs()),
-                    Some(Node::Tabs { selected: Some(selected), .. }) if *selected == item
+                    Some(Node::Tabs { selected: Some(selected), .. }) if selected.item() == Some(item)
                 ) {
                     Ok(None)
                 } else {
-                    Ok(Some(WorkspaceCommand::Select { source }))
+                    Ok(Some(WorkspaceCommand::Select {
+                        source: source.as_tab_source(),
+                    }))
                 }
             }
             JournalDeliveryActivation::RaiseContained(floating) => {

@@ -117,7 +117,8 @@ pub use dockspace::model::{
     DockspaceLayout, DockspaceLayoutError, DockspaceNode, DockspaceNodeView, DockspaceRootLayout,
     DockspaceRootView, DockspaceSplitView, DockspaceSurfaceLayout, DockspaceSurfaceView,
     DockspaceTabsView, DockspaceView, FloatingPresentationId, InvalidDockFraction, ItemId,
-    PreparedDockAction, PreparedTabsGroup, RootAllocation, RootId, SurfaceId, WorkspaceVersion,
+    PreparedDockAction, PreparedTabsGroup, RootAllocation, RootId, SurfaceId, TabKey,
+    WorkspaceVersion,
 };
 #[cfg(feature = "motion")]
 pub use dockspace::motion;

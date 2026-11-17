@@ -45,8 +45,8 @@ fn durable(session: &DockspaceSession) -> DurableState {
     let tabs = view.item(FIRST).unwrap().tabs();
     DurableState {
         version: session.version(),
-        tabs: tabs.items().to_vec(),
-        selected: tabs.selected(),
+        tabs: tabs.items().collect::<Vec<_>>(),
+        selected: tabs.selected().and_then(|tab| tab.item()),
         contained: view
             .surface(SURFACE)
             .unwrap()
@@ -115,7 +115,7 @@ fn paint(session: &mut DockspaceSession) -> (Recorded, PaintedSurfaceOutput) {
             Step::Operation {
                 operation: Operation::Tab(tab),
                 ..
-            } if tab.item() == FIRST => {
+            } if tab.item() == Some(FIRST) => {
                 let bounds = tab.visible_bounds();
                 // The leading half of the first tab is the same-group gap at index zero.
                 before_first_tab = Some(

@@ -86,17 +86,25 @@ fn assert_declaration(view: DockspaceView<'_>) {
         node = children.next().unwrap();
         let side = children.next().unwrap().tabs().unwrap();
         assert!(children.next().is_none());
-        assert_eq!(side.items(), [side_item(depth)]);
-        assert_eq!(side.selected(), Some(side_item(depth)));
+        assert_eq!(side.items().collect::<Vec<_>>(), [side_item(depth)]);
+        assert_eq!(
+            side.selected().and_then(|tab| tab.item()),
+            Some(side_item(depth))
+        );
         assert!(!side.is_central());
     }
     let central = node.tabs().unwrap();
-    assert_eq!(central.items(), [FIRST, SECOND]);
-    assert_eq!(central.selected(), Some(SECOND));
+    assert_eq!(central.items().collect::<Vec<_>>(), [FIRST, SECOND]);
+    assert_eq!(central.selected().and_then(|tab| tab.item()), Some(SECOND));
     assert!(central.is_central());
     assert_eq!(
-        root.central().unwrap().tabs().unwrap().items(),
-        central.items()
+        root.central()
+            .unwrap()
+            .tabs()
+            .unwrap()
+            .items()
+            .collect::<Vec<_>>(),
+        central.items().collect::<Vec<_>>()
     );
 }
 

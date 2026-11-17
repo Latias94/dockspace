@@ -104,7 +104,7 @@ fn assert_original(session: &DockspaceSession) {
     assert_eq!(session.view().surfaces().count(), 1);
     let first = session.view().item(FIRST).unwrap();
     assert_eq!((first.surface(), first.root()), (SURFACE, ROOT));
-    assert_eq!(first.tabs().items(), &[FIRST]);
+    assert_eq!(first.tabs().items().collect::<Vec<_>>(), &[FIRST]);
     assert!(first.is_selected());
     assert!(session.view().item(HISTORICAL).is_none());
     assert!(session.view().item(MISSING).is_none());
@@ -163,7 +163,10 @@ fn ordinary_terminal_restore_retries_atomically_and_recognizes_unloaded_content(
         let restored = frame.view().item(MISSING).unwrap();
         assert_eq!(restored.surface(), SURFACE);
         assert_eq!(restored.root(), RootId::new(1));
-        assert_eq!(restored.tabs().items(), &[FIRST, MISSING]);
+        assert_eq!(
+            restored.tabs().items().collect::<Vec<_>>(),
+            &[FIRST, MISSING]
+        );
         assert!(restored.is_selected());
         assert!(frame.view().item(HISTORICAL).is_none());
         assert_eq!(frame.external_key_for_item(MISSING), Some("pane:missing"));
@@ -475,8 +478,8 @@ fn foreign_stale_and_changed_sidecar_preparations_reject_without_publishing_the_
         let generation = session.next_document_generation();
         let later = session.item_id_for_external_key("pane:later");
         let first = session.view().item(FIRST).unwrap();
-        let items = first.tabs().items().to_vec();
-        let selected = first.tabs().selected();
+        let items = first.tabs().items().collect::<Vec<_>>();
+        let selected = first.tabs().selected().and_then(|tab| tab.item());
         {
             let mut frame = session.begin_host_frame().unwrap();
             if selected == Some(FIRST) {
@@ -496,9 +499,24 @@ fn foreign_stale_and_changed_sidecar_preparations_reject_without_publishing_the_
         assert_eq!(session.version(), before);
         assert_eq!(session.document_id(), Some(DOCUMENT));
         assert_eq!(session.next_document_generation(), generation);
-        assert_eq!(session.view().item(FIRST).unwrap().tabs().items(), items);
         assert_eq!(
-            session.view().item(FIRST).unwrap().tabs().selected(),
+            session
+                .view()
+                .item(FIRST)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
+            items
+        );
+        assert_eq!(
+            session
+                .view()
+                .item(FIRST)
+                .unwrap()
+                .tabs()
+                .selected()
+                .and_then(|tab| tab.item()),
             selected
         );
         assert_eq!(session.view().item(FIRST).unwrap().root(), ROOT);

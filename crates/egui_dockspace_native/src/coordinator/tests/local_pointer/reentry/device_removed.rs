@@ -79,7 +79,7 @@ fn assert_items(native: &NativeCoordinator) {
     assert_eq!(surface.contained_count(), 0);
     let root = surface.main_root().unwrap();
     let tabs = root.content().unwrap().tabs().unwrap();
-    let mut items = tabs.items().to_vec();
+    let mut items = tabs.items().collect::<Vec<_>>();
     items.sort_unstable();
     assert_eq!(items, [FIRST, SECOND, THIRD]);
     for item in items {

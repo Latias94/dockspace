@@ -106,8 +106,11 @@ impl PaneView for Panes {
     }
 
     fn tab_ui(&mut self, ui: &mut Ui, tab: &Tab<'_>) -> TabVisuals {
+        let Some(item) = tab.item() else {
+            return tab.paint(ui);
+        };
         self.tabs.push(TabSnapshot {
-            item: tab.item,
+            item: item,
             id: tab.response.id,
             bar: tab.bar,
             rect: tab.rect,
@@ -135,7 +138,7 @@ impl PaneView for Panes {
         );
         let title_rect = Rect::from_min_max(tab.content_rect.min, button.left_bottom());
         custom.paint_title(ui, title_rect);
-        if tab.item == SECOND {
+        if item == SECOND {
             let response = ui.put(button, egui::Button::new("!"));
             self.tab_button = Some(response.rect);
             self.tab_clicks += usize::from(response.clicked());
@@ -144,9 +147,13 @@ impl PaneView for Panes {
     }
 
     fn tab_close_ui(&mut self, ui: &Ui, close: &TabClose<'_>) {
+        let Some(item) = close.item() else {
+            close.paint(ui);
+            return;
+        };
         assert!(close.rect.contains_rect(ui.clip_rect()));
         self.closes.push(CloseSnapshot {
-            item: close.item,
+            item: item,
             rect: close.rect,
             icon: close.icon_rect,
             color: close.stroke.color,
@@ -460,7 +467,7 @@ fn paint_preview_tab_background(
         |ui| {
             ui.set_clip_rect(clip);
             let tab = DropPreviewTab {
-                item: FIRST,
+                key: FIRST.into(),
                 ordinal: 0,
                 selected: true,
                 is_payload: true,

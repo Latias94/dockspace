@@ -192,7 +192,7 @@ fn inactive_tab_tap_waits_within_slop_and_selects_once_on_early_contact_end() {
         released.inputs(),
         &[HostInputOutcome::ProductActionApplied(
             DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: SECOND.into(),
                 changed: true,
             }
         )]
@@ -354,7 +354,7 @@ fn touch_movement_yields_to_content_and_untimed_touch_can_still_tap() {
                 released.inputs(),
                 &[HostInputOutcome::ProductActionApplied(
                     DockspaceActionOutcome::Selected {
-                        item: SECOND,
+                        tab: SECOND.into(),
                         changed: true,
                     }
                 )]
@@ -428,7 +428,13 @@ fn touch_movement_yields_to_content_and_untimed_touch_can_still_tap() {
         assert!(session.pointer_continuation().is_none());
         assert_eq!(session.view().item(SECOND).unwrap().surface(), SURFACE);
         assert_eq!(
-            session.view().item(SECOND).unwrap().tabs().items(),
+            session
+                .view()
+                .item(SECOND)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[FIRST, SECOND]
         );
         assert_eq!(paint(&mut session).2, focus_before);
@@ -755,8 +761,8 @@ fn armed_touch_first_move_and_contact_end_batch_commits_source_activation_once()
             (
                 item.root(),
                 item.contained(),
-                item.tabs().items().to_vec(),
-                item.tabs().selected(),
+                item.tabs().items().collect::<Vec<_>>(),
+                item.tabs().selected().and_then(|tab| tab.item()),
             )
         });
         let contained = session
@@ -974,7 +980,13 @@ fn armed_touch_first_move_and_contact_end_batch_commits_source_activation_once()
         assert_eq!(session.view().contained(front).unwrap().rect(), front_rect);
         if rear_title {
             assert_eq!(
-                session.view().item(third).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(third)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[third, fourth, fifth]
             );
             for item in [fourth, fifth] {
@@ -983,16 +995,37 @@ fn armed_touch_first_move_and_contact_end_batch_commits_source_activation_once()
             }
             assert!(session.view().contained(rear).is_none());
             assert_eq!(
-                session.view().item(FIRST).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FIRST, SECOND]
             );
             assert!(!session.view().item(SECOND).unwrap().is_selected());
         } else {
             assert_eq!(
-                session.view().item(third).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(third)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[third, SECOND]
             );
-            assert_eq!(session.view().item(FIRST).unwrap().tabs().items(), &[FIRST]);
+            assert_eq!(
+                session
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
+                &[FIRST]
+            );
             assert_eq!(session.view().item(SECOND).unwrap().root(), ROOT);
             assert!(session.view().item(SECOND).unwrap().contained().is_none());
             assert_eq!(session.view().contained(rear).unwrap().rect(), rear_rect);

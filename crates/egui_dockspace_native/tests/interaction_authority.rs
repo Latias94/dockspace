@@ -231,7 +231,9 @@ fn run_surface_frame_with_overlay<P: PaneView>(
                         SurfacePaintProgramOperation::Pane(record) => {
                             assert!(pane.replace(record).is_none());
                         }
-                        SurfacePaintProgramOperation::Tab(record) if record.item() == SECOND => {
+                        SurfacePaintProgramOperation::Tab(record)
+                            if record.item() == Some(SECOND) =>
+                        {
                             assert!(second_tab.replace(record).is_none());
                         }
                         SurfacePaintProgramOperation::TabBar(record) => bars.push(record),

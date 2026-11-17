@@ -1,4 +1,7 @@
 use super::*;
+use crate::ids::TabKey;
+
+const SECOND_TAB: TabKey = TabKey::for_item(SECOND);
 
 fn split_session(source_is_central: bool) -> DockspaceSession {
     let source = if source_is_central {
@@ -54,8 +57,11 @@ fn docking_a_captured_group_within_one_root_preserves_order_and_selection() {
     assert!(report.submitted_action_outcome(submitted).is_some());
     let central = session.view().root(MAIN_ROOT).unwrap().central().unwrap();
     let tabs = central.tabs().unwrap();
-    assert_eq!(tabs.items(), &[FLOATING, FIRST, SECOND, NEW_ITEM]);
-    assert_eq!(tabs.selected(), Some(SECOND));
+    assert_eq!(
+        tabs.items().collect::<Vec<_>>(),
+        &[FLOATING, FIRST, SECOND, NEW_ITEM]
+    );
+    assert_eq!(tabs.selected(), Some(TabKey::for_item(SECOND)));
     assert_eq!(session.view().item(SECOND).unwrap().root(), MAIN_ROOT);
 }
 
@@ -93,15 +99,18 @@ fn docking_a_partial_group_across_surfaces_preserves_the_remaining_central_area(
         );
         let moved = session.view().item(SECOND).unwrap();
         assert_eq!(moved.surface(), ROOTLESS_SURFACE);
-        assert_eq!(moved.tabs().selected(), Some(SECOND));
+        assert_eq!(moved.tabs().selected(), Some(TabKey::for_item(SECOND)));
         let expected_items = if install_main {
             vec![FIRST, SECOND]
         } else {
             vec![target_item, FIRST, SECOND]
         };
-        assert_eq!(moved.tabs().items(), expected_items);
+        assert_eq!(moved.tabs().items().collect::<Vec<_>>(), expected_items);
         let central = session.view().root(MAIN_ROOT).unwrap().central().unwrap();
-        assert_eq!(central.tabs().unwrap().items(), &[FLOATING, NEW_ITEM]);
+        assert_eq!(
+            central.tabs().unwrap().items().collect::<Vec<_>>(),
+            &[FLOATING, NEW_ITEM]
+        );
     }
 }
 
@@ -150,7 +159,13 @@ fn preparing_or_submitting_a_group_again_never_refreshes_its_captured_version() 
             assert_eq!(session.view().item(FIRST).unwrap().root(), CONTAINED_ROOT);
             assert_eq!(session.view().item(SECOND).unwrap().root(), MAIN_ROOT);
             assert_eq!(
-                session.view().item(FIRST).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FLOATING, FIRST]
             );
         }
@@ -189,13 +204,19 @@ fn group_actions_keep_the_capturing_session_authority() {
                 report.inputs(),
                 [HostInputOutcome::ProductActionApplied(
                     DockspaceActionOutcome::Selected {
-                        item: SECOND,
+                        tab: SECOND_TAB,
                         changed: true,
                     }
                 )]
             ));
             assert_eq!(
-                source.view().item(FIRST).unwrap().tabs().items(),
+                source
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FIRST, SECOND]
             );
             assert_eq!(target.view().item(FIRST).unwrap().root(), MAIN_ROOT);
@@ -231,11 +252,11 @@ fn floating_one_group_keeps_siblings_and_the_original_central_leaf() {
         let moved = session.view().item(SECOND).unwrap();
         assert_eq!(moved.root(), root);
         assert_eq!(moved.contained(), Some(floating));
-        assert_eq!(moved.tabs().items(), &[FIRST, SECOND]);
-        assert_eq!(moved.tabs().selected(), Some(SECOND));
+        assert_eq!(moved.tabs().items().collect::<Vec<_>>(), &[FIRST, SECOND]);
+        assert_eq!(moved.tabs().selected(), Some(TabKey::for_item(SECOND)));
         let central = session.view().root(MAIN_ROOT).unwrap().central().unwrap();
         assert_eq!(
-            central.tabs().unwrap().items(),
+            central.tabs().unwrap().items().collect::<Vec<_>>(),
             if source_is_central {
                 &[][..]
             } else {
@@ -243,7 +264,13 @@ fn floating_one_group_keeps_siblings_and_the_original_central_leaf() {
             }
         );
         assert_eq!(
-            session.view().item(FLOATING).unwrap().tabs().items(),
+            session
+                .view()
+                .item(FLOATING)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[FLOATING, NEW_ITEM]
         );
         assert_eq!(session.view().item(FLOATING).unwrap().root(), MAIN_ROOT);
@@ -279,7 +306,7 @@ fn floating_and_restoring_a_complete_group_preserves_its_root_identity() {
     ));
     assert_eq!(
         session.view().item(SECOND).unwrap().tabs().selected(),
-        Some(SECOND)
+        Some(TabKey::for_item(SECOND))
     );
 
     let group = session.capture_tabs_group(DockAnchor::Item(FIRST)).unwrap();
@@ -312,7 +339,7 @@ fn floating_and_restoring_a_complete_group_preserves_its_root_identity() {
     );
     assert_eq!(
         session.view().item(SECOND).unwrap().tabs().selected(),
-        Some(SECOND)
+        Some(TabKey::for_item(SECOND))
     );
     assert!(session.view().item(SECOND).unwrap().contained().is_none());
 }
@@ -385,7 +412,13 @@ fn complete_native_group_actions_wait_for_the_exact_target_presentation() {
                 }) if items == &[NATIVE_FIRST, NATIVE_SECOND]
             ));
             assert_eq!(
-                session.view().item(NATIVE_SECOND).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(NATIVE_SECOND)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[NATIVE_FIRST, NATIVE_SECOND]
             );
         } else {
@@ -399,7 +432,13 @@ fn complete_native_group_actions_wait_for_the_exact_target_presentation() {
                 })
             );
             assert_eq!(
-                session.view().item(NATIVE_SECOND).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(NATIVE_SECOND)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[TARGET_FIRST, NATIVE_FIRST, NATIVE_SECOND, TARGET_SECOND]
             );
         }
@@ -414,7 +453,7 @@ fn complete_native_group_actions_wait_for_the_exact_target_presentation() {
                 .unwrap()
                 .tabs()
                 .selected(),
-            Some(NATIVE_SECOND)
+            Some(TabKey::for_item(NATIVE_SECOND))
         );
         assert!(matches!(
             settled.take_native_effects().as_slice(),

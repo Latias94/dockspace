@@ -78,17 +78,38 @@ fn a_candidate_layout_checkpoint_is_owned_without_publishing_the_abandoned_frame
             .unwrap();
         let candidate = frame.view().to_layout();
         assert_eq!(
-            candidate.view().item(LEFT).unwrap().tabs().items(),
+            candidate
+                .view()
+                .item(LEFT)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             [LEFT, RIGHT]
         );
         candidate
     };
     assert_eq!(session.version(), version);
     assert_eq!(session.workspace(), &before);
-    assert_eq!(session.view().item(LEFT).unwrap().tabs().items(), [LEFT]);
+    assert_eq!(
+        session
+            .view()
+            .item(LEFT)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
+        [LEFT]
+    );
     let mut rebuilt = DockspaceSession::from_layout(checkpoint, session.policy().clone()).unwrap();
     assert_eq!(
-        rebuilt.view().item(LEFT).unwrap().tabs().items(),
+        rebuilt
+            .view()
+            .item(LEFT)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         [LEFT, RIGHT]
     );
     assert_eq!(rebuilt.view().item(RIGHT).unwrap().root(), CONTAINED_ROOT);

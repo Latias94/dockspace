@@ -713,7 +713,7 @@ impl PresentationPlan {
     pub(crate) fn push_surface_program_pane_operation(
         &mut self,
         id: PaneSceneId,
-        selected: Option<ItemId>,
+        selected: Option<TabKey>,
     ) -> Result<(), SurfaceProgramBuildError> {
         self.facts_mut().surface_program.push_root_operation(
             SurfaceProgramRootOperation::Pane(id),
@@ -885,7 +885,10 @@ impl PresentationPlan {
                     let root = ResolvedSurfaceProgramRoot {
                         root: root.root,
                         contained,
-                        title_item: root.title_tabs.and_then(|tabs| self.selected_in_tabs(tabs)),
+                        title_item: root
+                            .title_tabs
+                            .and_then(|tabs| self.selected_in_tabs(tabs))
+                            .and_then(TabKey::item),
                     };
                     active_root = Some(root);
                     ResolvedSurfaceProgramStep::RootBegin(root)

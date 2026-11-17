@@ -323,7 +323,8 @@ fn device_removal_retries_then_scrolls_the_overflowing_strip_with_a_fresh_identi
             .unwrap()
             .tabs()
             .unwrap()
-            .items(),
+            .items()
+            .collect::<Vec<_>>(),
         (1..=24).map(ItemId::new).collect::<Vec<_>>()
     );
     assert!(!native.session.has_active_gesture());

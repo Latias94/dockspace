@@ -189,7 +189,12 @@ fn exercise() -> Result<(), Box<dyn Error>> {
         for item in ITEMS {
             assert_eq!(view.item(item).unwrap().surface(), ROOT);
         }
-        let mut items = view.item(ITEMS[0]).unwrap().tabs().items().to_vec();
+        let mut items = view
+            .item(ITEMS[0])
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>();
         items.sort_unstable();
         assert_eq!(items, ITEMS);
     });

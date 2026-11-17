@@ -1,5 +1,6 @@
 mod cleanup_ownership;
 use super::support;
+use crate::ids::TabKey;
 
 use support::{
     TestPresentationHost, complete_host_frame_with_current_outputs,
@@ -452,7 +453,9 @@ fn child_next_tab_input(
         .plan()
         .tab_records()
         .iter()
-        .find(|tab| projection.plan().tab_selected(tab) && tab.id().item == ItemId::new(2))
+        .find(|tab| {
+            projection.plan().tab_selected(tab) && tab.id().tab.item() == Some(ItemId::new(2))
+        })
         .map(|tab| *tab.id())
         .expect("child left leaf must select item 2");
     assert_eq!(
@@ -465,7 +468,7 @@ fn child_next_tab_input(
         selection: crate::engine::LocalTabSelection::Navigate {
             source: tab,
             target: dockspace::presentation::scene::TabSceneId {
-                item: ItemId::new(3),
+                tab: TabKey::for_item(ItemId::new(3)),
                 ..tab
             },
         },
@@ -2298,7 +2301,7 @@ fn destroyed_child_rejects_its_old_candidate_action_later_in_the_same_frame() {
         Some(Node::Tabs {
             selected: Some(item),
             ..
-        }) if *item == ItemId::new(2)
+        }) if *item == TabKey::for_item(ItemId::new(2))
     ));
     assert!(
         fixture
@@ -2352,7 +2355,7 @@ fn semantic_input_before_child_destruction_keeps_actual_same_frame_order() {
         Some(Node::Tabs {
             selected: Some(item),
             ..
-        }) if *item == ItemId::new(3)
+        }) if *item == TabKey::for_item(ItemId::new(3))
     ));
     assert!(
         fixture
@@ -2560,7 +2563,9 @@ fn terminal_replacement_cleanup_consumes_the_recovery_obligation() {
         &mut pending.fixture.presentation_host,
         EngineInput::WorkspaceCommand {
             expected,
-            command: WorkspaceCommand::Select { source: selection },
+            command: WorkspaceCommand::Select {
+                source: selection.as_tab_source(),
+            },
         },
     )
     .expect("a consumed recovery obligation must not freeze ordinary commands");

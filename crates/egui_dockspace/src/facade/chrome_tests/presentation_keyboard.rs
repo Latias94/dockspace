@@ -84,7 +84,7 @@ fn split(harness: &Harness) -> (crate::DockspaceAxis, Vec<Vec<ItemId>>) {
         split.axis(),
         split
             .children()
-            .map(|node| node.tabs().unwrap().items().to_vec())
+            .map(|node| node.tabs().unwrap().items().collect::<Vec<_>>())
             .collect(),
     )
 }

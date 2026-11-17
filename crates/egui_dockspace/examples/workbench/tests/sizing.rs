@@ -72,7 +72,12 @@ fn the_default_workbench_keeps_its_original_pane_dimensions() {
     assert!(panes.panes[&CONSOLE].content.unwrap().height() > 160.0);
     assert!(panes.panes[&OUTLINE].content.unwrap().width() > 250.0);
     assert_eq!(
-        dock.view().item(EDITOR).unwrap().tabs().items(),
+        dock.view()
+            .item(EDITOR)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[EDITOR, PREVIEW],
     );
     assert!(dock.view().item(INSPECTOR).unwrap().contained().is_some());
@@ -101,6 +106,7 @@ fn the_sizing_menu_caps_real_panes_tracks_tab_selection_and_restores_normal_geom
         .unwrap()
         .tabs()
         .selected()
+        .and_then(|tab| tab.item())
         .unwrap();
     assert_ne!(selected, CONSOLE);
     assert!(

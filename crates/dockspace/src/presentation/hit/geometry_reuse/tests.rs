@@ -128,7 +128,7 @@ impl Fixture {
                 bounds,
                 SceneLayerKey::surface_base(),
             ));
-            plan.push_surface_program_pane_operation(pane, Some(self.selected))
+            plan.push_surface_program_pane_operation(pane, Some(self.selected.into()))
                 .unwrap();
         }
         let bar = TabBarSceneId { root, tabs };

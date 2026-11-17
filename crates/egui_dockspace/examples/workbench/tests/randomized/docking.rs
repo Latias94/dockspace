@@ -94,7 +94,11 @@ impl Replay {
         };
         let destination_view = self.dock.view().item(target).unwrap();
         let root = destination_view.root();
-        let selected = destination_view.tabs().selected().unwrap();
+        let selected = destination_view
+            .tabs()
+            .selected()
+            .and_then(|tab| tab.item())
+            .unwrap();
         let source_root = self.dock.view().item(item).unwrap().root();
         let mut destination = self.panes.panes[&selected].content.unwrap().center();
         for _ in 0..16 {
@@ -176,9 +180,9 @@ impl Replay {
             let source = self.dock.view().item(item).unwrap();
             for &target in &items {
                 let destination = self.dock.view().item(target).unwrap();
-                if source.tabs().items().len() > 1
+                if source.tabs().items().collect::<Vec<_>>().len() > 1
                     && destination.is_selected()
-                    && !source.tabs().items().contains(&target)
+                    && !source.tabs().items().collect::<Vec<_>>().contains(&target)
                 {
                     choices.push((item, target));
                 }
@@ -206,7 +210,9 @@ impl Replay {
             for &target in &items {
                 let source = self.dock.view().item(item).unwrap();
                 let destination = self.dock.view().item(target).unwrap();
-                if destination.is_selected() && !source.tabs().items().contains(&target) {
+                if destination.is_selected()
+                    && !source.tabs().items().collect::<Vec<_>>().contains(&target)
+                {
                     choices.push((item, target));
                 }
             }

@@ -14,7 +14,7 @@ use crate::graph::command::{MovePayload, TabTarget};
 use crate::graph::error::CommandError;
 use crate::graph::workspace::RootPresentationOwner;
 use crate::graph::{Node, Workspace};
-use crate::ids::{ItemId, NodeId, RootId};
+use crate::ids::{ItemId, NodeId, RootId, TabKey};
 use crate::policy::{DockPolicySnapshot, TabBarPolicy, TabBarVisibility};
 use crate::presentation::layout::{
     LayoutError, LayoutMetrics, LayoutMetricsError, LayoutProjection, measure_root_sizing,
@@ -40,7 +40,7 @@ pub(crate) struct FutureTabStrip {
 /// One future member, including members clipped out of the target viewport.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct FutureTab {
-    pub(crate) item: ItemId,
+    pub(crate) key: TabKey,
     pub(crate) ordinal: usize,
     pub(crate) full_bounds: LogicalRect,
     pub(crate) clip_bounds: LogicalRect,
@@ -70,7 +70,7 @@ pub(crate) fn candidate_tab_bar_policy(
     let Some(Node::Tabs { .. }) = candidate.node(tabs) else {
         return Err(FutureLayoutProjectionError::TargetIsNotTabs { root, node: tabs });
     };
-    let items = candidate.visible_tab_items(tabs);
+    let items = candidate.visible_tab_keys(tabs);
     let central = candidate
         .root(root)
         .ok_or(FutureLayoutProjectionError::MissingRoot { root })?
@@ -80,7 +80,7 @@ pub(crate) fn candidate_tab_bar_policy(
     let declaration = policy.tab_bar_declaration(target_plan.surface(), Some(rule));
     let revealed = declaration.visibility() == TabBarVisibility::AutoHideSingle
         && items.len() == 1
-        && original.visible_tab_items(tabs) == items
+        && original.visible_tab_keys(tabs) == items
         && target_plan
             .tab_bar_records()
             .iter()
@@ -138,7 +138,16 @@ pub(crate) fn project_future_root(
                 }
                 let selected = workspace.visible_tab_selection(node);
                 let measured = match selected {
-                    Some(item) => candidate_pane_sizing(original, &pane_sizings, root, node, item)?,
+                    Some(tab) => {
+                        let item = tab.item().ok_or(
+                            FutureLayoutProjectionError::LayoutTabSizingUnavailable {
+                                root,
+                                tabs: node,
+                                tab,
+                            },
+                        )?;
+                        candidate_pane_sizing(original, &pane_sizings, root, node, item)?
+                    }
                     None => match pane_sizings.get(&PaneSizingKey::new(root, node, None)) {
                         Some(measured) => *measured,
                         None if original.node_has_visible_content(node)
@@ -229,7 +238,7 @@ pub(crate) fn project_future_tab_strip(
             node: target.tabs(),
         });
     };
-    let items = candidate.visible_tab_items(target.tabs());
+    let items = candidate.visible_tab_keys(target.tabs());
     let selected = candidate.visible_tab_selection(target.tabs());
     let target_policy = candidate_tab_bar_policy(
         original,
@@ -317,7 +326,9 @@ pub(crate) fn project_future_tab_strip(
             target.tabs(),
             item,
         )?;
-        let close = policy.pane_close_capability(item).allows_close();
+        let close = item
+            .item()
+            .is_some_and(|item| policy.pane_close_capability(item).allows_close());
         desired_widths.push(desired_tab_width(intrinsic.content_width(), close, config));
         close_allowed.push(close);
     }
@@ -366,7 +377,7 @@ pub(crate) fn project_future_tab_strip(
         let full_bounds = LogicalRect::new(cursor, bar.y(), width, bar.height())?;
         let chrome = operable_tab_chrome(full_bounds, viewport, close, config)?;
         tabs.push(FutureTab {
-            item,
+            key: item,
             ordinal,
             full_bounds,
             clip_bounds: viewport,
@@ -386,16 +397,13 @@ pub(crate) fn project_future_tab_strip(
         maximum_scroll_offset: flow.maximum_scroll_offset(viewport.width()),
         tabs: tabs.into_boxed_slice(),
     }));
-    let payload_index = items.iter().position(|item| *item == first_payload).ok_or(
-        FutureLayoutProjectionError::PayloadItemMissing {
-            item: first_payload,
-        },
-    )?;
+    let payload_index = items
+        .iter()
+        .position(|item| *item == first_payload)
+        .ok_or(FutureLayoutProjectionError::PayloadTabMissing { tab: first_payload })?;
     let payload_start = flow
         .tab_range(payload_index)
-        .ok_or(FutureLayoutProjectionError::PayloadItemMissing {
-            item: first_payload,
-        })?
+        .ok_or(FutureLayoutProjectionError::PayloadTabMissing { tab: first_payload })?
         .0;
     let marker_x = viewport.x() - scroll + payload_start;
     let marker_width = config.splitter_thickness().min(viewport.width());
@@ -438,7 +446,7 @@ fn future_presentation_menu_tab_bar(
         if !candidate.node_has_visible_content(tabs) {
             return Ok(None);
         }
-        let items = candidate.visible_tab_items(tabs);
+        let items = candidate.visible_tab_keys(tabs);
         let tab_bar =
             candidate_tab_bar_policy(original, candidate, policy, target_plan, root, tabs)?;
         if tab_bar.visibility() == TabBarVisibility::Hidden {
@@ -488,14 +496,14 @@ fn candidate_tab_intrinsic(
     candidate_surface: crate::ids::SurfaceId,
     candidate_root: RootId,
     candidate_tabs: NodeId,
-    item: ItemId,
+    tab: TabKey,
 ) -> Result<crate::presentation::manifest::TabIntrinsic, FutureLayoutProjectionError> {
     let candidate_key = TabIntrinsicKey::new(
         candidate_surface,
         TabSceneId {
             root: candidate_root,
             tabs: candidate_tabs,
-            item,
+            tab,
         },
     );
     if let Some(intrinsic) = layout_facts(target_plan, source_layout_facts)
@@ -504,6 +512,9 @@ fn candidate_tab_intrinsic(
         return Ok(intrinsic);
     }
 
+    let item = tab
+        .item()
+        .ok_or(FutureLayoutProjectionError::TabIntrinsicUnavailable { key: candidate_key })?;
     let source = original
         .capture_item_source_by_id(item)?
         .ok_or(FutureLayoutProjectionError::PayloadItemMissing { item })?;
@@ -517,7 +528,7 @@ fn candidate_tab_intrinsic(
         TabSceneId {
             root: source.root(),
             tabs: source.tabs(),
-            item,
+            tab,
         },
     );
     layout_facts(target_plan, source_layout_facts)
@@ -541,7 +552,7 @@ fn presentation_surface(workspace: &Workspace, root: RootId) -> Option<crate::id
     }
 }
 
-fn payload_items(original: &Workspace, payload: &MovePayload) -> Vec<ItemId> {
+fn payload_items(original: &Workspace, payload: &MovePayload) -> Vec<TabKey> {
     let mut items = match payload {
         MovePayload::Item(source) => vec![source.item()],
         MovePayload::Tabs(source) | MovePayload::Subtree(source) => {
@@ -549,7 +560,7 @@ fn payload_items(original: &Workspace, payload: &MovePayload) -> Vec<ItemId> {
         }
     };
     items.retain(|&item| !original.item_is_hidden(item));
-    items
+    items.into_iter().map(TabKey::for_item).collect()
 }
 
 fn collect_pane_sizings(
@@ -619,6 +630,12 @@ pub(crate) enum FutureLayoutProjectionError {
         tabs: NodeId,
         item: ItemId,
     },
+    #[error("sizing for layout tab {tab:?} in {root}/{tabs:?} is unavailable")]
+    LayoutTabSizingUnavailable {
+        root: RootId,
+        tabs: NodeId,
+        tab: TabKey,
+    },
     #[error("retained outputs disagree about the pane sizing for exact key {key:?}")]
     ConflictingPaneSizing { key: PaneSizingKey },
     #[error("target presentation omitted retained layout facts")]
@@ -633,6 +650,8 @@ pub(crate) enum FutureLayoutProjectionError {
     PayloadContainsNoItems,
     #[error("drag payload item {item} vanished from the candidate target")]
     PayloadItemMissing { item: ItemId },
+    #[error("drag payload tab {tab:?} vanished from the candidate target")]
+    PayloadTabMissing { tab: TabKey },
     #[error("source and target outputs were compiled with different presentation configs")]
     PresentationConfigMismatch,
     #[error(transparent)]

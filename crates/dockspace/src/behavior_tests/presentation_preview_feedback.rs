@@ -47,7 +47,7 @@ fn feedback(
                 operation: SurfacePaintProgramOperation::Tab(tab),
                 paint,
                 ..
-            } if tab.item() == DRAGGED => {
+            } if tab.item() == Some(DRAGGED) => {
                 assert!(source_paint.replace(paint).is_none());
             }
             _ => {}
@@ -142,7 +142,7 @@ fn dragging_fixture() -> (DockspaceSession, LogicalPoint, DockspacePreviewVisual
         .expect("the contained source is paintable");
     let tab = plan
         .tabs()
-        .find(|tab| tab.item() == DRAGGED)
+        .find(|tab| tab.item() == Some(DRAGGED))
         .expect("the contained tab is visible");
     let initial = plan
         .receiver_for_tab_body(tab)
@@ -319,7 +319,7 @@ fn ordinary_release_commits_without_paint_or_presentation() {
     let artifact = output.presentation_artifact();
     let mut inspection = session.begin_host_frame().unwrap();
     let plan = inspection.paint_plan(SURFACE).unwrap().unwrap();
-    let tab = plan.tabs().find(|tab| tab.item() == DRAGGED).unwrap();
+    let tab = plan.tabs().find(|tab| tab.item() == Some(DRAGGED)).unwrap();
     let receiver = plan.receiver_for_tab_body(tab).unwrap();
     inspection
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)

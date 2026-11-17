@@ -5,6 +5,7 @@ use crate::engine::transition::{EngineTransition, InputOutcome, WorkspaceVersion
 use crate::graph::command::{CloseCommitOutcome, CommandOutcome};
 use crate::ids::{
     EngineAuthorityDomainId, FloatingPresentationId, ItemId, ReducerTickId, RootId, SurfaceId,
+    TabKey,
 };
 use crate::model::DockspaceActionOutcome;
 
@@ -70,13 +71,9 @@ pub enum DockspaceEventKind {
     ///
     /// This does not mean a widget became active, nor that pane or native-window
     /// focus was observed. Selecting an already selected item can update MRU.
-    SelectionCommitted { item: ItemId },
+    SelectionCommitted { tab: TabKey },
     /// One tab changed its index within its existing group.
-    TabReordered {
-        item: ItemId,
-        from: usize,
-        to: usize,
-    },
+    TabReordered { tab: TabKey, from: usize, to: usize },
     /// One previously closed item was opened.
     ItemOpened { item: ItemId, root: RootId },
     /// An owned item changed its participation in the visible layout.
@@ -225,9 +222,9 @@ fn command_kind(
                 visible: *visible,
             }
         }
-        CommandOutcome::Selected { item, .. } => Event::SelectionCommitted { item: *item },
-        CommandOutcome::Reordered { item, from, to, .. } => Event::TabReordered {
-            item: *item,
+        CommandOutcome::Selected { tab, .. } => Event::SelectionCommitted { tab: *tab },
+        CommandOutcome::Reordered { tab, from, to, .. } => Event::TabReordered {
+            tab: *tab,
             from: *from,
             to: *to,
         },

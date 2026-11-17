@@ -65,7 +65,13 @@ impl EditorProbeHandle {
             .viewports
             .entry(ui.ctx().viewport_id())
             .or_default()
-            .preview_tabs = Some(preview.tabs.iter().map(|tab| tab.item).collect());
+            .preview_tabs = Some(
+            preview
+                .tabs
+                .iter()
+                .map(|tab| tab.item().expect("smoke fixture contains only item tabs"))
+                .collect(),
+        );
     }
 }
 
@@ -336,7 +342,7 @@ impl MergeSmoke {
                     (
                         id,
                         item.root(),
-                        item.tabs().items().to_vec(),
+                        item.tabs().items().collect::<Vec<_>>(),
                         item.is_selected(),
                     )
                 })
@@ -393,8 +399,16 @@ impl MergeSmoke {
             let target = target.center() * scale;
             let (mut target_items, source_items) = app.dockspace.with_view(|view| {
                 (
-                    view.item(self.target).unwrap().tabs().items().to_vec(),
-                    view.item(self.source).unwrap().tabs().items().to_vec(),
+                    view.item(self.target)
+                        .unwrap()
+                        .tabs()
+                        .items()
+                        .collect::<Vec<_>>(),
+                    view.item(self.source)
+                        .unwrap()
+                        .tabs()
+                        .items()
+                        .collect::<Vec<_>>(),
                 )
             });
             assert!(!target_items.contains(&self.source));
@@ -477,13 +491,23 @@ impl MergeSmoke {
         app.dockspace.with_view(|view| {
             let source = view.item(self.source).unwrap();
             let target = view.item(self.target).unwrap();
-            source.tabs().items() == self.expected_target
-                && target.tabs().items() == self.expected_target
+            source
+                .tabs()
+                .items()
+                .eq(self.expected_target.iter().copied())
+                && target
+                    .tabs()
+                    .items()
+                    .eq(self.expected_target.iter().copied())
                 && source.root() == target.root()
                 && source.contained() == target.contained()
                 && source.is_selected()
                 && self.remaining_source.first().is_none_or(|item| {
-                    view.item(*item).unwrap().tabs().items() == self.remaining_source
+                    view.item(*item)
+                        .unwrap()
+                        .tabs()
+                        .items()
+                        .eq(self.remaining_source.iter().copied())
                 })
         })
     }

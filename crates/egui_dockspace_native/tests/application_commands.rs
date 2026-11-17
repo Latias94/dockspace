@@ -150,7 +150,7 @@ fn stored_native_payload_commands_and_group_capture_share_the_public_slot() {
         );
         assert!(app.take_action_status().is_none());
         assert_eq!(
-            app.with_view(|view| view.item(FIRST).unwrap().tabs().items().to_vec()),
+            app.with_view(|view| view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>()),
             [FIRST, SECOND]
         );
         assert_eq!(

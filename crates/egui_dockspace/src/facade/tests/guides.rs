@@ -242,6 +242,7 @@ fn boxed_custom_guides_keep_stable_receivers_accessibility_and_docking() {
                 .unwrap()
                 .tabs()
                 .items()
+                .collect::<Vec<_>>()
                 .contains(&SECOND)
                 .then_some(())
         });

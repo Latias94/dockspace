@@ -74,7 +74,7 @@ fn configured_modifiers_control_real_docking_and_update_without_pointer_motion()
         let second = dockspace.view().item(SECOND).unwrap();
         if enabled {
             assert_eq!(
-                second.tabs().items(),
+                second.tabs().items().collect::<Vec<_>>(),
                 &[FIRST, SECOND],
                 "{activation:?}, {modifiers:?}"
             );
@@ -84,7 +84,13 @@ fn configured_modifiers_control_real_docking_and_update_without_pointer_motion()
                 "{activation:?}, {modifiers:?}"
             );
             assert_eq!(
-                dockspace.view().item(FIRST).unwrap().tabs().items(),
+                dockspace
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FIRST]
             );
         }
@@ -189,12 +195,24 @@ fn configured_cancel_shortcut_replaces_escape_and_keeps_extra_modifiers() {
         );
         if cancel_enabled {
             assert_eq!(
-                dockspace.view().item(FIRST).unwrap().tabs().items(),
+                dockspace
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FIRST]
             );
         } else {
             assert_eq!(
-                dockspace.view().item(FIRST).unwrap().tabs().items(),
+                dockspace
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FIRST, SECOND]
             );
         }
@@ -273,7 +291,13 @@ fn shift_disables_explicit_guides_and_tab_gap_docking() {
         );
         assert!(dockspace.view().item(SECOND).unwrap().contained().is_some());
         assert_eq!(
-            dockspace.view().item(FIRST).unwrap().tabs().items(),
+            dockspace
+                .view()
+                .item(FIRST)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[FIRST]
         );
     }
@@ -416,7 +440,7 @@ struct ProductMagneticSnapshot {
 
 fn node_contains_item(node: DockspaceNodeView<'_>, item: ItemId) -> bool {
     if let Some(tabs) = node.tabs() {
-        return tabs.items().contains(&item);
+        return tabs.items().collect::<Vec<_>>().contains(&item);
     }
     node.split().is_some_and(|split| {
         split
@@ -463,8 +487,8 @@ fn product_magnetic_snapshot(dockspace: &Dockspace) -> Option<ProductMagneticSna
         .content()
         .and_then(|content| item_split_relation(content, SECOND, FIRST));
     Some(ProductMagneticSnapshot {
-        source_tabs: source.tabs().items().to_vec(),
-        target_tabs: target.tabs().items().to_vec(),
+        source_tabs: source.tabs().items().collect::<Vec<_>>(),
+        target_tabs: target.tabs().items().collect::<Vec<_>>(),
         split_relation,
         source_selected: source.is_selected(),
         source_surface: source.surface(),
@@ -975,7 +999,13 @@ fn same_packet_shift_release_cannot_commit_an_earlier_magnetic_target() {
                     "a suppressed release may float or preserve its source but must not dock",
                 );
                 assert_eq!(
-                    dockspace.view().item(FIRST).unwrap().tabs().items(),
+                    dockspace
+                        .view()
+                        .item(FIRST)
+                        .unwrap()
+                        .tabs()
+                        .items()
+                        .collect::<Vec<_>>(),
                     &[FIRST]
                 );
             }

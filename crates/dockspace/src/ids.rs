@@ -109,6 +109,65 @@ macro_rules! stable_id {
 }
 
 stable_id!(ItemId, "Stable application identity for dockable content.");
+
+/// Identity of one direct child in a tab group.
+///
+/// A content tab retains its application's [`ItemId`]. A layout tab identifies
+/// its complete child layout independently of that layout's selected content.
+/// Layout keys are session-local and are not persistent application identities.
+/// A key identifies a tab; prepared actions separately prove its current owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TabKey(pub(crate) TabContent);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum TabContent {
+    Item(ItemId),
+    Layout(NodeId),
+}
+
+impl TabKey {
+    /// Identifies a tab containing one real application item.
+    #[must_use]
+    pub const fn for_item(item: ItemId) -> Self {
+        Self(TabContent::Item(item))
+    }
+
+    /// Returns the application item when this tab directly contains one.
+    ///
+    /// A layout tab has no representative item. Its descendants remain real
+    /// application items with their own content and focus identities.
+    #[must_use]
+    pub const fn item(self) -> Option<ItemId> {
+        match self.0 {
+            TabContent::Item(item) => Some(item),
+            TabContent::Layout(_) => None,
+        }
+    }
+
+    /// Returns whether this tab owns a complete child layout.
+    #[must_use]
+    pub const fn is_layout(self) -> bool {
+        matches!(self.0, TabContent::Layout(_))
+    }
+
+    pub(crate) const fn for_layout(node: NodeId) -> Self {
+        Self(TabContent::Layout(node))
+    }
+
+    pub(crate) const fn layout(self) -> Option<NodeId> {
+        match self.0 {
+            TabContent::Item(_) => None,
+            TabContent::Layout(node) => Some(node),
+        }
+    }
+}
+
+impl From<ItemId> for TabKey {
+    fn from(item: ItemId) -> Self {
+        Self::for_item(item)
+    }
+}
+
 stable_id!(RootId, "Stable identity for a docking graph root.");
 stable_id!(
     SurfaceId,

@@ -343,9 +343,15 @@ impl Exercise {
             Phase::ReleaseTab => {
                 let view = dock.view();
                 let preview = view.item(PREVIEW).ok_or("Preview disappeared")?;
-                if preview.tabs().items() != [OUTLINE, PREVIEW]
+                if preview.tabs().items().collect::<Vec<_>>() != [OUTLINE, PREVIEW]
                     || !preview.is_selected()
-                    || view.item(EDITOR).unwrap().tabs().items() != [EDITOR]
+                    || view
+                        .item(EDITOR)
+                        .unwrap()
+                        .tabs()
+                        .items()
+                        .collect::<Vec<_>>()
+                        != [EDITOR]
                     || panes.panes.len() != 8
                     || panes.panes.keys().any(|id| view.item(*id).is_none())
                     || panes.panes[&EDITOR].text.matches('~').count() != PHASE_FRAMES

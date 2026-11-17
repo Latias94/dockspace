@@ -527,7 +527,7 @@ fn contained_group_edge_drag_previews_only_visible_members_but_moves_every_owned
                 .plan()
                 .tab_records()
                 .iter()
-                .all(|tab| tab.id().item != hidden)
+                .all(|tab| tab.id().tab.item() != Some(hidden))
         );
         engine.workspace().validate().unwrap();
     }

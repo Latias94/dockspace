@@ -1,6 +1,7 @@
 //! Empty anchors and numeric allocation are independent product contracts.
 
 use crate::geometry::{LogicalRect, LogicalSize};
+use crate::ids::TabKey;
 use crate::model::{
     DockAnchor, DockPlacement, DockspaceAxis, DockspaceContainedLayout, DockspaceLayout,
     DockspaceLayoutError, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout,
@@ -152,7 +153,8 @@ fn measured_weighted_and_preferred_anchors_have_explicit_independent_sizes() {
                                 .tabs()
                                 .unwrap()
                                 .items()
-                                .is_empty(),
+                                .next()
+                                .is_none(),
                             empty
                         );
                     }
@@ -243,14 +245,29 @@ fn moving_last_content_preserves_main_anchor_and_retires_contained_source_for_bo
         let view = session.view();
         let root = view.root(ROOT).unwrap();
         assert_eq!(root.allocation(), allocation);
-        assert!(root.central().unwrap().tabs().unwrap().items().is_empty());
+        assert!(
+            root.central()
+                .unwrap()
+                .tabs()
+                .unwrap()
+                .items()
+                .next()
+                .is_none()
+        );
         assert!(root.retains_empty_central_root());
         assert!(view.root(FLOATING_ROOT).is_none());
         assert_eq!(
-            view.item(MIDDLE).unwrap().tabs().items(),
+            view.item(MIDDLE)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[MIDDLE, FIRST, LAST]
         );
-        assert_eq!(view.item(MIDDLE).unwrap().tabs().selected(), Some(LAST));
+        assert_eq!(
+            view.item(MIDDLE).unwrap().tabs().selected(),
+            Some(TabKey::for_item(LAST))
+        );
         let restored = view.to_layout();
         assert_eq!(restored.view().root(ROOT).unwrap().allocation(), allocation);
     }

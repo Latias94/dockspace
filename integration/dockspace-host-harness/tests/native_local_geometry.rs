@@ -325,7 +325,7 @@ fn local_size_only_root_presents_and_current_selection_commits_once_after_drop()
         report.inputs(),
         &[HostInputOutcome::ProductActionApplied(
             DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: SECOND.into(),
                 changed: true,
             },
         )]
@@ -347,7 +347,7 @@ fn local_size_only_root_presents_and_current_selection_commits_once_after_drop()
         report.inputs(),
         &[HostInputOutcome::ProductActionApplied(
             DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: SECOND.into(),
                 changed: false,
             },
         )]

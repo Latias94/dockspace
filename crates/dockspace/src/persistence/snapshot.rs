@@ -16,7 +16,7 @@ use crate::graph::{
     Axis, ContainedFloating, InvalidSplitWeight, Node, RootRecord, SplitWeight,
     SurfacePresentation, Workspace, WorkspaceBuildError, WorkspaceBuilder,
 };
-use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
+use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
 
 #[cfg(test)]
 mod visibility_tests;
@@ -55,12 +55,12 @@ pub enum SnapshotNode {
     /// Ordered dockable items sharing one content rectangle.
     Tabs {
         /// Stable item identities in tab order.
-        items: Vec<u64>,
-        /// Selected stable item identity.
+        items: Vec<SnapshotTabKey>,
+        /// Selected direct child identity.
         #[serde(deserialize_with = "deserialize_required_option")]
-        selected: Option<u64>,
-        /// Complete stable item permutation in most-recent-first order.
-        mru: Vec<u64>,
+        selected: Option<SnapshotTabKey>,
+        /// Complete direct-child permutation in most-recent-first order.
+        mru: Vec<SnapshotTabKey>,
     },
     /// Ordered N-ary split children.
     Split {
@@ -71,6 +71,30 @@ pub enum SnapshotNode {
         /// Exact normalized shares from the runtime model.
         weights: Vec<f64>,
     },
+}
+
+/// One direct child using a stable content ID or a snapshot-local layout ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "id",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum SnapshotTabKey {
+    /// One real application item.
+    Item(u64),
+    /// One complete child layout.
+    Layout(u64),
+}
+
+impl SnapshotTabKey {
+    pub(crate) const fn item(self) -> Option<u64> {
+        match self {
+            Self::Item(item) => Some(item),
+            Self::Layout(_) => None,
+        }
+    }
 }
 
 /// Persisted split direction.
@@ -455,9 +479,19 @@ fn capture_node(
             selected,
             mru,
         } => SnapshotNode::Tabs {
-            items: items.iter().map(|item| item.get()).collect(),
-            selected: selected.map(ItemId::get),
-            mru: mru.iter().map(|item| item.get()).collect(),
+            items: items
+                .iter()
+                .copied()
+                .map(|tab| capture_tab_key(tab, node_ids))
+                .collect::<Result<_, _>>()?,
+            selected: selected
+                .map(|tab| capture_tab_key(tab, node_ids))
+                .transpose()?,
+            mru: mru
+                .iter()
+                .copied()
+                .map(|tab| capture_tab_key(tab, node_ids))
+                .collect::<Result<_, _>>()?,
         },
         Node::Split {
             axis,
@@ -478,6 +512,31 @@ fn capture_node(
     })
 }
 
+fn capture_tab_key(
+    tab: TabKey,
+    node_ids: &HashMap<NodeId, u64>,
+) -> Result<SnapshotTabKey, SnapshotCaptureError> {
+    match tab.0 {
+        crate::ids::TabContent::Item(item) => Ok(SnapshotTabKey::Item(item.get())),
+        crate::ids::TabContent::Layout(node) => {
+            captured_id(node_ids, node).map(SnapshotTabKey::Layout)
+        }
+    }
+}
+
+fn restore_tab_key(
+    tab: SnapshotTabKey,
+    owner: SnapshotReferenceOwner,
+    runtime_nodes: &HashMap<u64, NodeId>,
+) -> Result<TabKey, SnapshotRestoreError> {
+    match tab {
+        SnapshotTabKey::Item(item) => Ok(TabKey::for_item(ItemId::new(item))),
+        SnapshotTabKey::Layout(node) => {
+            runtime_node(runtime_nodes, owner, node).map(TabKey::for_layout)
+        }
+    }
+}
+
 fn preflight_references_and_scalars(
     snapshot: &WorkspaceSnapshot,
     index: &SnapshotIndex,
@@ -491,6 +550,7 @@ fn preflight_references_and_scalars(
                 SnapshotNode::Split { .. } => &[],
             })
             .copied()
+            .filter_map(SnapshotTabKey::item)
             .collect();
         let mut hidden_items = HashSet::with_capacity(snapshot.hidden_items.len());
         for &item in &snapshot.hidden_items {
@@ -507,6 +567,23 @@ fn preflight_references_and_scalars(
         }
     }
     for record in &snapshot.nodes {
+        if let SnapshotNode::Tabs {
+            items,
+            selected,
+            mru,
+        } = &record.node
+        {
+            for tab in items.iter().chain(selected.iter()).chain(mru.iter()) {
+                if let SnapshotTabKey::Layout(node) = tab {
+                    require_reference(
+                        &index.nodes,
+                        SnapshotReferenceOwner::Node(record.id),
+                        SnapshotEntityKind::Node,
+                        *node,
+                    )?;
+                }
+            }
+        }
         if let SnapshotNode::Split {
             children, weights, ..
         } = &record.node
@@ -587,9 +664,9 @@ fn validate_registered_items(
             mru,
         } = &record.node
         {
-            items.extend(tab_items.iter().copied());
-            items.extend(selected.iter().copied());
-            items.extend(mru.iter().copied());
+            items.extend(tab_items.iter().copied().filter_map(SnapshotTabKey::item));
+            items.extend(selected.iter().copied().filter_map(SnapshotTabKey::item));
+            items.extend(mru.iter().copied().filter_map(SnapshotTabKey::item));
         }
     }
 
@@ -650,9 +727,25 @@ fn restore_node(
             selected,
             mru,
         } => Ok(Node::Tabs {
-            items: items.iter().copied().map(ItemId::new).collect(),
-            selected: selected.map(ItemId::new),
-            mru: mru.iter().copied().map(ItemId::new).collect(),
+            items: items
+                .iter()
+                .copied()
+                .map(|tab| {
+                    restore_tab_key(tab, SnapshotReferenceOwner::Node(record.id), runtime_nodes)
+                })
+                .collect::<Result<_, _>>()?,
+            selected: selected
+                .map(|tab| {
+                    restore_tab_key(tab, SnapshotReferenceOwner::Node(record.id), runtime_nodes)
+                })
+                .transpose()?,
+            mru: mru
+                .iter()
+                .copied()
+                .map(|tab| {
+                    restore_tab_key(tab, SnapshotReferenceOwner::Node(record.id), runtime_nodes)
+                })
+                .collect::<Result<_, _>>()?,
         }),
         SnapshotNode::Split {
             axis,

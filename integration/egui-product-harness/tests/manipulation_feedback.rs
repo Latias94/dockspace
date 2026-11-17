@@ -232,7 +232,7 @@ fn ordinary_release_delivers_once_independently_of_its_output_disposition() {
         assert_eq!(
             split
                 .children()
-                .map(|child| child.tabs().unwrap().items().to_vec())
+                .map(|child| child.tabs().unwrap().items().collect::<Vec<_>>())
                 .collect::<Vec<_>>(),
             [vec![ItemId::new(1)], vec![ItemId::new(2)]],
             "the release position, not the preceding top preview, decides the result",

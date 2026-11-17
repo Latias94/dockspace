@@ -1151,7 +1151,10 @@ fn expected_pane_records(
                     if workspace.node_has_visible_content(node) {
                         expected.insert(
                             PaneSceneId { root, tabs: node },
-                            (workspace.visible_tab_selection(node), layer),
+                            (
+                                workspace.visible_tab_selection(node).and_then(TabKey::item),
+                                layer,
+                            ),
                         );
                     }
                 }
@@ -1226,7 +1229,7 @@ fn validate_tab_records(
                 .map(crate::policy::DockTargetRuleKey::Item)
                 .or(Some(crate::policy::DockTargetRuleKey::Root(pane.id().root))),
         );
-        let item_count = workspace.visible_tab_items(pane.id().tabs).len();
+        let item_count = workspace.visible_tab_keys(pane.id().tabs).len();
         let revealed = declaration.visibility() == TabBarVisibility::AutoHideSingle
             && item_count == 1
             && bars
@@ -1338,7 +1341,7 @@ fn validate_tab_records(
                     .flatten()
                 });
                 let valid = declaration.visibility() == TabBarVisibility::AutoHideSingle
-                    && workspace.visible_tab_items(id.tabs).len() == 1
+                    && workspace.visible_tab_keys(id.tabs).len() == 1
                     && controls.len() == 1
                     && control.is_some_and(|control| {
                         expected_bounds == Some(control.bounds())
@@ -1399,7 +1402,7 @@ fn validate_tab_records(
                 id: bar_id,
             });
         };
-        let items = workspace.visible_tab_items(bar_id.tabs);
+        let items = workspace.visible_tab_keys(bar_id.tabs);
         let selected = workspace.visible_tab_selection(bar_id.tabs);
         let group_grip_matches = match bar.group_grip_bounds() {
             None => true,
@@ -1503,7 +1506,7 @@ fn validate_tab_records(
         let visible = &tabs[start..end];
         let visible_record = |item| {
             visible
-                .binary_search_by_key(&item, |(id, _)| id.item)
+                .binary_search_by_key(&item, |(id, _)| id.tab)
                 .ok()
                 .map(|row| &ready.facts.tab_records[visible[row].1])
         };
@@ -1511,7 +1514,7 @@ fn validate_tab_records(
             .iter()
             .copied()
             .filter(|item| visible_record(*item).is_none());
-        if !bar.hidden_items().iter().copied().eq(expected_hidden) {
+        if !bar.hidden_tabs().iter().copied().eq(expected_hidden) {
             return Err(SceneBuildError::InvalidTabBarRecord {
                 surface: ready.surface,
                 id: bar_id,
@@ -1520,7 +1523,7 @@ fn validate_tab_records(
         let members_match = bar.members().len() == items.len()
             && bar.members().iter().enumerate().all(|(ordinal, member)| {
                 let tab = member.tab();
-                let record = visible_record(tab.item).filter(|record| *record.id() == tab);
+                let record = visible_record(tab.tab).filter(|record| *record.id() == tab);
                 let visibility_matches = match (member.visibility(), record) {
                     (TabStripMemberVisibility::Visible, Some(record)) => {
                         member.full_bounds() == record.full_bounds()
@@ -1544,7 +1547,7 @@ fn validate_tab_records(
                 member.ordinal() == ordinal
                     && tab.root == bar_id.root
                     && tab.tabs == bar_id.tabs
-                    && items.get(ordinal).copied() == Some(tab.item)
+                    && items.get(ordinal).copied() == Some(tab.tab)
                     && rect_has_area(full)
                     && full.y() == bar.bounds().y()
                     && full.height() == bar.bounds().height()
@@ -1570,8 +1573,11 @@ fn validate_tab_records(
         for &(_, row) in visible {
             let record = &ready.facts.tab_records[row];
             let id = *record.id();
-            let ordinal_matches = items.get(record.ordinal()).copied() == Some(id.item);
-            let close_allowed = policy.pane_close_capability(id.item).allows_close();
+            let ordinal_matches = items.get(record.ordinal()).copied() == Some(id.tab);
+            let close_allowed = id
+                .tab
+                .item()
+                .is_some_and(|item| policy.pane_close_capability(item).allows_close());
             let close_visual_matches = match (close_allowed, record.close_visual_bounds()) {
                 (false, None) => true,
                 (true, Some(close)) => {
@@ -1608,7 +1614,7 @@ fn validate_tab_records(
             if id.root != bar_id.root
                 || id.tabs != bar_id.tabs
                 || !ordinal_matches
-                || ready.tab_selected(record) != (selected == Some(id.item))
+                || ready.tab_selected(record) != (selected == Some(id.tab))
                 || record.layer() != bar.layer()
                 || !geometry_matches
                 || !workspace_index.semantic_node_exists(ready.surface, id.root, id.tabs)
@@ -1633,8 +1639,8 @@ fn validate_tab_records(
 fn validate_tab_strip_controls_and_menu(
     ready: &PresentationPlan,
     bar: &TabBarRecord,
-    items: &[ItemId],
-    selected: Option<ItemId>,
+    items: &[TabKey],
+    selected: Option<TabKey>,
     controls: Option<&BTreeMap<TabStripControlId, &TabStripControlRecord>>,
     menu: Option<&TabListMenuRecord>,
 ) -> Result<(), SceneBuildError> {
@@ -1749,13 +1755,13 @@ fn validate_tab_strip_controls_and_menu(
             None => !rects_overlap_with_area(row.bounds(), menu.viewport()),
         };
         if row.ordinal() != ordinal
-            || items.get(ordinal).copied() != Some(tab.item)
+            || items.get(ordinal).copied() != Some(tab.tab)
             || tab.root != id.root
             || tab.tabs != id.tabs
             || !rect_has_area(row.bounds())
             || row.bounds().x() != menu.viewport().x()
             || row.bounds().width() != menu.viewport().width()
-            || row.selected() != (selected == Some(tab.item))
+            || row.selected() != (selected == Some(tab.tab))
             || !hit_matches
         {
             return Err(SceneBuildError::InvalidTabBarRecord {

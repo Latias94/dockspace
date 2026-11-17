@@ -40,7 +40,7 @@ fn locked_commands_reject_without_mutation_and_work_again_after_unlock() {
             target: DockTarget::Center(target),
         },
         WorkspaceCommand::Reorder {
-            source: source.clone(),
+            source: source.clone().as_tab_source(),
             insertion_index: 2,
         },
         WorkspaceCommand::Move {
@@ -174,7 +174,8 @@ fn rejected_mutation_rolls_back_an_earlier_allowed_selection() {
             source: workspace
                 .capture_item_source_by_id(ItemId::new(5))
                 .unwrap()
-                .unwrap(),
+                .unwrap()
+                .as_tab_source(),
         },
         WorkspaceCommand::UpdateContainedRect {
             surface: SOURCE,
@@ -222,7 +223,7 @@ fn locked_selection_and_raise_remain_available_with_exact_roster_preconditions()
     let policy = policy.snapshot(PolicyRevision::new(1));
     let report = WorkspaceTransaction::from_commands([
         WorkspaceCommand::Select {
-            source: source.clone(),
+            source: source.clone().as_tab_source(),
         },
         raise.clone(),
     ])
@@ -236,7 +237,7 @@ fn locked_selection_and_raise_remain_available_with_exact_roster_preconditions()
         ]
     ));
     assert!(
-        matches!(workspace.node(source.tabs()), Some(Node::Tabs { selected: Some(item), .. }) if *item == source.item())
+        matches!(workspace.node(source.tabs()), Some(Node::Tabs { selected: Some(item), .. }) if item.item() == Some(source.item()))
     );
     assert_eq!(
         workspace.surface(SOURCE).unwrap().contained,

@@ -55,8 +55,12 @@ fn contained_group_close_waits_for_application_approval_for_every_activation() {
                 .content()
                 .and_then(|content| content.tabs())
                 .expect("the complete group retains its tabs");
-            assert_eq!(tabs.items(), &[SECOND, THIRD], "{name}");
-            assert_eq!(tabs.selected(), Some(SECOND), "{name}");
+            assert_eq!(tabs.items().collect::<Vec<_>>(), &[SECOND, THIRD], "{name}");
+            assert_eq!(
+                tabs.selected().and_then(|tab| tab.item()),
+                Some(SECOND),
+                "{name}"
+            );
             for item in [SECOND, THIRD] {
                 let location = dockspace.view().item(item).expect("the item remains open");
                 assert_eq!(location.root(), FLOATING_ROOT, "{name}");
@@ -302,8 +306,14 @@ fn contained_group_close_veto_preserves_every_item_through_the_public_facade() {
             .expect("veto preserves every item");
         assert_eq!(location.root(), FLOATING_ROOT);
         assert_eq!(location.contained(), Some(FLOATING));
-        assert_eq!(location.tabs().items(), &[SECOND, THIRD]);
-        assert_eq!(location.tabs().selected(), Some(SECOND));
+        assert_eq!(
+            location.tabs().items().collect::<Vec<_>>(),
+            &[SECOND, THIRD]
+        );
+        assert_eq!(
+            location.tabs().selected().and_then(|tab| tab.item()),
+            Some(SECOND)
+        );
     }
 }
 
@@ -415,8 +425,14 @@ fn contained_group_close_deferred_allow_commits_once_through_the_public_facade()
             .expect("the deferred group remains intact");
         assert_eq!(location.root(), FLOATING_ROOT);
         assert_eq!(location.contained(), Some(FLOATING));
-        assert_eq!(location.tabs().items(), &[SECOND, THIRD]);
-        assert_eq!(location.tabs().selected(), Some(SECOND));
+        assert_eq!(
+            location.tabs().items().collect::<Vec<_>>(),
+            &[SECOND, THIRD]
+        );
+        assert_eq!(
+            location.tabs().selected().and_then(|tab| tab.item()),
+            Some(SECOND)
+        );
     }
 
     let closed = dockspace
@@ -674,8 +690,14 @@ fn contained_presentation_menu_close_group_requests_a_root_close_plan() {
             .expect("Close Layout waits for the application");
         assert_eq!(location.root(), FLOATING_ROOT);
         assert_eq!(location.contained(), Some(FLOATING));
-        assert_eq!(location.tabs().items(), &[SECOND, THIRD]);
-        assert_eq!(location.tabs().selected(), Some(SECOND));
+        assert_eq!(
+            location.tabs().items().collect::<Vec<_>>(),
+            &[SECOND, THIRD]
+        );
+        assert_eq!(
+            location.tabs().selected().and_then(|tab| tab.item()),
+            Some(SECOND)
+        );
     }
     for (index, item) in request.plan().items().iter().enumerate() {
         let closed = dockspace

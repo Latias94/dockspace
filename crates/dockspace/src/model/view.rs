@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, fmt};
 
 use crate::geometry::LogicalRect;
 use crate::graph::{Node, SplitWeight, SurfacePresentation, Workspace};
-use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
+use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
 
 use super::{DockspaceAxis, DockspaceLayout, RootAllocation};
 use crate::model::PreparedTabsGroup;
@@ -210,7 +210,7 @@ impl<'a> DockspaceItemView<'a> {
     /// Returns whether this item is the selected visible content of its tabs leaf.
     #[must_use]
     pub fn is_selected(self) -> bool {
-        self.tabs.visible_selected() == Some(self.item)
+        self.tabs.visible_selected() == Some(TabKey::for_item(self.item))
     }
 }
 
@@ -372,7 +372,7 @@ impl<'a> DockspaceRootView<'a> {
             match self.workspace.node(node) {
                 Some(Node::Tabs { items, .. }) => {
                     for candidate in items {
-                        if *candidate != item || found {
+                        if candidate.item() != Some(item) || found {
                             return false;
                         }
                         found = true;
@@ -548,41 +548,53 @@ impl<'a> DockspaceNodeView<'a> {
 /// Read-only product view of one tabs leaf.
 #[derive(Debug, Clone, Copy)]
 pub struct DockspaceTabsView<'a> {
-    items: &'a [ItemId],
-    selected: Option<ItemId>,
+    items: &'a [TabKey],
+    selected: Option<TabKey>,
     hidden_items: &'a BTreeSet<ItemId>,
     central: bool,
 }
 
 impl<'a> DockspaceTabsView<'a> {
-    /// Returns all owned items in durable tab order, including hidden members.
+    /// Returns every direct child in durable tab order, including hidden members.
     #[must_use]
-    pub const fn items(self) -> &'a [ItemId] {
+    pub const fn tabs(self) -> &'a [TabKey] {
         self.items
     }
 
-    /// Returns the logical selected item, or `None` for an empty central leaf.
+    /// Iterates directly owned application items, including hidden members.
+    pub fn items(self) -> impl DoubleEndedIterator<Item = ItemId> + Clone + 'a {
+        self.items.iter().filter_map(|tab| tab.item())
+    }
+
+    /// Returns the logical selected direct child, or `None` for an empty central container.
     ///
     /// A completely hidden stack retains a logical selection. Renderers should
     /// use [`Self::visible_selected`] when deciding which content to present.
     #[must_use]
-    pub const fn selected(self) -> Option<ItemId> {
+    pub const fn selected(self) -> Option<TabKey> {
         self.selected
     }
 
-    /// Iterates visible members in their durable tab order.
+    /// Iterates visible direct children in their durable tab order.
+    pub fn visible_tabs(self) -> impl DoubleEndedIterator<Item = TabKey> + Clone + 'a {
+        self.items.iter().copied().filter(move |tab| {
+            tab.item()
+                .is_some_and(|item| !self.hidden_items.contains(&item))
+        })
+    }
+
+    /// Iterates visible directly owned application items in durable tab order.
     pub fn visible_items(self) -> impl DoubleEndedIterator<Item = ItemId> + Clone + 'a {
-        self.items
-            .iter()
-            .copied()
-            .filter(move |item| !self.hidden_items.contains(item))
+        self.visible_tabs().filter_map(TabKey::item)
     }
 
-    /// Returns the selected visible item, or `None` for empty or entirely hidden tabs.
+    /// Returns the selected visible child, or `None` for empty or entirely hidden tabs.
     #[must_use]
-    pub fn visible_selected(self) -> Option<ItemId> {
-        self.selected
-            .filter(|item| !self.hidden_items.contains(item))
+    pub fn visible_selected(self) -> Option<TabKey> {
+        self.selected.filter(|tab| {
+            tab.item()
+                .is_some_and(|item| !self.hidden_items.contains(&item))
+        })
     }
 
     /// Returns whether this leaf is the root's central docking anchor.

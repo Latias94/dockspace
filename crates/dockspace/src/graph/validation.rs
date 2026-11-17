@@ -11,7 +11,7 @@ use crate::graph::{
     Axis, NORMALIZED_WEIGHT_TOLERANCE, Node, Workspace, WorkspaceData, is_exact_tab_mru,
     normalized_weight_sum,
 };
-use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
+use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
 
 /// The stable presentation location that owns a root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +65,14 @@ pub enum WorkspaceValidationError {
         /// Unreachable runtime node.
         node: NodeId,
     },
+    /// A layout child requires the composable graph implementation.
+    #[error("tabs node {tabs:?} contains unsupported layout tab {tab:?}")]
+    UnsupportedLayoutTab {
+        /// Owning tabs container.
+        tabs: NodeId,
+        /// Rejected direct-child identity.
+        tab: TabKey,
+    },
     /// A non-central tabs leaf contains no items.
     #[error("non-central tabs node {tabs:?} is empty")]
     EmptyTabs {
@@ -77,7 +85,7 @@ pub enum WorkspaceValidationError {
         /// Tabs node with invalid state.
         tabs: NodeId,
         /// Invalid selected item, or `None` when a populated node has no selection.
-        selected: Option<ItemId>,
+        selected: Option<TabKey>,
     },
     /// A tabs leaf selects hidden content despite owning a visible alternative.
     #[error("tabs node {tabs:?} selects hidden item {item} while other items are visible")]
@@ -104,28 +112,28 @@ pub enum WorkspaceValidationError {
         mru: usize,
     },
     /// A tabs MRU permutation contains the same item more than once.
-    #[error("tabs node {tabs:?} repeats item {item} in its MRU permutation")]
+    #[error("tabs node {tabs:?} repeats tab {item:?} in its MRU permutation")]
     DuplicateTabMruItem {
         /// Tabs node with invalid history.
         tabs: NodeId,
         /// Repeated item identity.
-        item: ItemId,
+        item: TabKey,
     },
     /// A tabs MRU permutation contains an item outside its visual item order.
-    #[error("tabs node {tabs:?} MRU permutation contains foreign item {item}")]
+    #[error("tabs node {tabs:?} MRU permutation contains foreign item {item:?}")]
     TabMruItemNotInTabs {
         /// Tabs node with invalid history.
         tabs: NodeId,
         /// Foreign item identity.
-        item: ItemId,
+        item: TabKey,
     },
     /// A visual tab item is absent from its MRU permutation.
-    #[error("tabs node {tabs:?} item {item} is missing from its MRU permutation")]
+    #[error("tabs node {tabs:?} item {item:?} is missing from its MRU permutation")]
     TabItemMissingFromMru {
         /// Tabs node with invalid history.
         tabs: NodeId,
         /// Missing item identity.
-        item: ItemId,
+        item: TabKey,
     },
     /// The selected tab is not the most-recent MRU entry.
     #[error(
@@ -135,9 +143,9 @@ pub enum WorkspaceValidationError {
         /// Tabs node with invalid history.
         tabs: NodeId,
         /// Current selected item.
-        selected: Option<ItemId>,
+        selected: Option<TabKey>,
         /// First MRU entry.
-        most_recent: Option<ItemId>,
+        most_recent: Option<TabKey>,
     },
     /// An item occurs more than once in the workspace forest.
     #[error(
@@ -620,9 +628,9 @@ impl<'workspace> Validator<'workspace> {
     fn validate_tabs(
         &mut self,
         tabs: NodeId,
-        items: &[ItemId],
-        selected: Option<ItemId>,
-        mru: &[ItemId],
+        items: &[TabKey],
+        selected: Option<TabKey>,
+        mru: &[TabKey],
     ) {
         if items.is_empty() {
             if !self.central_nodes.contains(&tabs) {
@@ -637,11 +645,12 @@ impl<'workspace> Validator<'workspace> {
             self.errors
                 .push(WorkspaceValidationError::InvalidSelection { tabs, selected });
         }
-        if let Some(item) = selected
+        if let Some(item) = selected.and_then(TabKey::item)
             && self.workspace.hidden_items.contains(&item)
             && items
                 .iter()
-                .any(|item| !self.workspace.hidden_items.contains(item))
+                .filter_map(|tab| tab.item())
+                .any(|item| !self.workspace.hidden_items.contains(&item))
         {
             self.errors
                 .push(WorkspaceValidationError::HiddenSelection { tabs, item });
@@ -649,10 +658,15 @@ impl<'workspace> Validator<'workspace> {
 
         self.validate_tab_mru(tabs, items, selected, mru);
 
-        for item in items {
-            if let Some(first_tabs) = self.items.insert(*item, tabs) {
+        for tab in items {
+            let Some(item) = tab.item() else {
+                self.errors
+                    .push(WorkspaceValidationError::UnsupportedLayoutTab { tabs, tab: *tab });
+                continue;
+            };
+            if let Some(first_tabs) = self.items.insert(item, tabs) {
                 self.errors.push(WorkspaceValidationError::DuplicateItem {
-                    item: *item,
+                    item,
                     first_tabs,
                     duplicate_tabs: tabs,
                 });
@@ -663,9 +677,9 @@ impl<'workspace> Validator<'workspace> {
     fn validate_tab_mru(
         &mut self,
         tabs: NodeId,
-        items: &[ItemId],
-        selected: Option<ItemId>,
-        mru: &[ItemId],
+        items: &[TabKey],
+        selected: Option<TabKey>,
+        mru: &[TabKey],
     ) {
         if items.len() <= 2 && is_exact_tab_mru(items, selected, mru) {
             return;
@@ -1015,7 +1029,7 @@ mod tests {
             },
             WorkspaceValidationError::InvalidSelection {
                 tabs: first,
-                selected,
+                selected: selected.map(TabKey::for_item),
             },
             WorkspaceValidationError::TabMruLengthMismatch {
                 tabs: first,
@@ -1024,21 +1038,24 @@ mod tests {
             },
             WorkspaceValidationError::TabMruItemNotInTabs {
                 tabs: first,
-                item: foreign,
+                item: TabKey::for_item(foreign),
             },
             WorkspaceValidationError::DuplicateTabMruItem {
                 tabs: first,
-                item: foreign,
+                item: TabKey::for_item(foreign),
             },
             WorkspaceValidationError::TabMruItemNotInTabs {
                 tabs: first,
-                item: foreign,
+                item: TabKey::for_item(foreign),
             },
-            WorkspaceValidationError::TabItemMissingFromMru { tabs: first, item },
+            WorkspaceValidationError::TabItemMissingFromMru {
+                tabs: first,
+                item: TabKey::for_item(item),
+            },
             WorkspaceValidationError::SelectedTabNotMostRecent {
                 tabs: first,
-                selected,
-                most_recent: Some(foreign),
+                selected: selected.map(TabKey::for_item),
+                most_recent: Some(TabKey::for_item(foreign)),
             },
             WorkspaceValidationError::DuplicateItem {
                 item,

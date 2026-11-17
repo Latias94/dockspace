@@ -207,8 +207,8 @@ fn policy_disabled_tabs_keep_visible_accessibility_and_hover_without_activation(
                 .unwrap()
                 .tabs()
                 .unwrap();
-            assert_eq!(tabs.items(), [FIRST, SECOND]);
-            assert_eq!(tabs.selected(), Some(FIRST));
+            assert_eq!(tabs.items().collect::<Vec<_>>(), [FIRST, SECOND]);
+            assert_eq!(tabs.selected().and_then(|tab| tab.item()), Some(FIRST));
         }
 
         let output = run_frame(

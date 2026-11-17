@@ -31,7 +31,11 @@ pub(crate) fn window_title(
 fn append_selected_titles(title: &mut String, node: DockspaceNodeView<'_>, panes: &impl PaneView) {
     let mut pending = vec![node];
     while let Some(node) = pending.pop() {
-        if let Some(item) = node.tabs().and_then(DockspaceTabsView::visible_selected) {
+        if let Some(item) = node
+            .tabs()
+            .and_then(DockspaceTabsView::visible_selected)
+            .and_then(|tab| tab.item())
+        {
             if !title.is_empty() {
                 title.push_str(" · ");
             }

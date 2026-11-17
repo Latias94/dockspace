@@ -1541,9 +1541,9 @@ fn contained_move_resize_select_focus_and_dock_back_preserve_exact_ownership() {
         .and_then(|root| root.content())
         .and_then(|content| content.tabs())
         .expect("dock-back recovers the contained pane into the main tabs");
-    assert_eq!(tabs.items(), &[FIRST, SECOND]);
+    assert_eq!(tabs.items().collect::<Vec<_>>(), &[FIRST, SECOND]);
     assert_eq!(
-        tabs.selected(),
+        tabs.selected().and_then(|tab| tab.item()),
         Some(SECOND),
         "core must preserve the exact recovered pane instead of selecting the first visible tab"
     );
@@ -3056,10 +3056,9 @@ fn default_features_programmatic_close_reports_stale_and_root_rejection() {
     assert!(matches!(
         selection.status(),
         DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
-            item: SECOND,
+            tab: selected_tab,
             changed: true,
-        })
-    ));
+        }) if selected_tab.item() == Some(SECOND)));
     let stale = stale_dockspace
         .submit_prepared_close_request(prepared)
         .expect("the stale close request is reduced");
@@ -3103,10 +3102,9 @@ fn stale_prepared_dock_action_is_inert_in_the_product_executor() {
     assert!(matches!(
         selection.status(),
         DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
-            item: SECOND,
+            tab: selected_tab,
             changed: true,
-        })
-    ));
+        }) if selected_tab.item() == Some(SECOND)));
 
     let stale = dockspace
         .submit_prepared_action(prepared)
@@ -3981,8 +3979,7 @@ fn unavailable_pane_focus_binding_terminates_without_guessing_a_target() {
         .expect("a fresh explicit selection publishes a new focus request");
     assert!(matches!(
         selected.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: SECOND, .. })
-    ));
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(SECOND)));
     let (_, capability) = run_focus_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert_eq!(capability, DockspaceCapability::Supported);
     assert!(
@@ -4014,8 +4011,7 @@ fn discarded_pane_focus_does_not_replay_over_later_application_focus() {
         .expect("the exact pane-focus request precedes the discarded UI passes");
     assert!(matches!(
         selected.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: SECOND, .. })
-    ));
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(SECOND)));
     assert!(!context.memory(|memory| memory.has_focus(panes.target)));
 
     context
@@ -4042,8 +4038,7 @@ fn discarded_pane_focus_does_not_replay_over_later_application_focus() {
         .expect("a new explicit selection requests focus again");
     assert!(matches!(
         selected.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: SECOND, .. })
-    ));
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(SECOND)));
     let _ = run_focus_frame(&context, &mut dockspace, &mut panes, Vec::new());
     assert!(context.memory(|memory| memory.has_focus(panes.target)));
     let _ = run_focus_frame(&context, &mut dockspace, &mut panes, Vec::new());

@@ -1860,7 +1860,7 @@ mod tests {
                 .iter()
                 .find(|region| match region.id().kind() {
                     PresentationHitRegionKind::TabBody(tab) => {
-                        !group && tab.tabs == tabs && tab.item == ItemId::new(1)
+                        !group && tab.tabs == tabs && tab.tab == ItemId::new(1).into()
                     }
                     PresentationHitRegionKind::TabGroupDrag { bar, .. } => {
                         group && bar.tabs == tabs

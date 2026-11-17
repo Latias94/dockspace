@@ -120,8 +120,8 @@ fn standalone_service_drains_fatal_native_work_without_an_output_scope() {
     assert!(state.is_shutdown_drained(), "{:?}", state.pending_work());
     assert_eq!(state.coordinator.session().version(), version);
     assert_eq!(
-        state.view().item(ItemId::new(1)).unwrap().tabs().items(),
-        before.view().item(ItemId::new(1)).unwrap().tabs().items()
+        state.view().item(ItemId::new(1)).unwrap().tabs().tabs(),
+        before.view().item(ItemId::new(1)).unwrap().tabs().tabs()
     );
     assert_eq!(format!("{:?}", state.error().unwrap()), cause);
     state.with_errors(|_, cleanup| assert!(cleanup.is_empty(), "{cleanup:?}"));

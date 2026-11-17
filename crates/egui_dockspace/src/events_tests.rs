@@ -38,9 +38,12 @@ impl PaneView for Panes {
     }
 
     fn tab_ui(&mut self, ui: &mut Ui, tab: &Tab<'_>) -> TabVisuals {
-        self.tabs.insert(tab.item, tab.visible_rect);
+        let Some(item) = tab.item() else {
+            return tab.paint(ui);
+        };
+        self.tabs.insert(item, tab.visible_rect);
         let visuals = tab.paint(ui);
-        if self.blocked_tab == Some(tab.item) {
+        if self.blocked_tab == Some(item) {
             ui.interact(
                 tab.visible_rect,
                 ui.scope_id().with("application-tab-button"),
@@ -175,7 +178,9 @@ fn button(position: Pos2, pressed: bool) -> Event {
 fn selections(events: &[DockspaceEvent], item: ItemId) -> usize {
     events
         .iter()
-        .filter(|event| event.kind() == &DockspaceEventKind::SelectionCommitted { item })
+        .filter(|event| {
+            event.kind() == &DockspaceEventKind::SelectionCommitted { tab: item.into() }
+        })
         .count()
 }
 

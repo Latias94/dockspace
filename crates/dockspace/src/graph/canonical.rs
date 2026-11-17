@@ -21,7 +21,7 @@ use crate::graph::{
     InvalidSplitWeight, InvalidSplitWeights, NORMALIZED_WEIGHT_TOLERANCE, Node, SplitWeight,
     Workspace, WorkspaceData, is_exact_tab_mru, normalized_weight_sum,
 };
-use crate::ids::{ItemId, NodeId, RootId};
+use crate::ids::{ItemId, NodeId, RootId, TabKey};
 
 /// Summary of one successfully published canonicalization transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,13 +126,21 @@ pub enum CanonicalizationError {
         /// Invalid tabs node.
         node: NodeId,
         /// Selected item, when one was supplied.
-        selected: Option<ItemId>,
+        selected: Option<TabKey>,
     },
     /// A tabs node does not carry one exact selected-first item permutation.
     #[error("tabs node {node:?} has invalid MRU state")]
     InvalidTabMru {
         /// Tabs node with invalid or missing history.
         node: NodeId,
+    },
+    /// A layout child requires the composable graph implementation.
+    #[error("tabs node {node:?} contains unsupported layout tab {tab:?}")]
+    UnsupportedLayoutTab {
+        /// Owning tabs container.
+        node: NodeId,
+        /// Rejected direct-child identity.
+        tab: TabKey,
     },
     /// A central-region identity does not name a tabs leaf.
     #[error("root {root} central node {central:?} is not a tabs leaf")]
@@ -761,10 +769,16 @@ fn validate_nodes(
                     return Err(CanonicalizationError::InvalidTabMru { node: node_id });
                 }
 
-                for item in items {
-                    if let Some(first) = item_owners.insert(*item, node_id) {
+                for tab in items {
+                    let item = tab
+                        .item()
+                        .ok_or(CanonicalizationError::UnsupportedLayoutTab {
+                            node: node_id,
+                            tab: *tab,
+                        })?;
+                    if let Some(first) = item_owners.insert(item, node_id) {
                         return Err(CanonicalizationError::DuplicateItem {
-                            item: *item,
+                            item,
                             first,
                             second: node_id,
                         });
@@ -1075,7 +1089,7 @@ mod tests {
         let original = builder.draft().clone();
         let error = CanonicalizationError::InvalidSelection {
             node: leaf,
-            selected: Some(ItemId::new(2)),
+            selected: Some(TabKey::for_item(ItemId::new(2))),
         };
 
         structural_work::reset();

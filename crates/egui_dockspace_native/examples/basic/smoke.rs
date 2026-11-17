@@ -25,7 +25,7 @@ const NATIVE_RESTORE_ITEMS: [ItemId; 2] = [INSPECTOR, ASSETS];
 struct SavedTabs {
     item: ItemId,
     items: Vec<ItemId>,
-    selected: Option<ItemId>,
+    selected: Option<TabKey>,
 }
 
 #[derive(Clone, Copy)]
@@ -479,7 +479,7 @@ impl EditorSmoke {
                     view.item(INSPECTOR).is_some_and(|pane| {
                         pane.item() == INSPECTOR
                             && pane.is_selected()
-                            && pane.tabs().items().contains(&EDITOR)
+                            && pane.tabs().items().any(|item| item == EDITOR)
                     })
                 });
                 if !centered {
@@ -597,10 +597,10 @@ impl EditorSmoke {
                         status,
                         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                             DockspaceActionOutcome::Selected {
-                                item: EDITOR,
+                                tab,
                                 changed: true
                             }
-                        ))
+                        )) if tab == TabKey::for_item(EDITOR)
                     ) || !app.dockspace.arrangement_locked()
                         || !app.dockspace.with_view(|view| {
                             view.item(EDITOR).is_some_and(|pane| pane.is_selected())
@@ -678,11 +678,11 @@ impl EditorSmoke {
                 self.check_text(app)?;
                 let default_panes = app.dockspace.with_view(|view| {
                     view.item(EDITOR).is_some_and(|pane| {
-                        pane.is_selected() && pane.tabs().items() == [EDITOR, HISTORY, PROFILER]
+                        pane.is_selected() && pane.tabs().items().eq([EDITOR, HISTORY, PROFILER])
                     }) && view.item(INSPECTOR).is_some_and(|pane| {
                         pane.is_selected()
                             && pane.contained().is_some()
-                            && pane.tabs().items() == [PREVIEW, INSPECTOR]
+                            && pane.tabs().items().eq([PREVIEW, INSPECTOR])
                     })
                 });
                 if !app.all_root_profile() || !default_panes {
@@ -706,8 +706,8 @@ impl EditorSmoke {
                     if !matches!(
                         status,
                         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-                            DockspaceActionOutcome::Selected { item: EDITOR, .. }
-                        ))
+                            DockspaceActionOutcome::Selected { tab, .. }
+                        )) if tab == TabKey::for_item(EDITOR)
                     ) {
                         return Err(format!("Document select after Default failed: {status:?}"));
                     }
@@ -818,10 +818,10 @@ impl EditorSmoke {
                         status,
                         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                             DockspaceActionOutcome::Selected {
-                                item: INSPECTOR,
+                                tab,
                                 ..
                             }
-                        ))
+                        )) if tab == TabKey::for_item(INSPECTOR)
                     ) {
                         return Err(format!("Inspector select after reload failed: {status:?}"));
                     }
@@ -1145,7 +1145,7 @@ impl EditorSmoke {
                         let pane = view.item(*item).ok_or("a saved pane disappeared")?;
                         Ok(SavedTabs {
                             item: pane.item(),
-                            items: pane.tabs().items().to_vec(),
+                            items: pane.tabs().items().collect::<Vec<_>>(),
                             selected: pane.tabs().selected(),
                         })
                     })

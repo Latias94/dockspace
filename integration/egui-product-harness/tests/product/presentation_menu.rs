@@ -197,8 +197,14 @@ fn presentation_menu_floats_and_docks_back_with_truthful_native_availability() {
             .item(item)
             .expect("Float preserves every item");
         assert_eq!(location.contained(), Some(floating_id));
-        assert_eq!(location.tabs().items(), &[FIRST, SECOND]);
-        assert_eq!(location.tabs().selected(), Some(FIRST));
+        assert_eq!(
+            location.tabs().items().collect::<Vec<_>>(),
+            &[FIRST, SECOND]
+        );
+        assert_eq!(
+            location.tabs().selected().and_then(|tab| tab.item()),
+            Some(FIRST)
+        );
     }
     assert_eq!(
         surface_ids(&dockspace),
@@ -263,8 +269,14 @@ fn presentation_menu_floats_and_docks_back_with_truthful_native_availability() {
         assert_eq!(location.root(), main.id());
         assert_eq!(location.surface(), SURFACE);
         assert_eq!(location.contained(), None);
-        assert_eq!(location.tabs().items(), &[FIRST, SECOND]);
-        assert_eq!(location.tabs().selected(), Some(FIRST));
+        assert_eq!(
+            location.tabs().items().collect::<Vec<_>>(),
+            &[FIRST, SECOND]
+        );
+        assert_eq!(
+            location.tabs().selected().and_then(|tab| tab.item()),
+            Some(FIRST)
+        );
     }
     assert_eq!(
         surface_ids(&dockspace),

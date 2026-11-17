@@ -3,7 +3,7 @@
 use super::{SurfacePointerId, WorkspaceVersion};
 use crate::engine::event::ReductionCause;
 use crate::geometry::LogicalPoint;
-use crate::ids::{ItemId, RootId, SurfaceId};
+use crate::ids::{ItemId, RootId, SurfaceId, TabKey};
 
 /// One core-owned touch arbitration or context-menu event.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -41,7 +41,7 @@ pub struct DockspaceContextMenuRequest {
     pointer: SurfacePointerId,
     surface: SurfaceId,
     root: RootId,
-    item: Option<ItemId>,
+    tab: Option<TabKey>,
     position: LogicalPoint,
 }
 
@@ -52,7 +52,7 @@ impl DockspaceContextMenuRequest {
         pointer: SurfacePointerId,
         surface: SurfaceId,
         root: RootId,
-        item: Option<ItemId>,
+        tab: Option<TabKey>,
         position: LogicalPoint,
     ) -> Self {
         Self {
@@ -61,7 +61,7 @@ impl DockspaceContextMenuRequest {
             pointer,
             surface,
             root,
-            item,
+            tab,
             position,
         }
     }
@@ -90,10 +90,19 @@ impl DockspaceContextMenuRequest {
         self.root
     }
 
-    /// Returns the targeted item, when the request names one.
+    /// Returns the targeted direct child, when the menu names one tab.
+    #[must_use]
+    pub const fn tab(self) -> Option<TabKey> {
+        self.tab
+    }
+
+    /// Returns real application content when the targeted tab contains one.
     #[must_use]
     pub const fn item(self) -> Option<ItemId> {
-        self.item
+        match self.tab {
+            Some(tab) => tab.item(),
+            None => None,
+        }
     }
 
     /// Returns the logical surface position at which the menu was requested.

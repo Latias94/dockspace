@@ -134,7 +134,7 @@ fn mixed_full_identities_and_junction_arms_match_record_sort_bitwise() {
     let tab = TabSceneId {
         root,
         tabs,
-        item: ItemId::new(3),
+        tab: (ItemId::new(3)).into(),
     };
     let menu = TabListMenuSessionId::new_for_test(TabStripStateKey::new(surface, bar), 1);
     let floating = FloatingPresentationId::new(4);

@@ -225,7 +225,7 @@ impl DockEngine {
     pub(super) fn advance_selection_revision(
         &mut self,
         input: InputSequence,
-        source: &crate::graph::command::ItemSource,
+        source: &crate::graph::command::TabSource,
     ) -> Result<(), EngineError> {
         self.presentation_authority.selection_rebind = None;
         let revision = self
@@ -235,7 +235,8 @@ impl DockEngine {
             .ok_or(EngineError::WorkspaceRevisionExhausted { input })?;
         self.version = WorkspaceVersion::new(self.version.epoch(), revision);
         self.reconcile_close_scopes();
-        let eligible = self.viewport.native_create_sagas().next().is_none()
+        let eligible = source.tab().item().is_some()
+            && self.viewport.native_create_sagas().next().is_none()
             && self.surface_recovery.is_empty()
             && self.bound_surface_recoveries.is_empty()
             && self.presentation_requirements().config()
@@ -346,7 +347,7 @@ impl DockEngine {
     pub(super) fn advance_selection_revision_caused(
         &mut self,
         cause: ReductionCause,
-        source: &crate::graph::command::ItemSource,
+        source: &crate::graph::command::TabSource,
     ) -> Result<(), EngineError> {
         self.advance_selection_revision(self.last_input, source)
             .map_err(|source| EngineError::PointerInteractionInvariant {
@@ -765,7 +766,7 @@ impl DockEngine {
                     match workspace.node(bar.tabs) {
                         Some(Node::Tabs { .. }) => Some((
                             TabStripStateKey::new(surface, bar),
-                            workspace.visible_tab_items(bar.tabs),
+                            workspace.visible_tab_keys(bar.tabs),
                         )),
                         Some(Node::Split { .. }) | None => None,
                     }

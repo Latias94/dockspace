@@ -76,6 +76,6 @@ impl DockEngine {
     }
 
     fn replacement_selected_item(&self, tabs: crate::ids::NodeId) -> Option<ItemId> {
-        self.workspace.visible_tab_selection(tabs)
+        self.workspace.first_active_item(tabs)
     }
 }

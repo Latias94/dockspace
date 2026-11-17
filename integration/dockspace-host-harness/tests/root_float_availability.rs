@@ -160,8 +160,14 @@ fn cross_surface_contained_root_float_query_is_ready_and_executes() {
     assert_eq!(contained.id(), FLOATING);
     assert_eq!(contained.root().unwrap().id(), GROUP_ROOT);
     let tabs = contained.root().unwrap().content().unwrap().tabs().unwrap();
-    assert_eq!(tabs.items(), &[GROUP_FIRST, GROUP_SECOND]);
-    assert_eq!(tabs.selected(), Some(GROUP_SECOND));
+    assert_eq!(
+        tabs.items().collect::<Vec<_>>(),
+        &[GROUP_FIRST, GROUP_SECOND]
+    );
+    assert_eq!(
+        tabs.selected().and_then(|tab| tab.item()),
+        Some(GROUP_SECOND)
+    );
     for item in [GROUP_FIRST, GROUP_SECOND] {
         let location = session.view().item(item).unwrap();
         assert_eq!(location.surface(), B);

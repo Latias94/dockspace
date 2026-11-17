@@ -34,7 +34,7 @@ fn assert_items(native: &NativeCoordinator) {
             let mut pending = vec![root.content().unwrap()];
             while let Some(node) = pending.pop() {
                 if let Some(tabs) = node.tabs() {
-                    for &item in tabs.items() {
+                    for item in tabs.items() {
                         items.push(item);
                         let location = view.item(item).unwrap();
                         assert_eq!(location.surface(), surface.id());

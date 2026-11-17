@@ -120,8 +120,8 @@ fn resolved_center_keeps_the_presented_target_when_its_future_rect_covers_a_neig
     else {
         panic!("the committed destination remains C's tabs leaf");
     };
-    assert_eq!(items.as_slice(), &[C, A]);
-    assert_eq!(*selected, Some(A));
+    assert_eq!(items.as_slice(), &[C, A].map(TabKey::for_item));
+    assert_eq!(*selected, Some(A.into()));
     assert_eq!(feedback.selected_item(), Some(C));
 }
 
@@ -163,8 +163,8 @@ fn tab_gap_neighbors_exclude_the_payload_and_preserve_the_pre_removal_index() {
             feedback.action(),
             DockspaceDropAction::InsertTab {
                 index,
-                previous,
-                next
+                previous: previous.map(TabKey::for_item),
+                next: next.map(TabKey::for_item),
             },
             "source={source:?}, pre-removal index={index}",
         );
@@ -224,8 +224,8 @@ fn tab_gap_neighbors_skip_hidden_members_without_renumbering_durable_positions()
                     feedback.action(),
                     DockspaceDropAction::InsertTab {
                         index,
-                        previous,
-                        next,
+                        previous: previous.map(TabKey::for_item),
+                        next: next.map(TabKey::for_item),
                     },
                     "items={items:?}, payload={source:?}, durable index={index}"
                 );
@@ -277,8 +277,8 @@ fn tab_gap_feedback_excludes_same_leaf_groups_and_retains_external_groups() {
                     feedback.action(),
                     DockspaceDropAction::InsertTab {
                         index,
-                        previous: previous.filter(|_| !overlaps),
-                        next: next.filter(|_| !overlaps),
+                        previous: previous.filter(|_| !overlaps).map(TabKey::for_item),
+                        next: next.filter(|_| !overlaps).map(TabKey::for_item),
                     },
                     "payload={payload:?}, durable index={index}"
                 );
@@ -310,7 +310,11 @@ fn hidden_bars_keep_their_selected_target_and_empty_central_has_no_representativ
         .ready_candidate(SURFACE)
         .unwrap()
         .plan();
-    assert!(plan.tab_records().iter().all(|tab| tab.id().item != C));
+    assert!(
+        plan.tab_records()
+            .iter()
+            .all(|tab| tab.id().tab != C.into())
+    );
     for (tabs, selected) in [(hidden, Some(C)), (central, None)] {
         let feedback = resolve(
             plan,
@@ -477,7 +481,7 @@ fn paint_feedback_reads_presented_bounds_and_shapes_hidden_target_titles() {
             .plan()
             .tab_records()
             .iter()
-            .find(|tab| tab.id().item == A)
+            .find(|tab| tab.id().tab == A.into())
             .unwrap()
             .drag_hit()
             .rect(),
@@ -529,12 +533,17 @@ fn paint_feedback_reads_presented_bounds_and_shapes_hidden_target_titles() {
         presented_bounds,
         "an unpresented resize cannot replace the actual destination geometry"
     );
-    assert!(plan.plan.tab_records().iter().all(|tab| tab.id().item != C));
+    assert!(
+        plan.plan
+            .tab_records()
+            .iter()
+            .all(|tab| tab.id().tab != C.into())
+    );
     let mut resources = Vec::new();
     plan.visit_tab_resources(|visual, item| resources.push((visual, item)))
         .unwrap();
     assert!(
-        resources.contains(&(feedback.visual_id(), C)),
+        resources.contains(&(feedback.visual_id(), C.into())),
         "the hidden target's label still needs a text resource"
     );
 }
@@ -572,7 +581,7 @@ fn future_group_tabs_visit_resources_for_payload_members_newly_visible_at_the_de
         .tab_records()
         .iter()
         .filter(|tab| tab.id().tabs == source)
-        .map(|tab| tab.id().item)
+        .map(|tab| tab.id().tab)
         .collect::<std::collections::BTreeSet<_>>();
     assert!(
         source_visible.len() < payload.len(),
@@ -619,7 +628,7 @@ fn future_group_tabs_visit_resources_for_payload_members_newly_visible_at_the_de
         .collect::<Vec<_>>();
     let newly_visible = paintable
         .iter()
-        .filter(|tab| tab.is_payload() && !source_visible.contains(&tab.item()))
+        .filter(|tab| tab.is_payload() && !source_visible.contains(&tab.key()))
         .collect::<Vec<_>>();
     assert!(
         !newly_visible.is_empty(),
@@ -630,14 +639,14 @@ fn future_group_tabs_visit_resources_for_payload_members_newly_visible_at_the_de
         .unwrap();
     for tab in paintable {
         assert!(
-            resources.contains(&(feedback.visual_id(), tab.item())),
+            resources.contains(&(feedback.visual_id(), tab.key())),
             "every future paintable tab needs a resource visit: {:?}",
-            tab.item()
+            tab.key()
         );
     }
     for item in payload {
         assert!(
-            resources.contains(&(feedback.visual_id(), item)),
+            resources.contains(&(feedback.visual_id(), item.into())),
             "the complete future payload must remain enumerable: {item:?}"
         );
     }

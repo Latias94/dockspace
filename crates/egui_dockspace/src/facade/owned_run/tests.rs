@@ -337,8 +337,7 @@ fn discarded_focus_keeps_the_core_request_without_reapplying_framework_focus() {
     let selected = dockspace.select_item_current(SECOND).unwrap();
     assert!(matches!(
         selected.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: SECOND, .. })
-    ));
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(SECOND)));
     let request = dockspace.session.pane_focus_request(SURFACE).unwrap();
     let (mut output, receipt) = crate::run_ui(&context, input(1.0, Vec::new()), |ui| {
         if ui.ctx().current_pass_index() < 2 {
@@ -374,8 +373,7 @@ fn discarded_focus_keeps_the_core_request_without_reapplying_framework_focus() {
     let selected = dockspace.select_item_current(SECOND).unwrap();
     assert!(matches!(
         selected.status(),
-        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: SECOND, .. })
-    ));
+        DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(SECOND)));
     assert_ne!(dockspace.session.pane_focus_request(SURFACE), Some(request));
     for time in [1.3, 1.4] {
         let (output, _) = dockspace
@@ -1081,10 +1079,9 @@ fn a_pending_pane_focus_request_does_not_steal_focus_from_an_application_modal()
             assert!(matches!(
                 selected.status(),
                 DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
-                    item: FIRST,
+                    tab: selected_tab,
                     ..
-                })
-            ));
+                }) if selected_tab.item() == Some(FIRST)));
         }
         let events = if pass == 6 {
             vec![Event::Text("modal input".to_owned())]

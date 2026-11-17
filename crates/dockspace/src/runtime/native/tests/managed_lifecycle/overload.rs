@@ -986,11 +986,23 @@ fn overload_cancel_preserves_delivered_drag_release_and_its_successor_output() {
             .unwrap();
         let report = frame.commit().unwrap();
         assert_eq!(
-            session.view().item(ITEM).unwrap().tabs().items(),
+            session
+                .view()
+                .item(ITEM)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[ItemId::new(3), ITEM]
         );
         assert_eq!(
-            session.view().item(SECOND_ITEM).unwrap().tabs().items(),
+            session
+                .view()
+                .item(SECOND_ITEM)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[SECOND_ITEM]
         );
         assert_delivered_release_survives_reset(

@@ -31,7 +31,7 @@ use crate::persistence::placement::{
     ViewportPlacementRestoreError, ViewportPlacementSnapshot,
 };
 use crate::persistence::snapshot::{
-    SnapshotCaptureError, SnapshotNode, SnapshotRestoreError, WorkspaceSnapshot,
+    SnapshotCaptureError, SnapshotNode, SnapshotRestoreError, SnapshotTabKey, WorkspaceSnapshot,
 };
 use crate::platform::registry::ViewportAdmission;
 use crate::platform::viewport::ViewportRole;
@@ -1150,6 +1150,7 @@ fn snapshot_item_ids(snapshot: &WorkspaceSnapshot) -> BTreeSet<ItemId> {
             SnapshotNode::Split { .. } => None,
         })
         .flatten()
+        .filter_map(SnapshotTabKey::item)
         .map(ItemId::new)
         .collect()
 }

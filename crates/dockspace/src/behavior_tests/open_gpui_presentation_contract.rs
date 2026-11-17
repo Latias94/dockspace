@@ -1,4 +1,5 @@
 use super::support;
+use crate::ids::TabKey;
 
 use dockspace::engine::transition::{EngineTransition, InputOutcome};
 use dockspace::engine::{CoreHostFrame, DockEngine, EngineInput};
@@ -474,7 +475,10 @@ fn narrow_three_tab_strip_publishes_only_operable_tabs_and_stable_gap_indices() 
         assert!(tab.text_bounds().x() >= tab.visible_bounds().x());
         assert!(tab.text_bounds().max().x() <= tab.visible_bounds().max().x());
     }
-    assert_eq!(automatic.tab_bar_records()[0].hidden_items(), &[first]);
+    assert_eq!(
+        automatic.tab_bar_records()[0].hidden_tabs(),
+        &[TabKey::for_item(first)]
+    );
     assert_eq!(
         automatic
             .tab_records()
@@ -1135,7 +1139,7 @@ fn structural_records_are_stable_unique_and_keep_final_accessibility_state() {
             .tab_records()
             .iter()
             .filter(|tab| first_plan.tab_selected(tab))
-            .map(|tab| tab.id().item)
+            .filter_map(|tab| tab.id().tab.item())
             .collect::<Vec<_>>(),
         vec![selected, right_item],
         "each tabs node carries its final selected item"
@@ -1197,9 +1201,11 @@ fn visible_items(ready: &PresentationPlan, tabs: NodeId) -> Vec<ItemId> {
         .iter()
         .filter_map(|tab| {
             let TabSceneId {
-                tabs: owner, item, ..
+                tabs: owner,
+                tab: item,
+                ..
             } = *tab.id();
-            (owner == tabs).then_some(item)
+            (owner == tabs).then(|| item.item()).flatten()
         })
         .collect()
 }

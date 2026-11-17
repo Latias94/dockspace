@@ -261,8 +261,18 @@ impl Fixture {
                 (HOST, ROOT, None)
             );
         }
-        assert_eq!(view.item(MOVED).unwrap().tabs().items(), &[RETAINED, MOVED]);
-        assert_eq!(view.item(MOVED).unwrap().tabs().selected(), Some(MOVED));
+        assert_eq!(
+            view.item(MOVED).unwrap().tabs().items().collect::<Vec<_>>(),
+            &[RETAINED, MOVED]
+        );
+        assert_eq!(
+            view.item(MOVED)
+                .unwrap()
+                .tabs()
+                .selected()
+                .and_then(|tab| tab.item()),
+            Some(MOVED)
+        );
     }
 
     fn observe(
@@ -396,7 +406,7 @@ fn paint(
             operation: SurfacePaintProgramOperation::Tab(record),
             ..
         } = step
-            && record.item() == MOVED
+            && record.item() == Some(MOVED)
         {
             tab = plan.receiver_for_tab_body(record);
         }

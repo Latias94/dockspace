@@ -83,7 +83,13 @@ fn redock(context: &Context, dockspace: &mut Dockspace, floating: &FullOutput) {
     assert!(!dockspace.has_active_gesture());
     assert!(dockspace.view().item(FIRST).unwrap().contained().is_none());
     assert_eq!(
-        dockspace.view().item(FIRST).unwrap().tabs().items(),
+        dockspace
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[SECOND, FIRST]
     );
 }

@@ -643,7 +643,7 @@ fn compile_root(
                 items: persistent_items,
                 ..
             } => {
-                let items = workspace.visible_tab_items(*node);
+                let items = workspace.visible_tab_keys(*node);
                 let selected = workspace.visible_tab_selection(*node);
                 let depth = *node_depths
                     .get(node)

@@ -9,7 +9,7 @@ use crate::graph::transaction::WorkspaceTransaction;
 use crate::graph::workspace::WorkspaceIndex;
 use crate::graph::{Axis, ContainedFloating, Node, RootRecord, SurfacePresentation, Workspace};
 use crate::ids::{
-    EngineAuthorityDomainId, FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId,
+    EngineAuthorityDomainId, FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey,
 };
 use crate::interaction::targeting::resolver::{
     DropResolution, ResolvedDrop, resolve_presented_drop,
@@ -254,18 +254,22 @@ fn assert_future_tabs_match_committed(
             .tabs
             .iter()
             .filter(|tab| tab.payload)
-            .map(|tab| tab.item)
+            .map(|tab| tab.key)
             .collect::<Vec<_>>(),
-        payload,
+        payload
+            .iter()
+            .copied()
+            .map(TabKey::for_item)
+            .collect::<Vec<_>>(),
     );
     for (future, member) in future.tabs.iter().zip(bar.members()) {
-        assert_eq!(future.item, member.tab().item);
+        assert_eq!(future.key, member.tab().tab);
         assert_eq!(future.ordinal, member.ordinal());
         assert_eq!(future.full_bounds, member.full_bounds());
         assert_eq!(future.clip_bounds, bar.viewport());
         assert_eq!(
             future.selected,
-            committed.selected_in_tabs(target) == Some(future.item)
+            committed.selected_in_tabs(target) == Some(future.key)
         );
         let visible = committed
             .tab_records()
@@ -505,7 +509,10 @@ fn future_split_preserves_an_unchanged_revealed_single_sibling() {
             .iter()
             .any(|bar| bar.id().tabs == sibling)
     );
-    assert_eq!(states.revealed_single_item(sibling_key), Some(revealed));
+    assert_eq!(
+        states.revealed_single_tab(sibling_key),
+        Some(revealed.into())
+    );
     let moved_pane = committed
         .pane_records()
         .iter()
@@ -734,7 +741,7 @@ fn check_after_tabs_preview(tail_scrolled: bool) {
     let inserted = bar
         .members()
         .iter()
-        .find(|member| member.tab().item == MOVED)
+        .find(|member| member.tab().tab == MOVED.into())
         .unwrap()
         .full_bounds();
     let marker_width = config.splitter_thickness().min(bar.viewport().width());
@@ -821,12 +828,12 @@ fn center_and_gap_merges_project_every_payload_title_after_the_source_pane_disap
             ]
         };
         assert_eq!(
-            future.tabs.iter().map(|tab| tab.item).collect::<Vec<_>>(),
-            expected
+            future.tabs.iter().map(|tab| tab.key).collect::<Vec<_>>(),
+            expected.map(TabKey::for_item)
         );
         assert_eq!(
-            future.tabs.iter().find(|tab| tab.selected).unwrap().item,
-            ItemId::new(2)
+            future.tabs.iter().find(|tab| tab.selected).unwrap().key,
+            TabKey::for_item(ItemId::new(2))
         );
     }
 }
@@ -868,9 +875,9 @@ fn same_strip_gap_preview_removes_the_source_before_computing_future_order() {
             .unwrap()
             .tabs
             .iter()
-            .map(|tab| tab.item)
+            .map(|tab| tab.key)
             .collect::<Vec<_>>(),
-        [ItemId::new(2), MOVED, ItemId::new(3)]
+        [ItemId::new(2), MOVED, ItemId::new(3)].map(TabKey::for_item)
     );
 }
 

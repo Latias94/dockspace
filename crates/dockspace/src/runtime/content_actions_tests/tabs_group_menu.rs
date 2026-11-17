@@ -45,7 +45,7 @@ fn menu_action(session: &mut DockspaceSession, whole_root: bool) -> PreparedSurf
     } else {
         let bar = plan
             .tab_bars()
-            .find(|bar| bar.members().any(|member| member.item() == FIRST))
+            .find(|bar| bar.members().any(|member| member.item() == Some(FIRST)))
             .unwrap();
         assert!(plan.tabs_group_menu_operable(bar));
         plan.tabs_group_command(bar, DockspaceTabsGroupCommandKind::Float)
@@ -73,7 +73,7 @@ fn group_and_root_menu_float_commands_preserve_their_distinct_payloads() {
         assert_eq!(first.contained(), view.item(SECOND).unwrap().contained());
         assert_eq!(view.item(THIRD).unwrap().contained().is_some(), whole_root);
         assert_eq!(view.item(FOURTH).unwrap().contained().is_some(), whole_root);
-        assert_eq!(first.tabs().items(), &[FIRST, SECOND]);
+        assert_eq!(first.tabs().items().collect::<Vec<_>>(), &[FIRST, SECOND]);
     }
 }
 

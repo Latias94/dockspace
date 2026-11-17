@@ -259,7 +259,11 @@ fn paint(frame: &mut NativeHostFrame<'_>) -> Scene {
             } = step
                 && let Some(receiver) = plan.receiver_for_tab_body(tab)
             {
-                tabs.push((tab.item(), receiver, tab.visible_bounds()));
+                tabs.push((
+                    tab.item().expect("fixture tabs contain application items"),
+                    receiver,
+                    tab.visible_bounds(),
+                ));
             }
             Ok::<(), ()>(())
         })
@@ -428,7 +432,10 @@ fn accepted_release(
             assert!(!state.coordinator.session().has_active_gesture());
             assert!(!state.coordinator.session().has_pending_presentation());
             let view = state.coordinator.session().view();
-            assert_eq!(view.item(FIRST).unwrap().tabs().items(), [SECOND, FIRST]);
+            assert_eq!(
+                view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>(),
+                [SECOND, FIRST]
+            );
             assert_eq!(view.item(FIRST).unwrap().surface(), SOURCE);
             return (terminal, output);
         }
@@ -725,7 +732,10 @@ fn elapsed_service_refill_preserves_release_close_and_ready_bootstrap_owners() {
         for item in [FIRST, SECOND] {
             assert_eq!(view.item(item).unwrap().surface(), SOURCE);
         }
-        assert_eq!(view.item(FIRST).unwrap().tabs().items(), [SECOND, FIRST]);
+        assert_eq!(
+            view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>(),
+            [SECOND, FIRST]
+        );
         assert_eq!(view.item(WAITING_ITEM).unwrap().surface(), WAITING);
         bridge.with_close_control(|control| {
             assert_eq!(control.request_for_binding(root), Some(close));
@@ -762,7 +772,10 @@ fn elapsed_service_refill_preserves_release_close_and_ready_bootstrap_owners() {
         captured_before_refill + (INPUT_TURNS * CADENCE_RECORDS) as u64,
     );
     let view = state.coordinator.session().view();
-    assert_eq!(view.item(FIRST).unwrap().tabs().items(), [SECOND, FIRST]);
+    assert_eq!(
+        view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>(),
+        [SECOND, FIRST]
+    );
     assert_eq!(bridge.input_backlog_for_test(), (0, None));
     assert!(!bridge.callback_boundary_pending());
     assert!(!state.coordinator.session().has_pending_native_input());

@@ -230,9 +230,11 @@ fn render(frame: &mut DockspaceHostFrame<'_>, width: f64) -> Scene {
                 operation: Operation::Tab(tab),
                 ..
             } => {
-                if let Some(receiver) = plan.receiver_for_tab_body(tab) {
+                if let Some(item) = tab.item()
+                    && let Some(receiver) = plan.receiver_for_tab_body(tab)
+                {
                     tabs.push(Tab {
-                        item: tab.item(),
+                        item,
                         receiver,
                         visible: tab.visible_bounds(),
                     });
@@ -509,7 +511,13 @@ fn reduce(session: &mut DockspaceSession, scene: &Scene) -> HostFrameReport {
 }
 
 fn order(session: &DockspaceSession) -> Vec<ItemId> {
-    session.view().item(FIRST).unwrap().tabs().items().to_vec()
+    session
+        .view()
+        .item(FIRST)
+        .unwrap()
+        .tabs()
+        .items()
+        .collect::<Vec<_>>()
 }
 
 fn selections(report: &HostFrameReport) -> Vec<ItemId> {
@@ -518,9 +526,9 @@ fn selections(report: &HostFrameReport) -> Vec<ItemId> {
         .iter()
         .filter_map(|outcome| match outcome {
             HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                item,
+                tab,
                 changed: true,
-            }) => Some(*item),
+            }) => tab.item(),
             _ => None,
         })
         .collect()

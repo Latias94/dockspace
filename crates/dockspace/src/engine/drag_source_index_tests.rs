@@ -319,7 +319,7 @@ fn published_workspace_before_revision_uses_live_drag_source_validation() {
         .capture_item_source(fixture.root, fixture.tabs, ItemId::new(2))
         .unwrap();
     crate::graph::transaction::WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source,
+        source: source.as_tab_source(),
     }])
     .apply(&mut candidate, &engine.policy)
     .unwrap();

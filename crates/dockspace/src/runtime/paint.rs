@@ -6,7 +6,9 @@ use std::fmt;
 use crate::engine::SurfaceContributionToken;
 use crate::geometry::{LogicalPoint, LogicalRect, LogicalSize, PhysicalRect};
 use crate::graph::Axis;
-use crate::ids::{FloatingPresentationId, HostPresentationAttemptId, ItemId, RootId, SurfaceId};
+use crate::ids::{
+    FloatingPresentationId, HostPresentationAttemptId, ItemId, RootId, SurfaceId, TabKey,
+};
 use crate::interaction::targeting::guide::DropGuideClusterId;
 use crate::interaction::targeting::resolver::DropAffordance;
 use crate::interaction::targeting::targets::{DropTargetId, SceneLayerKey};
@@ -1632,7 +1634,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
     /// Invalid programs are rejected before the visitor receives any request.
     pub fn visit_tab_resources(
         &self,
-        mut visitor: impl FnMut(DockspaceVisualId, ItemId),
+        mut visitor: impl FnMut(DockspaceVisualId, TabKey),
     ) -> Result<(), DockspaceRuntimeError> {
         if !self.program_valid {
             return Err(DockspaceRuntimeError::surface_program_invariant(
@@ -1647,13 +1649,13 @@ impl<'frame> SurfacePaintPlan<'frame> {
                         ..
                     } => visitor(
                         DockspaceVisualId(VisualIdentity::Tab(*record.id())),
-                        record.id().item,
+                        record.id().tab,
                     ),
                     ResolvedSurfaceProgramStep::PopupMenu(menu) => {
                         for row in menu.rows() {
                             visitor(
                                 DockspaceVisualId(VisualIdentity::Tab(row.tab())),
-                                row.tab().item,
+                                row.tab().tab,
                             );
                         }
                     }
@@ -1661,7 +1663,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
                         if let Some(decoration) = self.drag_decoration()
                             && let Some(item) = decoration.ghost_item()
                         {
-                            visitor(decoration.source_visual(), item);
+                            visitor(decoration.source_visual(), TabKey::for_item(item));
                         }
                     }
                     ResolvedSurfaceProgramStep::DragPreview => {
@@ -1674,14 +1676,14 @@ impl<'frame> SurfacePaintPlan<'frame> {
                                 }
                                 _ => (None, None),
                             };
-                            for item in [target.selected_item(), previous, next]
+                            for item in [target.selected_tab(), previous, next]
                                 .into_iter()
                                 .flatten()
                             {
                                 visitor(target.visual_id(), item);
                             }
                             for tab in preview.tabs() {
-                                visitor(target.visual_id(), tab.item());
+                                visitor(target.visual_id(), tab.key());
                             }
                         }
                     }
@@ -1974,7 +1976,10 @@ impl<'frame> SurfacePaintPlan<'frame> {
                 })
             }
             ResolvedSurfaceProgramOperation::TabBar(record) => {
-                SurfacePaintProgramOperation::TabBar(TabBarPaintRecord { record })
+                SurfacePaintProgramOperation::TabBar(TabBarPaintRecord {
+                    record,
+                    selected: self.plan.selected_in_tabs(record.id().tabs),
+                })
             }
             ResolvedSurfaceProgramOperation::Tab(record) => {
                 SurfacePaintProgramOperation::Tab(TabPaintRecord {
@@ -2245,8 +2250,11 @@ impl<'frame> SurfacePaintPlan<'frame> {
     /// Activation requests the selected pane's content focus. Use
     /// [`Self::prepare_tab_navigation`] to preserve framework tab focus instead.
     #[must_use]
-    pub fn prepare_tab_select(self, item: ItemId) -> Option<super::PreparedSurfaceAction> {
-        let tab = self.tab_record(item)?;
+    pub fn prepare_tab_select(
+        self,
+        item: impl Into<TabKey>,
+    ) -> Option<super::PreparedSurfaceAction> {
+        let tab = self.tab_record(item.into())?;
         self.tab_is_operable(tab).then_some(())?;
         Some(super::PreparedSurfaceAction::select_tab(
             self.authority_domain,
@@ -2262,8 +2270,11 @@ impl<'frame> SurfacePaintPlan<'frame> {
 
     /// Prepares a close request for one visible tab close control.
     #[must_use]
-    pub fn prepare_tab_close(self, item: ItemId) -> Option<super::PreparedSurfaceAction> {
-        let tab = self.tab_record(item)?;
+    pub fn prepare_tab_close(
+        self,
+        item: impl Into<TabKey>,
+    ) -> Option<super::PreparedSurfaceAction> {
+        let tab = self.tab_record(item.into())?;
         let close_bounds = tab.close_bounds()?;
         self.plan
             .region_is_operable(close_bounds, tab.layer())
@@ -2284,10 +2295,15 @@ impl<'frame> SurfacePaintPlan<'frame> {
     /// the item's close policy must allow the ordinary close-decision workflow.
     /// This does not grant authority to activate a missing close button.
     #[must_use]
-    pub fn prepare_tab_body_close(self, item: ItemId) -> Option<super::PreparedSurfaceAction> {
-        let tab = self.tab_record(item)?;
+    pub fn prepare_tab_body_close(
+        self,
+        item: impl Into<TabKey>,
+    ) -> Option<super::PreparedSurfaceAction> {
+        let tab = self.tab_record(item.into())?;
         self.tab_is_operable(tab).then_some(())?;
-        self.candidate.item_close_is_available(item).then_some(())?;
+        self.candidate
+            .item_close_is_available(tab.id().tab.item()?)
+            .then_some(())?;
         Some(super::PreparedSurfaceAction::close(
             self.authority_domain,
             self.version,
@@ -2367,7 +2383,10 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self.plan
             .tab_bar_records()
             .iter()
-            .map(|record| TabBarPaintRecord { record })
+            .map(|record| TabBarPaintRecord {
+                record,
+                selected: self.plan.selected_in_tabs(record.id().tabs),
+            })
     }
 
     /// Returns one exact core-selected presentation menu anchor per visible root.
@@ -2486,8 +2505,8 @@ impl<'frame> SurfacePaintPlan<'frame> {
     }
 
     #[must_use]
-    pub fn tab_receiver(&self, item: ItemId) -> Option<DockspaceReceiverDescriptor> {
-        let tab = self.tab_record(item)?;
+    pub fn tab_receiver(&self, item: impl Into<TabKey>) -> Option<DockspaceReceiverDescriptor> {
+        let tab = self.tab_record(item.into())?;
         self.tab_is_operable(tab).then_some(())?;
         self.receiver(PresentationHitRegionKind::TabBody(*tab.id()))
     }
@@ -2740,7 +2759,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         &self,
         item: ItemId,
     ) -> Option<DockspaceReceiverDescriptor> {
-        let tab = self.tab_record(item)?;
+        let tab = self.tab_record(item.into())?;
         let tab = *tab.id();
         self.receiver(PresentationHitRegionKind::DropTarget(
             DropTargetId::Center {
@@ -2796,11 +2815,11 @@ impl<'frame> SurfacePaintPlan<'frame> {
         })
     }
 
-    fn tab_record(&self, item: ItemId) -> Option<&'frame crate::presentation::scene::TabRecord> {
+    fn tab_record(&self, item: TabKey) -> Option<&'frame crate::presentation::scene::TabRecord> {
         self.plan
             .tab_records()
             .iter()
-            .find(|record| record.id().item == item)
+            .find(|record| record.id().tab == item)
     }
 
     fn tab_is_operable(&self, tab: &crate::presentation::scene::TabRecord) -> bool {
@@ -2939,14 +2958,15 @@ mod tests {
                 SurfacePaintProgramStep::Operation {
                     operation: SurfacePaintProgramOperation::Tab(tab),
                     ..
-                } => expected_resources.push((tab.visual_id(), tab.item())),
+                } => expected_resources.push((tab.visual_id(), tab.key())),
                 SurfacePaintProgramStep::PopupMenu { menu, .. } => {
                     expected_resources
-                        .extend(menu.rows().map(|row| (row.tab_visual_id(), row.item())));
+                        .extend(menu.rows().map(|row| (row.tab_visual_id(), row.key())));
                 }
                 SurfacePaintProgramStep::DragDecoration(decoration) => {
                     if let Some(item) = decoration.ghost_item() {
-                        expected_resources.push((decoration.source_visual(), item));
+                        expected_resources
+                            .push((decoration.source_visual(), TabKey::for_item(item)));
                     }
                 }
                 SurfacePaintProgramStep::DropTarget(target) => {

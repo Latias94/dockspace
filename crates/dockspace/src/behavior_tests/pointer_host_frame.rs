@@ -1,4 +1,5 @@
 use super::support;
+use crate::ids::TabKey;
 
 use std::collections::BTreeSet;
 
@@ -1388,7 +1389,7 @@ fn point_inside_inactive_tab(
         .find(|region| {
             matches!(
                 region.id().kind(),
-                PresentationHitRegionKind::TabBody(tab) if tab.item == ItemId::new(2)
+                PresentationHitRegionKind::TabBody(tab) if tab.tab == TabKey::for_item(ItemId::new(2))
             )
         })
         .expect("inactive tab has an exact delivery region");
@@ -1415,7 +1416,7 @@ fn point_inside_tab(
         .find(|region| {
             matches!(
                 region.id().kind(),
-                PresentationHitRegionKind::TabBody(tab) if tab.item == item
+                PresentationHitRegionKind::TabBody(tab) if tab.tab == TabKey::for_item(item)
             )
         })
         .expect("item has an exact delivery region");
@@ -1439,7 +1440,7 @@ fn point_inside_tab_group(
         .plan()
         .tab_records()
         .iter()
-        .find(|record| record.id().item == item)
+        .find(|record| record.id().tab == TabKey::for_item(item))
         .expect("item has an exact tab record");
     let region = projection
         .hit_manifest()
@@ -1532,7 +1533,7 @@ fn point_inside_tab_close(
         .find(|region| {
             matches!(
                 region.id().kind(),
-                PresentationHitRegionKind::TabClose(tab) if tab.item == item
+                PresentationHitRegionKind::TabClose(tab) if tab.tab == TabKey::for_item(item)
             )
         })
         .expect("closeable tab has an exact delivery region");
@@ -2129,7 +2130,7 @@ fn resolved_journal_preview_cannot_authorize_an_unknown_release_hover() {
     assert_eq!(engine.interaction().status(), InteractionStatus::Idle);
     assert!(matches!(
         engine.workspace().node(target_tabs),
-        Some(Node::Tabs { items, .. }) if items.as_slice() == [ItemId::new(3)]
+        Some(Node::Tabs { items, .. }) if items.as_slice() == [ItemId::new(3)].map(TabKey::for_item)
     ));
     assert_eq!(engine.pending_release_preview(), None);
     assert_eq!(provider.committed_through(), PointerEdgeSequence::new(3));
@@ -2235,7 +2236,7 @@ fn inactive_tab_continuation_preserves_visible_target_authority_then_commits() {
     assert!(matches!(
         engine.workspace().node(target_tabs),
         Some(Node::Tabs { items, .. })
-            if items.as_slice() == [ItemId::new(3), ItemId::new(2)]
+            if items.as_slice() == [ItemId::new(3), ItemId::new(2)].map(TabKey::for_item)
     ));
 }
 
@@ -3896,8 +3897,8 @@ fn presented_journal_preview_preserves_the_active_drag_until_release() {
         engine.workspace().node(target_tabs),
         Some(Node::Tabs { items, .. })
             if items.len() == 2
-                && items.contains(&ItemId::new(1))
-                && items.contains(&ItemId::new(3))
+                && items.contains(&TabKey::for_item(ItemId::new(1)))
+                && items.contains(&TabKey::for_item(ItemId::new(3)))
     ));
 }
 
@@ -4069,7 +4070,7 @@ fn journal_partial_subtree_known_none_uses_core_reserved_contained_identity() {
     assert!(matches!(
         engine.workspace().node(detached_record.node),
         Some(Node::Tabs { items, .. })
-            if items == &[ItemId::new(1), ItemId::new(2)]
+            if items == &[ItemId::new(1), ItemId::new(2)].map(TabKey::for_item)
     ));
     assert_eq!(
         engine.workspace().item_multiset(),
@@ -4275,7 +4276,7 @@ fn journal_partial_payload_installs_core_reserved_root_on_rootless_background() 
         .expect("new main root exists");
     assert!(matches!(
         engine.workspace().node(main.node),
-        Some(Node::Tabs { items, .. }) if items == &[ItemId::new(1)]
+        Some(Node::Tabs { items, .. }) if items == &[ItemId::new(1)].map(TabKey::for_item)
     ));
     let contained = engine
         .workspace()
@@ -4283,7 +4284,7 @@ fn journal_partial_payload_installs_core_reserved_root_on_rootless_background() 
         .expect("source contained root remains");
     assert!(matches!(
         engine.workspace().node(contained.node),
-        Some(Node::Tabs { items, .. }) if items == &[ItemId::new(2)]
+        Some(Node::Tabs { items, .. }) if items == &[ItemId::new(2)].map(TabKey::for_item)
     ));
 }
 
@@ -4891,7 +4892,7 @@ fn surface_local_tab_press_subthreshold_move_release_is_ticket_causal() {
         Some(Node::Tabs {
             selected: Some(item),
             ..
-        }) if *item == ItemId::new(2)
+        }) if *item == TabKey::for_item(ItemId::new(2))
     ));
     let selected = transition
         .events()
@@ -4901,11 +4902,11 @@ fn surface_local_tab_press_subthreshold_move_release_is_ticket_causal() {
                 event.kind(),
                 dockspace::engine::event::WorkspaceEventKind::CommandCommitted(
                     dockspace::graph::command::CommandOutcome::Selected {
-                        item,
+                        tab: item,
                         changed: true,
                         ..
                     }
-                ) if *item == ItemId::new(2)
+                ) if item.item() == Some(ItemId::new(2))
             )
         })
         .expect("selection emits one workspace event");
@@ -4941,7 +4942,7 @@ fn authoritative_tab_list_control_then_row_click_selects_and_closes() {
         matches!(
             kind,
             PresentationHitRegionKind::TabListMenuRow { tab, .. }
-                if tab.item == ItemId::new(2)
+                if tab.tab == TabKey::for_item(ItemId::new(2))
         )
     });
     let before = engine.version();
@@ -4959,7 +4960,7 @@ fn authoritative_tab_list_control_then_row_click_selects_and_closes() {
             tab,
             changed: true,
             ..
-        }] if tab.item == ItemId::new(2)
+        }] if tab.tab == TabKey::for_item(ItemId::new(2))
     ));
     assert_eq!(released.events().len(), 1);
     assert_eq!(
@@ -4979,7 +4980,7 @@ fn authoritative_tab_list_control_then_row_click_selects_and_closes() {
         Some(Node::Tabs {
             selected: Some(item),
             ..
-        }) if *item == ItemId::new(2)
+        }) if *item == TabKey::for_item(ItemId::new(2))
     ));
     commit_empty_pointer_journal(&mut engine, &mut host, provider, 2);
 }
@@ -5004,7 +5005,7 @@ fn tab_list_row_click_survives_same_output_presentation_refresh() {
         matches!(
             kind,
             PresentationHitRegionKind::TabListMenuRow { tab, .. }
-                if tab.item == ItemId::new(2)
+                if tab.tab == TabKey::for_item(ItemId::new(2))
         )
     });
     let before = interaction(&engine);
@@ -5044,7 +5045,7 @@ fn tab_list_row_click_survives_same_output_presentation_refresh() {
             tab,
             changed: true,
             ..
-        }] if tab.item == ItemId::new(2)
+        }] if tab.tab == TabKey::for_item(ItemId::new(2))
     ));
     assert_eq!(engine.interaction().status(), InteractionStatus::Idle);
 }
@@ -5068,7 +5069,7 @@ fn authoritative_selected_menu_row_closes_without_workspace_advance() {
         matches!(
             kind,
             PresentationHitRegionKind::TabListMenuRow { tab, .. }
-                if tab.item == ItemId::new(1)
+                if tab.tab == TabKey::for_item(ItemId::new(1))
         )
     });
     let before = engine.version();
@@ -5081,7 +5082,7 @@ fn authoritative_selected_menu_row_closes_without_workspace_advance() {
             tab,
             changed: false,
             ..
-        }] if tab.item == ItemId::new(1)
+        }] if tab.tab == TabKey::for_item(ItemId::new(1))
     ));
     assert_eq!(engine.version(), before);
     assert!(released.events().is_empty());
@@ -5582,7 +5583,9 @@ fn surface_local_tab_wrong_receiver_region_rejects_atomically() {
         .regions()
         .iter()
         .find_map(|region| match region.id().kind() {
-            PresentationHitRegionKind::TabBody(tab) if tab.item == ItemId::new(1) => {
+            PresentationHitRegionKind::TabBody(tab)
+                if tab.tab == TabKey::for_item(ItemId::new(1)) =>
+            {
                 Some(region.id())
             }
             _ => None,
@@ -6037,7 +6040,7 @@ fn candidate_tab_navigation_uses_the_checked_command_path() {
         .map(|tab| *tab.id())
         .expect("one tab is selected");
     let target = TabSceneId {
-        item: ItemId::new(2),
+        tab: TabKey::for_item(ItemId::new(2)),
         ..current
     };
     let scene = projection.plan_stamp();
@@ -6067,7 +6070,7 @@ fn candidate_tab_navigation_uses_the_checked_command_path() {
         Some(Node::Tabs {
             selected: Some(item),
             ..
-        }) if *item == ItemId::new(2)
+        }) if *item == TabKey::for_item(ItemId::new(2))
     ));
 }
 
@@ -6122,7 +6125,7 @@ fn clipped_menu_row_remains_reachable_through_prepared_navigation() {
         .prepare_tab_list_menu_navigation(
             SURFACE,
             menu,
-            crate::engine::TabListMenuNavigation::Focus(row.tab().item),
+            crate::engine::TabListMenuNavigation::Focus(row.tab().tab),
         )
         .expect("the presented full row roster permits keyboard focus despite pointer clipping");
     frame
@@ -6148,12 +6151,12 @@ fn clipped_menu_row_remains_reachable_through_prepared_navigation() {
         transition.reduced_inputs()[0].outcome(),
         InputOutcome::InteractionProcessed {
             outcome: InteractionOutcome::TabListMenuFocusMoved {
-                item,
+                tab: item,
                 changed: true,
                 ..
             },
             ..
-        } if *item == row.tab().item
+        } if *item == row.tab().tab
     ));
 }
 
@@ -7431,7 +7434,7 @@ fn committed_drag_release_fixture() -> CommittedDragReleaseFixture {
     assert_ne!(engine.workspace(), &before);
     assert!(
         matches!(engine.workspace().node(target_tabs), Some(Node::Tabs { items, .. })
-        if items.as_slice() == [ItemId::new(3), ItemId::new(1)])
+        if items.as_slice() == [ItemId::new(3), ItemId::new(1)].map(TabKey::for_item))
     );
     assert_eq!(engine.version().epoch(), before_version.epoch());
     assert_eq!(
@@ -7782,7 +7785,7 @@ fn new_authoritative_press_preserves_the_already_committed_release() {
     assert_eq!(engine.pending_release_preview(), None);
     assert!(matches!(
         engine.workspace().node(target_tabs),
-        Some(Node::Tabs { items, .. }) if items == &[ItemId::new(3), ItemId::new(1)]
+        Some(Node::Tabs { items, .. }) if items == &[ItemId::new(3), ItemId::new(1)].map(TabKey::for_item)
     ));
     assert!(matches!(
         transition.reduced_pointer_edges()[0].interaction_outcomes(),

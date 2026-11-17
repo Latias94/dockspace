@@ -1,4 +1,5 @@
 use crate::geometry::LogicalRect;
+use crate::ids::TabKey;
 use crate::ids::{FloatingPresentationId, ItemId, RootId, SurfaceId};
 use crate::model::{
     DockspaceAxis, DockspaceContainedLayout, DockspaceLayout, DockspaceLayoutError, DockspaceNode,
@@ -112,8 +113,14 @@ fn product_layout_builds_central_nary_contained_and_rootless_topology() {
         .central()
         .and_then(|node| node.tabs())
         .expect("central tabs must be queryable without a runtime node ID");
-    assert_eq!(central.items(), &[ItemId::new(2), ItemId::new(3)]);
-    assert_eq!(central.selected(), Some(ItemId::new(2)));
+    assert_eq!(
+        central.items().collect::<Vec<_>>(),
+        &[ItemId::new(2), ItemId::new(3)]
+    );
+    assert_eq!(
+        central.selected(),
+        (Some(ItemId::new(2))).map(TabKey::for_item)
+    );
 
     let floating = rooted
         .contained()
@@ -136,7 +143,7 @@ fn product_layout_builds_central_nary_contained_and_rootless_topology() {
         .and_then(|root| root.central())
         .and_then(|node| node.tabs())
         .expect("an empty central leaf remains a valid product view");
-    assert!(empty_central.items().is_empty());
+    assert!(empty_central.items().next().is_none());
     assert_eq!(empty_central.selected(), None);
 }
 

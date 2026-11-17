@@ -56,7 +56,7 @@ fn an_inactive_items_complete_sizing_follows_it_into_a_center_preview_and_commit
     );
     assert_eq!(
         workspace.visible_tab_selection(source),
-        Some(selected_source)
+        Some(selected_source.into())
     );
     assert_eq!(source_plan.pane_records()[0].bounds().width(), 400.0);
     let resolved = resolve_target(
@@ -96,8 +96,8 @@ fn an_inactive_items_complete_sizing_follows_it_into_a_center_preview_and_commit
         .unwrap();
     assert_eq!(pane.content_bounds(), resolved.visual().rect());
     assert_eq!(
-        workspace.visible_tab_items(source).as_ref(),
-        [selected_source]
+        workspace.visible_tab_keys(source).as_ref(),
+        [selected_source.into()]
     );
 }
 

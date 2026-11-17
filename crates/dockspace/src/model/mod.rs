@@ -11,7 +11,7 @@ mod view;
 #[cfg(test)]
 mod visibility_tests;
 
-pub use crate::ids::{FloatingPresentationId, ItemId, RootId, SurfaceId};
+pub use crate::ids::{FloatingPresentationId, ItemId, RootId, SurfaceId, TabKey};
 pub use action::{
     DockAnchor, DockEdge, DockFraction, DockPlacement, DockspaceActionOutcome,
     DockspaceActionRejection, InvalidDockFraction, LogicalSurfaceRejection, NativeTearOffSource,

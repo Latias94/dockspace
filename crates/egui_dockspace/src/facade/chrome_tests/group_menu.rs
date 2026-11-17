@@ -93,7 +93,10 @@ fn group_menu_float_moves_only_that_group() {
     let view = harness.dockspace.view();
     let first = view.item(ItemId::new(1)).unwrap();
     assert!(first.contained().is_some());
-    assert_eq!(first.tabs().items(), &[ItemId::new(1), ItemId::new(2)]);
+    assert_eq!(
+        first.tabs().items().collect::<Vec<_>>(),
+        &[ItemId::new(1), ItemId::new(2)]
+    );
     assert!(view.item(ItemId::new(3)).unwrap().contained().is_none());
     assert!(view.item(ItemId::new(4)).unwrap().contained().is_none());
 }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::geometry::LogicalRect;
 pub use crate::graph::RootReference;
 use crate::graph::{Axis, SplitWeight};
-use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
+use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
 use crate::policy::DockTargetRuleKey;
 
 /// Programmatic request to close one item or one complete root.
@@ -152,10 +152,10 @@ pub(crate) struct NodeFingerprintRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FingerprintNode {
     Tabs {
-        items: Arc<[ItemId]>,
+        items: Arc<[TabKey]>,
         hidden: Vec<ItemId>,
-        selected: Option<ItemId>,
-        mru: Arc<[ItemId]>,
+        selected: Option<TabKey>,
+        mru: Arc<[TabKey]>,
     },
     Split {
         axis: Axis,
@@ -185,6 +185,15 @@ pub struct ItemSource {
 }
 
 impl ItemSource {
+    /// Captures this real content item's direct tab identity against the same owner.
+    pub(crate) fn as_tab_source(&self) -> TabSource {
+        TabSource {
+            root: self.root,
+            tabs: self.tabs,
+            tab: TabKey::for_item(self.item),
+            reference: self.reference.clone(),
+        }
+    }
     /// Returns the source root.
     pub const fn root(&self) -> RootId {
         self.root
@@ -198,6 +207,37 @@ impl ItemSource {
     /// Returns the source item.
     pub const fn item(&self) -> ItemId {
         self.item
+    }
+
+    /// Returns the exact root-owner reference.
+    pub const fn reference(&self) -> &RootReference {
+        &self.reference
+    }
+}
+
+/// A direct tab child frozen against one workspace state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabSource {
+    pub(crate) root: RootId,
+    pub(crate) tabs: NodeId,
+    pub(crate) tab: TabKey,
+    pub(crate) reference: RootReference,
+}
+
+impl TabSource {
+    /// Returns the source root.
+    pub const fn root(&self) -> RootId {
+        self.root
+    }
+
+    /// Returns the owning tabs container.
+    pub const fn tabs(&self) -> NodeId {
+        self.tabs
+    }
+
+    /// Returns the direct child identity.
+    pub const fn tab(&self) -> TabKey {
+        self.tab
     }
 
     /// Returns the exact root-owner reference.
@@ -636,17 +676,17 @@ pub enum RootPresentationTarget {
 /// The sole durable mutation vocabulary for a docking workspace.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WorkspaceCommand {
-    /// Select one item in its current tabs stack.
-    Select { source: ItemSource },
+    /// Select one direct child in its current tabs container.
+    Select { source: TabSource },
     /// Show or hide an owned item while retaining its membership and split weights.
     SetItemVisibility { source: ItemSource, visible: bool },
-    /// Reorder one item to an exact pre-removal gap in the same tabs stack.
+    /// Reorder one direct child to an exact pre-removal gap in the same container.
     #[allow(
         dead_code,
         reason = "Retained internal protocol case is matched by the shared reducer and exercised by protocol tests"
     )]
     Reorder {
-        source: ItemSource,
+        source: TabSource,
         insertion_index: usize,
     },
     /// Open one not-yet-owned item into existing topology.
@@ -803,7 +843,7 @@ impl WorkspaceCommand {
 pub enum CommandOutcome {
     /// Selection was checked and optionally changed.
     Selected {
-        item: ItemId,
+        tab: TabKey,
         tabs: NodeId,
         changed: bool,
     },
@@ -816,7 +856,7 @@ pub enum CommandOutcome {
     },
     /// One tab was checked and optionally reordered.
     Reordered {
-        item: ItemId,
+        tab: TabKey,
         tabs: NodeId,
         from: usize,
         to: usize,

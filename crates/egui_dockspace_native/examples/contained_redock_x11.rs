@@ -26,7 +26,7 @@ mod x11 {
     use dockspace::geometry::LogicalRect;
     use dockspace::model::{
         DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, DockspaceView,
-        FloatingPresentationId, ItemId, RootId, SurfaceId,
+        FloatingPresentationId, ItemId, RootId, SurfaceId, TabKey,
     };
     use dockspace::policy::DockPolicy;
     use dockspace::runtime::DockspaceSession;
@@ -218,12 +218,12 @@ mod x11 {
         Done,
     }
 
-    fn root_tabs<'a>(view: DockspaceView<'a>) -> Option<&'a [ItemId]> {
+    fn root_tabs<'a>(view: DockspaceView<'a>) -> Option<&'a [TabKey]> {
         let root = view.surface(SURFACE)?.main_root()?;
         if root.id() != ROOT {
             return None;
         }
-        Some(root.content()?.tabs()?.items())
+        Some(root.content()?.tabs()?.tabs())
     }
 
     struct RegressionApp {
@@ -333,7 +333,7 @@ mod x11 {
             match self.stage {
                 Stage::Live => {
                     let initial = self.dockspace.with_view(|view| {
-                        root_tabs(view) == Some([FIRST, SECOND].as_slice())
+                        root_tabs(view) == Some([FIRST, SECOND].map(TabKey::for_item).as_slice())
                             && view.surfaces().map(|surface| surface.id()).eq([SURFACE])
                             && view.surface(SURFACE).unwrap().contained_count() == 0
                     });
@@ -348,10 +348,10 @@ mod x11 {
                     let contained = self.dockspace.with_view(|view| {
                         let second = view.item(SECOND)?;
                         let floating = second.contained()?;
-                        assert_eq!(root_tabs(view), Some([FIRST].as_slice()));
+                        assert_eq!(root_tabs(view), Some([TabKey::for_item(FIRST)].as_slice()));
                         assert_eq!(second.surface(), SURFACE);
                         assert_ne!(second.root(), ROOT);
-                        assert_eq!(second.tabs().items(), &[SECOND]);
+                        assert_eq!(second.tabs().items().collect::<Vec<_>>(), &[SECOND]);
                         assert!(second.is_selected());
                         assert_eq!(view.surfaces().count(), 1);
                         assert_eq!(view.surface(SURFACE)?.contained_count(), 1);
@@ -376,7 +376,7 @@ mod x11 {
                 }
                 Stage::Redocked(floating) => {
                     let redocked = self.dockspace.with_view(|view| {
-                        root_tabs(view) == Some([FIRST, SECOND].as_slice())
+                        root_tabs(view) == Some([FIRST, SECOND].map(TabKey::for_item).as_slice())
                             && view.contained(floating).is_none()
                             && view.surface(SURFACE).unwrap().contained_count() == 0
                             && view.surfaces().map(|surface| surface.id()).eq([SURFACE])

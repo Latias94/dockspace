@@ -85,7 +85,7 @@ pub(super) fn select_presentation_menu_tab_bar(
             return Ok(None);
         }
         let items = match workspace.node(tabs) {
-            Some(Node::Tabs { .. }) => workspace.visible_tab_items(tabs),
+            Some(Node::Tabs { .. }) => workspace.visible_tab_keys(tabs),
             Some(Node::Split { .. }) => return Ok(None),
             None => {
                 return Err(SceneCompilationError::MissingNode {
@@ -127,9 +127,9 @@ pub(super) fn compile_tabs_leaf(
     tabs: NodeId,
     depth: usize,
     bounds: LogicalRect,
-    items: &[crate::ids::ItemId],
-    persistent_items: &[crate::ids::ItemId],
-    selected: Option<crate::ids::ItemId>,
+    items: &[crate::ids::TabKey],
+    persistent_items: &[crate::ids::TabKey],
+    selected: Option<crate::ids::TabKey>,
     layer: SceneLayerKey,
     fraction: DockFraction,
     tab_strip_states: &TabStripStateStore,
@@ -285,9 +285,9 @@ fn compile_tab_strip(
     root: RootId,
     tabs: NodeId,
     bar: LogicalRect,
-    items: &[crate::ids::ItemId],
-    persistent_items: &[crate::ids::ItemId],
-    selected: Option<crate::ids::ItemId>,
+    items: &[crate::ids::TabKey],
+    persistent_items: &[crate::ids::TabKey],
+    selected: Option<crate::ids::TabKey>,
     layer: SceneLayerKey,
     tab_strip_states: &TabStripStateStore,
     presentation_menu_anchor: bool,
@@ -322,14 +322,25 @@ fn compile_tab_strip(
     let mut content_widths = Vec::with_capacity(items.len());
     let mut close_allowed = Vec::with_capacity(items.len());
     for item in items.iter().copied() {
-        let key = TabIntrinsicKey::new(surface, TabSceneId { root, tabs, item });
+        let key = TabIntrinsicKey::new(
+            surface,
+            TabSceneId {
+                root,
+                tabs,
+                tab: item,
+            },
+        );
         let intrinsic = measurements
             .measured_tab_intrinsic(key)
             .ok_or(SceneCompilationError::MissingTabIntrinsicMeasurement { key })?;
         let item_close_allowed = requirement
             .close_capability(item)
             .ok_or(SceneCompilationError::MissingTabCloseCapability {
-                id: TabSceneId { root, tabs, item },
+                id: TabSceneId {
+                    root,
+                    tabs,
+                    tab: item,
+                },
             })?
             .allows_close();
         content_widths.push(intrinsic.content_width());
@@ -396,14 +407,22 @@ fn compile_tab_strip(
             Some(_) => TabStripMemberVisibility::PartiallyVisible,
         };
         members.push(TabStripMemberRecord::new(
-            TabSceneId { root, tabs, item },
+            TabSceneId {
+                root,
+                tabs,
+                tab: item,
+            },
             ordinal,
             width,
             full,
             visibility,
         ));
         if let Some(chrome) = operable_tab_chrome(full, viewport, close_allowed, config)? {
-            let id = TabSceneId { root, tabs, item };
+            let id = TabSceneId {
+                root,
+                tabs,
+                tab: item,
+            };
             let drag = if interaction == TabBarInteraction::Enabled {
                 chrome.drag
             } else {
@@ -719,8 +738,8 @@ fn compile_tab_list_menu(
     bar: TabBarSceneId,
     anchor: LogicalRect,
     layer: SceneLayerKey,
-    items: &[crate::ids::ItemId],
-    selected: Option<crate::ids::ItemId>,
+    items: &[crate::ids::TabKey],
+    selected: Option<crate::ids::TabKey>,
     content_widths: &[f64],
     metrics: crate::presentation::manifest::TabListMenuMetrics,
     active_menu: &ActiveTabListMenu,
@@ -730,7 +749,7 @@ fn compile_tab_list_menu(
         return Ok(());
     }
     let key = TabStripStateKey::new(surface, bar);
-    if active_menu.key() != key || active_menu.items() != items {
+    if active_menu.key() != key || active_menu.tabs() != items {
         return Err(SceneCompilationError::TabListMenuRosterMismatch { key });
     }
     let bounds = ready
@@ -835,7 +854,7 @@ fn compile_tab_list_menu(
             TabSceneId {
                 root: bar.root,
                 tabs: bar.tabs,
-                item,
+                tab: item,
             },
             ordinal,
             row,

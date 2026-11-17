@@ -179,7 +179,7 @@ impl DockEngine {
                 };
                 InputOutcome::ProductActionProcessed {
                     outcome: crate::model::DockspaceActionOutcome::Selected {
-                        item: selection.target().item,
+                        tab: selection.target().tab,
                         changed,
                     },
                     version,
@@ -390,7 +390,10 @@ impl DockEngine {
                 .iter()
                 .filter(|pane| pane.id().root == splitter.root)
                 .all(|pane| {
-                    self.workspace.visible_tab_selection(pane.id().tabs) == plan.pane_selected(pane)
+                    self.workspace
+                        .visible_tab_selection(pane.id().tabs)
+                        .and_then(TabKey::item)
+                        == plan.pane_selected(pane)
                 })
         {
             return false;
@@ -484,7 +487,7 @@ impl DockEngine {
                 let Some(tab) = plan
                     .tab_records()
                     .iter()
-                    .find(|record| record.id().item == item)
+                    .find(|record| record.id().tab.item() == Some(item))
                 else {
                     return false;
                 };
@@ -546,10 +549,10 @@ impl DockEngine {
         if !matches!(self.workspace.node(key.bar().tabs), Some(Node::Tabs { .. }))
             || !self
                 .workspace
-                .visible_tab_items(key.bar().tabs)
+                .visible_tab_keys(key.bar().tabs)
                 .iter()
                 .copied()
-                .eq(bar.members().iter().map(|member| member.tab().item))
+                .eq(bar.members().iter().map(|member| member.tab().tab))
         {
             return false;
         }
@@ -578,13 +581,13 @@ impl DockEngine {
                                     .rows()
                                     .iter()
                                     .find(|row| row.focused())
-                                    .map(|row| row.tab().item)
+                                    .map(|row| row.tab().tab)
                                     == Some(active.focus())
                                 && record
                                     .rows()
                                     .iter()
-                                    .map(|row| row.tab().item)
-                                    .eq(active.items().iter().copied())
+                                    .map(|row| row.tab().tab)
+                                    .eq(active.tabs().iter().copied())
                         })
                 }),
         }

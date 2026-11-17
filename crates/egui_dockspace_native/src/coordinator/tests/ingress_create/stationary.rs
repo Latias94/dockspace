@@ -117,7 +117,7 @@ impl Fixture {
                 {
                     assert!(tab.operable());
                     assert_eq!(tab.full_bounds(), tab.visible_bounds());
-                    tabs.push(tab.item());
+                    tabs.push(tab.item().expect("fixture tabs contain application items"));
                 }
                 Ok::<(), ()>(())
             })
@@ -331,9 +331,13 @@ fn selected_items(report: &HostFrameReport) -> Vec<(ItemId, bool)> {
         .iter()
         .filter_map(|outcome| match outcome {
             HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                item,
+                tab,
                 changed,
-            }) => Some((*item, *changed)),
+            }) => Some((
+                tab.item()
+                    .expect("fixture selections target application items"),
+                *changed,
+            )),
             _ => None,
         })
         .collect()

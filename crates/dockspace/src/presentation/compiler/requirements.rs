@@ -154,7 +154,7 @@ fn derive_root_requirements(
                 if !workspace.node_has_visible_content(node) {
                     continue;
                 }
-                let visible_items = workspace.visible_tab_items(node);
+                let visible_items = workspace.visible_tab_keys(node);
                 if items.is_empty() {
                     debug_assert!(selected.is_none());
                     pane_sizings.insert(PaneSizingKey::new(root, node, None));
@@ -163,6 +163,7 @@ fn derive_root_requirements(
                         visible_items
                             .iter()
                             .copied()
+                            .filter_map(crate::ids::TabKey::item)
                             .map(|item| PaneSizingKey::new(root, node, Some(item))),
                     );
                 }
@@ -196,7 +197,14 @@ fn derive_root_requirements(
                         visible_items
                             .iter()
                             .copied()
-                            .map(|item| (item, policy.pane_close_capability(item)))
+                            .map(|tab| {
+                                let capability = tab
+                                    .item()
+                                    .map_or(crate::policy::CloseCapability::Disabled, |item| {
+                                        policy.pane_close_capability(item)
+                                    });
+                                (tab, capability)
+                            })
                             .collect(),
                     ),
                 );
@@ -214,7 +222,7 @@ fn derive_root_requirements(
                             TabSceneId {
                                 root,
                                 tabs: node,
-                                item,
+                                tab: item,
                             },
                         )
                     }));

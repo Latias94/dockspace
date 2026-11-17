@@ -35,10 +35,13 @@ fn hidden_target_member_gap_preview_matches_the_durable_insertion_and_committed_
     let Some(Node::Tabs { items, .. }) = workspace.node(target) else {
         unreachable!()
     };
-    assert_eq!(items, &[retained[0], retained[1], MOVED, retained[2]]);
     assert_eq!(
-        workspace.visible_tab_items(target).as_ref(),
-        &[retained[0], MOVED, retained[2]]
+        items,
+        &[retained[0], retained[1], MOVED, retained[2]].map(TabKey::for_item)
+    );
+    assert_eq!(
+        workspace.visible_tab_keys(target).as_ref(),
+        &[retained[0], MOVED, retained[2]].map(TabKey::for_item)
     );
     assert!(workspace.item_is_hidden(retained[1]));
     let committed = compile(&workspace, &policy, &config, strip, &mut states);
@@ -106,6 +109,6 @@ fn all_hidden_main_outer_drop_previews_the_same_full_space_as_the_committed_visi
         committed
             .tab_records()
             .iter()
-            .all(|tab| tab.id().item != hidden_item)
+            .all(|tab| tab.id().tab != hidden_item.into())
     );
 }

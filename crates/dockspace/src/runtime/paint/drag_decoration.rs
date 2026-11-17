@@ -192,7 +192,7 @@ pub(super) fn resolve<'frame>(
             let member = bar
                 .members()
                 .iter()
-                .find(|member| member.tab().item == source.item())?;
+                .find(|member| member.tab().tab.item() == Some(source.item()))?;
             let tab = member.tab();
             let projection = source_projection(plan, source_surface, source.root(), drag.session());
             Some(DockspaceDragDecoration {

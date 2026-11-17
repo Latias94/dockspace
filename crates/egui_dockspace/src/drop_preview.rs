@@ -7,7 +7,7 @@ pub use dockspace::runtime::{
 };
 use egui::{Color32, CornerRadius, Galley, Id, Rect, Stroke, StrokeKind, Ui, Vec2};
 
-use crate::ItemId;
+use crate::{ItemId, TabKey};
 
 /// One future tab, with candidate order and geometry but no input authority.
 ///
@@ -17,8 +17,8 @@ use crate::ItemId;
 /// and order describe the pending move's result, not the published workspace.
 #[derive(Clone, Debug)]
 pub struct DropPreviewTab {
-    /// Stable application identity of the future tab's pane.
-    pub item: ItemId,
+    /// Identity of the future direct content or layout tab.
+    pub key: TabKey,
     /// Zero-based index in the complete future target group, before clipping.
     pub ordinal: usize,
     /// Whether this tab would be selected after the move.
@@ -54,6 +54,12 @@ pub struct DropPreviewTab {
 }
 
 impl DropPreviewTab {
+    /// Returns the real application item for a direct content tab.
+    #[must_use]
+    pub const fn item(&self) -> Option<ItemId> {
+        self.key.item()
+    }
+
     /// Returns the inset background bounds before clipping and pane connection.
     pub fn background_rect(&self) -> Rect {
         crate::tab::background_rect(self.rect, self.background_inset)

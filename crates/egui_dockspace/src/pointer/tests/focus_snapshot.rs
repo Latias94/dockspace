@@ -218,7 +218,13 @@ fn a_discarded_touch_in_an_unfocused_interval_does_not_suppress_the_focused_mous
         assert!(!dockspace.has_active_gesture());
         assert_eq!(dockspace.version(), selected);
         assert_eq!(
-            dockspace.view().item(SECOND).unwrap().tabs().items(),
+            dockspace
+                .view()
+                .item(SECOND)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             [FIRST, SECOND],
             "the focused mouse release completes its own click without moving the old drag"
         );

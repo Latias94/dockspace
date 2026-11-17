@@ -352,9 +352,11 @@ fn changing_selected_target_item_invalidates_the_frozen_command() {
     let selection = workspace
         .capture_item_source(TARGET_ROOT, target_tabs, TARGET_PEER)
         .expect("target peer is selectable");
-    WorkspaceTransaction::from_commands([WorkspaceCommand::Select { source: selection }])
-        .apply(&mut workspace, &DockPolicySnapshot::default())
-        .expect("selection changes target semantics");
+    WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
+        source: selection.as_tab_source(),
+    }])
+    .apply(&mut workspace, &DockPolicySnapshot::default())
+    .expect("selection changes target semantics");
     let before = workspace.clone();
 
     let error = WorkspaceTransaction::from_commands([command])
@@ -553,7 +555,7 @@ fn reorder_and_tab_gap_commands_enforce_effective_tab_bar_policy() {
     let before = workspace.clone();
 
     let error = WorkspaceTransaction::from_commands([WorkspaceCommand::Reorder {
-        source,
+        source: source.as_tab_source(),
         insertion_index: 0,
     }])
     .apply(&mut workspace, &snapshot(&policy))

@@ -293,7 +293,15 @@ fn append_node<'layout>(
     let (kind, items, selected) = match record {
         Node::Tabs {
             items, selected, ..
-        } => (0, items.as_slice(), selected.map_or(0, ItemId::get)),
+        } => (
+            0,
+            items.as_slice(),
+            selected.map_or(0, |tab| {
+                tab.item()
+                    .expect("ordinary workload tab contains an item")
+                    .get()
+            }),
+        ),
         Node::Split { axis, children, .. } => {
             assert_eq!(children.len(), 2, "primary matrix requires binary topology");
             (if *axis == Axis::Horizontal { 1 } else { 2 }, &[][..], 0)
@@ -311,7 +319,11 @@ fn append_node<'layout>(
         items.len(),
         selected,
     );
-    words.extend(items.iter().map(|item| item.get()));
+    words.extend(items.iter().map(|tab| {
+        tab.item()
+            .expect("ordinary workload tab contains an item")
+            .get()
+    }));
     if let Node::Split { children, .. } = record {
         for (child, &node) in children.iter().enumerate() {
             append_node(
@@ -363,7 +375,15 @@ fn preorder_export_matches_the_keyed_export_for_all_primary_commands() {
         let (kind, items, selected) = match workspace.node(node).unwrap() {
             Node::Tabs {
                 items, selected, ..
-            } => (0, items.as_slice(), selected.map_or(0, ItemId::get)),
+            } => (
+                0,
+                items.as_slice(),
+                selected.map_or(0, |tab| {
+                    tab.item()
+                        .expect("ordinary workload tab contains an item")
+                        .get()
+                }),
+            ),
             Node::Split { axis, children, .. } => {
                 assert_eq!(children.len(), 2);
                 (if *axis == Axis::Horizontal { 1 } else { 2 }, &[][..], 0)
@@ -381,7 +401,11 @@ fn preorder_export_matches_the_keyed_export_for_all_primary_commands() {
             items.len(),
             selected,
         );
-        words.extend(items.iter().map(|item| item.get()));
+        words.extend(items.iter().map(|tab| {
+            tab.item()
+                .expect("ordinary workload tab contains an item")
+                .get()
+        }));
         if let Node::Split { children, .. } = workspace.node(node).unwrap() {
             for (child, &node) in children.iter().enumerate() {
                 append_keyed(

@@ -92,7 +92,7 @@ pub(crate) fn materialize_presentation_sample(
                                 node: id.tabs,
                             });
                         };
-                        let items = workspace.visible_tab_items(id.tabs);
+                        let items = workspace.visible_tab_keys(id.tabs);
                         let selected = workspace.visible_tab_selection(id.tabs);
                         let root_layout =
                             layout
@@ -103,7 +103,11 @@ pub(crate) fn materialize_presentation_sample(
                                 })?;
                         let sampled_bounds =
                             rects.get(&id).copied().unwrap_or_else(|| pane.bounds());
-                        let key = PaneSizingKey::new(id.root, id.tabs, selected);
+                        let key = PaneSizingKey::new(
+                            id.root,
+                            id.tabs,
+                            selected.and_then(crate::ids::TabKey::item),
+                        );
                         let sizing = root_layout
                             .pane_sizing(key)
                             .ok_or(SceneCompilationError::MissingPaneSizingMeasurement { key })?;

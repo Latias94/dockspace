@@ -103,7 +103,7 @@ fn middle_click(editor: &mut Editor, point: LogicalPoint) -> Vec<EguiSurfaceActi
                 .unwrap()
                 .tabs()
                 .selected(),
-            Some(INSPECTOR),
+            Some(INSPECTOR.into()),
             "the shared renderer must not select the middle-clicked tab"
         );
         if !pressed {

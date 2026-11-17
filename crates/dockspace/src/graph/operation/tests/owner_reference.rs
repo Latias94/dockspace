@@ -138,7 +138,7 @@ fn clone_keeps_exact_refs_independent_build_and_published_aba_reject_them() {
 
     let policy = default_policy();
     WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source: source.clone(),
+        source: source.clone().as_tab_source(),
     }])
     .apply(&mut workspace, &policy)
     .unwrap();
@@ -150,9 +150,11 @@ fn clone_keeps_exact_refs_independent_build_and_published_aba_reject_them() {
         let source = workspace
             .capture_item_source(A, tabs[0], ItemId::new(item))
             .unwrap();
-        WorkspaceTransaction::from_commands([WorkspaceCommand::Select { source }])
-            .apply(&mut workspace, &policy)
-            .unwrap();
+        WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
+            source: source.as_tab_source(),
+        }])
+        .apply(&mut workspace, &policy)
+        .unwrap();
     }
     assert_eq!(workspace, original);
     assert!(matches!(
@@ -176,7 +178,8 @@ fn actual_stage_supports_net_zero_selection_but_rejects_predicted_branch_refs() 
     let first = WorkspaceCommand::Select {
         source: workspace
             .capture_item_source(A, tabs[0], ItemId::new(2))
-            .unwrap(),
+            .unwrap()
+            .as_tab_source(),
     };
     let mut predicted = workspace.clone();
     WorkspaceTransaction::from_commands([first.clone()])
@@ -188,7 +191,7 @@ fn actual_stage_supports_net_zero_selection_but_rejects_predicted_branch_refs() 
     let error = WorkspaceTransaction::from_commands([
         first,
         WorkspaceCommand::Select {
-            source: predicted_source,
+            source: predicted_source.as_tab_source(),
         },
     ])
     .apply(&mut workspace, &policy)
@@ -209,7 +212,9 @@ fn actual_stage_supports_net_zero_selection_but_rejects_predicted_branch_refs() 
         for item in [2, 1] {
             stage.push(|current| {
                 Ok(WorkspaceCommand::Select {
-                    source: current.capture_item_source(A, tabs[0], ItemId::new(item))?,
+                    source: current
+                        .capture_item_source(A, tabs[0], ItemId::new(item))?
+                        .as_tab_source(),
                 })
             })?;
         }
@@ -227,7 +232,13 @@ fn actual_stage_supports_net_zero_selection_but_rejects_predicted_branch_refs() 
     assert_eq!(workspace, original);
     assert_eq!(
         workspace.tab_mru(tabs[0]),
-        Some([ItemId::new(1), ItemId::new(2)].as_slice())
+        Some(
+            [
+                TabKey::for_item(ItemId::new(1)),
+                TabKey::for_item(ItemId::new(2))
+            ]
+            .as_slice()
+        )
     );
     assert!(matches!(
         workspace.verify_reference(A, tabs[0], old.reference(), ReferenceRole::Source),
@@ -246,19 +257,23 @@ fn ignoring_a_stage_error_cannot_publish_or_capture_again() {
     let result = WorkspaceTransaction::apply_with(&mut workspace, &default_policy(), |stage| {
         stage.push(|current| {
             Ok(WorkspaceCommand::Select {
-                source: current.capture_item_source(A, tabs[0], ItemId::new(2))?,
+                source: current
+                    .capture_item_source(A, tabs[0], ItemId::new(2))?
+                    .as_tab_source(),
             })
         })?;
         let ignored = stage.push(|_| {
             Ok(WorkspaceCommand::Select {
-                source: old.clone(),
+                source: old.clone().as_tab_source(),
             })
         });
         assert!(ignored.is_err());
         let ignored = stage.push(|current| {
             called_after_error = true;
             Ok(WorkspaceCommand::Select {
-                source: current.capture_item_source(A, tabs[0], ItemId::new(1))?,
+                source: current
+                    .capture_item_source(A, tabs[0], ItemId::new(1))?
+                    .as_tab_source(),
             })
         });
         assert!(ignored.is_err());
@@ -353,9 +368,11 @@ fn same_version_index_rejects_changed_and_foreign_issuers_and_retains_unrelated_
     let source = workspace
         .capture_item_source(A, tabs[0], ItemId::new(2))
         .unwrap();
-    WorkspaceTransaction::from_commands([WorkspaceCommand::Select { source }])
-        .apply(&mut workspace, &default_policy())
-        .unwrap();
+    WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
+        source: source.as_tab_source(),
+    }])
+    .apply(&mut workspace, &default_policy())
+    .unwrap();
     let fraction = DockFraction::new(0.5).unwrap();
     for result in [
         index
@@ -396,7 +413,7 @@ fn same_version_index_rejects_changed_and_foreign_issuers_and_retains_unrelated_
         .capture_item_source(A, tabs[0], ItemId::new(2))
         .unwrap();
     WorkspaceTransaction::from_commands([WorkspaceCommand::Reorder {
-        source,
+        source: source.as_tab_source(),
         insertion_index: 0,
     }])
     .apply(&mut workspace, &default_policy())
@@ -404,9 +421,11 @@ fn same_version_index_rejects_changed_and_foreign_issuers_and_retains_unrelated_
     let source = workspace
         .capture_item_source(A, tabs[0], ItemId::new(1))
         .unwrap();
-    WorkspaceTransaction::from_commands([WorkspaceCommand::Select { source }])
-        .apply(&mut workspace, &default_policy())
-        .unwrap();
+    WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
+        source: source.as_tab_source(),
+    }])
+    .apply(&mut workspace, &default_policy())
+    .unwrap();
     assert!(matches!(
         rebound.after_selection(&workspace, version, A, tabs[0]),
         Err(CommandError::StaleNode { .. })
@@ -422,9 +441,11 @@ fn common_capture_select_and_item_move_build_no_full_root_proofs() {
     let source = workspace
         .capture_item_source(A, tabs[0], ItemId::new(2))
         .unwrap();
-    WorkspaceTransaction::from_commands([WorkspaceCommand::Select { source }])
-        .apply(&mut workspace, &default_policy())
-        .unwrap();
+    WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
+        source: source.as_tab_source(),
+    }])
+    .apply(&mut workspace, &default_policy())
+    .unwrap();
     assert!(Arc::ptr_eq(
         &source_body,
         workspace.root_structure(A).unwrap()
@@ -551,9 +572,11 @@ fn retained_selection_rebind_rejects_an_unrelated_intervening_root_edit() {
         let source = workspace
             .capture_item_source(root, tabs, ItemId::new(item))
             .unwrap();
-        WorkspaceTransaction::from_commands([WorkspaceCommand::Select { source }])
-            .apply(&mut workspace, &default_policy())
-            .unwrap();
+        WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
+            source: source.as_tab_source(),
+        }])
+        .apply(&mut workspace, &default_policy())
+        .unwrap();
     }
     assert!(matches!(
         index.after_selection(&workspace, version, A, tabs[0]),
@@ -572,9 +595,11 @@ fn selection_and_resize_change_exact_refs_at_distinct_geometry_boundaries() {
     let source = workspace
         .capture_item_source(A, tabs[0], ItemId::new(2))
         .unwrap();
-    WorkspaceTransaction::from_commands([WorkspaceCommand::Select { source }])
-        .apply(&mut workspace, &default_policy())
-        .unwrap();
+    WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
+        source: source.as_tab_source(),
+    }])
+    .apply(&mut workspace, &default_policy())
+    .unwrap();
     assert!(Arc::ptr_eq(
         &initial_body,
         workspace.root_structure(A).unwrap()
@@ -660,13 +685,17 @@ fn a_new_root_and_its_donor_issue_actual_refs_before_the_next_prefix() {
         stage.push(|current| {
             let new_tabs = current.root(new_root).unwrap().node;
             Ok(WorkspaceCommand::Select {
-                source: current.capture_item_source(new_root, new_tabs, ItemId::new(2))?,
+                source: current
+                    .capture_item_source(new_root, new_tabs, ItemId::new(2))?
+                    .as_tab_source(),
             })
         })?;
         stage.push(|current| {
             let source = current.capture_item_source(A, tabs[0], ItemId::new(1))?;
             assert_ne!(source.reference(), old_donor.reference());
-            Ok(WorkspaceCommand::Select { source })
+            Ok(WorkspaceCommand::Select {
+                source: source.as_tab_source(),
+            })
         })?;
         Ok(())
     })
@@ -753,10 +782,14 @@ fn an_exact_cold_move_noop_preserves_a_frozen_same_root_followup() {
         ),
     };
     structural_work::reset();
-    let report =
-        WorkspaceTransaction::from_commands([noop, WorkspaceCommand::Select { source: followup }])
-            .apply(&mut workspace, &default_policy())
-            .unwrap();
+    let report = WorkspaceTransaction::from_commands([
+        noop,
+        WorkspaceCommand::Select {
+            source: followup.as_tab_source(),
+        },
+    ])
+    .apply(&mut workspace, &default_policy())
+    .unwrap();
     let work = structural_work::snapshot();
     assert_eq!(work.root_fingerprint_builds, 0);
     assert_eq!(work.root_fingerprint_node_visits, 0);
@@ -935,7 +968,9 @@ fn staged_selection_roundtrip_publishes_history_only_change() {
         for item in [3, 1] {
             stage.push(|current| {
                 Ok(WorkspaceCommand::Select {
-                    source: current.capture_item_source(A, tabs, ItemId::new(item))?,
+                    source: current
+                        .capture_item_source(A, tabs, ItemId::new(item))?
+                        .as_tab_source(),
                 })
             })?;
         }
@@ -956,15 +991,15 @@ fn staged_selection_roundtrip_publishes_history_only_change() {
     else {
         unreachable!()
     };
-    assert_eq!(items, &[1, 2, 3].map(ItemId::new));
-    assert_eq!(*selected, Some(ItemId::new(1)));
+    assert_eq!(items, &[1, 2, 3].map(ItemId::new).map(TabKey::for_item));
+    assert_eq!(*selected, Some(TabKey::for_item(ItemId::new(1))));
     assert_eq!(
         workspace.tab_mru(tabs),
-        Some([1, 3, 2].map(ItemId::new).as_slice())
+        Some([1, 3, 2].map(ItemId::new).map(TabKey::for_item).as_slice())
     );
     assert_eq!(
         original.tab_mru(tabs),
-        Some([1, 2, 3].map(ItemId::new).as_slice())
+        Some([1, 2, 3].map(ItemId::new).map(TabKey::for_item).as_slice())
     );
     assert_ne!(workspace, original);
     assert!(matches!(

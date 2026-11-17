@@ -11,8 +11,8 @@ enum DetachedPayload {
         source_root: RootId,
         node: NodeId,
         items: Vec<ItemId>,
-        selected: Option<ItemId>,
-        mru: Option<Vec<ItemId>>,
+        selected: Option<TabKey>,
+        mru: Option<Vec<TabKey>>,
         is_tabs: bool,
         central: Option<NodeId>,
     },
@@ -138,21 +138,17 @@ pub(super) fn apply_command(
 
 pub(super) fn select(
     workspace: &mut Workspace,
-    source: &ItemSource,
+    source: &TabSource,
 ) -> Result<AppliedCommand, CommandError> {
-    validate_item_source(workspace, source)?;
+    validate_tab_source(workspace, source)?;
     let tabs = source.tabs();
-    let item = source.item();
-    let changed = workspace.set_visible_tab_selection(tabs, item)?;
+    let tab = source.tab();
+    let changed = workspace.set_visible_tab_selection(tabs, tab)?;
     if changed {
         workspace.complete_selection_change(source.root(), tabs)?;
     }
     Ok(AppliedCommand {
-        outcome: CommandOutcome::Selected {
-            item,
-            tabs,
-            changed,
-        },
+        outcome: CommandOutcome::Selected { tab, tabs, changed },
         delta: ItemDelta::None,
     })
 }
@@ -191,19 +187,19 @@ fn set_item_visibility(
 
 fn reorder(
     workspace: &mut Workspace,
-    source: &ItemSource,
+    source: &TabSource,
     insertion_index: usize,
 ) -> Result<AppliedCommand, CommandError> {
-    validate_item_source(workspace, source)?;
+    validate_tab_source(workspace, source)?;
     let tabs = source.tabs();
-    let item = source.item();
-    let (from, to, changed) = reorder_item(workspace, tabs, item, insertion_index)?;
+    let tab = source.tab();
+    let (from, to, changed) = reorder_tab(workspace, tabs, tab, insertion_index)?;
     if changed {
         workspace.complete_root_change(source.root())?;
     }
     Ok(AppliedCommand {
         outcome: CommandOutcome::Reordered {
-            item,
+            tab,
             tabs,
             from,
             to,
@@ -1399,7 +1395,14 @@ fn merge_payload_into_tabs(
 ) -> Result<(), CommandError> {
     let (items, selected, mru) = match payload {
         DetachedPayload::Item { item, .. } => {
-            return insert_items(workspace, target, index, &[item], Some(item), None);
+            return insert_tabs(
+                workspace,
+                target,
+                index,
+                &[TabKey::for_item(item)],
+                Some(TabKey::for_item(item)),
+                None,
+            );
         }
         DetachedPayload::Node {
             node,
@@ -1432,30 +1435,34 @@ fn merge_payload_into_tabs(
             source_items.clear();
             *source_selected = None;
             source_mru.clear();
-            (items, selected, mru)
+            (
+                items.into_iter().map(TabKey::for_item).collect::<Vec<_>>(),
+                selected,
+                mru,
+            )
         }
     };
-    insert_items(workspace, target, index, &items, selected, mru.as_deref())
+    insert_tabs(workspace, target, index, &items, selected, mru.as_deref())
 }
 
-fn insert_items(
+fn insert_tabs(
     workspace: &mut Workspace,
     tabs: NodeId,
     index: usize,
-    inserted: &[ItemId],
-    selected_item: Option<ItemId>,
-    source_mru: Option<&[ItemId]>,
+    inserted: &[TabKey],
+    selected_item: Option<TabKey>,
+    source_mru: Option<&[TabKey]>,
 ) -> Result<(), CommandError> {
     // A hidden payload retains its flag and does not displace visible focus in
     // its destination. An entirely hidden destination keeps a legal selection.
     let selected_item = selected_item
-        .filter(|item| !workspace.item_is_hidden(*item))
+        .filter(|tab| workspace.tab_is_visible(*tab))
         .or_else(|| workspace.visible_tab_selection(tabs))
         .or_else(|| {
             inserted
                 .iter()
                 .copied()
-                .find(|item| !workspace.item_is_hidden(*item))
+                .find(|tab| workspace.tab_is_visible(*tab))
         })
         .or(selected_item);
     let node = workspace
@@ -1693,7 +1700,12 @@ fn move_item_within_same_tabs(
     match target {
         DockTarget::Center(target) if target.tabs() == source.tabs() => Ok(Some(false)),
         DockTarget::TabGap { target, index } if target.tabs() == source.tabs() => {
-            let (_, _, changed) = reorder_item(workspace, source.tabs(), source.item(), *index)?;
+            let (_, _, changed) = reorder_tab(
+                workspace,
+                source.tabs(),
+                TabKey::for_item(source.item()),
+                *index,
+            )?;
             Ok(Some(changed))
         }
         DockTarget::InnerEdge(target) | DockTarget::OuterEdge(target)
@@ -1716,10 +1728,10 @@ fn move_item_within_same_tabs(
     }
 }
 
-fn reorder_item(
+fn reorder_tab(
     workspace: &mut Workspace,
     tabs: NodeId,
-    item: ItemId,
+    item: TabKey,
     insertion_index: usize,
 ) -> Result<(usize, usize, bool), CommandError> {
     let node = workspace
@@ -1743,7 +1755,7 @@ fn reorder_item(
     let from = items
         .iter()
         .position(|entry| *entry == item)
-        .ok_or(CommandError::ItemNotInTabs { tabs, item })?;
+        .ok_or(CommandError::TabNotInTabs { tabs, tab: item })?;
     let to = if insertion_index > from {
         insertion_index - 1
     } else {
@@ -1762,6 +1774,7 @@ pub(super) fn remove_item(
     tabs: NodeId,
     item: ItemId,
 ) -> Result<(), CommandError> {
+    let tab = TabKey::for_item(item);
     let node = workspace
         .storage
         .nodes
@@ -1780,13 +1793,13 @@ pub(super) fn remove_item(
     };
     let index = items
         .iter()
-        .position(|entry| *entry == item)
+        .position(|entry| *entry == tab)
         .ok_or(CommandError::ItemNotInTabs { tabs, item })?;
     items.remove(index);
-    let was_selected = *selected == Some(item);
+    let was_selected = *selected == Some(tab);
     let mru_index =
         mru.iter()
-            .position(|candidate| *candidate == item)
+            .position(|candidate| *candidate == tab)
             .ok_or(CommandError::Invariant {
                 stage: "locate removed item in tabs MRU",
             })?;

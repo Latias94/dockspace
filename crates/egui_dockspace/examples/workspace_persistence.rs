@@ -636,7 +636,8 @@ mod tests {
                 .item(document)
                 .unwrap()
                 .tabs()
-                .items(),
+                .items()
+                .collect::<Vec<_>>(),
             &[inspector, document]
         );
         assert_eq!(restored.panes.items[&document].title, "Document");

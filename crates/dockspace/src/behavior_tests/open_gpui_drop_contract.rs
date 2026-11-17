@@ -16,6 +16,7 @@
 //! and state-preservation guarantees.
 
 use super::support;
+use crate::ids::TabKey;
 
 use dockspace::engine::transition::InputOutcome;
 use dockspace::engine::{DockEngine, EngineInput};
@@ -232,12 +233,18 @@ fn tabs_state(workspace: &Workspace, tabs: NodeId) -> (Vec<ItemId>, Option<ItemI
         panic!("expected node {tabs:?} to remain a tabs node");
     };
     (
-        items.clone(),
-        *selected,
-        workspace
+        (items.clone())
+            .into_iter()
+            .filter_map(TabKey::item)
+            .collect(),
+        selected.and_then(TabKey::item),
+        (workspace
             .tab_mru(tabs)
             .expect("tabs node must retain a complete MRU permutation")
-            .to_vec(),
+            .to_vec())
+        .into_iter()
+        .filter_map(TabKey::item)
+        .collect(),
     )
 }
 
@@ -255,7 +262,7 @@ fn tabs_containing(workspace: &Workspace, item: ItemId) -> NodeId {
     workspace
         .nodes()
         .find_map(|(node, record)| match record {
-            Node::Tabs { items, .. } if items.contains(&item) => Some(node),
+            Node::Tabs { items, .. } if items.contains(&TabKey::for_item(item)) => Some(node),
             Node::Tabs { .. } | Node::Split { .. } => None,
         })
         .expect("moved item must remain owned by exactly one tabs node")

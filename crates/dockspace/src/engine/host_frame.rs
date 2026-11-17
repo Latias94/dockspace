@@ -901,15 +901,15 @@ impl<'frame> HostFrameView<'frame> {
         {
             return Err(InteractionRejection::TabStripSourceUnavailable { key });
         }
-        let requested_items: &[ItemId] = match &adjustment.0 {
+        let requested_items: &[TabKey] = match &adjustment.0 {
             TabScrollAdjustmentKind::ScrollByPreserving { keep_visible, .. } => keep_visible,
-            TabScrollAdjustmentKind::RevealItem(item) => std::slice::from_ref(item),
+            TabScrollAdjustmentKind::RevealTab(item) => std::slice::from_ref(item),
         };
         if let Some(item) = requested_items.iter().copied().find(|item| {
             !record
                 .members()
                 .iter()
-                .any(|member| member.tab().item == *item)
+                .any(|member| member.tab().tab == *item)
         }) {
             return Err(InteractionRejection::TabStripScrollItemUnavailable { key, item });
         }

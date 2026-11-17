@@ -507,8 +507,11 @@ fn assert_content_on_root(view: DockspaceView<'_>, root_surface: SurfaceId) -> C
                 (item_view.surface(), item_view.root(), item_view.contained()),
                 (surface, root, contained)
             );
-            assert_eq!(item_view.tabs().items(), items);
-            assert_eq!(item_view.tabs().selected(), Some(selected));
+            assert_eq!(item_view.tabs().items().collect::<Vec<_>>(), items);
+            assert_eq!(
+                item_view.tabs().selected().and_then(|tab| tab.item()),
+                Some(selected)
+            );
             assert_eq!(item_view.tabs().is_central(), central);
             assert_eq!(item_view.is_selected(), item == selected);
         }

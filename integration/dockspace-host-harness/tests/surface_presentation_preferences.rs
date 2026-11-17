@@ -390,8 +390,11 @@ fn assert_complete_content(view: DockspaceView<'_>) -> ContentIdentities {
                 (pane.surface(), pane.root(), pane.contained()),
                 (surface, root, contained)
             );
-            assert_eq!(pane.tabs().items(), &items);
-            assert_eq!(pane.tabs().selected(), Some(selected));
+            assert_eq!(pane.tabs().items().collect::<Vec<_>>(), &items);
+            assert_eq!(
+                pane.tabs().selected().and_then(|tab| tab.item()),
+                Some(selected)
+            );
             assert_eq!(pane.tabs().is_central(), central);
             assert_eq!(pane.is_selected(), item == selected);
         }

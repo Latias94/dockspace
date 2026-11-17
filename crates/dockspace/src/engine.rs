@@ -148,8 +148,8 @@ use crate::engine::surface_recovery::{
 };
 use crate::geometry::{LogicalPoint, LogicalRect, LogicalSize};
 use crate::graph::command::{
-    CloseCommitOutcome, CommandOutcome, ContainedPosition, ContentCloseTarget, ItemSource,
-    MovePayload, NodeFingerprint, NodeSource, RootContent, RootPresentationTarget, SplitResize,
+    CloseCommitOutcome, CommandOutcome, ContainedPosition, ContentCloseTarget, MovePayload,
+    NodeFingerprint, NodeSource, RootContent, RootPresentationTarget, SplitResize,
     WorkspaceCommand,
 };
 use crate::graph::error::{CommandError, ReferenceRole, TransactionError};
@@ -162,7 +162,7 @@ use crate::graph::{Axis, Node, Workspace};
 use crate::ids::{
     EngineAuthorityDomainId, FloatingPresentationId, HostPresentationAttemptId, InputSequence,
     ItemId, NativeCreateSagaId, PresentationIdentityFrontier, ReducerCausalOrdinal, ReducerTickId,
-    RootId, SourceSequence, StableInputSourceId, SurfaceId, WorkspaceRevision,
+    RootId, SourceSequence, StableInputSourceId, SurfaceId, TabKey, WorkspaceRevision,
 };
 #[cfg(test)]
 use crate::input::ingress::BackendIngressProviderReplacementTicket;

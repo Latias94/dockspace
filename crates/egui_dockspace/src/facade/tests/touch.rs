@@ -490,6 +490,7 @@ fn explicit_touch_long_press_then_motion_uses_the_normal_preview_and_dock_releas
                 .unwrap()
                 .tabs()
                 .items()
+                .collect::<Vec<_>>()
                 .contains(&FIRST)
             {
                 break;
@@ -502,6 +503,7 @@ fn explicit_touch_long_press_then_motion_uses_the_normal_preview_and_dock_releas
                 .unwrap()
                 .tabs()
                 .items()
+                .collect::<Vec<_>>()
                 .contains(&FIRST)
         );
         assert!(!dockspace.session.has_active_gesture());
@@ -591,7 +593,13 @@ fn touch_drag_pauses_docking_without_motion_and_end_does_not_restore_the_old_tar
                 Vec::new(),
             );
             assert_eq!(
-                dockspace.view().item(FIRST).unwrap().tabs().items(),
+                dockspace
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FIRST]
             );
         }

@@ -404,7 +404,7 @@ fn paint_menu_row(
             },
             receiver,
         );
-        if let Some(resource) = context.resources.item(row.item()) {
+        if let Some(resource) = context.resources.tab(row.key()) {
             response.on_hover_text(resource.title.as_str())
         } else {
             response
@@ -431,7 +431,7 @@ fn paint_menu_row(
     if !paint_omitted {
         painter.rect_filled(bounds, 0.0, fill);
     }
-    if !paint_omitted && let Some(resource) = context.resources.item(row.item()) {
+    if !paint_omitted && let Some(resource) = context.resources.tab(row.key()) {
         let galley = resource.galley_for_width(context.ui, bounds.width());
         let text_pos = pos2(bounds.min.x, bounds.center().y - galley.size().y * 0.5);
         context.paint_tab_title(
@@ -459,10 +459,12 @@ fn paint_menu_row(
     context.ui.ctx().accesskit_node_builder(id, |node| {
         node.set_role(Role::MenuItem);
         node.set_bounds(accesskit_bounds(bounds));
-        node.set_label(context.resources.item(row.item()).map_or_else(
-            || format!("Pane {}", row.item().get()),
-            |item| item.title.clone(),
-        ));
+        node.set_label(
+            context
+                .resources
+                .tab(row.key())
+                .map_or_else(|| "Layout".to_owned(), |item| item.title.clone()),
+        );
         node.set_selected(row.selected());
         if enabled {
             node.add_action(Action::Click);
@@ -488,7 +490,7 @@ fn paint_menu_row(
         }
         return;
     }
-    if focus && let Some(action) = context.plan.prepare_tab_list_menu_focus(menu, row.item()) {
+    if focus && let Some(action) = context.plan.prepare_tab_list_menu_focus(menu, row.key()) {
         context.push_local_action(id.with("accesskit-focus"), action);
     }
     if reveal && let Some(action) = context.plan.prepare_tab_list_menu_reveal(row) {

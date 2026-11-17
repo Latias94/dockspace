@@ -649,7 +649,7 @@ impl DockEngine {
         }
         match region.kind() {
             PresentationHitRegionKind::TabBody(tab) => {
-                let source = TabGestureSource::Item(tab);
+                let source = TabGestureSource::Tab(tab);
                 let prepared = match self.prepare_journal_tab_gesture(presentation, source, point) {
                     Ok(prepared) => prepared,
                     Err(rejection) => return Ok(Some(InteractionOutcome::Rejected(rejection))),
@@ -2655,13 +2655,13 @@ impl DockEngine {
             return Err(InteractionRejection::TabGesturePointerOutsideSurface { surface });
         }
         let (root, tabs, layer) = match source {
-            TabGestureSource::Item(source) => {
+            TabGestureSource::Tab(source) => {
                 let tab = plan
                     .tab_records()
                     .iter()
                     .find(|record| *record.id() == source)
                     .ok_or(InteractionRejection::TabGestureSourceUnavailable {
-                        source: TabGestureSource::Item(source),
+                        source: TabGestureSource::Tab(source),
                     })?;
                 if !tab.drag_hit().contains(point)
                     || tab
@@ -2669,7 +2669,7 @@ impl DockEngine {
                         .is_some_and(|close| close.contains(point))
                 {
                     return Err(InteractionRejection::TabGestureHitMismatch {
-                        source: TabGestureSource::Item(source),
+                        source: TabGestureSource::Tab(source),
                     });
                 }
                 (source.root, source.tabs, tab.layer())
@@ -2777,7 +2777,7 @@ impl DockEngine {
                     minimum_size: contained.minimum_size,
                 }
             }
-            TabGestureSource::Item(_) | TabGestureSource::Group(_) => {
+            TabGestureSource::Tab(_) | TabGestureSource::Group(_) => {
                 let pane = plan
                     .pane_records()
                     .iter()
@@ -2787,9 +2787,9 @@ impl DockEngine {
                     .ok_or_else(unavailable)?;
                 let facts = plan.layout_facts().ok_or_else(unavailable)?;
                 let root_facts = facts.root(root).ok_or_else(unavailable)?;
-                let pane_sizing = if let TabGestureSource::Item(item) = source {
+                let pane_sizing = if let TabGestureSource::Tab(item) = source {
                     let measured = root_facts
-                        .pane_sizing(PaneSizingKey::new(root, tabs, Some(item.item)))
+                        .pane_sizing(PaneSizingKey::new(root, tabs, item.tab.item()))
                         .ok_or_else(unavailable)?;
                     let visibility = self
                         .presentation_requirements()
@@ -2849,25 +2849,15 @@ impl DockEngine {
             return Ok(InteractionOutcome::Rejected(rejection));
         }
         let source_payload = match prepared.source {
-            TabGestureSource::Item(source) => match self.workspace.node(source.tabs) {
-                Some(Node::Tabs { items, .. }) if items.contains(&source.item) => {
-                    Ok(MovePayload::Item(ItemSource {
-                        root: source.root,
-                        tabs: source.tabs,
-                        item: source.item,
-                        reference: prepared.source_node.reference.clone(),
-                    }))
-                }
-                Some(Node::Tabs { .. }) => Err(CommandError::ItemNotInTabs {
-                    tabs: source.tabs,
-                    item: source.item,
-                }),
-                Some(Node::Split { .. }) => Err(CommandError::NodeIsNotTabs { node: source.tabs }),
-                None => Err(CommandError::MissingNode {
-                    role: ReferenceRole::Source,
-                    node: source.tabs,
-                }),
-            },
+            TabGestureSource::Tab(source) => self
+                .workspace
+                .verify_reference(
+                    source.root,
+                    source.tabs,
+                    &prepared.source_node.reference,
+                    ReferenceRole::Source,
+                )
+                .and_then(|()| self.tab_drag_payload(source)),
             TabGestureSource::Group(_) => {
                 if matches!(self.workspace.node(prepared.tabs), Some(Node::Tabs { .. })) {
                     Ok(MovePayload::Tabs(prepared.source_node.clone()))
@@ -2895,7 +2885,7 @@ impl DockEngine {
             // Selecting a tab and focusing its content do not require docking permission.
             Err(CommandError::Policy(_))
                 if intent == SourcePressIntent::Activate
-                    && matches!(prepared.source, TabGestureSource::Item(_)) =>
+                    && matches!(prepared.source, TabGestureSource::Tab(_)) =>
             {
                 false
             }
@@ -2929,21 +2919,21 @@ impl DockEngine {
             }
         }
         if intent == SourcePressIntent::Activate
-            && let TabGestureSource::Item(source) = prepared.source
+            && let TabGestureSource::Tab(source) = prepared.source
         {
             let already_selected = matches!(
                 self.workspace.node(source.tabs),
                 Some(Node::Tabs {
                     selected: Some(selected),
                     ..
-                }) if *selected == source.item
+                }) if *selected == source.tab
             );
             if !already_selected {
                 selection_changed = true;
                 let selection =
                     match self
                         .workspace
-                        .capture_item_source(source.root, source.tabs, source.item)
+                        .capture_tab_source(source.root, source.tabs, source.tab)
                     {
                         Ok(source) => source,
                         Err(error) => {
@@ -3031,21 +3021,18 @@ impl DockEngine {
                     &mut candidate_events,
                 )?;
             }
-            if !can_arm && let TabGestureSource::Item(source) = prepared.source {
+            if !can_arm && let TabGestureSource::Tab(source) = prepared.source {
                 events.extend(candidate_events);
                 return Ok(InteractionOutcome::ProductActionApplied(
                     crate::model::DockspaceActionOutcome::Selected {
-                        item: source.item,
+                        tab: source.tab,
                         changed: selection_changed,
                     },
                 ));
             }
         }
         let payload = match prepared.source {
-            TabGestureSource::Item(source) => self
-                .workspace
-                .capture_item_source(source.root, source.tabs, source.item)
-                .map(MovePayload::Item),
+            TabGestureSource::Tab(source) => self.tab_drag_payload(source),
             TabGestureSource::Group(_) => self
                 .workspace
                 .capture_node_source(prepared.root, prepared.tabs)
@@ -3082,7 +3069,7 @@ impl DockEngine {
                     floating: contained.floating,
                     intent: match prepared.source {
                         TabGestureSource::ContainedTitle { .. } => ContainedDragIntent::MoveWindow,
-                        TabGestureSource::Item(_) | TabGestureSource::Group(_) => {
+                        TabGestureSource::Tab(_) | TabGestureSource::Group(_) => {
                             ContainedDragIntent::DockContent
                         }
                     },

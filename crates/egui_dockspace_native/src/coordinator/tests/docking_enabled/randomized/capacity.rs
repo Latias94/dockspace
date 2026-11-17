@@ -91,7 +91,7 @@ fn sized_scene(
                     SurfacePaintProgramStep::Operation {
                         operation: SurfacePaintProgramOperation::Tab(tab),
                         ..
-                    } if tab.item() == item => {
+                    } if tab.item() == Some(item) => {
                         descriptor = plan.receiver_for_tab_body(tab);
                     }
                     SurfacePaintProgramStep::DropGuide { structural, .. }
@@ -370,7 +370,7 @@ fn narrow_and_short_native_windows_keep_raw_docking_operable_after_tab_overflow(
             } = step
             {
                 assert_eq!(bar.members().len(), 4);
-                overflowed = bar.maximum_scroll_offset() > 0.0 && !bar.hidden_items().is_empty();
+                overflowed = bar.maximum_scroll_offset() > 0.0 && !bar.hidden_tabs().is_empty();
             }
             Ok::<(), ()>(())
         })

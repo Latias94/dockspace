@@ -89,7 +89,7 @@ fn clipped_contained_sources_keep_their_unclipped_durable_acquisition_geometry()
                 floating == FLOATING
                     && direction == crate::presentation::scene::ContainedResizeDirection::East
             }
-            ("tab", PresentationHitRegionKind::TabBody(tab)) => tab.item == LEFT,
+            ("tab", PresentationHitRegionKind::TabBody(tab)) => tab.tab == LEFT.into(),
             ("splitter", PresentationHitRegionKind::SplitterHandle(splitter)) => {
                 splitter.root == CONTAINED_ROOT
             }

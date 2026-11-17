@@ -164,7 +164,13 @@ fn stale_hover_after_migration(preserve_root: bool) {
         }
     );
     assert_eq!(
-        session.view().item(FOURTH).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FOURTH)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FOURTH, FIFTH]
     );
     assert!(

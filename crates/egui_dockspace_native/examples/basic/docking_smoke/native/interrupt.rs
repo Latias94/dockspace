@@ -1,6 +1,6 @@
 //! Interrupt a visible native preview, then verify cancellation or geometry refresh.
 
-use dockspace::model::{FloatingPresentationId, RootId};
+use dockspace::model::{FloatingPresentationId, RootId, TabKey};
 
 use super::*;
 
@@ -19,7 +19,7 @@ struct PanePlacement {
     root: RootId,
     contained: Option<FloatingPresentationId>,
     items: Vec<ItemId>,
-    selected: Option<ItemId>,
+    selected: Option<TabKey>,
 }
 
 type Placements = BTreeMap<ItemId, PanePlacement>;
@@ -262,7 +262,7 @@ fn assert_continued(app: &NativeExampleApp, before: &Placements, expected: &[Ite
             assert_eq!(current.root, target.root);
             assert_eq!(current.contained, target.contained);
             assert_eq!(current.items, expected);
-            assert_eq!(current.selected, Some(HISTORY));
+            assert_eq!(current.selected, Some(HISTORY.into()));
         } else if source.items.contains(&item) {
             assert_eq!(current.surface, source.surface);
             assert_eq!(current.root, source.root);
@@ -271,6 +271,7 @@ fn assert_continued(app: &NativeExampleApp, before: &Placements, expected: &[Ite
             assert!(
                 current
                     .selected
+                    .and_then(egui_dockspace::TabKey::item)
                     .is_some_and(|item| remaining.contains(&item))
             );
         } else {
@@ -326,7 +327,7 @@ fn placements(app: &NativeExampleApp) -> Placements {
                     surface: pane.surface(),
                     root: pane.root(),
                     contained: pane.contained(),
-                    items: pane.tabs().items().to_vec(),
+                    items: pane.tabs().items().collect::<Vec<_>>(),
                     selected: pane.tabs().selected(),
                 },
             )

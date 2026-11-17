@@ -594,7 +594,13 @@ fn equalization_respects_axis_policy_and_discarded_or_stale_actions() {
     assert_eq!(session.workspace(), &after_merge);
     assert_eq!(session.version(), version);
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         [FIRST, SECOND]
     );
 }

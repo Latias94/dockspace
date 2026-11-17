@@ -36,7 +36,7 @@ fn capture(session: &mut DockspaceSession, delivery: Delivery) -> PreparedSurfac
     let mut frame = session.begin_host_frame().unwrap();
     frame.measure_surface(SURFACE, metrics()).unwrap();
     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
-    let partial = plan.tabs().find(|tab| tab.item() == SECOND).unwrap();
+    let partial = plan.tabs().find(|tab| tab.item() == Some(SECOND)).unwrap();
     assert!(partial.visible_bounds().width() < partial.full_bounds().width());
     assert!(partial.operable());
     assert_eq!(partial.close_bounds(), None);
@@ -144,7 +144,16 @@ fn clipped_tab_body_close_uses_the_existing_deferred_decision_workflow() {
         for item in [FIRST, THIRD, FOURTH] {
             assert!(session.view().item(item).is_some());
         }
-        assert_eq!(session.view().item(FIRST).unwrap().tabs().items(), &[FIRST]);
+        assert_eq!(
+            session
+                .view()
+                .item(FIRST)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
+            &[FIRST]
+        );
         assert_eq!(session.pending_content_close_plans().count(), 0);
     }
 }
@@ -174,7 +183,13 @@ fn tab_body_close_requests_are_rollbackable_and_veto_keeps_the_item() {
     assert_eq!(session.version(), before);
     assert_eq!(session.pending_content_close_plans().count(), 0);
     assert_eq!(
-        session.view().item(SECOND).unwrap().tabs().items(),
+        session
+            .view()
+            .item(SECOND)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
 }
@@ -236,7 +251,7 @@ fn a_contained_window_covering_the_tab_body_cannot_authorize_body_close() {
     frame.measure_surface(SURFACE, metrics()).unwrap();
     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
     for item in [FIRST, SECOND] {
-        let tab = plan.tabs().find(|tab| tab.item() == item).unwrap();
+        let tab = plan.tabs().find(|tab| tab.item() == Some(item)).unwrap();
         assert!(!tab.operable(), "the contained frame must cover {item:?}");
         assert!(plan.prepare_tab_body_close(item).is_none());
     }

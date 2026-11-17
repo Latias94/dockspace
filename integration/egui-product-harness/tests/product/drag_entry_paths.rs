@@ -91,7 +91,7 @@ fn nested_central_group_shift_drag_detaches_contents_and_preserves_empty_central
         first.contained().is_some(),
         "dragging a central tab group moves its contents into a floating root"
     );
-    assert_eq!(first.tabs().items(), &[FIRST, SECOND]);
+    assert_eq!(first.tabs().items().collect::<Vec<_>>(), &[FIRST, SECOND]);
     assert_eq!(dockspace.view().item(SECOND).unwrap().root(), first.root());
     assert_eq!(dockspace.view().item(THIRD).unwrap().root(), ROOT);
     assert!(
@@ -104,6 +104,7 @@ fn nested_central_group_shift_drag_detaches_contents_and_preserves_empty_central
             .tabs()
             .unwrap()
             .items()
+            .collect::<Vec<_>>()
             .is_empty(),
         "the central slot remains available in the main layout"
     );
@@ -183,7 +184,7 @@ fn assert_partial_contained_tear_off_uses_its_pane_geometry(group: bool) {
     let floating = moved.contained().expect("the partial payload was floated");
     assert_ne!(floating, FLOATING);
     assert_eq!(
-        moved.tabs().items(),
+        moved.tabs().items().collect::<Vec<_>>(),
         if group {
             &[SECOND, THIRD][..]
         } else {

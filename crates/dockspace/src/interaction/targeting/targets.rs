@@ -56,7 +56,9 @@ impl DropSourceSuppression {
             return Self::default();
         };
         let removes_leaf = match payload {
-            MovePayload::Item(source) => items.as_slice() == [source.item()],
+            MovePayload::Item(source) => {
+                items.as_slice() == [crate::ids::TabKey::for_item(source.item())]
+            }
             MovePayload::Tabs(_) | MovePayload::Subtree(_) => !items.is_empty(),
         };
         Self {

@@ -59,7 +59,7 @@ fn locked_tabs_and_crossing_moves_share_one_rule_for_commands_and_drop_eligibili
             );
             for command in [
                 WorkspaceCommand::Reorder {
-                    source,
+                    source: source.as_tab_source(),
                     insertion_index,
                 },
                 WorkspaceCommand::Move { payload, target },
@@ -126,10 +126,7 @@ fn reorder_constraints_allow_undocking_and_new_items_before_the_barrier() {
     };
     assert_eq!(
         items,
-        &vec![7, 1, 2, 3, 4, 5]
-            .into_iter()
-            .map(ItemId::new)
-            .collect::<Vec<_>>()
+        &[7, 1, 2, 3, 4, 5].map(ItemId::new).map(TabKey::for_item)
     );
 }
 
@@ -199,7 +196,7 @@ fn frozen_barriers_match_command_rejections_for_every_source_gap_and_rule_subset
                     &workspace,
                     &policy,
                     &WorkspaceCommand::Reorder {
-                        source: source.clone(),
+                        source: source.clone().as_tab_source(),
                         insertion_index: index,
                     },
                 );

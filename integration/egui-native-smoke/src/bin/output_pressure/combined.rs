@@ -309,9 +309,9 @@ impl CombinedPressure {
                 && view
                     .surface(ROOT_SURFACE)
                     .is_some_and(|surface| surface.contained_count() == 0)
-                && view
-                    .item(MAIN_ITEM)
-                    .is_some_and(|item| item.root() == MAIN_ROOT && item.tabs().items() == expected)
+                && view.item(MAIN_ITEM).is_some_and(|item| {
+                    item.root() == MAIN_ROOT && item.tabs().items().collect::<Vec<_>>() == expected
+                })
         }) {
             return Err(
                 "combined pressure did not restore the exact ordered [1..16] main tabs".into(),

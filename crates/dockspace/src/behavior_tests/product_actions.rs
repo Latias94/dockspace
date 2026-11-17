@@ -1,5 +1,6 @@
 use crate::close::plan::ClosePlanTarget;
 use crate::geometry::{LogicalRect, LogicalSize, PhysicalRect, ScaleFactor};
+use crate::ids::TabKey;
 use crate::ids::{FloatingPresentationId, ItemId, RootId, SurfaceId};
 use crate::model::{
     DockAnchor, DockEdge, DockFraction, DockPlacement, DockspaceActionOutcome,
@@ -16,6 +17,9 @@ use crate::runtime::{
     NativeWorkAreaRoster, SurfacePresentationResult, SurfaceUnavailableReason,
     UniformSurfaceMetrics,
 };
+
+const SECOND_TAB: TabKey = TabKey::for_item(SECOND);
+const TARGET_SECOND_TAB: TabKey = TabKey::for_item(TARGET_SECOND);
 
 mod focus;
 mod tabs_group;
@@ -344,7 +348,7 @@ fn product_actions_select_open_and_dock_without_runtime_node_ids() {
         report.inputs(),
         &[HostInputOutcome::ProductActionApplied(
             DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: SECOND_TAB,
                 changed: true,
             },
         )]
@@ -356,7 +360,7 @@ fn product_actions_select_open_and_dock_without_runtime_node_ids() {
             .and_then(|root| root.central())
             .and_then(|central| central.tabs())
             .and_then(|tabs| tabs.selected()),
-        Some(SECOND),
+        Some(TabKey::for_item(SECOND)),
     );
 
     let mut frame = session.begin_host_frame().expect("open frame begins");
@@ -417,7 +421,10 @@ fn product_actions_select_open_and_dock_without_runtime_node_ids() {
         .and_then(|root| root.central())
         .and_then(|central| central.tabs())
         .expect("central tabs remain queryable");
-    assert_eq!(tabs.items(), &[FIRST, SECOND, NEW_ITEM, FLOATING]);
+    assert_eq!(
+        tabs.items().collect::<Vec<_>>(),
+        &[FIRST, SECOND, NEW_ITEM, FLOATING]
+    );
     assert!(session.view().root(CONTAINED_ROOT).is_none());
 }
 
@@ -471,8 +478,11 @@ fn docking_a_complete_root_preserves_group_order_and_selection() {
         .and_then(|root| root.content())
         .and_then(|content| content.tabs())
         .expect("merged tabs remain product-visible");
-    assert_eq!(tabs.items(), &[FIRST, SECOND, SOURCE_FIRST, SOURCE_SECOND]);
-    assert_eq!(tabs.selected(), Some(SOURCE_SECOND));
+    assert_eq!(
+        tabs.items().collect::<Vec<_>>(),
+        &[FIRST, SECOND, SOURCE_FIRST, SOURCE_SECOND]
+    );
+    assert_eq!(tabs.selected(), Some(TabKey::for_item(SOURCE_SECOND)));
     let moved = session
         .view()
         .item(SOURCE_SECOND)
@@ -521,7 +531,7 @@ fn prepared_root_docking_rejects_a_newer_workspace_revision() {
         report.inputs(),
         [
             HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: SECOND_TAB,
                 changed: true,
             }),
             HostInputOutcome::StaleRejected { .. },
@@ -583,7 +593,7 @@ fn prepared_move_root_to_new_window_rejects_a_newer_workspace_revision() {
         report.inputs(),
         &[
             HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: SECOND_TAB,
                 changed: true,
             }),
             HostInputOutcome::StaleRejected {
@@ -653,7 +663,7 @@ fn complete_root_cross_surface_float_and_dock_back_use_current_surface() {
             .and_then(|root| root.content())
             .and_then(|node| node.tabs())
             .and_then(|tabs| tabs.selected()),
-        Some(SECOND)
+        Some(TabKey::for_item(SECOND))
     );
     assert!(session.view().surface(MAIN_SURFACE).is_none());
 
@@ -695,7 +705,7 @@ fn complete_root_cross_surface_float_and_dock_back_use_current_surface() {
             .and_then(|root| root.content())
             .and_then(|node| node.tabs())
             .and_then(|tabs| tabs.selected()),
-        Some(SECOND)
+        Some(TabKey::for_item(SECOND))
     );
     assert_eq!(
         session
@@ -703,8 +713,8 @@ fn complete_root_cross_surface_float_and_dock_back_use_current_surface() {
             .root(EXISTING_ROOT)
             .and_then(|root| root.content())
             .and_then(|node| node.tabs())
-            .map(|tabs| tabs.items()),
-        Some([EXISTING_ITEM, FIRST, SECOND].as_slice())
+            .map(|tabs| tabs.items().collect::<Vec<_>>()),
+        Some(vec![EXISTING_ITEM, FIRST, SECOND])
     );
 }
 
@@ -774,8 +784,8 @@ fn docked_contained_round_trip_preserves_items_selection_focus_and_placement_lin
         .and_then(|root| root.content())
         .and_then(|node| node.tabs())
         .expect("the complete floated root remains tabs");
-    assert_eq!(floated_tabs.items(), &[FIRST, SECOND]);
-    assert_eq!(floated_tabs.selected(), Some(SECOND));
+    assert_eq!(floated_tabs.items().collect::<Vec<_>>(), &[FIRST, SECOND]);
+    assert_eq!(floated_tabs.selected(), Some(TabKey::for_item(SECOND)));
     assert_eq!(
         session.view().item(FIRST).and_then(|item| item.contained()),
         Some(floating)
@@ -828,8 +838,8 @@ fn docked_contained_round_trip_preserves_items_selection_focus_and_placement_lin
         .content()
         .and_then(|node| node.tabs())
         .expect("the restored root remains tabs");
-    assert_eq!(restored_tabs.items(), &[FIRST, SECOND]);
-    assert_eq!(restored_tabs.selected(), Some(SECOND));
+    assert_eq!(restored_tabs.items().collect::<Vec<_>>(), &[FIRST, SECOND]);
+    assert_eq!(restored_tabs.selected(), Some(TabKey::for_item(SECOND)));
     assert!(session.view().contained(floating).is_none());
     assert!(
         session
@@ -1108,8 +1118,14 @@ fn live_native_root_to_contained_preserves_multi_item_product_state_until_exact_
         .and_then(|root| root.content())
         .and_then(|node| node.tabs())
         .expect("the live native source root remains tabs");
-    assert_eq!(source_tabs.items(), &[NATIVE_FIRST, NATIVE_SECOND]);
-    assert_eq!(source_tabs.selected(), Some(NATIVE_SECOND));
+    assert_eq!(
+        source_tabs.items().collect::<Vec<_>>(),
+        &[NATIVE_FIRST, NATIVE_SECOND]
+    );
+    assert_eq!(
+        source_tabs.selected(),
+        Some(TabKey::for_item(NATIVE_SECOND))
+    );
 
     let prepared = session.prepare_float_root(NATIVE_SOURCE_ROOT, MAIN_SURFACE);
     let mut stage = session
@@ -1223,8 +1239,14 @@ fn live_native_root_to_contained_preserves_multi_item_product_state_until_exact_
         .and_then(|root| root.content())
         .and_then(|node| node.tabs())
         .expect("the transferred complete root remains tabs");
-    assert_eq!(transferred_tabs.items(), &[NATIVE_FIRST, NATIVE_SECOND]);
-    assert_eq!(transferred_tabs.selected(), Some(NATIVE_SECOND));
+    assert_eq!(
+        transferred_tabs.items().collect::<Vec<_>>(),
+        &[NATIVE_FIRST, NATIVE_SECOND]
+    );
+    assert_eq!(
+        transferred_tabs.selected(),
+        Some(TabKey::for_item(NATIVE_SECOND))
+    );
     for item in [NATIVE_FIRST, NATIVE_SECOND] {
         let location = session
             .view()
@@ -1378,7 +1400,10 @@ fn changed_presentation_configuration_cancels_pending_native_rehome_only_on_comm
                 assert_eq!(source.surface(), NATIVE_SOURCE_SURFACE);
                 assert_eq!(source.root(), NATIVE_SOURCE_ROOT);
                 assert_eq!(source.contained(), None);
-                assert_eq!(source.tabs().items(), &[NATIVE_FIRST, NATIVE_SECOND]);
+                assert_eq!(
+                    source.tabs().items().collect::<Vec<_>>(),
+                    &[NATIVE_FIRST, NATIVE_SECOND]
+                );
                 assert_eq!(source.is_selected(), item == NATIVE_SECOND);
             }
         } else {
@@ -1483,7 +1508,7 @@ fn live_native_root_rejects_stale_and_unknown_routes_without_starting_a_transfer
         stale_report.inputs(),
         [
             HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                item: TARGET_SECOND,
+                tab: TARGET_SECOND_TAB,
                 changed: true,
             }),
             HostInputOutcome::StaleRejected { .. },
@@ -1619,7 +1644,7 @@ fn product_actions_resolve_anchors_against_the_same_frame_candidate() {
         .and_then(|root| root.central())
         .and_then(|central| central.tabs())
         .expect("central tabs remain queryable");
-    assert_eq!(tabs.items(), &[NEW_ITEM, FIRST, SECOND]);
+    assert_eq!(tabs.items().collect::<Vec<_>>(), &[NEW_ITEM, FIRST, SECOND]);
 }
 
 #[test]
@@ -1647,7 +1672,7 @@ fn prepared_product_actions_reject_a_newer_same_frame_candidate() {
         report.inputs(),
         &[
             HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: SECOND_TAB,
                 changed: true,
             }),
             HostInputOutcome::StaleRejected {
@@ -1681,7 +1706,7 @@ fn prepared_product_actions_are_bound_to_the_preparing_session() {
         report.inputs(),
         &[HostInputOutcome::ProductActionApplied(
             DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: SECOND_TAB,
                 changed: true,
             },
         )]
@@ -1968,8 +1993,8 @@ fn floating_part_of_a_root_allocates_fresh_product_identities() {
             .root(MAIN_ROOT)
             .and_then(|root| root.central())
             .and_then(|central| central.tabs())
-            .map(|tabs| tabs.items()),
-        Some([SECOND].as_slice()),
+            .map(|tabs| tabs.items().collect::<Vec<_>>()),
+        Some(vec![SECOND]),
     );
 }
 
@@ -2318,7 +2343,7 @@ fn product_action_policy_rejection_rolls_back_without_leaking_internal_errors() 
             .root(MAIN_ROOT)
             .and_then(|root| root.central())
             .and_then(|central| central.tabs())
-            .is_some_and(|tabs| !tabs.items().contains(&NEW_ITEM))
+            .is_some_and(|tabs| !tabs.items().any(|item| item == NEW_ITEM))
     );
 }
 
@@ -2340,7 +2365,7 @@ fn product_close_requests_are_revision_and_session_bound() {
         report.inputs(),
         [
             HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: SECOND_TAB,
                 changed: true,
             }),
             HostInputOutcome::StaleRejected {
@@ -2436,7 +2461,7 @@ fn terminal_configuration_commits_after_semantic_actions() {
         report.inputs(),
         &[
             HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: SECOND_TAB,
                 changed: true,
             }),
             HostInputOutcome::PolicyReplaced {

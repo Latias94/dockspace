@@ -356,7 +356,7 @@ impl DockEngine {
             .presentation_authority
             .tab_strip_states
             .active_menu_for(session.key())
-            .is_some_and(|active| active.session() == session && active.items().contains(&tab.item))
+            .is_some_and(|active| active.session() == session && active.tabs().contains(&tab.tab))
         {
             return Ok(InteractionOutcome::Rejected(
                 InteractionRejection::TabListMenuSessionUnavailable { session },
@@ -365,7 +365,7 @@ impl DockEngine {
 
         let source = match self
             .workspace
-            .capture_item_source(tab.root, tab.tabs, tab.item)
+            .capture_tab_source(tab.root, tab.tabs, tab.tab)
         {
             Ok(source) => source,
             Err(source) => {
@@ -413,20 +413,23 @@ impl DockEngine {
                     .map(crate::platform::registry::ViewportRecord::binding),
             ),
         };
-        if let Some(binding) = native_activation {
-            let _ = self.start_viewport_activation(
-                ViewportActivationRequest::pointer_tab_gesture(binding, PanelFocus::Item(tab.item)),
-                focus_causal,
-                events,
-            )?;
-        } else {
-            let native_guard = self.viewport_focus_binding(surface);
-            self.viewport_focus
-                .request_local_pane_focus(surface, tab.item, native_guard, focus_causal)
-                .map_err(|source| EngineError::CausedViewportFocus {
-                    cause: focus_causal.cause(),
-                    source,
-                })?;
+        let focus_item = self.tab_content_focus_target(tab);
+        if let Some(item) = focus_item {
+            if let Some(binding) = native_activation {
+                let _ = self.start_viewport_activation(
+                    ViewportActivationRequest::pointer_tab_gesture(binding, PanelFocus::Item(item)),
+                    focus_causal,
+                    events,
+                )?;
+            } else {
+                let native_guard = self.viewport_focus_binding(surface);
+                self.viewport_focus
+                    .request_local_pane_focus(surface, item, native_guard, focus_causal)
+                    .map_err(|source| EngineError::CausedViewportFocus {
+                        cause: focus_causal.cause(),
+                        source,
+                    })?;
+            }
         }
         Ok(InteractionOutcome::TabListMenuItemSelected {
             session,
@@ -828,7 +831,7 @@ impl DockEngine {
         session: crate::presentation::tab_strip::TabListMenuSessionId,
         revision: PopupRoutingRevision,
         expected_record: &TabListMenuRecord,
-        target: ItemId,
+        target: TabKey,
     ) -> Result<InteractionOutcome, EngineError> {
         let offset = match self.resolve_tab_list_menu_navigation(
             plan,
@@ -855,7 +858,7 @@ impl DockEngine {
         }
         Ok(InteractionOutcome::TabListMenuFocusMoved {
             session,
-            item: target,
+            tab: target,
             offset,
             changed,
         })
@@ -932,16 +935,16 @@ impl DockEngine {
         {
             return Err(InteractionRejection::TabStripSourceUnavailable { key });
         }
-        let member = |item: ItemId| {
+        let member = |item: TabKey| {
             record
                 .members()
                 .iter()
-                .find(|member| member.tab().item == item)
+                .find(|member| member.tab().tab == item)
                 .copied()
                 .ok_or(InteractionRejection::TabStripScrollItemUnavailable { key, item })
         };
         match &adjustment.0 {
-            TabScrollAdjustmentKind::RevealItem(item) => {
+            TabScrollAdjustmentKind::RevealTab(item) => {
                 let member = member(*item)?;
                 Ok(reveal_scroll_offset(
                     record.scroll_offset(),
@@ -966,9 +969,9 @@ impl DockEngine {
                         operable_tab_scroll_range(
                             member,
                             record,
-                            self.policy
-                                .pane_close_capability(member.tab().item)
-                                .allows_close(),
+                            member.tab().tab.item().is_some_and(|item| {
+                                self.policy.pane_close_capability(item).allows_close()
+                            }),
                             &self.presentation_authority.presentation_config,
                         )
                     });
@@ -1006,16 +1009,16 @@ impl DockEngine {
         {
             return Err(InteractionRejection::TabListMenuSessionUnavailable { session });
         }
-        let row = |item: ItemId| {
+        let row = |item: TabKey| {
             record
                 .rows()
                 .iter()
-                .find(|row| row.tab().item == item)
+                .find(|row| row.tab().tab == item)
                 .copied()
                 .ok_or(InteractionRejection::TabListMenuScrollItemUnavailable { session, item })
         };
         match &adjustment.0 {
-            TabScrollAdjustmentKind::RevealItem(item) => {
+            TabScrollAdjustmentKind::RevealTab(item) => {
                 let row = row(*item)?;
                 Ok(reveal_scroll_offset(
                     record.scroll_offset(),
@@ -1060,7 +1063,7 @@ impl DockEngine {
         session: crate::presentation::tab_strip::TabListMenuSessionId,
         revision: PopupRoutingRevision,
         expected_record: &TabListMenuRecord,
-        target: ItemId,
+        target: TabKey,
     ) -> Result<f64, InteractionRejection> {
         self.validate_tab_list_menu_popup(plan, session, revision)?;
         let record = plan
@@ -1077,7 +1080,7 @@ impl DockEngine {
             .active_menu_for(session.key())
             .filter(|active| active.session() == session)
             .ok_or(InteractionRejection::TabListMenuSessionUnavailable { session })?;
-        if !active.items().contains(&target) {
+        if !active.tabs().contains(&target) {
             return Err(InteractionRejection::TabListMenuFocusItemUnavailable {
                 session,
                 item: target,
@@ -1086,7 +1089,7 @@ impl DockEngine {
         let row = record
             .rows()
             .iter()
-            .find(|row| row.tab().item == target)
+            .find(|row| row.tab().tab == target)
             .ok_or(InteractionRejection::TabListMenuFocusItemUnavailable {
                 session,
                 item: target,

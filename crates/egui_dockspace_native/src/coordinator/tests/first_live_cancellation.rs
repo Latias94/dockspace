@@ -99,7 +99,7 @@ fn prepare_child_content(
         .tabs()
         .unwrap()
         .items()
-        .to_vec();
+        .collect::<Vec<_>>();
     let source_locations = items
         .into_iter()
         .map(|item| (item, item_location(native, item)))

@@ -1467,7 +1467,7 @@ mod tests {
         let tab = TabSceneId {
             root: bar.root,
             tabs: bar.tabs,
-            item: ItemId::new(20),
+            tab: (ItemId::new(20)).into(),
         };
         let row = PresentationHitRegion::new(
             PresentationHitRegionId::new(

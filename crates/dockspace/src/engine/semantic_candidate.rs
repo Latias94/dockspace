@@ -3,6 +3,44 @@
 use super::*;
 
 impl DockEngine {
+    pub(super) fn tab_content_focus_target(
+        &self,
+        tab: crate::presentation::scene::TabSceneId,
+    ) -> Option<ItemId> {
+        self.workspace
+            .capture_tab_source(tab.root, tab.tabs, tab.tab)
+            .ok()?;
+        match tab.tab.item() {
+            Some(item) => (!self.workspace.item_is_hidden(item)).then_some(item),
+            None => self.workspace.first_active_item(tab.tab.layout()?),
+        }
+    }
+
+    pub(super) fn tab_drag_payload(
+        &self,
+        tab: crate::presentation::scene::TabSceneId,
+    ) -> Result<MovePayload, CommandError> {
+        let source = self
+            .workspace
+            .capture_tab_source(tab.root, tab.tabs, tab.tab)?;
+        match tab.tab.0 {
+            crate::ids::TabContent::Item(item) => {
+                Ok(MovePayload::Item(crate::graph::command::ItemSource {
+                    root: tab.root,
+                    tabs: tab.tabs,
+                    item,
+                    reference: source.reference,
+                }))
+            }
+            crate::ids::TabContent::Layout(node) => {
+                Ok(MovePayload::Subtree(crate::graph::command::NodeSource {
+                    root: tab.root,
+                    node,
+                    reference: source.reference,
+                }))
+            }
+        }
+    }
     pub(super) fn reduce_host_focus_observation(
         &mut self,
         expected_epoch: crate::ids::WorkspaceEpoch,
@@ -154,7 +192,7 @@ impl DockEngine {
             else {
                 return Ok(self.candidate_action_rejection(
                     InteractionRejection::TabGestureSourceUnavailable {
-                        source: TabGestureSource::Item(tab),
+                        source: TabGestureSource::Tab(tab),
                     },
                 ));
             };
@@ -179,19 +217,19 @@ impl DockEngine {
             {
                 return Ok(self.candidate_action_rejection(
                     InteractionRejection::TabGestureSourceUnavailable {
-                        source: TabGestureSource::Item(tab),
+                        source: TabGestureSource::Tab(tab),
                     },
                 ));
             }
             let source = match self
                 .workspace
-                .capture_item_source(tab.root, tab.tabs, tab.item)
+                .capture_tab_source(tab.root, tab.tabs, tab.tab)
             {
                 Ok(source) => source,
                 Err(_) => {
                     return Ok(self.candidate_action_rejection(
                         InteractionRejection::TabGestureSourceUnavailable {
-                            source: TabGestureSource::Item(tab),
+                            source: TabGestureSource::Tab(tab),
                         },
                     ));
                 }
@@ -214,14 +252,14 @@ impl DockEngine {
                     let Some(contained) = candidate.plan().contained_record(floating) else {
                         return Ok(self.candidate_action_rejection(
                             InteractionRejection::TabGestureSourceUnavailable {
-                                source: TabGestureSource::Item(tab),
+                                source: TabGestureSource::Tab(tab),
                             },
                         ));
                     };
                     if contained.root() != tab.root || contained.layer() != record.layer() {
                         return Ok(self.candidate_action_rejection(
                             InteractionRejection::TabGestureSourceUnavailable {
-                                source: TabGestureSource::Item(tab),
+                                source: TabGestureSource::Tab(tab),
                             },
                         ));
                     }
@@ -231,7 +269,7 @@ impl DockEngine {
                         let Some(root) = self.workspace.root(tab.root) else {
                             return Ok(self.candidate_action_rejection(
                                 InteractionRejection::TabGestureSourceUnavailable {
-                                    source: TabGestureSource::Item(tab),
+                                    source: TabGestureSource::Tab(tab),
                                 },
                             ));
                         };
@@ -262,7 +300,7 @@ impl DockEngine {
                 _ => {
                     return Ok(self.candidate_action_rejection(
                         InteractionRejection::TabGestureSourceUnavailable {
-                            source: TabGestureSource::Item(tab),
+                            source: TabGestureSource::Tab(tab),
                         },
                     ));
                 }
@@ -295,14 +333,12 @@ impl DockEngine {
             let native_guard = self.viewport_focus_binding(scene.surface());
             match selection {
                 LocalTabSelection::Activate { .. } => {
+                    let Some(item) = self.tab_content_focus_target(tab) else {
+                        return Ok(outcome);
+                    };
                     let _ = self
                         .viewport_focus
-                        .request_local_pane_focus(
-                            scene.surface(),
-                            tab.item,
-                            native_guard,
-                            focus_causal,
-                        )
+                        .request_local_pane_focus(scene.surface(), item, native_guard, focus_causal)
                         .map_err(|source| EngineError::CausedViewportFocus {
                             cause: focus_causal.cause(),
                             source,
@@ -320,7 +356,7 @@ impl DockEngine {
                             candidate.plan(),
                             TabStripStateKey::new(scene.surface(), *bar.id()),
                             bar,
-                            &TabScrollAdjustment::reveal_item(tab.item),
+                            &TabScrollAdjustment::reveal_tab(tab.tab),
                         )?;
                     }
                     self.viewport_focus.preserve_local_focus(

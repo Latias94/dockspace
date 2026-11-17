@@ -175,7 +175,14 @@ fn edit(model: &mut Semantics, session: &mut DockspaceSession, edit: Edit, group
                     insertion: 0,
                 },
                 |frame| {
-                    let first = frame.view().item(target).unwrap().tabs().items()[0];
+                    let first = frame
+                        .view()
+                        .item(target)
+                        .unwrap()
+                        .tabs()
+                        .items()
+                        .next()
+                        .unwrap();
                     frame
                         .dock_item_current(target, DockPlacement::Before(first))
                         .unwrap();

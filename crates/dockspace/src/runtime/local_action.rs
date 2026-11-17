@@ -9,7 +9,7 @@ use crate::engine::{
     EngineInput, LocalSurfaceAction as SurfaceAction, LocalTabChromeAction, LocalTabSelection,
     SplitterReset,
 };
-use crate::ids::{EngineAuthorityDomainId, FloatingPresentationId, ItemId, SurfaceId};
+use crate::ids::{EngineAuthorityDomainId, FloatingPresentationId, SurfaceId};
 use crate::input::intent::CloseSceneTarget;
 use crate::interaction::{GestureCancelDelivery, ResizeAdjustment};
 use crate::model::WorkspaceVersion;
@@ -362,9 +362,9 @@ impl PreparedSurfaceAction {
     /// Navigation preserves this focus after selection commits. Content activation
     /// subsequently requests pane focus through the ordinary observation path.
     #[must_use]
-    pub const fn tab_focus_target(&self) -> Option<ItemId> {
+    pub const fn tab_focus_target(&self) -> Option<crate::ids::TabKey> {
         match self.action {
-            SurfaceAction::SelectTab { selection, .. } => Some(selection.target().item),
+            SurfaceAction::SelectTab { selection, .. } => Some(selection.target().tab),
             SurfaceAction::Close { .. }
             | SurfaceAction::CloseRoot { .. }
             | SurfaceAction::CloseTabs { .. }
@@ -530,7 +530,7 @@ impl DeferredSurfaceAction {
     /// Navigation preserves this focus after selection commits; content activation
     /// subsequently requests pane focus.
     #[must_use]
-    pub const fn tab_focus_target(&self) -> Option<ItemId> {
+    pub const fn tab_focus_target(&self) -> Option<crate::ids::TabKey> {
         self.0.tab_focus_target()
     }
 

@@ -275,9 +275,9 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
                 .iter()
                 .filter_map(|outcome| match outcome {
                     HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                        item,
+                        tab,
                         changed,
-                    }) => Some((*item, *changed)),
+                    }) => tab.item().map(|item| (item, *changed)),
                     _ => None,
                 })
                 .collect();
@@ -303,12 +303,24 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
             assert!(session.has_active_gesture());
             assert_eq!(session.view().item(source_item).unwrap().surface(), A);
             assert_eq!(
-                session.view().item(source_item).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(source_item)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FIRST, SECOND]
             );
             assert_eq!(session.view().item(FOURTH).unwrap().surface(), B);
             assert_eq!(
-                session.view().item(FOURTH).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(FOURTH)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[THIRD, FOURTH]
             );
 
@@ -542,12 +554,24 @@ fn stationary_hover_selects_once_at_deadline_and_dropped_frame_keeps_token_retry
             assert_eq!(session.version(), delivered_version);
             assert_eq!(session.view().item(source_item).unwrap().surface(), B);
             assert_eq!(
-                session.view().item(source_item).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(source_item)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[THIRD, FOURTH, source_item]
             );
             assert_eq!(session.view().item(remaining_item).unwrap().surface(), A);
             assert_eq!(
-                session.view().item(remaining_item).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(remaining_item)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[remaining_item]
             );
             assert_eq!(session.view().item(THIRD).unwrap().surface(), B);

@@ -68,7 +68,7 @@ fn overflow(dockspace: &mut Dockspace) -> (Rect, f64, f64) {
             operation: Operation::TabBar(bar),
             ..
         } = step
-            && bar.members().any(|member| member.item() == TARGET)
+            && bar.members().any(|member| member.item() == Some(TARGET))
         {
             let rect = bar.viewport();
             result = Some((

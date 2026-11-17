@@ -192,7 +192,7 @@ impl NativeSmoke {
                     let root = surface.main_root().unwrap();
                     assert_eq!(root.id(), INSPECTOR_ROOT);
                     assert!(root.retains_empty_central_root());
-                    assert!(root.content().unwrap().tabs().unwrap().items().is_empty());
+                    assert!(root.content().unwrap().tabs().unwrap().tabs().is_empty());
                     assert_eq!(surface.contained_count(), 0);
                     true
                 } else {
@@ -218,7 +218,7 @@ impl NativeSmoke {
                     assert!(!root.retains_empty_central_root());
                     let content = root.content().unwrap();
                     assert!(content.is_central());
-                    assert!(content.tabs().unwrap().items().is_empty());
+                    assert!(content.tabs().unwrap().tabs().is_empty());
                     assert_eq!(view.surface(SURFACE).unwrap().contained_count(), 1);
                 } else {
                     assert!(view.root(INSPECTOR_ROOT).is_none());
@@ -240,7 +240,7 @@ impl NativeSmoke {
                     let pane = view.item(item).unwrap();
                     assert_eq!(pane.root(), MAIN_ROOT);
                     assert_eq!(
-                        pane.tabs().items(),
+                        pane.tabs().items().collect::<Vec<_>>(),
                         [OUTLINE, ASSETS, HISTORY, self.order[0], self.order[1]]
                     );
                 }
@@ -307,12 +307,16 @@ impl NativeSmoke {
             let completed = app.dockspace.with_view(|view| {
                 let source = view.item(source).unwrap();
                 let target = view.item(target).unwrap();
-                source.tabs().items() == self.expected
-                    && target.tabs().items() == self.expected
+                source.tabs().items().eq(self.expected.iter().copied())
+                    && target.tabs().items().eq(self.expected.iter().copied())
                     && source.surface() == target.surface()
                     && source.is_selected()
                     && self.remaining.first().is_none_or(|item| {
-                        view.item(*item).unwrap().tabs().items() == self.remaining
+                        view.item(*item)
+                            .unwrap()
+                            .tabs()
+                            .items()
+                            .eq(self.remaining.iter().copied())
                     })
             });
             if completed {
@@ -338,9 +342,15 @@ impl NativeSmoke {
                 } else {
                     egui::ViewportId::ROOT
                 };
-                let selected = app
-                    .dockspace
-                    .with_view(|view| view.item(target).unwrap().tabs().selected().unwrap());
+                let Some(selected) = app.dockspace.with_view(|view| {
+                    view.item(target)
+                        .unwrap()
+                        .tabs()
+                        .selected()
+                        .and_then(|tab| tab.item())
+                }) else {
+                    return false;
+                };
                 if let Some((bounds, scale)) = app
                     .dockspace
                     .with_panes(|panes| panes.panes[&selected].content)
@@ -386,10 +396,15 @@ impl NativeSmoke {
         let Some(source_bounds) = source_sample.tabs.get(source_title).copied() else {
             return false;
         };
-        let selected = app
-            .dockspace
-            .with_view(|view| view.item(target).unwrap().tabs().selected())
-            .unwrap();
+        let Some(selected) = app.dockspace.with_view(|view| {
+            view.item(target)
+                .unwrap()
+                .tabs()
+                .selected()
+                .and_then(|tab| tab.item())
+        }) else {
+            return false;
+        };
         let Some((target_bounds, scale)) = app
             .dockspace
             .with_panes(|panes| panes.panes[&selected].content)
@@ -400,13 +415,15 @@ impl NativeSmoke {
         let target_point = target_bounds.center() * scale;
         let (mut expected, remaining) = app.dockspace.with_view(|view| {
             (
-                view.item(target).unwrap().tabs().items().to_vec(),
+                view.item(target)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 view.item(source)
                     .unwrap()
                     .tabs()
                     .items()
-                    .iter()
-                    .copied()
                     .filter(|item| *item != source)
                     .collect::<Vec<_>>(),
             )

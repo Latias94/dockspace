@@ -1262,7 +1262,7 @@ fn assert_close_create_and_output_pressure(
             .unwrap()
             .tabs()
             .items()
-            .to_vec()
+            .collect::<Vec<_>>()
     };
     let (receivers, points, mut unrelated_output, input_artifact) = if with_accepted_release {
         // Repaint after close/create enrollment so receiver facts come from the
@@ -1284,7 +1284,7 @@ fn assert_close_create_and_output_pressure(
             } = step
             {
                 for (index, item, fraction) in [(0, 3, 0.25), (1, 6, 0.625)] {
-                    if tab.item() == ItemId::new(item) {
+                    if tab.item() == Some(ItemId::new(item)) {
                         let bounds = tab.visible_bounds();
                         let point = LogicalPoint::new(
                             bounds.x() + bounds.width() * fraction,

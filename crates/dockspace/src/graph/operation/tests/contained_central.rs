@@ -128,7 +128,7 @@ fn checked_in_both_paths(workspace: &Workspace, command: WorkspaceCommand) -> Wo
     };
     let noop = WorkspaceCommand::Select {
         source: workspace
-            .capture_item_source(SURVIVOR_ROOT, tabs, selected)
+            .capture_tab_source(SURVIVOR_ROOT, tabs, selected)
             .unwrap(),
     };
     let (batched, report) = prepare_transaction(workspace, &policy, &[noop, command])
@@ -478,7 +478,8 @@ fn creating_a_new_root_from_a_contained_central_singleton_requires_rehome() {
     let noop = WorkspaceCommand::Select {
         source: workspace
             .capture_item_source(SURVIVOR_ROOT, destination, DESTINATION)
-            .unwrap(),
+            .unwrap()
+            .as_tab_source(),
     };
     for commands in [vec![command.clone()], vec![noop, command]] {
         let error = WorkspaceTransaction::from_commands(commands.clone())

@@ -207,7 +207,7 @@ fn queued_reset_is_stale_after_publication_and_repeated_resets_preserve_semantic
 
         let restored = state.coordinator.session().view().item(THIRD).unwrap();
         assert_eq!(restored.surface(), SURFACE);
-        assert_eq!(restored.tabs().items(), &[FIRST, THIRD]);
+        assert_eq!(restored.tabs().items().collect::<Vec<_>>(), &[FIRST, THIRD]);
         assert!(restored.is_selected());
         assert_eq!(restored.root(), PRESET_ROOT);
         assert_ne!(current, previous);
@@ -262,8 +262,8 @@ fn queued_reset_is_stale_after_publication_and_repeated_resets_preserve_semantic
     assert!(matches!(
         take(&mut state),
         NativeActionStatus::Dock(egui_dockspace::DockspaceActionStatus::Applied(
-            dockspace::model::DockspaceActionOutcome::Selected { item: THIRD, .. }
-        ))
+            dockspace::model::DockspaceActionOutcome::Selected { tab, .. }
+        )) if tab == THIRD.into()
     ));
 }
 
@@ -1532,8 +1532,8 @@ mod persistence {
         assert!(matches!(
             take(&mut state),
             NativeActionStatus::Dock(egui_dockspace::DockspaceActionStatus::Applied(
-                dockspace::model::DockspaceActionOutcome::Selected { item: SECOND, .. }
-            ))
+                dockspace::model::DockspaceActionOutcome::Selected { tab, .. }
+            )) if tab == SECOND.into()
         ));
         assert_eq!(state.panes.0, panes);
         assert!(state.shutdown.is_none());

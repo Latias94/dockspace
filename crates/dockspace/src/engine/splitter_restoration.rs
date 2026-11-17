@@ -206,7 +206,11 @@ impl DockEngine {
             let sizing = match workspace.node(node)? {
                 Node::Tabs { .. } => {
                     let selected = workspace.visible_tab_selection(node);
-                    let measured = facts.pane_sizing(PaneSizingKey::new(root, node, selected))?;
+                    let measured = facts.pane_sizing(PaneSizingKey::new(
+                        root,
+                        node,
+                        selected.and_then(TabKey::item),
+                    ))?;
                     let visibility = if plan
                         .tab_bar_records()
                         .iter()

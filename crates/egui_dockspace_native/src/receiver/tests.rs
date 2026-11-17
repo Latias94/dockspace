@@ -1092,7 +1092,7 @@ fn overflow_controls_block_disabled_click_and_drag_without_selecting_underlying_
                             SurfacePaintProgramOperation::Tab(tab) => {
                                 assert_eq!(tab.full_bounds().width(), 400.0);
                                 tab_bounds.push((
-                                    tab.item(),
+                                    tab.item().expect("fixture tabs contain application items"),
                                     ui.make_persistent_id((instance_id, "tab", tab.visual_id())),
                                     tab.drag_bounds(),
                                 ));

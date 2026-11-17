@@ -95,7 +95,7 @@ fn events_keep_intermediate_versions_order_and_session_scoped_identity() {
         assert_eq!(report.notification().events(), report.events());
         assert_eq!(
             report.events()[0].kind(),
-            &DockspaceEventKind::SelectionCommitted { item: SECOND }
+            &DockspaceEventKind::SelectionCommitted { tab: SECOND.into() }
         );
         assert_eq!(report.events()[0].version(), selected);
         let opened = report

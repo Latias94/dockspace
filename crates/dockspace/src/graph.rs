@@ -29,7 +29,7 @@ use thiserror::Error;
 use crate::geometry::LogicalRect;
 use crate::graph::canonical::CanonicalizationError;
 use crate::graph::validation::WorkspaceValidationErrors;
-use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
+use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
 use shared_storage::NodeStore;
 
 pub(crate) const NORMALIZED_WEIGHT_TOLERANCE: f64 = 1.0e-12;
@@ -53,7 +53,7 @@ pub(crate) fn normalized_weight_sum(values: impl IntoIterator<Item = f64>) -> f6
     sum + correction
 }
 
-pub(crate) fn is_exact_tab_mru(items: &[ItemId], selected: Option<ItemId>, mru: &[ItemId]) -> bool {
+pub(crate) fn is_exact_tab_mru(items: &[TabKey], selected: Option<TabKey>, mru: &[TabKey]) -> bool {
     if mru.len() != items.len() || mru.first().copied() != selected {
         return false;
     }
@@ -189,12 +189,12 @@ pub enum InvalidSplitWeights {
 pub enum Node {
     /// Ordered tabs sharing one content rectangle.
     Tabs {
-        /// Items in visual tab order.
-        items: Vec<ItemId>,
-        /// Active item, or `None` for a permitted empty central leaf.
-        selected: Option<ItemId>,
-        /// Complete most-recent-first permutation, with the selected item first.
-        mru: Vec<ItemId>,
+        /// Direct children in visual tab order.
+        items: Vec<TabKey>,
+        /// Active direct child, or `None` for a permitted empty central container.
+        selected: Option<TabKey>,
+        /// Complete most-recent-first permutation, with the selected child first.
+        mru: Vec<TabKey>,
     },
     /// Ordered N-ary split children.
     Split {
@@ -237,7 +237,7 @@ impl Clone for Node {
 impl Node {
     /// Creates a tabs node and selects its first item, if present.
     pub fn tabs(items: impl IntoIterator<Item = ItemId>) -> Self {
-        let items: Vec<ItemId> = items.into_iter().collect();
+        let items: Vec<TabKey> = items.into_iter().map(TabKey::for_item).collect();
         let selected = items.first().copied();
         let mru = initial_tab_mru(&items, selected);
         Self::Tabs {
@@ -254,7 +254,8 @@ impl Node {
         items: impl IntoIterator<Item = ItemId>,
         selected: Option<ItemId>,
     ) -> Self {
-        let items = items.into_iter().collect::<Vec<_>>();
+        let items = items.into_iter().map(TabKey::for_item).collect::<Vec<_>>();
+        let selected = selected.map(TabKey::for_item);
         let mru = initial_tab_mru(&items, selected);
         Self::Tabs {
             items,
@@ -499,7 +500,7 @@ impl Workspace {
 
     /// Returns the tabs stack's selected-first MRU permutation.
     #[cfg(test)]
-    pub fn tab_mru(&self, tabs: NodeId) -> Option<&[ItemId]> {
+    pub fn tab_mru(&self, tabs: NodeId) -> Option<&[TabKey]> {
         self.storage.tab_mru(tabs)
     }
 
@@ -567,7 +568,7 @@ impl WorkspaceData {
     /// item here, with its selected item first. `None` means `tabs` is absent
     /// or is not a tabs node.
     #[cfg(test)]
-    pub fn tab_mru(&self, tabs: NodeId) -> Option<&[ItemId]> {
+    pub fn tab_mru(&self, tabs: NodeId) -> Option<&[TabKey]> {
         match self.nodes.get(tabs)? {
             Node::Tabs { mru, .. } => Some(mru),
             Node::Split { .. } => None,
@@ -622,8 +623,8 @@ impl WorkspaceData {
                 {
                     item_visits += tab_items.len();
                 }
-                for item in tab_items {
-                    *items.entry(*item).or_insert(0) += 1;
+                for item in tab_items.iter().filter_map(|tab| tab.item()) {
+                    *items.entry(item).or_insert(0) += 1;
                 }
             }
         }
@@ -716,7 +717,7 @@ impl WorkspaceBuilder {
         let Node::Tabs { mru: history, .. } = node else {
             return Err(WorkspaceBuildError::NodeIsNotTabs { node: tabs });
         };
-        *history = mru.into_iter().collect();
+        *history = mru.into_iter().map(TabKey::for_item).collect();
         Ok(())
     }
 
@@ -814,7 +815,7 @@ pub enum WorkspaceBuildError {
     },
 }
 
-fn initial_tab_mru(items: &[ItemId], selected: Option<ItemId>) -> Vec<ItemId> {
+fn initial_tab_mru(items: &[TabKey], selected: Option<TabKey>) -> Vec<TabKey> {
     let mut mru = Vec::with_capacity(items.len());
     if let Some(selected) = selected.filter(|selected| items.contains(selected)) {
         mru.push(selected);
@@ -828,11 +829,92 @@ mod tests {
     use super::*;
 
     #[test]
+    fn direct_tab_keys_keep_one_graph_node_and_real_content_ownership() {
+        use crate::graph::command::WorkspaceCommand;
+        use crate::graph::transaction::WorkspaceTransaction;
+        use crate::policy::DockPolicySnapshot;
+
+        let items = [ItemId::new(1), ItemId::new(2), ItemId::new(3)];
+        let keys = items.map(TabKey::for_item);
+        let root = RootId::new(1);
+        let mut builder = Workspace::builder();
+        let tabs = builder.insert_node(Node::tabs(items));
+        builder.set_root(root, RootRecord::new(tabs));
+        builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(root));
+        let mut workspace = builder.build().unwrap();
+        let policy = DockPolicySnapshot::default();
+        let source = workspace.capture_tab_source(root, tabs, keys[1]).unwrap();
+        WorkspaceTransaction::from_commands([WorkspaceCommand::Select { source }])
+            .apply(&mut workspace, &policy)
+            .unwrap();
+        let source = workspace.capture_tab_source(root, tabs, keys[1]).unwrap();
+        WorkspaceTransaction::from_commands([WorkspaceCommand::Reorder {
+            source,
+            insertion_index: 0,
+        }])
+        .apply(&mut workspace, &policy)
+        .unwrap();
+
+        assert_eq!(workspace.nodes().count(), 1);
+        assert_eq!(
+            workspace.visible_tab_keys(tabs).as_ref(),
+            [keys[1], keys[0], keys[2]]
+        );
+        assert_eq!(
+            workspace.tab_mru(tabs),
+            Some([keys[1], keys[0], keys[2]].as_slice())
+        );
+        assert_eq!(workspace.first_active_item(tabs), Some(items[1]));
+        assert_eq!(
+            workspace.item_multiset(),
+            BTreeMap::from(items.map(|item| (item, 1)))
+        );
+    }
+
+    #[test]
+    fn unsupported_layout_tabs_cannot_be_accepted_as_application_items() {
+        let item = ItemId::new(1);
+        let mut builder = Workspace::builder();
+        let child = builder.insert_node(Node::tabs([item]));
+        let layout = TabKey::for_layout(child);
+        assert_ne!(layout, TabKey::for_item(item));
+        assert_eq!(layout.item(), None);
+        let tabs = builder.insert_node(Node::Tabs {
+            items: vec![layout],
+            selected: Some(layout),
+            mru: vec![layout],
+        });
+        let root = RootId::new(1);
+        builder.set_root(root, RootRecord::new(tabs));
+        builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(root));
+
+        assert!(
+            builder
+                .validate()
+                .unwrap_err()
+                .errors()
+                .iter()
+                .any(|error| matches!(
+                    error,
+                    validation::WorkspaceValidationError::UnsupportedLayoutTab { tabs: actual, tab }
+                        if *actual == tabs && *tab == layout
+                ))
+        );
+        assert_eq!(
+            builder.build().unwrap_err(),
+            CanonicalizationError::UnsupportedLayoutTab {
+                node: tabs,
+                tab: layout
+            },
+        );
+    }
+
+    #[test]
     fn exact_tab_mru_requires_selected_first_unique_membership() {
-        let a = ItemId::new(1);
-        let b = ItemId::new(2);
-        let c = ItemId::new(3);
-        let cases: &[(&[ItemId], Option<ItemId>, &[ItemId], bool)] = &[
+        let a = TabKey::for_item(ItemId::new(1));
+        let b = TabKey::for_item(ItemId::new(2));
+        let c = TabKey::for_item(ItemId::new(3));
+        let cases: &[(&[TabKey], Option<TabKey>, &[TabKey], bool)] = &[
             (&[], None, &[], true),
             (&[], Some(a), &[], false),
             (&[], None, &[a], false),

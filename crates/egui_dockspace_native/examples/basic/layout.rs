@@ -367,7 +367,7 @@ impl NativeExampleApp {
                 .root(pane.root())?
                 .content()?
                 .tabs()
-                .is_some_and(|tabs| tabs.items() == [item]);
+                .is_some_and(|tabs| tabs.tabs() == [TabKey::for_item(item)]);
             Some((
                 contained,
                 !contained || pane.surface() != host || !standalone,
@@ -585,11 +585,7 @@ fn main_dock_placement(
 
 fn first_dock_anchor(node: DockspaceNodeView<'_>, exclude: Option<ItemId>) -> Option<ItemId> {
     if let Some(tabs) = node.tabs() {
-        return tabs
-            .items()
-            .iter()
-            .copied()
-            .find(|item| Some(*item) != exclude);
+        return tabs.items().find(|item| Some(*item) != exclude);
     }
     node.split()?
         .children()
@@ -605,9 +601,10 @@ pub(super) fn describe_status(status: &NativeActionStatus, panes: &ExamplePanes)
             )
         }
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(outcome)) => match outcome {
-            DockspaceActionOutcome::Selected { item, .. } => {
-                format!("Selected {}.", title(*item))
-            }
+            DockspaceActionOutcome::Selected { tab, .. } => match tab.item() {
+                Some(item) => format!("Selected {}.", title(item)),
+                None => "Selected layout.".to_owned(),
+            },
             DockspaceActionOutcome::ItemVisibilityChanged { item, visible, .. } => {
                 format!(
                     "{} {}; its layout position is retained.",

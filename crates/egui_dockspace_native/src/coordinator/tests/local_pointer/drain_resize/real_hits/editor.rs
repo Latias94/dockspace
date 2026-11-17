@@ -196,7 +196,8 @@ impl Editor {
                 .item(FIRST)
                 .unwrap()
                 .tabs()
-                .selected();
+                .selected()
+                .and_then(|tab| tab.item());
             let mut frame = self
                 .native
                 .poll_resolved_host_frame(&self.context, &mut test_budget())
@@ -222,7 +223,10 @@ impl Editor {
                 if let SurfacePaintProgramStep::Operation { operation, .. } = step {
                     match operation {
                         SurfacePaintProgramOperation::Tab(tab) => {
-                            tabs.insert(tab.item(), tab.visible_bounds());
+                            tabs.insert(
+                                tab.item().expect("fixture tabs contain application items"),
+                                tab.visible_bounds(),
+                            );
                         }
                         SurfacePaintProgramOperation::Pane(pane)
                             if pane.selected() == outline_selected =>

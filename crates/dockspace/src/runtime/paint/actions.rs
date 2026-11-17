@@ -1,7 +1,7 @@
 //! Opaque framework gesture preparation over one exact paint plan.
 
 use crate::geometry::LogicalPoint;
-use crate::ids::{FloatingPresentationId, ItemId};
+use crate::ids::{FloatingPresentationId, TabKey};
 use crate::interaction::{
     FrozenTabListMenuBackdropClick, FrozenTabListMenuRowClick, FrozenTabStripControlClick,
 };
@@ -285,7 +285,7 @@ impl SurfacePaintPlan<'_> {
             .find(|menu| menu.record.session() == row.session)?;
         self.prepare_tab_list_menu_scroll(
             menu,
-            crate::engine::TabScrollAdjustment::reveal_item(row.item()),
+            crate::engine::TabScrollAdjustment::reveal_tab(row.key()),
         )
     }
 
@@ -301,10 +301,10 @@ impl SurfacePaintPlan<'_> {
         let current = rows.iter().position(|row| row.focused())?;
         let last = rows.len().checked_sub(1)?;
         let target = match navigation {
-            SurfaceTabListNavigation::Previous => rows[current.saturating_sub(1)].tab().item,
-            SurfaceTabListNavigation::Next => rows[current.saturating_add(1).min(last)].tab().item,
-            SurfaceTabListNavigation::First => rows[0].tab().item,
-            SurfaceTabListNavigation::Last => rows[last].tab().item,
+            SurfaceTabListNavigation::Previous => rows[current.saturating_sub(1)].tab().tab,
+            SurfaceTabListNavigation::Next => rows[current.saturating_add(1).min(last)].tab().tab,
+            SurfaceTabListNavigation::First => rows[0].tab().tab,
+            SurfaceTabListNavigation::Last => rows[last].tab().tab,
         };
         self.prepare_tab_list_menu_focus(menu, target)
     }
@@ -314,13 +314,14 @@ impl SurfacePaintPlan<'_> {
     pub fn prepare_tab_list_menu_focus(
         self,
         menu: TabListMenuPaintRecord<'_>,
-        item: ItemId,
+        item: impl Into<TabKey>,
     ) -> Option<PreparedSurfaceAction> {
+        let item = item.into();
         let record = self.current_tab_list_menu(menu)?;
         record
             .rows()
             .iter()
-            .any(|row| row.tab().item == item)
+            .any(|row| row.tab().tab == item)
             .then_some(())?;
         Some(PreparedSurfaceAction::tab_chrome(
             self.authority_domain,
@@ -343,9 +344,10 @@ impl SurfacePaintPlan<'_> {
     #[must_use]
     pub fn prepare_tab_navigation(
         self,
-        item: ItemId,
+        item: impl Into<TabKey>,
         navigation: SurfaceTabNavigation,
     ) -> Option<PreparedSurfaceAction> {
+        let item = item.into();
         let tab = self.tab_record(item)?;
         let start = self.plan.selected_in_tabs(tab.id().tabs).unwrap_or(item);
         self.prepare_tab_input_sequence(item, start, [SurfaceTabInput::Navigate(navigation)])
@@ -356,7 +358,8 @@ impl SurfacePaintPlan<'_> {
     /// Use this for an accessibility focus request. Unlike activation, focusing
     /// a tab supersedes older content-focus requests without entering its pane.
     #[must_use]
-    pub fn prepare_tab_focus(self, item: ItemId) -> Option<PreparedSurfaceAction> {
+    pub fn prepare_tab_focus(self, item: impl Into<TabKey>) -> Option<PreparedSurfaceAction> {
+        let item = item.into();
         let current = self.tab_record(item)?;
         self.tab_is_operable(current).then_some(())?;
         Some(PreparedSurfaceAction::select_tab(
@@ -386,15 +389,17 @@ impl SurfacePaintPlan<'_> {
     #[must_use]
     pub fn prepare_tab_input_sequence(
         self,
-        item: ItemId,
-        start: ItemId,
+        item: impl Into<TabKey>,
+        start: impl Into<TabKey>,
         inputs: impl IntoIterator<Item = SurfaceTabInput>,
     ) -> Option<PreparedSurfaceAction> {
+        let item = item.into();
+        let start = start.into();
         let current = self
             .plan
             .tab_records()
             .iter()
-            .find(|record| record.id().item == item)?;
+            .find(|record| record.id().tab == item)?;
         self.tab_is_operable(current).then_some(())?;
         let bar =
             self.plan.tab_bar_records().iter().find(|bar| {
@@ -405,7 +410,7 @@ impl SurfacePaintPlan<'_> {
         inputs.peek()?;
         let mut cursor = members
             .iter()
-            .position(|member| member.tab().item == start)?;
+            .position(|member| member.tab().tab == start)?;
         let mut handled = false;
         let mut activate = false;
         for input in inputs {

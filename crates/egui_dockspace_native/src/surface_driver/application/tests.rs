@@ -1206,7 +1206,13 @@ fn return_complete_group_through_the_result_slot(
             assert_eq!(completed_source, source_root);
             assert_eq!(items, [SECOND, THIRD]);
             assert_eq!(
-                state.view().item(SECOND).unwrap().tabs().items(),
+                state
+                    .view()
+                    .item(SECOND)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FIRST, SECOND, THIRD]
             );
         }
@@ -1328,10 +1334,25 @@ fn native_group_commands_preserve_the_remaining_central_area() {
                 assert_ne!(root, ROOT);
                 assert_eq!(items, [SECOND, THIRD]);
                 assert_eq!(
-                    state.view().item(SECOND).unwrap().tabs().items(),
+                    state
+                        .view()
+                        .item(SECOND)
+                        .unwrap()
+                        .tabs()
+                        .items()
+                        .collect::<Vec<_>>(),
                     &[SECOND, THIRD]
                 );
-                assert_eq!(state.view().item(FIRST).unwrap().tabs().items(), &[FIRST]);
+                assert_eq!(
+                    state
+                        .view()
+                        .item(FIRST)
+                        .unwrap()
+                        .tabs()
+                        .items()
+                        .collect::<Vec<_>>(),
+                    &[FIRST]
+                );
             }
             NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                 DockspaceActionOutcome::TabsDocked {
@@ -1343,7 +1364,13 @@ fn native_group_commands_preserve_the_remaining_central_area() {
             )) if !float => {
                 assert_eq!(items, [SECOND, THIRD]);
                 assert_eq!(
-                    state.view().item(SECOND).unwrap().tabs().items(),
+                    state
+                        .view()
+                        .item(SECOND)
+                        .unwrap()
+                        .tabs()
+                        .items()
+                        .collect::<Vec<_>>(),
                     &[FIRST, SECOND, THIRD]
                 );
             }
@@ -1399,7 +1426,13 @@ fn native_group_dock_and_float_commands_keep_stale_and_foreign_authority() {
                 })
             );
             assert_eq!(
-                target.view().item(FIRST).unwrap().tabs().items(),
+                target
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FIRST, SECOND, THIRD]
             );
             target
@@ -1409,8 +1442,8 @@ fn native_group_dock_and_float_commands_keep_stale_and_foreign_authority() {
             assert!(matches!(
                 take(&mut target),
                 NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-                    DockspaceActionOutcome::Selected { item: THIRD, .. }
-                ))
+                    DockspaceActionOutcome::Selected { tab, .. }
+                )) if tab == THIRD.into()
             ));
             assert!(target.error().is_none());
         }
@@ -1443,7 +1476,13 @@ fn stored_native_group_command_keeps_its_capture_revision_after_admission() {
     );
     assert!(report.take_native_effects().is_empty());
     assert_eq!(
-        state.view().item(SECOND).unwrap().tabs().items(),
+        state
+            .view()
+            .item(SECOND)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND, THIRD]
     );
     assert!(state.view().item(SECOND).unwrap().is_selected());
@@ -1519,8 +1558,8 @@ fn foreign_native_groups_reject_without_staling_or_stopping_the_command_pipeline
             assert!(matches!(
                 take(&mut destination),
                 NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-                    DockspaceActionOutcome::Selected { item: SECOND, .. }
-                ))
+                    DockspaceActionOutcome::Selected { tab, .. }
+                )) if tab == SECOND.into()
             ));
             assert!(destination.view().item(SECOND).unwrap().is_selected());
             assert!(destination.error().is_none());
@@ -2041,7 +2080,7 @@ fn deferred_veto_and_close_reopen_keep_pane_data_and_the_single_result_slot() {
     ));
     let location = state.coordinator.session().view().item(FIRST).unwrap();
     assert_eq!(location.root(), ROOT);
-    assert_eq!(location.tabs().selected(), Some(FIRST));
+    assert_eq!(location.tabs().selected(), Some(FIRST.into()));
     assert_eq!(state.panes.0, "application-owned content");
     state
         .request_command(NativeCommand::OpenItem {
@@ -2186,7 +2225,7 @@ fn the_fixed_host_rejects_its_last_group_and_reopens_after_all_central_items_clo
             .unwrap()
             .tabs()
             .unwrap()
-            .items()
+            .tabs()
             .is_empty()
     );
     state
@@ -2394,7 +2433,7 @@ fn configuration_follows_local_selection_and_lock_keeps_selection_available() {
             .unwrap()
             .tabs()
             .selected(),
-        Some(SECOND)
+        Some(SECOND.into())
     );
 
     state
@@ -2404,8 +2443,8 @@ fn configuration_follows_local_selection_and_lock_keeps_selection_available() {
     assert!(matches!(
         take(&mut state),
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-            DockspaceActionOutcome::Selected { item: FIRST, .. }
-        ))
+            DockspaceActionOutcome::Selected { tab, .. }
+        )) if tab == FIRST.into()
     ));
     state
         .request_command(NativeCommand::OpenItem {

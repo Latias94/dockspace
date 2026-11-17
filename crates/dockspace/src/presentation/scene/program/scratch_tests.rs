@@ -18,7 +18,7 @@ fn tab(root: RootId, item: u64) -> SurfaceProgramRootOperation {
     SurfaceProgramRootOperation::Tab(TabSceneId {
         root,
         tabs: NodeId::default(),
-        item: ItemId::new(item),
+        tab: (ItemId::new(item)).into(),
     })
 }
 

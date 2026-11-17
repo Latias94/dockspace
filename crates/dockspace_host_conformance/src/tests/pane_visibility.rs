@@ -44,7 +44,13 @@ fn publish_visible_surface(host: &mut DeterministicHost) {
             .collect::<Vec<_>>();
         let selected = [A, C, X]
             .into_iter()
-            .filter_map(|item| view.item(item).unwrap().tabs().visible_selected())
+            .filter_map(|item| {
+                view.item(item)
+                    .unwrap()
+                    .tabs()
+                    .visible_selected()
+                    .and_then(|tab| tab.item())
+            })
             .collect::<Vec<_>>();
         let contained_visible = view.item(X).unwrap().is_visible();
         let mut minimum_items = Vec::new();
@@ -64,7 +70,10 @@ fn publish_visible_surface(host: &mut DeterministicHost) {
                             (LogicalSize::new(32.0, 24.0).unwrap()).into(),
                         )
                     }
-                    SurfaceMeasurementRequest::TabIntrinsic { item, .. } => {
+                    SurfaceMeasurementRequest::TabIntrinsic { key, .. } => {
+                        let Some(item) = key.item() else {
+                            return Ok(SurfaceMeasurementAnswer::TabIntrinsic(72.0));
+                        };
                         assert!(visible.contains(&item), "hidden tabs need no metadata");
                         intrinsic_items.push(item);
                         SurfaceMeasurementAnswer::TabIntrinsic(72.0)
@@ -85,7 +94,7 @@ fn publish_visible_surface(host: &mut DeterministicHost) {
         let mut painted_items = records
             .tabs
             .iter()
-            .map(|tab| tab.item())
+            .filter_map(|tab| tab.item())
             .collect::<Vec<_>>();
         painted_items.sort_unstable();
         assert_eq!(painted_items, visible);
@@ -158,14 +167,15 @@ fn shared_l08_pane_visibility_preserves_durable_layout_and_current_public_contro
                 });
                 let [
                     HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                        item: selected,
+                        tab: selected,
                         changed: true,
                     }),
                 ] = report.inputs()
                 else {
                     panic!("selection must commit through the public action: {report:?}");
                 };
-                let selected_view = host.view().item(*selected).unwrap();
+                assert_eq!(selected.item(), Some(item(target)));
+                let selected_view = host.view().item(item(target)).unwrap();
                 assert!(selected_view.is_selected());
                 SemanticObservation::ItemSelected(alias(selected_view.item()))
             }
@@ -228,8 +238,11 @@ fn shared_l08_pane_visibility_preserves_durable_layout_and_current_public_contro
         };
         observations.push(observed);
         let tabs = host.view().item(A).unwrap().tabs();
-        assert_eq!(tabs.items(), [A, B]);
-        assert_eq!(tabs.selected(), Some(expected_selection[index]));
+        assert_eq!(tabs.items().collect::<Vec<_>>(), [A, B]);
+        assert_eq!(
+            tabs.selected().and_then(|tab| tab.item()),
+            Some(expected_selection[index])
+        );
         assert_eq!(
             tabs.visible_items().collect::<Vec<_>>(),
             [A, B]
@@ -238,11 +251,27 @@ fn shared_l08_pane_visibility_preserves_durable_layout_and_current_public_contro
                 .collect::<Vec<_>>()
         );
         assert_eq!(
-            tabs.visible_selected(),
+            tabs.visible_selected().and_then(|tab| tab.item()),
             (index != 2).then_some(expected_selection[index])
         );
-        assert_eq!(host.view().item(C).unwrap().tabs().items(), [C]);
-        assert_eq!(host.view().item(X).unwrap().tabs().items(), [X]);
+        assert_eq!(
+            host.view()
+                .item(C)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
+            [C]
+        );
+        assert_eq!(
+            host.view()
+                .item(X)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
+            [X]
+        );
         assert_eq!(
             host.view().contained(FLOATING).unwrap().rect(),
             original_rect

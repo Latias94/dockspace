@@ -731,7 +731,7 @@ fn root_tab_point(
                         operation: SurfacePaintProgramOperation::Tab(tab),
                         ..
                     } = step
-                        && tab.item() == item
+                        && tab.item() == Some(item)
                     {
                         assert!(tab.operable());
                         assert_eq!(tab.full_bounds(), tab.visible_bounds());
@@ -924,7 +924,8 @@ fn drive_pointer_lineage(
                 .item(TABS[0])
                 .unwrap()
                 .tabs()
-                .items(),
+                .items()
+                .collect::<Vec<_>>(),
             TABS
         );
         assert!(native.session().view().item(TABS[0]).unwrap().is_selected());
@@ -1218,7 +1219,8 @@ fn drive(state: &State, context: &egui::Context, host: &BoundaryHost) -> Result<
                 .item(TABS[0])
                 .unwrap()
                 .tabs()
-                .items(),
+                .items()
+                .collect::<Vec<_>>(),
             TABS
         );
         assert!(state.is_quiescent());

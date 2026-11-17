@@ -218,7 +218,7 @@ fn shared_hit_geometry_keeps_new_output_and_rejects_an_old_receiver_receipt() {
         ));
         plan.begin_surface_program_root(pane.root, SurfaceProgramRootPresentation::Main)
             .unwrap();
-        plan.push_surface_program_pane_operation(pane, Some(ItemId::new(selected)))
+        plan.push_surface_program_pane_operation(pane, Some(ItemId::new(selected).into()))
             .unwrap();
         plan.end_surface_program_root(pane.root).unwrap();
         plan.finish_surface_program().unwrap();

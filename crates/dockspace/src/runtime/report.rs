@@ -505,7 +505,7 @@ fn interaction_host_outcome(
             pointer,
             surface,
             root,
-            item,
+            tab,
             position,
         } => Some(HostInputOutcome::Touch(
             DockspaceTouchEvent::ContextMenuRequested(DockspaceContextMenuRequest::new(
@@ -514,7 +514,7 @@ fn interaction_host_outcome(
                 SurfacePointerId::new(pointer.get()),
                 *surface,
                 *root,
-                *item,
+                *tab,
                 *position,
             )),
         )),

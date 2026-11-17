@@ -1,4 +1,5 @@
 use super::support;
+use crate::ids::TabKey;
 
 use dockspace::engine::DockEngine;
 use dockspace::geometry::{LogicalPoint, LogicalRect};
@@ -718,7 +719,7 @@ fn frozen_policy_is_the_only_close_affordance_authority() {
         ready
             .tab_records()
             .iter()
-            .find(|record| record.id().item == item)
+            .find(|record| record.id().tab == TabKey::for_item(item))
             .expect("policy fixture tab is visible")
             .close_bounds()
     };

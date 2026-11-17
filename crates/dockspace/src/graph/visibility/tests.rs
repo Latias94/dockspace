@@ -1,3 +1,4 @@
+use crate::ids::TabKey;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -57,7 +58,12 @@ fn select(workspace: &mut Workspace, item: u64) {
         .capture_item_source_by_id(ItemId::new(item))
         .unwrap()
         .unwrap();
-    apply(workspace, WorkspaceCommand::Select { source });
+    apply(
+        workspace,
+        WorkspaceCommand::Select {
+            source: source.as_tab_source(),
+        },
+    );
 }
 
 #[test]
@@ -67,7 +73,7 @@ fn hiding_retains_rosters_weights_and_chooses_visible_successors_without_showing
     let split = workspace.node(root.node).unwrap().clone();
     let ownership = workspace.item_multiset();
     assert!(matches!(
-        workspace.visible_tab_items(tabs[0]),
+        workspace.visible_tab_keys(tabs[0]),
         Cow::Borrowed(_)
     ));
     select(&mut workspace, 3);
@@ -76,16 +82,16 @@ fn hiding_retains_rosters_weights_and_chooses_visible_successors_without_showing
     }
     assert_eq!(
         workspace.visible_tab_selection(tabs[0]),
-        Some(ItemId::new(5))
+        Some(TabKey::for_item(ItemId::new(5)))
     );
     visibility(&mut workspace, 5, false);
     assert_eq!(
         workspace.visible_tab_selection(tabs[0]),
-        Some(ItemId::new(1))
+        Some(TabKey::for_item(ItemId::new(1)))
     );
     visibility(&mut workspace, 1, false);
     assert_eq!(workspace.visible_tab_selection(tabs[0]), None);
-    assert!(workspace.visible_tab_items(tabs[0]).is_empty());
+    assert!(workspace.visible_tab_keys(tabs[0]).is_empty());
     assert!(!workspace.node_has_visible_content(tabs[0]));
     assert!(workspace.node_has_visible_content(tabs[2]));
     assert!(matches!(
@@ -100,18 +106,21 @@ fn hiding_retains_rosters_weights_and_chooses_visible_successors_without_showing
     visibility(&mut workspace, 2, true);
     assert_eq!(
         workspace.visible_tab_selection(tabs[0]),
-        Some(ItemId::new(4))
+        Some(TabKey::for_item(ItemId::new(4)))
     );
     assert_eq!(
-        workspace.visible_tab_items(tabs[0]).as_ref(),
-        [ItemId::new(2), ItemId::new(4)]
+        workspace.visible_tab_keys(tabs[0]).as_ref(),
+        [
+            TabKey::for_item(ItemId::new(2)),
+            TabKey::for_item(ItemId::new(4))
+        ]
     );
     assert_eq!(*workspace.root(ROOT).unwrap(), root);
     assert_eq!(workspace.node(root.node).unwrap(), &split);
     assert_eq!(workspace.item_multiset(), ownership);
     assert!(
         matches!(workspace.node(tabs[0]), Some(Node::Tabs { items, .. })
-        if items == &(1..=5).map(ItemId::new).collect::<Vec<_>>())
+        if items == &(1..=5).map(ItemId::new).map(TabKey::for_item).collect::<Vec<_>>())
     );
 }
 
@@ -173,13 +182,15 @@ fn an_all_hidden_selected_item_is_rejected_even_by_the_unchanged_selection_fast_
     let Node::Tabs { selected, .. } = workspace.node(tabs[0]).unwrap() else {
         panic!()
     };
-    let item = selected.unwrap();
+    let item = selected.unwrap().item().unwrap();
     let source = workspace.capture_item_source(ROOT, tabs[0], item).unwrap();
     let snapshot = WorkspaceSnapshot::from(workspace.clone());
     let error = snapshot
         .prepare_transaction(
             &DockPolicySnapshot::default(),
-            &[WorkspaceCommand::Select { source }],
+            &[WorkspaceCommand::Select {
+                source: source.as_tab_source(),
+            }],
         )
         .unwrap_err();
     assert!(matches!(error, TransactionError::Command {
@@ -252,11 +263,14 @@ fn moving_hidden_items_preserves_the_flag_and_keeps_both_source_and_destination_
     assert!(workspace.item_is_hidden(ItemId::new(2)));
     assert_eq!(
         workspace.visible_tab_selection(tabs[1]),
-        Some(ItemId::new(6))
+        Some(TabKey::for_item(ItemId::new(6)))
     );
     assert_eq!(
-        workspace.visible_tab_items(tabs[1]).as_ref(),
-        [ItemId::new(6), ItemId::new(7)]
+        workspace.visible_tab_keys(tabs[1]).as_ref(),
+        [
+            TabKey::for_item(ItemId::new(6)),
+            TabKey::for_item(ItemId::new(7))
+        ]
     );
 
     visibility(&mut workspace, 3, false);
@@ -273,7 +287,7 @@ fn moving_hidden_items_preserves_the_flag_and_keeps_both_source_and_destination_
     );
     assert_eq!(
         workspace.visible_tab_selection(tabs[0]),
-        Some(ItemId::new(4))
+        Some(TabKey::for_item(ItemId::new(4)))
     );
 }
 
@@ -295,11 +309,14 @@ fn merging_hidden_tabs_retains_the_destination_selection_and_all_hidden_members(
     );
     assert_eq!(
         workspace.visible_tab_selection(destination),
-        Some(ItemId::new(8))
+        Some(TabKey::for_item(ItemId::new(8)))
     );
     assert_eq!(
-        workspace.visible_tab_items(destination).as_ref(),
-        [ItemId::new(8), ItemId::new(9)]
+        workspace.visible_tab_keys(destination).as_ref(),
+        [
+            TabKey::for_item(ItemId::new(8)),
+            TabKey::for_item(ItemId::new(9))
+        ]
     );
     for item in 1..=5 {
         assert!(workspace.item_is_hidden(ItemId::new(item)));

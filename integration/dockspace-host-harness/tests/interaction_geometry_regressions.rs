@@ -140,7 +140,10 @@ fn render_present(session: &mut DockspaceSession) -> BTreeMap<SurfaceId, Snapsho
                         }
                         SurfacePaintProgramOperation::Tab(record) => {
                             if let Some(receiver) = plan.receiver_for_tab_body(record) {
-                                snapshot.tabs.insert(record.item(), receiver);
+                                snapshot.tabs.insert(
+                                    record.item().expect("fixture contains only item tabs"),
+                                    receiver,
+                                );
                             }
                         }
                         SurfacePaintProgramOperation::TabBar(record) => {
@@ -377,8 +380,8 @@ fn hidden_draggable_source_requests_exact_intrinsic_and_reaches_visible_gap() {
                     SurfaceMeasurementRequest::PaneSizing { .. } => {
                         SurfaceMeasurementAnswer::PaneSizing((size(64.0, 48.0)).into())
                     }
-                    SurfaceMeasurementRequest::TabIntrinsic { item, .. } => {
-                        saw_hidden_source_intrinsic |= surface == SOURCE && item == A;
+                    SurfaceMeasurementRequest::TabIntrinsic { key, .. } => {
+                        saw_hidden_source_intrinsic |= surface == SOURCE && key.item() == Some(A);
                         SurfaceMeasurementAnswer::TabIntrinsic(96.0)
                     }
                     SurfaceMeasurementRequest::TabStrip { .. } => {

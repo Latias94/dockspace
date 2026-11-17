@@ -1848,7 +1848,7 @@ fn presented_tab_receiver(session: &mut DockspaceSession, item: ItemId) -> Prese
     presented_receiver(session, |plan| {
         let tab = plan
             .tabs()
-            .find(|tab| tab.item() == item)
+            .find(|tab| tab.item() == Some(item))
             .expect("the source tab is present");
         plan.receiver_for_tab_body(tab)
             .expect("the source tab exposes its exact drag receiver")

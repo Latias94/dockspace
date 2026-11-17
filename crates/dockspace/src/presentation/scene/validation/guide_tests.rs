@@ -256,7 +256,7 @@ fn canonical_rebinding_preserves_old_owners_and_binds_current_selection() {
     for select in [false, true] {
         if select {
             WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-                source: stale_source.clone(),
+                source: stale_source.as_tab_source(),
             }])
             .apply(&mut fixture.workspace, &policy)
             .unwrap();

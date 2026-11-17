@@ -22,7 +22,13 @@ fn record_visibility(session: &mut DockspaceSession) -> RecordedVisibility {
         .collect::<Vec<_>>();
     let mut selected = [FIRST, THIRD, CONTAINED]
         .into_iter()
-        .filter_map(|item| view.item(item).unwrap().tabs().visible_selected())
+        .filter_map(|item| {
+            view.item(item)
+                .unwrap()
+                .tabs()
+                .visible_selected()
+                .and_then(|tab| tab.item())
+        })
         .collect::<Vec<_>>();
     selected.sort_unstable();
     let mut minima = Vec::new();
@@ -43,7 +49,10 @@ fn record_visibility(session: &mut DockspaceSession) -> RecordedVisibility {
                     minima.push(item);
                     Answer::PaneSizing((LogicalSize::new(32.0, 24.0).unwrap()).into())
                 }
-                Request::TabIntrinsic { item, .. } => {
+                Request::TabIntrinsic { key, .. } => {
+                    let Some(item) = key.item() else {
+                        return Ok(Answer::TabIntrinsic(72.0));
+                    };
                     assert!(
                         visible.contains(&item),
                         "the hidden tab has no text metadata"
@@ -70,7 +79,7 @@ fn record_visibility(session: &mut DockspaceSession) -> RecordedVisibility {
     plan.visit_surface_program(|step| {
         if let Step::Operation { operation, .. } = step {
             match operation {
-                Operation::Tab(tab) => painted_tabs.push(tab.item()),
+                Operation::Tab(tab) => painted_tabs.extend(tab.item()),
                 Operation::Pane(pane) if group_hidden && pane.selected() == Some(THIRD) => {
                     assert_eq!(pane.bounds(), bounds);
                 }
@@ -202,7 +211,13 @@ fn shared_l08_visibility_executes_through_independent_recording_and_public_actio
                 assert!(report.workspace_changed());
                 let current = session.view().item(item(target)).unwrap();
                 assert!(current.is_selected());
-                SemanticObservation::ItemSelected(alias(current.tabs().visible_selected().unwrap()))
+                SemanticObservation::ItemSelected(alias(
+                    current
+                        .tabs()
+                        .visible_selected()
+                        .and_then(|tab| tab.item())
+                        .unwrap(),
+                ))
             }
             (SemanticSelector::Splitter(ScenarioAxis::Horizontal), SemanticAction::Increment) => {
                 let action = paint_and_present(&mut session, *step);
@@ -231,10 +246,13 @@ fn shared_l08_visibility_executes_through_independent_recording_and_public_actio
         };
         observations.push(observed);
         let tabs = session.view().item(FIRST).unwrap().tabs();
-        assert_eq!(tabs.items(), [FIRST, SECOND]);
-        assert_eq!(tabs.selected(), Some(expected_selection[index]));
+        assert_eq!(tabs.items().collect::<Vec<_>>(), [FIRST, SECOND]);
         assert_eq!(
-            tabs.visible_selected(),
+            tabs.selected().and_then(|tab| tab.item()),
+            Some(expected_selection[index])
+        );
+        assert_eq!(
+            tabs.visible_selected().and_then(|tab| tab.item()),
             (index != 2).then_some(expected_selection[index])
         );
         assert_eq!(
@@ -248,9 +266,24 @@ fn shared_l08_visibility_executes_through_independent_recording_and_public_actio
             session.view().contained(FLOATING).unwrap().rect(),
             original_rect
         );
-        assert_eq!(session.view().item(THIRD).unwrap().tabs().items(), [THIRD]);
         assert_eq!(
-            session.view().item(CONTAINED).unwrap().tabs().items(),
+            session
+                .view()
+                .item(THIRD)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
+            [THIRD]
+        );
+        assert_eq!(
+            session
+                .view()
+                .item(CONTAINED)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             [CONTAINED]
         );
         assert!(session.pending_content_close_plans().next().is_none());
@@ -299,11 +332,18 @@ fn retained_outputs_cannot_reauthorize_a_hidden_receiver_and_fresh_show_actions_
                 .item(SECOND)
                 .unwrap()
                 .tabs()
-                .visible_selected(),
+                .visible_selected()
+                .and_then(|tab| tab.item()),
             Some(SECOND)
         );
         assert_eq!(
-            session.view().item(FIRST).unwrap().tabs().items(),
+            session
+                .view()
+                .item(FIRST)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             [FIRST, SECOND]
         );
         present_visibility(&mut session);
@@ -352,8 +392,14 @@ fn document_restore_keeps_hidden_groups_and_rebuilds_only_visible_public_output(
         assert_eq!(after.root(), before.root());
         assert_eq!(after.contained(), before.contained());
         assert_eq!(after.tab_index(), before.tab_index());
-        assert_eq!(after.tabs().items(), before.tabs().items());
-        assert_eq!(after.tabs().selected(), before.tabs().selected());
+        assert_eq!(
+            after.tabs().items().collect::<Vec<_>>(),
+            before.tabs().items().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            after.tabs().selected().and_then(|tab| tab.item()),
+            before.tabs().selected().and_then(|tab| tab.item())
+        );
         assert_eq!(after.is_visible(), before.is_visible());
     }
     assert_eq!(
@@ -361,7 +407,13 @@ fn document_restore_keeps_hidden_groups_and_rebuilds_only_visible_public_output(
         [FIRST, SECOND, CONTAINED]
     );
     assert_eq!(
-        restored.view().item(FIRST).unwrap().tabs().items(),
+        restored
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         [FIRST, SECOND]
     );
     assert_eq!(
@@ -370,7 +422,8 @@ fn document_restore_keeps_hidden_groups_and_rebuilds_only_visible_public_output(
             .item(FIRST)
             .unwrap()
             .tabs()
-            .visible_selected(),
+            .visible_selected()
+            .and_then(|tab| tab.item()),
         None
     );
     present_visibility(&mut restored);
@@ -390,7 +443,8 @@ fn document_restore_keeps_hidden_groups_and_rebuilds_only_visible_public_output(
             .item(FIRST)
             .unwrap()
             .tabs()
-            .visible_selected(),
+            .visible_selected()
+            .and_then(|tab| tab.item()),
         Some(SECOND)
     );
 }

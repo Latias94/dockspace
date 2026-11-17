@@ -164,7 +164,7 @@ fn paint(session: &mut DockspaceSession) -> (PopupScene, PaintedSurfaceOutput) {
     plan.visit_surface_program(|step| {
         match step {
             Step::PopupMenu { menu, .. } => {
-                let target = menu.rows().find(|row| row.item() == THIRD).unwrap();
+                let target = menu.rows().find(|row| row.item() == Some(THIRD)).unwrap();
                 row = plan.receiver_for_tab_list_menu_row(target);
                 menu_frame = plan.receiver_for_tab_list_menu_frame(menu);
             }

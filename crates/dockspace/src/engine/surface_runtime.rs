@@ -913,7 +913,8 @@ impl DockEngine {
         }));
         for root in roots {
             for (tabs, node) in workspace.nodes() {
-                if !matches!(node, Node::Tabs { items, .. } if items.contains(&item)) {
+                if !matches!(node, Node::Tabs { items, .. } if items.contains(&TabKey::for_item(item)))
+                {
                     continue;
                 }
                 if let Ok(source) = workspace.capture_item_source(root, tabs, item) {
@@ -2477,7 +2478,9 @@ impl DockEngine {
             let selection_outcome = match crate::graph::operation::apply_owned_draft_command(
                 &mut candidate,
                 &self.policy,
-                &WorkspaceCommand::Select { source },
+                &WorkspaceCommand::Select {
+                    source: source.as_tab_source(),
+                },
             ) {
                 Ok(outcome) => outcome,
                 Err(TransactionError::Command { source, .. }) if source.is_expected_rejection() => {

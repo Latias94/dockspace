@@ -275,7 +275,7 @@ fn collect_items<'a>(
     items: &mut Vec<ItemId>,
 ) {
     if let Some(tabs) = node.tabs() {
-        items.extend_from_slice(tabs.items());
+        items.extend(tabs.items());
     } else if let Some(split) = node.split() {
         nodes.extend(split.children());
     }

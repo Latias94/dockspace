@@ -885,7 +885,8 @@ its recovery button entirely.
 - `tab_bar_layout(bar_id, ui)` reserves fixed leading/trailing widths outside
   the scrollable strip, plus an optional `after_tabs_width` inside it.
   `tab_bar_ui(ui, bar, slot)` draws into each visible allocation.
-  `bar.items()` includes every group member in tab order.
+  `bar.tabs()` includes every direct group member in tab order as a `TabKey`.
+  `bar.items()` iterates direct application items and excludes layout tabs.
 - `drag_preview_ui(ui, preview)` paints the non-interactive drag ghost. Reuse
   its background/title helpers to add the same icons or badges as the tabs.
   The callback is skipped when core projects the actual floating source.
@@ -909,7 +910,7 @@ fn tab_ui(
     tab: &egui_dockspace::Tab<'_>,
 ) -> egui_dockspace::TabVisuals {
     let mut appearance = tab.clone();
-    if self.needs_attention(tab.item) {
+    if tab.item().is_some_and(|item| self.needs_attention(item)) {
         appearance.visuals.fill = egui::Color32::from_rgb(120, 75, 25);
     }
     appearance.paint(ui)

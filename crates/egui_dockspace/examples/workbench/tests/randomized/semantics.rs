@@ -54,8 +54,8 @@ impl LayoutState {
                         state.groups.push(Group {
                             root: root.id(),
                             floating,
-                            items: tabs.items().to_vec(),
-                            selected: tabs.selected(),
+                            items: tabs.items().collect::<Vec<_>>(),
+                            selected: tabs.selected().and_then(|tab| tab.item()),
                         });
                     } else if let Some(split) = node.split() {
                         let children = split.children().collect::<Vec<_>>();
@@ -131,7 +131,7 @@ fn descendants(node: egui_dockspace::DockspaceNodeView<'_>) -> Vec<ItemId> {
     let mut items = Vec::new();
     while let Some(node) = pending.pop() {
         if let Some(tabs) = node.tabs() {
-            items.extend_from_slice(tabs.items());
+            items.extend(tabs.items());
         } else if let Some(split) = node.split() {
             pending.extend(split.children().collect::<Vec<_>>().into_iter().rev());
         }
@@ -203,12 +203,12 @@ impl MoveExpectation {
             );
         }
         assert_eq!(
-            moved.tabs().items(),
+            moved.tabs().items().collect::<Vec<_>>(),
             expected,
             "an admitted drop must move exactly its payload in order"
         );
         assert_eq!(
-            moved.tabs().selected(),
+            moved.tabs().selected().and_then(|tab| tab.item()),
             Some(self.selected),
             "the destination must activate the moved selection"
         );
@@ -222,8 +222,11 @@ impl MoveExpectation {
             moved.contained().is_some(),
             "an admitted Shift-drag must float its payload"
         );
-        assert_eq!(moved.tabs().items(), self.payload);
-        assert_eq!(moved.tabs().selected(), Some(self.selected));
+        assert_eq!(moved.tabs().items().collect::<Vec<_>>(), self.payload);
+        assert_eq!(
+            moved.tabs().selected().and_then(|tab| tab.item()),
+            Some(self.selected)
+        );
         self.assert_remainder_and_unaffected(replay, &after, None, false);
     }
 
@@ -248,7 +251,7 @@ impl MoveExpectation {
         if let Some(&item) = remainder.first() {
             let source = replay.dock.view().item(item).unwrap();
             assert_eq!(
-                source.tabs().items(),
+                source.tabs().items().collect::<Vec<_>>(),
                 remainder,
                 "the donor preserves the remaining tab order"
             );
@@ -260,7 +263,7 @@ impl MoveExpectation {
                 .is_some_and(|selected| !self.payload.contains(&selected))
             {
                 assert_eq!(
-                    source.tabs().selected(),
+                    source.tabs().selected().and_then(|tab| tab.item()),
                     self.source.selected,
                     "pressing then removing another tab restores the previous selection"
                 );

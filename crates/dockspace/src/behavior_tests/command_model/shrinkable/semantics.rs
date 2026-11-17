@@ -1,6 +1,7 @@
 //! A flat semantic oracle: no split topology, runtime identities or solver state.
 
 use super::*;
+use crate::ids::TabKey;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Group {
@@ -271,9 +272,12 @@ impl Semantics {
                         .expect("model root remains live")
                         .central
                         == Some(node),
-                    items: items.clone(),
-                    selected: *selected,
-                    mru: mru.clone(),
+                    items: (items.clone())
+                        .into_iter()
+                        .filter_map(TabKey::item)
+                        .collect(),
+                    selected: selected.and_then(TabKey::item),
+                    mru: (mru.clone()).into_iter().filter_map(TabKey::item).collect(),
                 }),
                 Node::Split { .. } => None,
             })
@@ -302,11 +306,17 @@ impl Semantics {
             };
             let expected = expected
                 .iter()
-                .find(|group| group.items == *items)
+                .find(|group| {
+                    group.items
+                        == items
+                            .iter()
+                            .filter_map(|tab| tab.item())
+                            .collect::<Vec<_>>()
+                })
                 .expect("the complete group was compared");
             assert_eq!(
                 workspace.visible_tab_selection(node),
-                expected.visible_selection(&self.hidden)
+                (expected.visible_selection(&self.hidden)).map(TabKey::for_item)
             );
         }
     }

@@ -252,14 +252,26 @@ fn same_bar_new_members_do_not_expand_item_selection_or_close_authority() {
             assert!(commit(frame).workspace_changed());
             assert!(session.view().item(FLOAT_SECOND).is_none());
             assert_eq!(
-                session.view().item(UNSEEN).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(UNSEEN)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FLOAT_FIRST, UNSEEN]
             );
         } else {
             assert!(report.workspace_changed(), "{report:?}");
             assert!(session.view().item(FLOAT_SECOND).unwrap().is_selected());
             assert_eq!(
-                session.view().item(UNSEEN).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(UNSEEN)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FLOAT_FIRST, FLOAT_SECOND, UNSEEN]
             );
         }
@@ -320,7 +332,13 @@ fn unrelated_sibling_bar_changes_do_not_expire_item_actions_in_the_same_root() {
             assert!(session.view().item(SECOND).unwrap().is_selected());
         }
         assert_eq!(
-            session.view().item(UNSEEN).unwrap().tabs().items(),
+            session
+                .view()
+                .item(UNSEEN)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[FLOAT_FIRST, FLOAT_SECOND, UNSEEN]
         );
     }
@@ -704,7 +722,10 @@ fn unpublished_tab_chrome_retains_its_popup_session_and_rejects_a_successor_popu
             let mut action = None;
             plan.visit_surface_program(|step| {
                 if let Step::PopupMenu { menu, .. } = step {
-                    let row = menu.rows().find(|row| row.item() == FLOAT_SECOND).unwrap();
+                    let row = menu
+                        .rows()
+                        .find(|row| row.item() == Some(FLOAT_SECOND))
+                        .unwrap();
                     action = plan.prepare_tab_list_menu_row_activation(row);
                 }
                 Ok::<(), ()>(())

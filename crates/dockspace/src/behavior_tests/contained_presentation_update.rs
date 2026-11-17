@@ -190,9 +190,11 @@ fn stale_node_source_rejects_without_touching_rect_or_roster() {
     let item = workspace
         .capture_item_source(ROOT_A, node_a, ItemId::new(20))
         .expect("item source must be current");
-    WorkspaceTransaction::from_commands([WorkspaceCommand::Select { source: item }])
-        .apply(&mut workspace, &DockPolicySnapshot::default())
-        .expect("fixture selection must change the source fingerprint");
+    WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
+        source: item.as_tab_source(),
+    }])
+    .apply(&mut workspace, &DockPolicySnapshot::default())
+    .expect("fixture selection must change the source fingerprint");
     let before = workspace.clone();
 
     let error = WorkspaceTransaction::from_commands([command])

@@ -2,7 +2,7 @@ use super::*;
 use crate::behavior_tests::support::{self, MeasurementProfile, TestPresentationHost};
 use crate::geometry::{LogicalRect, LogicalSize};
 use crate::graph::{RootRecord, SurfacePresentation};
-use crate::ids::NodeId;
+use crate::ids::{NodeId, TabKey};
 use crate::model::{DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout};
 use crate::policy::DockPolicy;
 use crate::presentation::compiler::{reset_surface_compilation_count, surface_compilation_count};
@@ -291,7 +291,7 @@ fn changed_selection_retains_sealed_facts_but_rebinds_current_semantics_and_outp
             .plan()
             .tab_records()
             .iter()
-            .all(|tab| candidate.plan().tab_selected(tab) == (tab.id().item == SECOND))
+            .all(|tab| candidate.plan().tab_selected(tab) == (tab.id().tab == SECOND.into()))
     );
     let mut title = None;
     candidate
@@ -320,7 +320,7 @@ fn changed_selection_retains_sealed_facts_but_rebinds_current_semantics_and_outp
     assert_eq!(current.hit_manifest().output(), current.output_ticket());
     assert_eq!(
         engine.workspace().tab_mru(tabs),
-        Some([SECOND, ITEM].as_slice())
+        Some([SECOND.into(), ITEM.into()].as_slice())
     );
     assert!(engine.presentation_authority.selection_rebind.is_none());
     assert_eq!(surface_compilation_count(), 0);
@@ -363,7 +363,7 @@ fn item_measurements(
     engine: &DockEngine,
     bounds: LogicalRect,
     mut minimum: impl FnMut(Option<ItemId>) -> LogicalSize,
-    mut intrinsic: impl FnMut(ItemId) -> f64,
+    mut intrinsic: impl FnMut(TabKey) -> f64,
 ) -> SurfaceMeasurements {
     let requirements = engine.presentation_requirements().surface(SURFACE).unwrap();
     let mut measurements = SurfaceMeasurements::new(requirements.ticket());
@@ -384,7 +384,7 @@ fn item_measurements(
         measurements
             .insert_tab_intrinsic(
                 key,
-                Measurement::Measured(TabIntrinsic::new(intrinsic(key.tab().item)).unwrap()),
+                Measurement::Measured(TabIntrinsic::new(intrinsic(key.tab().tab)).unwrap()),
             )
             .unwrap();
     }
@@ -497,7 +497,7 @@ fn unchanged_answers_rebuild_when_selected_items_have_different_actual_minima() 
     );
     assert_eq!(
         engine.workspace().tab_mru(tabs),
-        Some([SECOND, ITEM].as_slice())
+        Some([SECOND.into(), ITEM.into()].as_slice())
     );
 }
 
@@ -516,7 +516,7 @@ fn selecting_an_offscreen_tab_rebuilds_reveal_geometry_and_hit_receivers() {
         previous_bar
             .members()
             .iter()
-            .find(|member| member.tab().item == selected)
+            .find(|member| member.tab().tab == selected.into())
             .unwrap()
             .visibility(),
         TabStripMemberVisibility::Hidden,
@@ -524,7 +524,7 @@ fn selecting_an_offscreen_tab_rebuilds_reveal_geometry_and_hit_receivers() {
     let tab = TabSceneId {
         root: ROOT,
         tabs,
-        item: selected,
+        tab: selected.into(),
     };
     assert!(
         original
@@ -600,7 +600,7 @@ fn selecting_an_offscreen_tab_rebuilds_reveal_geometry_and_hit_receivers() {
     assert_ne!(current.output_ticket(), original.output_ticket());
     assert_eq!(
         engine.workspace().tab_mru(tabs).unwrap().first(),
-        Some(&selected)
+        Some(&selected.into())
     );
 }
 
@@ -643,7 +643,7 @@ fn local_selection_rebuilds_when_another_items_measurements_change() {
                 }
             },
             |item| {
-                if matches!(changed, ChangedAnswer::Intrinsic) && item == OTHER {
+                if matches!(changed, ChangedAnswer::Intrinsic) && item.item() == Some(OTHER) {
                     220.0
                 } else {
                     56.0
@@ -672,7 +672,7 @@ fn local_selection_rebuilds_when_another_items_measurements_change() {
         );
         assert_eq!(
             engine.workspace().tab_mru(tabs),
-            Some([SECOND, ITEM, OTHER].as_slice())
+            Some([SECOND.into(), ITEM.into(), OTHER.into()].as_slice())
         );
         let layout = current.plan().layout_facts().unwrap();
         assert!(layout.measurements().same_values(&answers));
@@ -685,7 +685,7 @@ fn local_selection_rebuilds_when_another_items_measurements_change() {
                 let tab = TabSceneId {
                     root: ROOT,
                     tabs,
-                    item: OTHER,
+                    tab: OTHER.into(),
                 };
                 assert_eq!(
                     layout
@@ -763,7 +763,7 @@ fn retained_facts_use_current_drop_policy_without_reauthorizing_old_output() {
     let old_tab = TabSceneId {
         root: ROOT,
         tabs,
-        item: ITEM,
+        tab: ITEM.into(),
     };
     let center = original
         .plan()
@@ -839,8 +839,8 @@ fn retained_facts_use_current_drop_policy_without_reauthorizing_old_output() {
     assert_eq!(surface_compilation_count(), 0);
     let current = engine.scene().ready_candidate(SURFACE).unwrap();
     assert!(current.plan().shares_facts(original.plan()));
-    assert_eq!(original.plan().selected_in_tabs(tabs), Some(ITEM));
-    assert_eq!(current.plan().selected_in_tabs(tabs), Some(SECOND));
+    assert_eq!(original.plan().selected_in_tabs(tabs), Some(ITEM.into()));
+    assert_eq!(current.plan().selected_in_tabs(tabs), Some(SECOND.into()));
     assert_ne!(current.output_ticket(), original.output_ticket());
     let resolved = query(&engine);
     let DropResolution::Resolved(resolved) = resolved.resolution() else {
@@ -880,8 +880,8 @@ fn retained_facts_use_current_drop_policy_without_reauthorizing_old_output() {
     assert!(matches!(
         engine.workspace().node(tabs),
         Some(Node::Tabs {
-            selected: Some(SECOND),
+            selected: Some(selected),
             ..
-        })
+        }) if *selected == SECOND.into()
     ));
 }

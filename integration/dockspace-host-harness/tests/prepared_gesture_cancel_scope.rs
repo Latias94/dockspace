@@ -78,7 +78,7 @@ fn direct_prepared_cancel_cannot_cancel_a_successor_gesture_at_the_same_version(
             operation: Operation::Tab(tab),
             ..
         } = step
-            && tab.item() == FIRST
+            && tab.item() == Some(FIRST)
         {
             descriptor = plan.receiver_for_tab_close(tab);
         }

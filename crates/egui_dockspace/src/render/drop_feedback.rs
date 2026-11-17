@@ -30,7 +30,7 @@ pub(super) fn paint(
     let tabs = preview
         .tabs()
         .filter_map(|tab| {
-            let resource = context.resources.item(tab.item())?;
+            let resource = context.resources.tab(tab.key())?;
             let selected = tab.selected();
             let text_color_override = if selected {
                 context.style.visuals.tab_active_text_color
@@ -58,7 +58,7 @@ pub(super) fn paint(
                 }
             });
             Some(DropPreviewTab {
-                item: tab.item(),
+                key: tab.key(),
                 ordinal: tab.ordinal(),
                 selected,
                 is_payload: tab.is_payload(),

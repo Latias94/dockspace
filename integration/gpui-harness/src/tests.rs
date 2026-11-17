@@ -189,12 +189,15 @@ impl Fixture {
             if let Step::Operation { operation, .. } = step {
                 match operation {
                     Operation::Tab(tab) => {
-                        geometry.tabs.insert(tab.item(), tab.visible_bounds());
+                        let Some(item) = tab.item() else {
+                            return Ok::<_, Infallible>(());
+                        };
+                        geometry.tabs.insert(item, tab.visible_bounds());
                         geometry
                             .tab_text
-                            .insert(tab.item(), (tab.text_layout_bounds(), tab.text_bounds()));
+                            .insert(item, (tab.text_layout_bounds(), tab.text_bounds()));
                         if let Some(viewport) = tab_bars.get(&tab.tab_bar_visual_id()) {
-                            geometry.tab_viewports.insert(tab.item(), *viewport);
+                            geometry.tab_viewports.insert(item, *viewport);
                         }
                     }
                     Operation::TabBar(bar) => {
@@ -718,7 +721,11 @@ fn real_tab_drag_merges_into_another_pane(cx: &mut TestAppContext) {
     let view = host.session.view();
     let target = view.item(ItemId::new(3)).expect("target item");
     assert!(
-        target.tabs().items().contains(&ItemId::new(2)),
+        target
+            .tabs()
+            .items()
+            .collect::<Vec<_>>()
+            .contains(&ItemId::new(2)),
         "dragged tab should join the target's group"
     );
     assert!(
@@ -727,6 +734,7 @@ fn real_tab_drag_merges_into_another_pane(cx: &mut TestAppContext) {
             .expect("source item")
             .tabs()
             .items()
+            .collect::<Vec<_>>()
             .contains(&ItemId::new(2))
     );
     assert_eq!(

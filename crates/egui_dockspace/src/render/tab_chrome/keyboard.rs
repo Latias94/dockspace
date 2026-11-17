@@ -56,7 +56,7 @@ pub(super) fn capture(
         let action = match batch.outcome {
             Outcome::Navigate(index) => rows
                 .get(index)
-                .and_then(|row| context.plan.prepare_tab_list_menu_focus(menu, row.item())),
+                .and_then(|row| context.plan.prepare_tab_list_menu_focus(menu, row.key())),
             Outcome::Activate(index) => rows
                 .get(index)
                 .and_then(|row| context.plan.prepare_tab_list_menu_row_activation(*row)),
@@ -99,7 +99,7 @@ pub(super) fn capture(
     }
     if let Some(row) = focused_index.and_then(|index| rows.get(index))
         && !row.focused()
-        && let Some(action) = context.plan.prepare_tab_list_menu_focus(menu, row.item())
+        && let Some(action) = context.plan.prepare_tab_list_menu_focus(menu, row.key())
     {
         let origin = tab_list_menu_row_id(context, *row).with("framework-focus");
         context.push_local_action(origin, action);

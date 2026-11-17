@@ -140,7 +140,9 @@ fn snapshot_source_version_and_same_version_mutation_keep_live_fallback() {
         .unwrap()
         .unwrap();
     crate::graph::transaction::WorkspaceTransaction::from_commands([
-        crate::graph::command::WorkspaceCommand::Select { source },
+        crate::graph::command::WorkspaceCommand::Select {
+            source: source.as_tab_source(),
+        },
     ])
     .apply(&mut changed, &candidate.policy)
     .unwrap();

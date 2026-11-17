@@ -188,7 +188,14 @@ fn press_during_motion_then_cancel(entry: Entry, focus_loss: bool, discarded_pas
     assert!(harness.panes.bounds[&FIRST].width() > left.width() + 20.0);
     assert!(harness.panes.bounds[&SECOND].width() < right.width() - 20.0);
     assert_eq!(
-        harness.dockspace.view().item(FIRST).unwrap().tabs().items(),
+        harness
+            .dockspace
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, THIRD]
     );
     assert_eq!(
@@ -198,7 +205,8 @@ fn press_during_motion_then_cancel(entry: Entry, focus_loss: bool, discarded_pas
             .item(SECOND)
             .unwrap()
             .tabs()
-            .items(),
+            .items()
+            .collect::<Vec<_>>(),
         &[SECOND]
     );
 }

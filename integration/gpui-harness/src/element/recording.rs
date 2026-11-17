@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, convert::Infallible};
 use anyhow::{Result, anyhow};
 use dockspace::{
     geometry::LogicalRect,
-    model::ItemId,
+    model::{ItemId, TabKey},
     runtime::{
         DockspaceDropEligibility, DockspacePreviewVisual, DockspaceReceiverDescriptor,
         SurfacePaintPlan, SurfacePaintProgramOperation as Operation,
@@ -27,6 +27,10 @@ pub(super) fn record(
     let label = |item: Option<ItemId>| {
         item.and_then(|item| panels.get(&item))
             .map_or_else(|| "Workspace".to_owned(), |pane| pane.title.to_string())
+    };
+    let tab_label = |key: TabKey| {
+        key.item()
+            .map_or_else(|| "Layout".to_owned(), |item| label(Some(item)))
     };
     let receiver = |draws: &mut Vec<Draw>, value: Option<DockspaceReceiverDescriptor>| {
         if let Some(value) = value {
@@ -71,7 +75,7 @@ pub(super) fn record(
                         if !paint.is_source_gap() {
                             draws.push(Draw::Tab(
                                 tab.visible_bounds(),
-                                tab.item(),
+                                tab.key(),
                                 if tab.selected() {
                                     colors.selected_tab
                                 } else {
@@ -82,8 +86,8 @@ pub(super) fn record(
                             draws.push(Draw::TabText(
                                 tab.text_layout_bounds(),
                                 tab.text_bounds(),
-                                tab.item(),
-                                label(Some(tab.item())),
+                                tab.key(),
+                                tab_label(tab.key()),
                                 if tab.selected() {
                                     colors.text
                                 } else {
@@ -194,11 +198,7 @@ pub(super) fn record(
                     receiver(&mut draws, plan.receiver_for_tab_list_menu_frame(menu));
                     for row in menu.rows() {
                         receiver(&mut draws, plan.receiver_for_tab_list_menu_row(row));
-                        draws.push(Draw::Text(
-                            row.bounds(),
-                            label(Some(row.item())),
-                            colors.text,
-                        ));
+                        draws.push(Draw::Text(row.bounds(), tab_label(row.key()), colors.text));
                     }
                 }
                 Step::DropTarget(_)

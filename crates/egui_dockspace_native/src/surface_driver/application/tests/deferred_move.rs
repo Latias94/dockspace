@@ -35,8 +35,24 @@ fn assert_tabs(state: &NativeRuntimeState<Panes>, first: &[ItemId], second: &[It
         let main = surface_view.main_root().unwrap();
         assert_eq!(main.id(), root);
         assert!(surface_view.contained().next().is_none());
-        assert_eq!(main.content().unwrap().tabs().unwrap().items(), items);
-        assert_eq!(main.central().unwrap().tabs().unwrap().items(), items);
+        assert_eq!(
+            main.content()
+                .unwrap()
+                .tabs()
+                .unwrap()
+                .items()
+                .collect::<Vec<_>>(),
+            items
+        );
+        assert_eq!(
+            main.central()
+                .unwrap()
+                .tabs()
+                .unwrap()
+                .items()
+                .collect::<Vec<_>>(),
+            items
+        );
         for item in items {
             let location = view.item(*item).unwrap();
             assert_eq!(location.surface(), surface);
@@ -169,7 +185,7 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
     }
     assert_eq!(
         state.view().item(FIRST).unwrap().tabs().selected(),
-        Some(FIRST)
+        Some(FIRST.into())
     );
 
     let fresh = request_plan(&mut state, FIRST);

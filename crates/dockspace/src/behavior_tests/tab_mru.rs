@@ -1,4 +1,5 @@
 use super::support;
+use crate::ids::TabKey;
 
 use dockspace::engine::{DockEngine, EngineInput};
 use dockspace::graph::command::{
@@ -65,7 +66,7 @@ fn selected(workspace: &Workspace, tabs: NodeId) -> Option<ItemId> {
     let Some(Node::Tabs { selected, .. }) = workspace.node(tabs) else {
         panic!("expected tabs node {tabs:?}");
     };
-    *selected
+    selected.and_then(TabKey::item)
 }
 
 fn two_roots() -> (Workspace, NodeId, NodeId) {
@@ -88,29 +89,35 @@ fn selection_and_reselection_keep_a_complete_most_recent_first_permutation() {
     let (mut workspace, source, _) = two_roots();
     assert_eq!(
         workspace.tab_mru(source),
-        Some([item(1), item(2), item(3)].as_slice())
+        Some([item(1), item(2), item(3)].map(TabKey::for_item).as_slice())
     );
 
     let select = workspace
         .capture_item_source(SOURCE_ROOT, source, item(2))
         .expect("selection source must exist");
-    apply(&mut workspace, WorkspaceCommand::Select { source: select });
+    apply(
+        &mut workspace,
+        WorkspaceCommand::Select {
+            source: select.as_tab_source(),
+        },
+    );
     assert_eq!(
         workspace.tab_mru(source),
-        Some([item(2), item(1), item(3)].as_slice())
+        Some([item(2), item(1), item(3)].map(TabKey::for_item).as_slice())
     );
 
     let reselect = workspace
         .capture_item_source(SOURCE_ROOT, source, item(2))
         .expect("reselection source must exist");
-    let report =
-        WorkspaceTransaction::from_commands([WorkspaceCommand::Select { source: reselect }])
-            .apply(&mut workspace, &DockPolicySnapshot::default())
-            .expect("reselection must be valid");
+    let report = WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
+        source: reselect.as_tab_source(),
+    }])
+    .apply(&mut workspace, &DockPolicySnapshot::default())
+    .expect("reselection must be valid");
     assert!(!report.changed());
     assert_eq!(
         workspace.tab_mru(source),
-        Some([item(2), item(1), item(3)].as_slice())
+        Some([item(2), item(1), item(3)].map(TabKey::for_item).as_slice())
     );
 }
 
@@ -124,13 +131,13 @@ fn closing_the_selected_tab_restores_the_most_recent_remaining_item() {
         apply(
             &mut workspace,
             WorkspaceCommand::Select {
-                source: source_item,
+                source: source_item.as_tab_source(),
             },
         );
     }
     assert_eq!(
         workspace.tab_mru(source),
-        Some([item(3), item(2), item(1)].as_slice())
+        Some([item(3), item(2), item(1)].map(TabKey::for_item).as_slice())
     );
 
     close(&mut workspace, item(3));
@@ -138,7 +145,7 @@ fn closing_the_selected_tab_restores_the_most_recent_remaining_item() {
     assert_eq!(selected(&workspace, source), Some(item(2)));
     assert_eq!(
         workspace.tab_mru(source),
-        Some([item(2), item(1)].as_slice())
+        Some([item(2), item(1)].map(TabKey::for_item).as_slice())
     );
 }
 
@@ -148,7 +155,12 @@ fn reorder_preserves_mru_while_a_single_item_move_updates_both_stacks() {
     let select = workspace
         .capture_item_source(SOURCE_ROOT, source, item(2))
         .expect("selection source must exist");
-    apply(&mut workspace, WorkspaceCommand::Select { source: select });
+    apply(
+        &mut workspace,
+        WorkspaceCommand::Select {
+            source: select.as_tab_source(),
+        },
+    );
 
     let reorder = workspace
         .capture_item_source(SOURCE_ROOT, source, item(3))
@@ -156,13 +168,13 @@ fn reorder_preserves_mru_while_a_single_item_move_updates_both_stacks() {
     apply(
         &mut workspace,
         WorkspaceCommand::Reorder {
-            source: reorder,
+            source: reorder.as_tab_source(),
             insertion_index: 0,
         },
     );
     assert_eq!(
         workspace.tab_mru(source),
-        Some([item(2), item(1), item(3)].as_slice()),
+        Some([item(2), item(1), item(3)].map(TabKey::for_item).as_slice()),
         "visual tab order must not become focus history"
     );
 
@@ -183,12 +195,16 @@ fn reorder_preserves_mru_while_a_single_item_move_updates_both_stacks() {
     assert_eq!(selected(&workspace, source), Some(item(1)));
     assert_eq!(
         workspace.tab_mru(source),
-        Some([item(1), item(3)].as_slice())
+        Some([item(1), item(3)].map(TabKey::for_item).as_slice())
     );
     assert_eq!(selected(&workspace, target), Some(item(2)));
     assert_eq!(
         workspace.tab_mru(target),
-        Some([item(2), item(10), item(11)].as_slice())
+        Some(
+            [item(2), item(10), item(11)]
+                .map(TabKey::for_item)
+                .as_slice()
+        )
     );
 }
 
@@ -202,7 +218,7 @@ fn merging_tabs_preserves_target_local_history_without_importing_source_history(
         apply(
             &mut workspace,
             WorkspaceCommand::Select {
-                source: source_item,
+                source: source_item.as_tab_source(),
             },
         );
     }
@@ -212,16 +228,16 @@ fn merging_tabs_preserves_target_local_history_without_importing_source_history(
     apply(
         &mut workspace,
         WorkspaceCommand::Select {
-            source: target_item,
+            source: target_item.as_tab_source(),
         },
     );
     assert_eq!(
         workspace.tab_mru(source),
-        Some([item(3), item(2), item(1)].as_slice())
+        Some([item(3), item(2), item(1)].map(TabKey::for_item).as_slice())
     );
     assert_eq!(
         workspace.tab_mru(target),
-        Some([item(11), item(10)].as_slice())
+        Some([item(11), item(10)].map(TabKey::for_item).as_slice())
     );
 
     let source_stack = workspace
@@ -241,14 +257,22 @@ fn merging_tabs_preserves_target_local_history_without_importing_source_history(
     assert_eq!(selected(&workspace, target), Some(item(3)));
     assert_eq!(
         workspace.tab_mru(target),
-        Some([item(3), item(11), item(10), item(1), item(2)].as_slice())
+        Some(
+            [item(3), item(11), item(10), item(1), item(2)]
+                .map(TabKey::for_item)
+                .as_slice()
+        )
     );
 
     close(&mut workspace, item(3));
     assert_eq!(selected(&workspace, target), Some(item(2)));
     assert_eq!(
         workspace.tab_mru(target),
-        Some([item(2), item(11), item(10), item(1)].as_slice())
+        Some(
+            [item(2), item(11), item(10), item(1)]
+                .map(TabKey::for_item)
+                .as_slice()
+        )
     );
 }
 
@@ -272,13 +296,13 @@ fn merging_a_tabs_stack_into_an_empty_central_leaf_preserves_its_complete_mru() 
         apply(
             &mut workspace,
             WorkspaceCommand::Select {
-                source: source_item,
+                source: source_item.as_tab_source(),
             },
         );
     }
     assert_eq!(
         workspace.tab_mru(source),
-        Some([item(3), item(2), item(1)].as_slice())
+        Some([item(3), item(2), item(1)].map(TabKey::for_item).as_slice())
     );
 
     let source_stack = workspace
@@ -298,14 +322,14 @@ fn merging_a_tabs_stack_into_an_empty_central_leaf_preserves_its_complete_mru() 
     assert_eq!(selected(&workspace, central), Some(item(3)));
     assert_eq!(
         workspace.tab_mru(central),
-        Some([item(3), item(2), item(1)].as_slice())
+        Some([item(3), item(2), item(1)].map(TabKey::for_item).as_slice())
     );
 
     close(&mut workspace, item(3));
     assert_eq!(selected(&workspace, central), Some(item(2)));
     assert_eq!(
         workspace.tab_mru(central),
-        Some([item(2), item(1)].as_slice())
+        Some([item(2), item(1)].map(TabKey::for_item).as_slice())
     );
 }
 
@@ -315,7 +339,12 @@ fn moving_a_complete_root_preserves_tab_identity_selection_and_mru() {
     let select = workspace
         .capture_item_source(SOURCE_ROOT, source, item(3))
         .expect("selection source must exist");
-    apply(&mut workspace, WorkspaceCommand::Select { source: select });
+    apply(
+        &mut workspace,
+        WorkspaceCommand::Select {
+            source: select.as_tab_source(),
+        },
+    );
     let expected = workspace
         .tab_mru(source)
         .expect("tabs history must exist")
@@ -363,17 +392,17 @@ fn validation_rejects_any_history_that_is_not_an_exact_selected_first_permutatio
     assert!(errors_for([item(1), item(1)]).iter().any(|error| matches!(
         error,
         WorkspaceValidationError::DuplicateTabMruItem { item: duplicate, .. }
-            if *duplicate == item(1)
+            if *duplicate == TabKey::for_item(item(1))
     )));
     assert!(errors_for([item(1)]).iter().any(|error| matches!(
         error,
         WorkspaceValidationError::TabItemMissingFromMru { item: missing, .. }
-            if *missing == item(2)
+            if *missing == TabKey::for_item(item(2))
     )));
     assert!(errors_for([item(1), item(99)]).iter().any(|error| matches!(
         error,
         WorkspaceValidationError::TabMruItemNotInTabs { item: foreign, .. }
-            if *foreign == item(99)
+            if *foreign == TabKey::for_item(item(99))
     )));
     assert!(errors_for([item(2), item(1)]).iter().any(|error| matches!(
         error,
@@ -381,6 +410,6 @@ fn validation_rejects_any_history_that_is_not_an_exact_selected_first_permutatio
             selected: Some(selected),
             most_recent: Some(most_recent),
             ..
-        } if *selected == item(1) && *most_recent == item(2)
+        } if *selected == TabKey::for_item(item(1)) && *most_recent == TabKey::for_item(item(2))
     )));
 }

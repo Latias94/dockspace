@@ -46,8 +46,11 @@ impl PaneView for Panes {
     }
 
     fn tab_ui(&mut self, ui: &mut Ui, tab: &crate::Tab<'_>) -> crate::TabVisuals {
+        let Some(item) = tab.item() else {
+            return tab.paint(ui);
+        };
         if tab.pane_focused {
-            self.focused_tabs.push(tab.item);
+            self.focused_tabs.push(item);
         }
         tab.paint(ui)
     }

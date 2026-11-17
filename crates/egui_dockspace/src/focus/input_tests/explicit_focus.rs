@@ -77,8 +77,7 @@ fn an_unapplied_pane_focus_request_yields_to_new_accesskit_focus() {
         let selected = dockspace.select_item_current(EDITOR).unwrap();
         assert!(matches!(
             selected.status(),
-            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { item: EDITOR, .. })
-        ));
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected { tab: selected_tab, .. }) if selected_tab.item() == Some(EDITOR)));
 
         let mut focus_before_docking = None;
         let (mut output, receipt) = run_with_ui(
@@ -137,10 +136,9 @@ fn an_unaccepted_accesskit_focus_does_not_cancel_a_new_pane_focus_request() {
             assert!(matches!(
                 selected.status(),
                 DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
-                    item: EDITOR,
+                    tab: selected_tab,
                     ..
-                })
-            ));
+                }) if selected_tab.item() == Some(EDITOR)));
             let mut focus_before_docking = None;
             let (mut output, receipt) = run_with_ui(
                 owned,

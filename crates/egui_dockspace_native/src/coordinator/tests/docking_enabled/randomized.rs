@@ -194,7 +194,7 @@ fn scene(
                 operation: SurfacePaintProgramOperation::Tab(tab),
                 ..
             } = step
-                && tab.item() == MOVING
+                && tab.item() == Some(MOVING)
             {
                 descriptor = source_plan.receiver_for_tab_body(tab);
             }
@@ -813,7 +813,7 @@ fn a_replacement_mouse_press_in_another_window_cancels_the_old_source_and_docks_
             operation: SurfacePaintProgramOperation::Tab(tab),
             ..
         } = step
-            && tab.item() == ItemId::new(1)
+            && tab.item() == Some(ItemId::new(1))
         {
             old_descriptor = plan.receiver_for_tab_body(tab);
         }

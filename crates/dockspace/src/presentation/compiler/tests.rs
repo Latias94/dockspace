@@ -1,6 +1,7 @@
 use super::*;
 use crate::geometry::{LogicalPoint, LogicalRect, LogicalSize};
 use crate::graph::{Axis, ContainedFloating, RootRecord, SurfacePresentation};
+use crate::ids::TabKey;
 use crate::ids::{ItemId, WorkspaceEpoch, WorkspaceRevision};
 use crate::interaction::targeting::targets::DropTargetLocation;
 use crate::interaction::{DragGeneration, DragSessionId};
@@ -533,7 +534,9 @@ fn surface_program_keeps_root_chrome_pane_contained_and_guide_order_in_core() {
             } => Some((
                 *root,
                 *presentation,
-                (*title_tabs).and_then(|tabs| plan.selected_in_tabs(tabs)),
+                (*title_tabs)
+                    .and_then(|tabs| plan.selected_in_tabs(tabs))
+                    .and_then(TabKey::item),
             )),
             _ => None,
         })
@@ -894,7 +897,7 @@ fn hit_and_semantic_manifests_follow_surface_program_membership() {
     let tab = *plan
         .tab_records()
         .iter()
-        .find(|record| record.id().item == item)
+        .find(|record| record.id().tab == item.into())
         .expect("fixture should compile the tab")
         .id();
     assert!(
@@ -1190,7 +1193,7 @@ fn narrow_main_tab_bar_preserves_selection_before_optional_group_chrome() {
     );
     assert!(
         plan.tab_records().iter().any(|tab| {
-            tab.id().item == ItemId::new(817)
+            tab.id().tab == ItemId::new(817).into()
                 && tab.drag_hit().rect().width() > 0.0
                 && tab.drag_hit().rect().height() > 0.0
         }),
@@ -1300,7 +1303,7 @@ fn viewport_shrink_reveals_the_existing_selection_once() {
     let (workspace, manifest, measurements, mut states, surface, bar, items) =
         overflowing_tab_strip_fixture_with(&policy, None, false);
     states
-        .adopt_resolved_scroll_offsets(surface, [(bar, 0.0, Some(items[3]), 1000.0)])
+        .adopt_resolved_scroll_offsets(surface, [(bar, 0.0, Some(items[3].into()), 1000.0)])
         .unwrap();
     let solve = |states: &TabStripStateStore| {
         compile_surface_measurements(
@@ -1329,7 +1332,7 @@ fn viewport_shrink_reveals_the_existing_selection_once() {
             [(
                 bar,
                 record.scroll_offset(),
-                Some(items[3]),
+                Some(items[3].into()),
                 record.viewport().width(),
             )],
         )
@@ -1812,7 +1815,9 @@ fn fractional_origin_selection_reveal_matches_validated_full_compilation() {
         let source = workspace.capture_item_source(root, tabs, items[1]).unwrap();
         let mut changed = workspace.clone();
         crate::graph::transaction::WorkspaceTransaction::from_commands([
-            crate::graph::command::WorkspaceCommand::Select { source },
+            crate::graph::command::WorkspaceCommand::Select {
+                source: source.as_tab_source(),
+            },
         ])
         .apply(&mut changed, &policy)
         .unwrap();
@@ -1837,7 +1842,7 @@ fn fractional_origin_selection_reveal_matches_validated_full_compilation() {
             &original,
             &config,
             requirement,
-            Some(items[1]),
+            Some(items[1].into()),
             &TabStripStateStore::default(),
         )
         .unwrap();
@@ -1860,7 +1865,7 @@ fn fractional_origin_selection_reveal_matches_validated_full_compilation() {
             current
                 .tab_records()
                 .iter()
-                .any(|tab| tab.id().item == items[1] && current.tab_selected(tab))
+                .any(|tab| tab.id().tab == items[1].into() && current.tab_selected(tab))
         );
         if changes_scroll {
             assert_ne!(old_bar.members(), new_bar.members());
@@ -1916,7 +1921,7 @@ fn partially_visible_tabs_keep_body_paint_and_hits_when_the_close_button_is_clip
         assert!(first_record.close_bounds().is_some());
         assert_eq!(
             plan.pane_selected(&plan.pane_records()[0]),
-            Some(first.tab().item)
+            first.tab().tab.item()
         );
 
         let tab = plan
@@ -1939,7 +1944,7 @@ fn partially_visible_tabs_keep_body_paint_and_hits_when_the_close_button_is_clip
         assert!(!plan.tab_selected(tab));
         assert_eq!(tab.close_visual_bounds(), None);
         assert_eq!(tab.close_bounds(), None);
-        assert_eq!(bar.hidden_items(), &[hidden.tab().item]);
+        assert_eq!(bar.hidden_tabs(), &[hidden.tab().tab]);
         assert_eq!(plan.tab_records().len(), 2);
         let painted_tabs = plan
             .surface_program()
@@ -2103,7 +2108,7 @@ fn left_clipped_tab_tails_require_complete_close_chrome_before_exposing_body_inp
                 [(
                     bar,
                     400.0 - visible_width,
-                    Some(items[3]),
+                    Some(items[3].into()),
                     initial.tab_bar_records()[0].viewport().width(),
                 )],
             )
@@ -2127,7 +2132,7 @@ fn left_clipped_tab_tails_require_complete_close_chrome_before_exposing_body_inp
         let bar = &plan.tab_bar_records()[0];
         let tail = bar.members()[0];
         assert_eq!(bar.scroll_offset(), 400.0 - visible_width);
-        assert_eq!(tail.tab().item, items[0]);
+        assert_eq!(tail.tab().tab, items[0].into());
         assert_eq!(
             tail.visibility(),
             TabStripMemberVisibility::PartiallyVisible
@@ -2274,9 +2279,10 @@ fn overflowing_tab_strip_fixture_with_geometry(
     let bar = TabBarSceneId { root, tabs };
     let mut states = TabStripStateStore::default();
     let state_key = TabStripStateKey::new(surface, bar);
+    let tab_keys = items.map(TabKey::for_item);
     assert!(
         states
-            .reconcile_exact_for_surface_roster([(state_key, items.as_slice())], false)
+            .reconcile_exact_for_surface_roster([(state_key, tab_keys.as_slice())], false)
             .expect("tab-strip roster reconciles")
             .state_changed()
     );
@@ -2286,7 +2292,7 @@ fn overflowing_tab_strip_fixture_with_geometry(
         .expect("core scroll should be valid");
     if open_menu {
         let (menu, _) = states
-            .open_tab_list_menu(state_key, Some(items[2]))
+            .open_tab_list_menu(state_key, Some(items[2].into()))
             .expect("the live strip can open its menu");
         states
             .set_active_menu_scroll_offset(menu, 12.0)
@@ -2348,9 +2354,9 @@ fn overflow_compiles_stable_controls_membership_and_menu_roster() {
     assert_eq!(
         members
             .iter()
-            .map(|member| member.tab().item)
+            .map(|member| member.tab().tab)
             .collect::<Vec<_>>(),
-        items
+        items.map(TabKey::for_item)
     );
     let visibilities = members
         .iter()
@@ -2426,17 +2432,17 @@ fn overflow_compiles_stable_controls_membership_and_menu_roster() {
     assert_eq!(
         menu.rows()
             .iter()
-            .map(|row| row.tab().item)
+            .map(|row| row.tab().tab)
             .collect::<Vec<_>>(),
-        items
+        items.map(TabKey::for_item)
     );
     assert_eq!(
         menu.rows()
             .iter()
             .filter(|row| row.focused())
-            .map(|row| row.tab().item)
+            .map(|row| row.tab().tab)
             .collect::<Vec<_>>(),
-        [items[2]]
+        [items[2].into()]
     );
     assert!(menu.scroll_offset() <= menu.maximum_scroll_offset());
 

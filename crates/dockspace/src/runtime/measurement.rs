@@ -6,7 +6,7 @@ pub use crate::presentation::manifest::{
 };
 
 use crate::geometry::{LogicalRect, PaneSizing};
-use crate::ids::{ItemId, SurfaceId};
+use crate::ids::{ItemId, SurfaceId, TabKey};
 use crate::policy::TabBarVisibility;
 use crate::presentation::manifest::{Measurement, SurfaceMeasurements, TabIntrinsic};
 use crate::presentation::scene::{PaneSceneId, SurfaceScene};
@@ -91,8 +91,8 @@ pub enum SurfaceMeasurementRequest {
         visual: DockspaceVisualId,
         /// Stable renderer identity of the tab strip owning this tab.
         bar: DockspaceVisualId,
-        /// Product pane item represented by the tab.
-        item: ItemId,
+        /// Direct child represented by the tab, independent of application content.
+        key: TabKey,
     },
     /// Measure renderer-owned chrome around one tab strip.
     TabStrip {
@@ -294,7 +294,7 @@ impl DockspaceHostFrame<'_> {
                                 tabs: tab.tabs,
                             },
                         ),
-                        item: tab.item,
+                        key: tab.tab,
                     })?
                     .into_tab_intrinsic()
                     .map_err(|error| core_error(error.into()))?,

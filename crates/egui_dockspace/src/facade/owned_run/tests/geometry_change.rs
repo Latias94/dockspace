@@ -326,11 +326,25 @@ fn cancelled_drag_then_resize(
         );
     }
     assert_eq!(
-        harness.dockspace.view().item(FIRST).unwrap().tabs().items(),
+        harness
+            .dockspace
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
     assert_eq!(
-        harness.dockspace.view().item(THIRD).unwrap().tabs().items(),
+        harness
+            .dockspace
+            .view()
+            .item(THIRD)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[THIRD]
     );
 

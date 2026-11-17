@@ -9,7 +9,7 @@ struct FeedbackPanes {
     target: Option<egui_dockspace::DockspaceDropTargetFeedback>,
     decorate_target: bool,
     future_tabs: Vec<egui_dockspace::DropPreviewTab>,
-    live_tabs: std::collections::BTreeMap<ItemId, (Rect, Rect, Rect, Rect, bool)>,
+    live_tabs: std::collections::BTreeMap<egui_dockspace::TabKey, (Rect, Rect, Rect, Rect, bool)>,
 }
 
 impl PaneView for FeedbackPanes {
@@ -46,7 +46,16 @@ impl PaneView for FeedbackPanes {
                     previous: Some(previous),
                     next: Some(next),
                     ..
-                } => format!("Insert between {} and {}", title(previous), title(next)),
+                } => format!(
+                    "Insert between {} and {}",
+                    previous
+                        .item()
+                        .map(&title)
+                        .unwrap_or_else(|| "Layout".to_owned()),
+                    next.item()
+                        .map(&title)
+                        .unwrap_or_else(|| "Layout".to_owned())
+                ),
                 _ => "Custom docking feedback".to_owned(),
             };
             preview.paint_label(ui, self.label_override.unwrap_or(&label));
@@ -55,7 +64,7 @@ impl PaneView for FeedbackPanes {
 
     fn tab_ui(&mut self, ui: &mut Ui, tab: &egui_dockspace::Tab<'_>) -> egui_dockspace::TabVisuals {
         self.live_tabs.insert(
-            tab.item,
+            tab.key,
             (
                 tab.rect,
                 tab.visible_rect,
@@ -97,7 +106,7 @@ fn assert_future_title_painted(output: &FullOutput, future: &egui_dockspace::Dro
 fn assert_future_matches_committed(panes: &FeedbackPanes, tabs: &[egui_dockspace::DropPreviewTab]) {
     for tab in tabs {
         assert_eq!(
-            panes.live_tabs[&tab.item],
+            panes.live_tabs[&tab.key],
             (
                 tab.rect,
                 tab.visible_rect
@@ -107,7 +116,7 @@ fn assert_future_matches_committed(panes: &FeedbackPanes, tabs: &[egui_dockspace
                 tab.selected,
             ),
             "future and committed geometry must agree for {:?}",
-            tab.item
+            tab.key
         );
     }
 }
@@ -232,10 +241,13 @@ fn disappearing_source_preview_names_the_original_destination_pane() {
     assert!(try_node_rect(&preview.output, Role::Label, "Dock into C").is_none());
     let future = panes.future_tabs.clone();
     assert_eq!(
-        future.iter().map(|tab| tab.item).collect::<Vec<_>>(),
+        future
+            .iter()
+            .filter_map(|tab| tab.item())
+            .collect::<Vec<_>>(),
         vec![THIRD, FIRST]
     );
-    let moved_tab = future.iter().find(|tab| tab.item == FIRST).unwrap();
+    let moved_tab = future.iter().find(|tab| tab.item() == Some(FIRST)).unwrap();
     assert!(moved_tab.selected && moved_tab.is_payload);
     assert_future_title_painted(&preview.output, moved_tab);
     panes.decorate_target = true;
@@ -257,12 +269,24 @@ fn disappearing_source_preview_names_the_original_destination_pane() {
         vec![pointer_button(target, false)],
     );
     assert_eq!(
-        dockspace.view().item(THIRD).unwrap().tabs().items(),
+        dockspace
+            .view()
+            .item(THIRD)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[THIRD, FIRST],
         "the passive feedback must not intercept release or retarget it to B"
     );
     assert_eq!(
-        dockspace.view().item(SECOND).unwrap().tabs().items(),
+        dockspace
+            .view()
+            .item(SECOND)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[SECOND]
     );
     assert_eq!(root_split(&dockspace).unwrap().1.len(), 2);
@@ -334,12 +358,15 @@ fn tab_reorder_shows_the_insertion_gap_and_neighbor_titles() {
     assert!(try_node_rect(&preview.output, Role::Label, "Insert between B and C").is_none());
     let future = panes.future_tabs.clone();
     assert_eq!(
-        future.iter().map(|tab| tab.item).collect::<Vec<_>>(),
+        future
+            .iter()
+            .filter_map(|tab| tab.item())
+            .collect::<Vec<_>>(),
         vec![SECOND, FIRST, THIRD]
     );
     assert_future_title_painted(
         &preview.output,
-        future.iter().find(|tab| tab.item == FIRST).unwrap(),
+        future.iter().find(|tab| tab.item() == Some(FIRST)).unwrap(),
     );
     panes.decorate_target = true;
     let preview = run_pane_frame(&context, &mut dockspace, &mut panes, Vec::new());
@@ -348,8 +375,8 @@ fn tab_reorder_shows_the_insertion_gap_and_neighbor_titles() {
         panes.target.unwrap().action(),
         egui_dockspace::DockspaceDropAction::InsertTab {
             index: 2,
-            previous: Some(SECOND),
-            next: Some(THIRD),
+            previous: Some(SECOND.into()),
+            next: Some(THIRD.into()),
         }
     );
     for wrong in ["Insert between A and B", "Insert between A and C"] {

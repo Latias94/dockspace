@@ -1,6 +1,8 @@
 #![cfg(feature = "serde")]
 
 use super::support;
+use crate::ids::TabKey;
+use crate::persistence::snapshot::SnapshotTabKey;
 
 use std::cell::{Cell, RefCell};
 
@@ -94,7 +96,11 @@ fn split_weights(snapshot: &mut WorkspaceSnapshot) -> &mut Vec<f64> {
 fn tab_state(
     snapshot: &mut WorkspaceSnapshot,
     contains: u64,
-) -> (&mut Vec<u64>, &mut Option<u64>, &mut Vec<u64>) {
+) -> (
+    &mut Vec<SnapshotTabKey>,
+    &mut Option<SnapshotTabKey>,
+    &mut Vec<SnapshotTabKey>,
+) {
     snapshot
         .nodes
         .iter_mut()
@@ -103,7 +109,7 @@ fn tab_state(
                 items,
                 selected,
                 mru,
-            } if items.contains(&contains) => Some((items, selected, mru)),
+            } if items.contains(&SnapshotTabKey::Item(contains)) => Some((items, selected, mru)),
             SnapshotNode::Tabs { .. } | SnapshotNode::Split { .. } => None,
         })
         .expect("sample must contain requested tabs")
@@ -183,11 +189,15 @@ fn json_round_trip_preserves_the_complete_workspace_contract() {
         restored.node(central),
         Some(Node::Tabs {
             items,
-            selected: Some(selected), .. }) if items == &[ItemId::new(1), ItemId::new(2)] && *selected == ItemId::new(2)
+            selected: Some(selected), .. }) if items == &[ItemId::new(1), ItemId::new(2)].map(TabKey::for_item) && *selected == TabKey::for_item(ItemId::new(2))
     ));
     assert_eq!(
         restored.tab_mru(central),
-        Some([ItemId::new(2), ItemId::new(1)].as_slice())
+        Some(
+            [ItemId::new(2), ItemId::new(1)]
+                .map(TabKey::for_item)
+                .as_slice()
+        )
     );
     let floating = restored
         .contained_floating(FLOATING)
@@ -250,40 +260,40 @@ fn json_round_trips_retain_double_precision_split_weights_bitwise() {
 #[test]
 fn malformed_or_missing_persisted_mru_is_rejected() {
     let mut duplicate = sample_snapshot();
-    *tab_state(&mut duplicate, 1).2 = vec![2, 2];
+    *tab_state(&mut duplicate, 1).2 = [2, 2].map(SnapshotTabKey::Item).to_vec();
     let SnapshotRestoreError::InvalidWorkspace(errors) = candidate_error(&duplicate) else {
         panic!("duplicate MRU must reach strict workspace validation")
     };
     assert!(errors.errors().iter().any(|error| matches!(
         error,
         WorkspaceValidationError::DuplicateTabMruItem { item, .. }
-            if *item == ItemId::new(2)
+            if *item == TabKey::for_item(ItemId::new(2))
     )));
 
     let mut missing = sample_snapshot();
-    *tab_state(&mut missing, 1).2 = vec![2];
+    *tab_state(&mut missing, 1).2 = [2].map(SnapshotTabKey::Item).to_vec();
     let SnapshotRestoreError::InvalidWorkspace(errors) = candidate_error(&missing) else {
         panic!("incomplete MRU must reach strict workspace validation")
     };
     assert!(errors.errors().iter().any(|error| matches!(
         error,
         WorkspaceValidationError::TabItemMissingFromMru { item, .. }
-            if *item == ItemId::new(1)
+            if *item == TabKey::for_item(ItemId::new(1))
     )));
 
     let mut foreign = sample_snapshot();
-    *tab_state(&mut foreign, 1).2 = vec![2, 99];
+    *tab_state(&mut foreign, 1).2 = [2, 99].map(SnapshotTabKey::Item).to_vec();
     let SnapshotRestoreError::InvalidWorkspace(errors) = candidate_error(&foreign) else {
         panic!("foreign MRU item must reach strict workspace validation")
     };
     assert!(errors.errors().iter().any(|error| matches!(
         error,
         WorkspaceValidationError::TabMruItemNotInTabs { item, .. }
-            if *item == ItemId::new(99)
+            if *item == TabKey::for_item(ItemId::new(99))
     )));
 
     let mut selected_not_first = sample_snapshot();
-    *tab_state(&mut selected_not_first, 1).2 = vec![1, 2];
+    *tab_state(&mut selected_not_first, 1).2 = [1, 2].map(SnapshotTabKey::Item).to_vec();
     let SnapshotRestoreError::InvalidWorkspace(errors) = candidate_error(&selected_not_first)
     else {
         panic!("selected-not-first MRU must reach strict workspace validation")
@@ -294,7 +304,7 @@ fn malformed_or_missing_persisted_mru_is_rejected() {
             selected: Some(selected),
             most_recent: Some(most_recent),
             ..
-        } if *selected == ItemId::new(2) && *most_recent == ItemId::new(1)
+        } if *selected == TabKey::for_item(ItemId::new(2)) && *most_recent == TabKey::for_item(ItemId::new(1))
     )));
 
     let snapshot = sample_snapshot();
@@ -818,9 +828,9 @@ fn cycle_shared_node_and_orphan_corruption_reach_strict_validation() {
     orphan.nodes.push(SnapshotNodeRecord {
         id: 999,
         node: SnapshotNode::Tabs {
-            items: vec![99],
-            selected: Some(99),
-            mru: vec![99],
+            items: vec![SnapshotTabKey::Item(99)],
+            selected: Some(SnapshotTabKey::Item(99)),
+            mru: vec![SnapshotTabKey::Item(99)],
         },
     });
     let SnapshotRestoreError::InvalidWorkspace(errors) = candidate_error(&orphan) else {
@@ -840,12 +850,12 @@ fn cycle_shared_node_and_orphan_corruption_reach_strict_validation() {
         .find_map(|record| match &mut record.node {
             SnapshotNode::Tabs {
                 items, selected, ..
-            } if items.contains(&3) => Some((items, selected)),
+            } if items.contains(&SnapshotTabKey::Item(3)) => Some((items, selected)),
             _ => None,
         })
         .expect("sample must contain the side tab");
-    items[0] = 1;
-    *selected = Some(1);
+    items[0] = SnapshotTabKey::Item(1);
+    *selected = Some(SnapshotTabKey::Item(1));
     let SnapshotRestoreError::InvalidWorkspace(errors) = candidate_error(&duplicate_item) else {
         panic!("duplicate item must reach strict validation")
     };
@@ -863,11 +873,11 @@ fn cycle_shared_node_and_orphan_corruption_reach_strict_validation() {
         .find_map(|record| match &mut record.node {
             SnapshotNode::Tabs {
                 items, selected, ..
-            } if items.contains(&1) => Some(selected),
+            } if items.contains(&SnapshotTabKey::Item(1)) => Some(selected),
             _ => None,
         })
         .expect("sample must contain the central tabs");
-    *selected = Some(999);
+    *selected = Some(SnapshotTabKey::Item(999));
     let SnapshotRestoreError::InvalidWorkspace(errors) = candidate_error(&invalid_selection) else {
         panic!("invalid selection must reach strict validation")
     };
@@ -931,9 +941,9 @@ fn deep_chain_restore_is_iterative() {
     let mut nodes = vec![SnapshotNodeRecord {
         id: 0,
         node: SnapshotNode::Tabs {
-            items: vec![1],
-            selected: Some(1),
-            mru: vec![1],
+            items: vec![SnapshotTabKey::Item(1)],
+            selected: Some(SnapshotTabKey::Item(1)),
+            mru: vec![SnapshotTabKey::Item(1)],
         },
     }];
     let mut subtree = 0;
@@ -943,9 +953,9 @@ fn deep_chain_restore_is_iterative() {
         nodes.push(SnapshotNodeRecord {
             id: sibling,
             node: SnapshotNode::Tabs {
-                items: vec![level + 2],
-                selected: Some(level + 2),
-                mru: vec![level + 2],
+                items: vec![SnapshotTabKey::Item(level + 2)],
+                selected: Some(SnapshotTabKey::Item(level + 2)),
+                mru: vec![SnapshotTabKey::Item(level + 2)],
             },
         });
         nodes.push(SnapshotNodeRecord {

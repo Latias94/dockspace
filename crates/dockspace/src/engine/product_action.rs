@@ -400,8 +400,8 @@ impl DockEngine {
             return Err(DockspaceActionRejection::Conflict);
         };
         let anchor = items
-            .first()
-            .copied()
+            .iter()
+            .find_map(|tab| tab.item())
             .ok_or(DockspaceActionRejection::Conflict)?;
         let source = self
             .workspace
@@ -588,7 +588,7 @@ impl DockEngine {
             | ProductAction::FloatItem { item, .. } => Some(*item),
             ProductAction::DockTabs { group, .. } | ProductAction::FloatTabs { group, .. } => {
                 match self.workspace.node(group.source.node()) {
-                    Some(Node::Tabs { selected, .. }) => *selected,
+                    Some(Node::Tabs { selected, .. }) => selected.and_then(TabKey::item),
                     _ => None,
                 }
             }
@@ -652,7 +652,7 @@ impl DockEngine {
                 version,
             } => {
                 if changed && let Some((surface, tabs)) = hidden_focus {
-                    if let Some(item) = self.workspace.visible_tab_selection(tabs) {
+                    if let Some(item) = self.workspace.first_active_item(tabs) {
                         self.request_product_item_focus(item, focus_causal)?;
                     } else {
                         let guard = self.viewport_focus_binding(surface);
@@ -721,7 +721,7 @@ impl DockEngine {
                     owner == root
                         && matches!(
                             self.workspace.node(tabs),
-                            Some(Node::Tabs { selected: Some(selected), .. }) if selected == item
+                            Some(Node::Tabs { selected: Some(selected), .. }) if selected.item() == Some(*item)
                         )
                 })
         };
@@ -737,7 +737,7 @@ impl DockEngine {
                 let node = self.workspace.root(root)?.node;
                 self.workspace.collect_items_in_subtree(node).into_iter().find(|item| {
                     !self.workspace.item_is_hidden(*item) && self.workspace.locate_item_by_id(*item).is_some_and(|(_, tabs, _)| {
-                        matches!(self.workspace.node(tabs), Some(Node::Tabs { selected: Some(selected), .. }) if selected == item)
+                        matches!(self.workspace.node(tabs), Some(Node::Tabs { selected: Some(selected), .. }) if selected.item() == Some(*item))
                     })
                 })
             })
@@ -805,7 +805,9 @@ impl DockEngine {
             ProductAction::SelectItem { item } => {
                 let source = self.capture_product_item(item)?;
                 Ok(ProductActionPlan::Command {
-                    command: WorkspaceCommand::Select { source },
+                    command: WorkspaceCommand::Select {
+                        source: source.as_tab_source(),
+                    },
                     context: ProductCommandContext::Select { item },
                 })
             }
@@ -886,9 +888,10 @@ impl DockEngine {
         self.validate_node_source(&group.source)
             .map_err(|_| DockspaceActionRejection::Conflict)?;
         match self.workspace.node(group.source.node()) {
-            Some(Node::Tabs { items, .. }) if !items.is_empty() => {
-                Ok((group.source.clone(), items.to_vec()))
-            }
+            Some(Node::Tabs { items, .. }) if !items.is_empty() => Ok((
+                group.source.clone(),
+                self.workspace.collect_items_in_subtree(group.source.node()),
+            )),
             _ => Err(DockspaceActionRejection::Conflict),
         }
     }
@@ -1213,7 +1216,7 @@ impl DockEngine {
                 };
                 let current = items
                     .iter()
-                    .position(|candidate| *candidate == item)
+                    .position(|candidate| candidate.item() == Some(item))
                     .ok_or(DockspaceActionRejection::Conflict)?;
                 let index = if matches!(placement, DockPlacement::After(_)) {
                     current + 1
@@ -1462,10 +1465,13 @@ impl ProductCommandContext {
                     changed,
                 })
             }
-            (Self::Select { item }, CommandOutcome::Selected { item: selected, .. })
-                if selected == item =>
+            (Self::Select { item }, CommandOutcome::Selected { tab: selected, .. })
+                if selected.item() == Some(item) =>
             {
-                Ok(DockspaceActionOutcome::Selected { item, changed })
+                Ok(DockspaceActionOutcome::Selected {
+                    tab: TabKey::for_item(item),
+                    changed,
+                })
             }
             (Self::Open { item }, CommandOutcome::Opened { item: opened, root })
                 if opened == item =>

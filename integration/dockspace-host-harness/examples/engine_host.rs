@@ -111,9 +111,9 @@ fn main() {
         let published = frame.commit().unwrap();
         match published.submitted_action_outcome(submitted) {
             Some(HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab,
                 changed: true,
-            })) => println!("selected item {SECOND:?}"),
+            })) if tab.item() == Some(SECOND) => println!("selected item {SECOND:?}"),
             other => panic!("unexpected selection result: {other:?}"),
         }
         (recordings, published)

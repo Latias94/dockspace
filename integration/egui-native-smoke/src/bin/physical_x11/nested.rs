@@ -67,7 +67,7 @@ pub(super) fn observed_redock_layout(view: DockspaceView<'_>) -> Option<RedockLa
     )?;
     let source = source.tabs()?;
     // Keeping this empty central source prevents tear-off from collapsing either split.
-    if !source.is_central() || !source.items().is_empty() || source.selected().is_some() {
+    if !source.is_central() || !source.tabs().is_empty() || source.selected().is_some() {
         return None;
     }
     let [sibling, target] =
@@ -77,8 +77,8 @@ pub(super) fn observed_redock_layout(view: DockspaceView<'_>) -> Option<RedockLa
     }
     if let Some(tabs) = target.tabs() {
         return (!tabs.is_central()
-            && tabs.items() == [MAIN_ITEM, CHILD_ITEM]
-            && tabs.selected() == Some(CHILD_ITEM))
+            && tabs.items().collect::<Vec<_>>() == [MAIN_ITEM, CHILD_ITEM]
+            && tabs.selected().and_then(|tab| tab.item()) == Some(CHILD_ITEM))
         .then_some(RedockLayout::Nested(NestedPaneCase::Center));
     }
     let [child, main] = binary_children(target.split()?, DockspaceAxis::Horizontal, [0.5, 0.5])?;
@@ -88,7 +88,9 @@ pub(super) fn observed_redock_layout(view: DockspaceView<'_>) -> Option<RedockLa
 
 fn singleton(node: DockspaceNodeView<'_>, item: ItemId) -> bool {
     node.tabs().is_some_and(|tabs| {
-        !tabs.is_central() && tabs.items() == [item] && tabs.selected() == Some(item)
+        !tabs.is_central()
+            && tabs.items().collect::<Vec<_>>() == [item]
+            && tabs.selected().and_then(|tab| tab.item()) == Some(item)
     })
 }
 
@@ -142,8 +144,14 @@ mod tests {
         )
         .unwrap();
         assert!(source.is_central());
-        assert_eq!(source.tabs().unwrap().items(), [CHILD_ITEM]);
-        assert_eq!(source.tabs().unwrap().selected(), Some(CHILD_ITEM));
+        assert_eq!(
+            source.tabs().unwrap().items().collect::<Vec<_>>(),
+            [CHILD_ITEM]
+        );
+        assert_eq!(
+            source.tabs().unwrap().selected().and_then(|tab| tab.item()),
+            Some(CHILD_ITEM)
+        );
         let [sibling, main] = binary_children(
             inner.split().unwrap(),
             DockspaceAxis::Vertical,

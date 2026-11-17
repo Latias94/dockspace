@@ -391,7 +391,7 @@ fn emit_first_live_child_output(
     assert_eq!(panes, [(ROOT, Some(selected))]);
     assert_eq!(tabs.len(), 2);
     for item in [ITEM, SECOND_ITEM] {
-        assert!(tabs.contains(&(ROOT, item, item == selected)));
+        assert!(tabs.contains(&(ROOT, Some(item), item == selected)));
     }
     assert_eq!(popup_backdrops, 0, "the popup stays on its source owner");
     let semantic_output = semantic_output.expect("the complete program emits its semantic seal");
@@ -551,7 +551,8 @@ fn ordered_first_live_rebases_following_surface_action_and_retries_atomically() 
         let stale = crate::graph::command::WorkspaceCommand::Select {
             source: workspace
                 .capture_item_source(ROOT, tabs, ITEM)
-                .expect("the former selected item remains in the child"),
+                .expect("the former selected item remains in the child")
+                .as_tab_source(),
         };
         let fresh = frame
             .paint_plan(child.surface())
@@ -1458,7 +1459,9 @@ fn native_first_live_projection_compiles_child_without_publishing_ownership() {
     assert_eq!(plan.measurement_ticket(), Some(measurements.ticket()));
     for item in [ITEM, SECOND_ITEM] {
         assert!(
-            plan.tab_records().iter().any(|tab| tab.id().item == item),
+            plan.tab_records()
+                .iter()
+                .any(|tab| tab.id().tab.item() == Some(item)),
             "the temporary child plan contains a tab record for {item:?}"
         );
     }

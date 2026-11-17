@@ -1979,7 +1979,7 @@ fn same_root_tab_gap_preview_tracks_the_inserted_tab_in_the_future_strip() {
     let inserted = bar
         .members()
         .iter()
-        .find(|member| member.tab().item == moved)
+        .find(|member| member.tab().tab.item() == Some(moved))
         .expect("the future strip must contain the moved item")
         .full_bounds();
     let width = stale_visual.width().min(bar.viewport().width());
@@ -2102,7 +2102,7 @@ fn future_tab_gap_preview_reselects_the_menu_host_after_the_old_host_is_pruned()
     let inserted = bar
         .members()
         .iter()
-        .find(|member| member.tab().item == moved)
+        .find(|member| member.tab().tab.item() == Some(moved))
         .expect("the future strip must contain the moved item")
         .full_bounds();
     let marker_width = resolved.visual().rect().width().min(bar.viewport().width());

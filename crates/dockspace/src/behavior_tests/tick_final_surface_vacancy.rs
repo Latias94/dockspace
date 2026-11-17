@@ -1,4 +1,5 @@
 use super::support;
+use crate::ids::TabKey;
 
 use crate::platform::{NativeCreateReadiness, WindowCreatePreparationObservation};
 use dockspace::close::CloseDecision;
@@ -534,7 +535,7 @@ fn start_pending_native_create(fixture: &mut NativeVacancyFixture) -> NativeCrea
         .find(|region| {
             matches!(
                 region.id().kind(),
-                PresentationHitRegionKind::TabBody(tab) if tab.item == SOURCE_ITEM
+                PresentationHitRegionKind::TabBody(tab) if tab.tab == TabKey::for_item(SOURCE_ITEM)
             )
         })
         .expect("source tab has an exact receiver");
@@ -813,7 +814,7 @@ fn same_tick_close_then_repopulate_preserves_the_existing_surface_binding() {
         .plan()
         .tab_records()
         .iter()
-        .find(|tab| tab.id().item == SOURCE_ITEM)
+        .find(|tab| tab.id().tab == TabKey::for_item(SOURCE_ITEM))
         .expect("source tab is painted");
     let tab = *tab.id();
     let expected = engine.version();

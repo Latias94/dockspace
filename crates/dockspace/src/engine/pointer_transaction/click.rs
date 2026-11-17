@@ -444,13 +444,13 @@ impl DockEngine {
                     .tab_strip_states
                     .active_menu_for(menu.key())
                     .ok_or(InteractionRejection::TabListMenuSessionUnavailable { session: menu })?;
-                if active.session() != menu || !active.items().contains(&tab.item) {
+                if active.session() != menu || !active.tabs().contains(&tab.tab) {
                     return Err(InteractionRejection::TabListMenuSessionUnavailable {
                         session: menu,
                     });
                 }
                 self.workspace
-                    .capture_item_source(tab.root, tab.tabs, tab.item)
+                    .capture_tab_source(tab.root, tab.tabs, tab.tab)
                     .map_err(InteractionRejection::CommandRejected)?;
                 Ok(FrozenClickAction::TabListMenuRow(
                     FrozenTabListMenuRowClick {

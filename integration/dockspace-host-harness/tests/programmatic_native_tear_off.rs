@@ -196,8 +196,18 @@ impl Fixture {
                 (ROOT, HOST, None)
             );
         }
-        assert_eq!(view.item(A).unwrap().tabs().items(), &[A, B]);
-        assert_eq!(view.item(A).unwrap().tabs().selected(), Some(B));
+        assert_eq!(
+            view.item(A).unwrap().tabs().items().collect::<Vec<_>>(),
+            &[A, B]
+        );
+        assert_eq!(
+            view.item(A)
+                .unwrap()
+                .tabs()
+                .selected()
+                .and_then(|tab| tab.item()),
+            Some(B)
+        );
         let contained = view.item(CONTAINED).unwrap();
         assert_eq!(
             (contained.root(), contained.surface(), contained.contained()),
@@ -430,17 +440,23 @@ fn item_group_and_root_transfer_only_after_exact_first_live() {
             assert_eq!(source_root.id(), ROOT);
             let central = source_root.central().unwrap().tabs().unwrap();
             assert!(central.is_central());
-            assert_eq!(central.items(), if kind == 0 { &[A][..] } else { &[][..] });
+            assert_eq!(
+                central.items().collect::<Vec<_>>(),
+                if kind == 0 { &[A][..] } else { &[][..] }
+            );
             let split = source_root.content().unwrap().split().unwrap();
             assert_eq!(split.child_count(), 2);
             assert_eq!(split.weights().collect::<Vec<_>>(), vec![0.75, 0.25]);
         }
         if kind == 0 {
-            assert_eq!(view.item(A).unwrap().tabs().items(), &[A]);
+            assert_eq!(
+                view.item(A).unwrap().tabs().items().collect::<Vec<_>>(),
+                &[A]
+            );
         } else {
             let tabs = view.item(A).unwrap().tabs();
-            assert_eq!(tabs.items(), &[A, B]);
-            assert_eq!(tabs.selected(), Some(B));
+            assert_eq!(tabs.items().collect::<Vec<_>>(), &[A, B]);
+            assert_eq!(tabs.selected().and_then(|tab| tab.item()), Some(B));
         }
         assert_eq!(view.item(CONTAINED).unwrap().contained(), Some(FLOATING));
     }
@@ -462,7 +478,14 @@ fn captured_group_never_retargets_its_anchor_or_refreshes_its_version() {
     let before = fixture.session.version();
     assert_ne!(before, captured_version);
     assert_eq!(
-        fixture.session.view().item(A).unwrap().tabs().items(),
+        fixture
+            .session
+            .view()
+            .item(A)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[SIBLING, A]
     );
     let source = NativeTearOffSource::Tabs(group);
@@ -500,9 +523,26 @@ fn captured_group_never_retargets_its_anchor_or_refreshes_its_version() {
     );
     assert!(report.take_native_effects().is_empty());
     assert_eq!(fixture.session.version(), before);
-    assert_eq!(fixture.session.view().item(B).unwrap().tabs().items(), &[B]);
     assert_eq!(
-        fixture.session.view().item(A).unwrap().tabs().items(),
+        fixture
+            .session
+            .view()
+            .item(B)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
+        &[B]
+    );
+    assert_eq!(
+        fixture
+            .session
+            .view()
+            .item(A)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[SIBLING, A]
     );
 }
@@ -981,10 +1021,13 @@ fn assert_partial_default_geometry(source_contained: bool) {
             (request.root, request.binding.surface())
         );
         assert_eq!(
-            moved.tabs().items(),
+            moved.tabs().items().collect::<Vec<_>>(),
             if group { &[A, B][..] } else { &[A][..] }
         );
-        assert_eq!(moved.tabs().selected(), Some(if group { B } else { A }));
+        assert_eq!(
+            moved.tabs().selected().and_then(|tab| tab.item()),
+            Some(if group { B } else { A })
+        );
         assert_eq!(view.item(SIBLING).unwrap().surface(), HOST);
         assert_eq!(view.item(CONTAINED).unwrap().contained(), Some(FLOATING));
     }

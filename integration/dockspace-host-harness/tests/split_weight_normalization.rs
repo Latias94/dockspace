@@ -49,7 +49,7 @@ fn equal_split_with_712_children_builds_a_valid_layout() {
     assert_eq!(
         split
             .children()
-            .map(|child| child.tabs().unwrap().items()[0])
+            .map(|child| child.tabs().unwrap().items().collect::<Vec<_>>()[0])
             .collect::<Vec<_>>(),
         (1..=712).map(ItemId::new).collect::<Vec<_>>()
     );
@@ -105,7 +105,7 @@ fn closing_last_item_of_713_way_split_keeps_remaining_layout_valid() {
     assert_eq!(
         split
             .children()
-            .map(|child| child.tabs().unwrap().items()[0])
+            .map(|child| child.tabs().unwrap().items().collect::<Vec<_>>()[0])
             .collect::<Vec<_>>(),
         (1..=712).map(ItemId::new).collect::<Vec<_>>()
     );

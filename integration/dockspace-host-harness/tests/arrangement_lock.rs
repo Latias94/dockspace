@@ -99,7 +99,13 @@ fn locked_product_commands_reject_structural_changes_but_select_still_works() {
         HostInputOutcome::CloseRejected(_)
     ));
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
     assert!(session.view().item(CLOSED).is_none());
@@ -110,7 +116,13 @@ fn locked_product_commands_reject_structural_changes_but_select_still_works() {
     assert!(report.workspace_changed());
     assert!(session.view().item(SECOND).unwrap().is_selected());
     assert_eq!(
-        session.view().item(SECOND).unwrap().tabs().items(),
+        session
+            .view()
+            .item(SECOND)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
 
@@ -178,7 +190,7 @@ fn current_action_tokens_correlate_mixed_batch_outcomes_in_submission_order() {
         assert_eq!(
             report.inputs()[index],
             HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                item,
+                tab: item.into(),
                 changed: true,
             })
         );
@@ -192,7 +204,13 @@ fn current_action_tokens_correlate_mixed_batch_outcomes_in_submission_order() {
     assert!(report.workspace_changed());
     assert!(session.view().item(FIRST).unwrap().is_selected());
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
     assert!(session.view().item(CLOSED).is_none());
@@ -369,7 +387,13 @@ fn locked_tab_pointer_press_selects_without_arming_a_drag_or_changing_arrangemen
         }
         assert!(session.view().item(SECOND).unwrap().is_selected());
         assert_eq!(
-            session.view().item(SECOND).unwrap().tabs().items(),
+            session
+                .view()
+                .item(SECOND)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[FIRST, SECOND]
         );
         assert!(session.view().item(SECOND).unwrap().contained().is_none());

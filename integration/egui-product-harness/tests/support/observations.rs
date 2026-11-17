@@ -74,7 +74,7 @@ pub(super) fn tab_items(dockspace: &Dockspace) -> Vec<ItemId> {
         .root(ROOT)
         .and_then(|root| root.content())
         .and_then(|node| node.tabs())
-        .map_or_else(Vec::new, |tabs| tabs.items().to_vec())
+        .map_or_else(Vec::new, |tabs| tabs.items().collect::<Vec<_>>())
 }
 
 pub(super) fn root_tabs(dockspace: &Dockspace) -> Option<Vec<ItemId>> {
@@ -85,7 +85,7 @@ pub(super) fn root_tabs(dockspace: &Dockspace) -> Option<Vec<ItemId>> {
             .content()?
             .tabs()?
             .items()
-            .to_vec(),
+            .collect::<Vec<_>>(),
     )
 }
 
@@ -98,7 +98,7 @@ pub(super) fn root_split(dockspace: &Dockspace) -> Option<(DockspaceAxis, Vec<Ve
             .map(|child| {
                 child
                     .tabs()
-                    .map_or_else(Vec::new, |tabs| tabs.items().to_vec())
+                    .map_or_else(Vec::new, |tabs| tabs.items().collect::<Vec<_>>())
             })
             .collect(),
     ))

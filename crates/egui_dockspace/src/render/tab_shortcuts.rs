@@ -169,7 +169,7 @@ enum FocusPass {
 #[derive(Clone, Copy)]
 struct FocusedGroup {
     visual: DockspaceVisualId,
-    tab: Option<dockspace::model::ItemId>,
+    tab: Option<dockspace::model::TabKey>,
 }
 
 fn focused_group(context: &RenderContext<'_, '_, '_>, pass: FocusPass) -> Option<FocusedGroup> {
@@ -233,7 +233,7 @@ fn focused_group(context: &RenderContext<'_, '_, '_>, pass: FocusPass) -> Option
                                 == context.ui.make_persistent_id((
                                     context.instance_id,
                                     "tab-close",
-                                    tab.item(),
+                                    tab.key(),
                                 )) =>
                     {
                         if focused
@@ -243,7 +243,7 @@ fn focused_group(context: &RenderContext<'_, '_, '_>, pass: FocusPass) -> Option
                                 tab.visual_id(),
                             )
                         {
-                            focused_tab = Some(tab.item());
+                            focused_tab = Some(tab.key());
                         }
                         Some(tab.tab_bar_visual_id())
                     }
@@ -290,15 +290,13 @@ fn prepare_navigation(
                 && !paint.is_source_gap()
             {
                 match operation {
-                    Operation::Pane(pane) if pane.tab_bar_visual_id() == group.visual => {
-                        selected = pane.selected();
+                    Operation::TabBar(bar) if bar.visual_id() == group.visual => {
+                        selected = bar.selected();
                     }
-                    Operation::Tab(tab)
-                        if source.is_none()
-                            && tab.tab_bar_visual_id() == group.visual
-                            && tab.operable() =>
-                    {
-                        source = Some(tab.item());
+                    Operation::Tab(tab) if tab.tab_bar_visual_id() == group.visual => {
+                        if source.is_none() && tab.operable() {
+                            source = Some(tab.key());
+                        }
                     }
                     _ => {}
                 }

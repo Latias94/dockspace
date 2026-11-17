@@ -1,4 +1,5 @@
 use super::support;
+use crate::ids::TabKey;
 
 use dockspace::engine::{DockEngine, EngineInput};
 use dockspace::geometry::LogicalRect;
@@ -197,7 +198,7 @@ fn tabs_containing(workspace: &Workspace, needle: ItemId) -> NodeId {
     workspace
         .nodes()
         .find_map(|(node, value)| match value {
-            Node::Tabs { items, .. } if items.contains(&needle) => Some(node),
+            Node::Tabs { items, .. } if items.contains(&TabKey::for_item(needle)) => Some(node),
             Node::Tabs { .. } | Node::Split { .. } => None,
         })
         .expect("item must remain reachable")
@@ -266,9 +267,11 @@ fn ordinary_command_index_failure_rolls_back_earlier_staged_commands() {
         .capture_item_source(ROOT_A, tabs, item(3))
         .expect("second selection exists");
     let transaction = WorkspaceTransaction::from_commands([
-        WorkspaceCommand::Select { source: selection },
         WorkspaceCommand::Select {
-            source: stale_selection,
+            source: selection.as_tab_source(),
+        },
+        WorkspaceCommand::Select {
+            source: stale_selection.as_tab_source(),
         },
     ]);
     let before = workspace.clone();
@@ -506,10 +509,16 @@ fn moving_a_central_tabs_group_transfers_content_and_preserves_its_source_contai
         else {
             panic!("the transferred group must remain a tabs leaf");
         };
-        assert_eq!(*items, expected_items);
-        assert_eq!(*selected, Some(item(4)));
+        assert_eq!(
+            items
+                .iter()
+                .filter_map(|tab| tab.item())
+                .collect::<Vec<_>>(),
+            expected_items
+        );
+        assert_eq!(*selected, (Some(item(4))).map(TabKey::for_item));
         if matches!(destination, 1 | 2 | 4) {
-            assert_eq!(mru, &[item(4), item(1)]);
+            assert_eq!(mru, &[item(4), item(1)].map(TabKey::for_item));
         }
         assert_eq!(workspace.item_multiset(), original_items);
         workspace.validate().unwrap();

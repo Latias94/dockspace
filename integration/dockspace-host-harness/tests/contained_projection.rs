@@ -517,7 +517,7 @@ fn assert_durable(session: &DockspaceSession, expected: LogicalRect) {
         assert_eq!(view.root(), ROOT);
         assert_eq!(view.surface(), SURFACE);
         assert_eq!(view.contained(), Some(FLOATING));
-        assert_eq!(view.tabs().items(), &[item]);
+        assert_eq!(view.tabs().items().collect::<Vec<_>>(), &[item]);
         assert!(view.is_selected());
     }
 }
@@ -1424,7 +1424,7 @@ fn frozen_clear_hover_batch_docks_behind_complete_source_at_release_commit() {
                 assert_eq!(view.surface(), SURFACE);
                 assert_eq!(view.root(), MAIN_ROOT);
                 assert_eq!(view.contained(), None);
-                assert_eq!(view.tabs().items(), &[item]);
+                assert_eq!(view.tabs().items().collect::<Vec<_>>(), &[item]);
             }
             assert!(session.bind_presented_receiver(&before.title).is_none());
         } else {
@@ -1703,9 +1703,15 @@ fn rejected_non_source_contained_target_blocks_a_legal_background_target_and_fal
         assert_eq!(source_view.surface(), SURFACE);
         assert_eq!(source_view.root(), MAIN_ROOT);
         assert!(source_view.contained().is_none());
-        assert_eq!(source_view.tabs().items(), &[SOURCE]);
+        assert_eq!(source_view.tabs().items().collect::<Vec<_>>(), &[SOURCE]);
         assert_eq!(
-            session.view().item(BACKGROUND).unwrap().tabs().items(),
+            session
+                .view()
+                .item(BACKGROUND)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[BACKGROUND]
         );
         assert_eq!(session.view().surfaces().count(), 1);
@@ -1775,7 +1781,8 @@ fn complete_contained_group_magnetic_hysteresis_survives_presented_source_only_p
                 .unwrap()
                 .tabs()
                 .unwrap()
-                .items(),
+                .items()
+                .collect::<Vec<_>>(),
             &[LEFT, RIGHT]
         );
     }
@@ -2001,7 +2008,10 @@ fn complete_contained_group_magnetic_hysteresis_survives_presented_source_only_p
         );
         let content = session.view().root(MAIN_ROOT).unwrap().content().unwrap();
         if outside_envelope {
-            assert_eq!(content.tabs().unwrap().items(), &[BACKGROUND, LEFT, RIGHT]);
+            assert_eq!(
+                content.tabs().unwrap().items().collect::<Vec<_>>(),
+                &[BACKGROUND, LEFT, RIGHT]
+            );
         } else {
             let split = content
                 .split()
@@ -2010,7 +2020,7 @@ fn complete_contained_group_magnetic_hysteresis_survives_presented_source_only_p
             assert_eq!(
                 split
                     .children()
-                    .map(|child| child.tabs().unwrap().items().to_vec())
+                    .map(|child| child.tabs().unwrap().items().collect::<Vec<_>>())
                     .collect::<Vec<_>>(),
                 [vec![LEFT, RIGHT], vec![BACKGROUND]]
             );

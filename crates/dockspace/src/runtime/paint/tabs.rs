@@ -1,7 +1,7 @@
 //! Pane, tab, and tab-bar paint records.
 
 use crate::geometry::LogicalRect;
-use crate::ids::{ItemId, RootId};
+use crate::ids::{ItemId, RootId, TabKey};
 use crate::policy::TabBarInteraction;
 use crate::presentation::scene::{
     PaneRecord, TabBarRecord, TabBarSceneId, TabGroupDragRegionKind, TabGroupDragRegionRecord,
@@ -89,8 +89,13 @@ impl TabPaintRecord<'_> {
     }
 
     #[must_use]
-    pub const fn item(self) -> ItemId {
-        self.record.id().item
+    pub const fn key(self) -> TabKey {
+        self.record.id().tab
+    }
+
+    #[must_use]
+    pub const fn item(self) -> Option<ItemId> {
+        self.key().item()
     }
 
     #[must_use]
@@ -184,8 +189,13 @@ impl TabStripMemberPaintRecord {
     }
 
     #[must_use]
-    pub const fn item(self) -> ItemId {
-        self.record.tab().item
+    pub const fn key(self) -> TabKey {
+        self.record.tab().tab
+    }
+
+    #[must_use]
+    pub const fn item(self) -> Option<ItemId> {
+        self.key().item()
     }
 
     #[must_use]
@@ -214,6 +224,7 @@ impl TabStripMemberPaintRecord {
 #[derive(Debug, Clone, Copy)]
 pub struct TabBarPaintRecord<'plan> {
     pub(super) record: &'plan TabBarRecord,
+    pub(super) selected: Option<TabKey>,
 }
 
 /// Read-only geometry and identity for one whole-group drag region.
@@ -269,6 +280,12 @@ impl<'plan> TabBarPaintRecord<'plan> {
         self.record.id().root
     }
 
+    /// Returns the group's selected direct child, including a fully clipped tab.
+    #[must_use]
+    pub const fn selected(self) -> Option<TabKey> {
+        self.selected
+    }
+
     #[must_use]
     pub const fn bounds(self) -> LogicalRect {
         self.record.bounds()
@@ -290,8 +307,8 @@ impl<'plan> TabBarPaintRecord<'plan> {
     }
 
     #[must_use]
-    pub fn hidden_items(self) -> &'plan [ItemId] {
-        self.record.hidden_items()
+    pub fn hidden_tabs(self) -> &'plan [TabKey] {
+        self.record.hidden_tabs()
     }
 
     pub fn members(self) -> impl ExactSizeIterator<Item = TabStripMemberPaintRecord> + 'plan {

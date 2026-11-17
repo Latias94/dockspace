@@ -186,8 +186,8 @@ fn frame(
 fn conserve_items(dock: &Dockspace, count: u64) {
     fn collect(node: egui_dockspace::DockspaceNodeView<'_>, items: &mut Vec<ItemId>) {
         if let Some(tabs) = node.tabs() {
-            assert!(!tabs.items().is_empty());
-            items.extend_from_slice(tabs.items());
+            assert!(!tabs.items().collect::<Vec<_>>().is_empty());
+            items.extend(tabs.items());
         } else {
             for child in node.split().unwrap().children() {
                 collect(child, items);
@@ -306,6 +306,7 @@ fn merge_tab(
             .unwrap()
             .tabs()
             .items()
+            .collect::<Vec<_>>()
             .contains(&source),
         "the released tab must join the intended target group"
     );
@@ -424,16 +425,16 @@ fn oversized_content_remains_scrollable_and_clipped_through_continuous_docking()
         let retained = panes.current[&FIRST];
         for _ in 0..5 {
             let target_tabs = dock.view().item(FIRST).unwrap().tabs();
-            let target = target_tabs.selected().unwrap();
+            let target = target_tabs.selected().and_then(|tab| tab.item()).unwrap();
             let remaining = (2..=6)
                 .map(ItemId::new)
-                .find(|item| !target_tabs.items().contains(item))
+                .find(|item| !target_tabs.items().collect::<Vec<_>>().contains(item))
                 .unwrap();
             let source_tabs = dock.view().item(remaining).unwrap().tabs();
-            let source = source_tabs.selected().unwrap();
+            let source = source_tabs.selected().and_then(|tab| tab.item()).unwrap();
             merge_tab(&ctx, &mut dock, &mut panes, size, source, target);
             let merged = dock.view().item(source).unwrap().tabs();
-            assert!(merged.items().contains(&FIRST));
+            assert!(merged.items().collect::<Vec<_>>().contains(&FIRST));
             conserve_items(&dock, 6);
         }
         reveal_first(&ctx, &mut dock, &mut panes, size);
@@ -583,5 +584,5 @@ fn tiny_and_zero_surfaces_recover_scrolled_content_and_new_float_redock_gestures
     assert_eq!(panes.current[&FIRST].scroll, retained.scroll);
     assert_eq!(panes.clicks.get(&FIRST), Some(&1));
     let merged = dock.view().item(FIRST).unwrap().tabs();
-    assert!(merged.items().contains(&SECOND));
+    assert!(merged.items().collect::<Vec<_>>().contains(&SECOND));
 }

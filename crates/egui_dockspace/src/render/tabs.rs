@@ -87,7 +87,7 @@ pub(crate) fn paint_pane(
         let child_ui = child.as_mut().expect("the pane child is still open");
         if context
             .resources
-            .item(item)
+            .tab(item)
             .is_some_and(|resource| resource.missing)
         {
             child_ui.centered_and_justified(|ui| {
@@ -260,10 +260,10 @@ fn publish_native_tab_strip_diagnostics(
             TabStripMemberVisibility::PartiallyVisible => "partially-visible",
             TabStripMemberVisibility::Hidden => continue,
         };
-        if context.resources.tab_visual(context.plan, member.item()) != Some(member.visual_id()) {
+        if context.resources.tab_visual(context.plan, member.key()) != Some(member.visual_id()) {
             continue;
         }
-        let Some(resource) = context.resources.item(member.item()) else {
+        let Some(resource) = context.resources.tab(member.key()) else {
             continue;
         };
         let Some(full) = egui_rect(member.full_bounds()) else {
@@ -376,7 +376,7 @@ pub(crate) fn paint_tab_record(
     paint: SurfacePaintDisposition,
 ) {
     let resources = context.resources;
-    let Some(resource) = resources.item(tab.item()) else {
+    let Some(resource) = resources.tab(tab.key()) else {
         return;
     };
     paint_tab(context, tab, resource, paint);
@@ -427,7 +427,8 @@ pub(crate) fn paint_tab(
     let focused = response.has_focus();
     let pane_focused = selected
         && operable
-        && context.plan.focused_pane() == Some(tab.item())
+        && tab.item().is_some()
+        && context.plan.focused_pane() == tab.item()
         && context.ui.input(|input| input.focused);
     let visuals = (!source_gap).then(|| {
         super::tab_customization::paint_tab(context, tab, resource, &response, pane_focused)
@@ -520,7 +521,7 @@ fn capture_tab_actions(
     if accesskit_activation || pointer_activation {
         response.request_focus();
         if (!tab.selected() || accesskit_activation)
-            && let Some(action) = context.plan.prepare_tab_select(tab.item())
+            && let Some(action) = context.plan.prepare_tab_select(tab.key())
         {
             context.push_local_action(
                 id.with(if accesskit_activation {
@@ -533,7 +534,7 @@ fn capture_tab_actions(
         }
     } else if accesskit_focus {
         response.request_focus();
-        if let Some(action) = context.plan.prepare_tab_focus(tab.item()) {
+        if let Some(action) = context.plan.prepare_tab_focus(tab.key()) {
             context.push_local_action(id.with("accesskit-focus"), action);
         }
     }

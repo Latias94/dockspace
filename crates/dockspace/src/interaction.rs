@@ -27,7 +27,7 @@ use crate::graph::command::{
 };
 use crate::graph::{Axis, SplitWeight};
 use crate::ids::{
-    FloatingPresentationId, InputSequence, ItemId, RootId, SurfaceId, WorkspaceEpoch,
+    FloatingPresentationId, InputSequence, RootId, SurfaceId, TabKey, WorkspaceEpoch,
 };
 use crate::input::intent::{
     Authority, CloseSceneTarget, ContainedGestureKind, ContainedPresentationOffer,
@@ -833,7 +833,7 @@ pub enum InteractionRejection {
     /// The exact current tab bar does not admit semantic scrolling.
     TabStripScrollDisabled { key: TabStripStateKey },
     /// The requested reveal item is absent from the exact current tab bar.
-    TabStripScrollItemUnavailable { key: TabStripStateKey, item: ItemId },
+    TabStripScrollItemUnavailable { key: TabStripStateKey, item: TabKey },
     /// The exact tab-bar geometry changed after the scroll proof was prepared.
     TabStripRecordChanged { key: TabStripStateKey },
     /// The claimed menu instance is no longer the sole active core-owned menu.
@@ -841,12 +841,12 @@ pub enum InteractionRejection {
     /// The requested reveal item is absent from the exact active menu.
     TabListMenuScrollItemUnavailable {
         session: TabListMenuSessionId,
-        item: ItemId,
+        item: TabKey,
     },
     /// The requested focus item is absent from the exact active menu.
     TabListMenuFocusItemUnavailable {
         session: TabListMenuSessionId,
-        item: ItemId,
+        item: TabKey,
     },
     /// The exact menu geometry changed after the scroll proof was prepared.
     TabListMenuRecordChanged { session: TabListMenuSessionId },
@@ -1381,7 +1381,7 @@ pub enum InteractionOutcome {
         pointer: PointerId,
         surface: SurfaceId,
         root: RootId,
-        item: Option<ItemId>,
+        tab: Option<TabKey>,
         position: LogicalPoint,
     },
     /// One pointer-journal scroll reduction or lifecycle terminal transition.
@@ -1453,7 +1453,7 @@ pub enum InteractionOutcome {
         /// Exact popup session whose focus was adjusted.
         session: TabListMenuSessionId,
         /// Resulting core-owned focus item.
-        item: ItemId,
+        tab: TabKey,
         /// Resulting core-clamped logical scroll offset.
         offset: f64,
         /// Whether focus or scroll state changed.
@@ -3601,6 +3601,7 @@ mod tests {
     use super::*;
     use crate::graph::workspace::WorkspaceIndex;
     use crate::graph::{ContainedFloating, Node, RootRecord, SurfacePresentation, Workspace};
+    use crate::ids::ItemId;
     use crate::ids::{EngineAuthorityDomainId, ReducerTickId, WorkspaceRevision};
     use crate::input::intent::Authority;
     use crate::input::journal::{PointerInputLease, PointerProviderScope, PointerStreamId};
@@ -4170,7 +4171,7 @@ mod tests {
             target: TabSceneId {
                 root: target_root,
                 tabs: target_tabs,
-                item: ItemId::new(3),
+                tab: ItemId::new(3).into(),
             },
             authority: presentation.presented,
             workspace: drag.source_validated_at,

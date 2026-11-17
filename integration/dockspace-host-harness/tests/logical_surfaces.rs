@@ -208,7 +208,14 @@ fn logical_surface_journey_preserves_unaffected_presented_authority() {
     assert_eq!(frame.surfaces(), [S1, S2]);
     let central = frame.view().root(R2).unwrap().central().unwrap();
     assert!(central.is_central());
-    assert!(central.tabs().unwrap().items().is_empty());
+    assert!(
+        central
+            .tabs()
+            .unwrap()
+            .items()
+            .collect::<Vec<_>>()
+            .is_empty()
+    );
     measure(&mut frame, S2);
     let mut attached = finish(frame);
     assert_eq!(attached.before(), version);
@@ -277,6 +284,7 @@ fn logical_surface_journey_preserves_unaffected_presented_authority() {
             .tabs()
             .unwrap()
             .items()
+            .collect::<Vec<_>>()
             .is_empty()
     );
     assert!(session.view().surface(S2).is_some());
@@ -305,7 +313,13 @@ fn logical_surface_journey_preserves_unaffected_presented_authority() {
     assert!(click(&mut session, before_retire, first_receiver).workspace_changed());
     assert!(session.view().item(FIRST).unwrap().is_selected());
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
     assert!(!session.has_active_gesture());
@@ -629,6 +643,7 @@ fn logical_surface_reattach_cannot_reauthorize_predecessor_outputs() {
                 .tabs()
                 .unwrap()
                 .items()
+                .collect::<Vec<_>>()
                 .is_empty()
         );
         assert!(session.presented_surface(S2).is_none());

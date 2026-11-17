@@ -269,7 +269,13 @@ fn veto_keeps_the_entire_group_and_later_local_selection_remains_usable() {
     assert!(!frame.commit().unwrap().workspace_changed());
     assert_eq!(session.version(), before);
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
     let select = session.prepare_select_item(SECOND);
@@ -348,7 +354,14 @@ fn current_close_decisions_resume_bounded_prefixes_and_drop_retries_the_original
         if resolved != ITEM_COUNT {
             assert_eq!(session.version(), version);
             assert_eq!(
-                session.view().item(FIRST).unwrap().tabs().items().len(),
+                session
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>()
+                    .len(),
                 ITEM_COUNT
             );
         }
@@ -544,11 +557,23 @@ fn review_deferred_close_survives_tab_selection_on_another_surface() {
         );
         assert!(report.workspace_changed());
         assert_eq!(
-            session.view().item(SECOND).unwrap().tabs().items(),
+            session
+                .view()
+                .item(SECOND)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[SECOND]
         );
         assert_eq!(
-            session.view().item(THIRD).unwrap().tabs().items(),
+            session
+                .view()
+                .item(THIRD)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[THIRD, FOURTH]
         );
         if select_other_surface {
@@ -573,7 +598,13 @@ fn deferred_root_close_scopes_to_content_not_selection_order_or_unrelated_edits(
         .unwrap();
     assert!(commit_deferred(frame).workspace_changed());
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[SECOND, FIRST]
     );
     close_item(&mut session, THIRD);
@@ -608,7 +639,13 @@ fn deferred_root_close_scopes_to_content_not_selection_order_or_unrelated_edits(
     assert!(session.view().item(FIRST).is_none());
     assert!(session.view().item(SECOND).is_none());
     assert_eq!(
-        session.view().item(FOURTH).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FOURTH)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FOURTH, FIFTH]
     );
 }
@@ -697,7 +734,13 @@ fn deferred_root_close_rejects_changed_surface_owner_with_identical_content() {
         }]
     ));
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
 }

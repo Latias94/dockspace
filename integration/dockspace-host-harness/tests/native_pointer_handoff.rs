@@ -239,10 +239,12 @@ fn render(frame: &mut DockspaceHostFrame<'_>, surface: SurfaceId) -> Scene {
                 operation: Operation::Tab(tab),
                 ..
             } => {
-                if let Some(receiver) = plan.receiver_for_tab_body(tab) {
+                if let Some(item) = tab.item()
+                    && let Some(receiver) = plan.receiver_for_tab_body(tab)
+                {
                     assert_eq!(receiver.role(), DockspaceReceiverRole::TabBody);
                     tabs.push(Tab {
-                        item: tab.item(),
+                        item,
                         receiver,
                         visible: tab.visible_bounds(),
                     });
@@ -400,7 +402,13 @@ fn fixture_with_destination(
 }
 
 fn order(session: &DockspaceSession) -> Vec<ItemId> {
-    session.view().item(FIRST).unwrap().tabs().items().to_vec()
+    session
+        .view()
+        .item(FIRST)
+        .unwrap()
+        .tabs()
+        .items()
+        .collect::<Vec<_>>()
 }
 
 fn capture_client(
@@ -669,7 +677,13 @@ fn explicit_handoff_retries_the_release_frame_and_settles_without_redelivery() {
             .unwrap();
         render(&mut abandoned, A).assert_preview(false);
         assert_eq!(
-            abandoned.view().item(FIRST).unwrap().tabs().items(),
+            abandoned
+                .view()
+                .item(FIRST)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             [SECOND, THIRD, FIRST]
         );
     }
@@ -1526,11 +1540,23 @@ fn cross_window_handoff_preserves_root_input_and_delivers_before_the_target_outp
         assert!(settled.take_native_effects().is_empty());
         assert_eq!(session.view().item(FIRST).unwrap().surface(), B);
         assert_eq!(
-            session.view().item(OTHER).unwrap().tabs().items(),
+            session
+                .view()
+                .item(OTHER)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             [OTHER, FIRST]
         );
         assert_eq!(
-            session.view().item(SECOND).unwrap().tabs().items(),
+            session
+                .view()
+                .item(SECOND)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             [SECOND, THIRD]
         );
         assert!(

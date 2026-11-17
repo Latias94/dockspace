@@ -99,14 +99,14 @@ fn paint_and_present(session: &mut DockspaceSession, step: SemanticStep) -> Prep
         };
         let action = match (step.selector(), step.action(), operation) {
             (SemanticSelector::Tab(target), SemanticAction::Activate, Operation::Tab(tab))
-                if tab.item() == item(target) =>
+                if tab.item() == Some(item(target)) =>
             {
-                plan.prepare_tab_select(tab.item())
+                plan.prepare_tab_select(tab.key())
             }
             (SemanticSelector::TabClose(target), SemanticAction::Activate, Operation::Tab(tab))
-                if tab.item() == item(target) =>
+                if tab.item() == Some(item(target)) =>
             {
-                plan.prepare_tab_close(tab.item())
+                plan.prepare_tab_close(tab.key())
             }
             (
                 SemanticSelector::Splitter(ScenarioAxis::Horizontal),
@@ -198,7 +198,13 @@ fn shared_l08_executes_through_presented_public_prepared_actions() {
     let mut observations = Vec::new();
     for step in LOCAL_TAB_CLOSE_SPLITTER_AND_CONTAINED.steps() {
         let action = paint_and_present(&mut session, *step);
-        let before_selected = session.view().item(SECOND).unwrap().tabs().selected();
+        let before_selected = session
+            .view()
+            .item(SECOND)
+            .unwrap()
+            .tabs()
+            .selected()
+            .and_then(|tab| tab.item());
         let before_weights = weights(&session);
         let before_rect = session.view().contained(FLOATING).unwrap().rect();
         let mut frame = session.begin_host_frame().unwrap();
@@ -207,7 +213,13 @@ fn shared_l08_executes_through_presented_public_prepared_actions() {
         let observed = match (step.selector(), step.action()) {
             (SemanticSelector::Tab(target), SemanticAction::Activate) => {
                 assert!(report.workspace_changed(), "{report:?}");
-                let selected = session.view().item(item(target)).unwrap().tabs().selected();
+                let selected = session
+                    .view()
+                    .item(item(target))
+                    .unwrap()
+                    .tabs()
+                    .selected()
+                    .and_then(|tab| tab.item());
                 assert_ne!(selected, before_selected);
                 assert_eq!(selected, Some(item(target)));
                 SemanticObservation::ItemSelected(alias(selected.unwrap()))

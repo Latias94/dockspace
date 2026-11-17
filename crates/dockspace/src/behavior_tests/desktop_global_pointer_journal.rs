@@ -1,4 +1,5 @@
 use super::support;
+use crate::ids::TabKey;
 
 mod transient_repaint;
 
@@ -824,7 +825,7 @@ fn tab_point(
         .find(|region| {
             matches!(
                 region.id().kind(),
-                PresentationHitRegionKind::TabBody(tab) if tab.item == item
+                PresentationHitRegionKind::TabBody(tab) if tab.tab == TabKey::for_item(item)
             )
         })
         .expect("source item has a tab receiver");
@@ -851,7 +852,7 @@ fn tab_close_point(
         .find(|region| {
             matches!(
                 region.id().kind(),
-                PresentationHitRegionKind::TabClose(tab) if tab.item == item
+                PresentationHitRegionKind::TabClose(tab) if tab.tab == TabKey::for_item(item)
             )
         })
         .expect("source item has a tab-close receiver");
@@ -2175,8 +2176,8 @@ fn complete_owned_child_root_confirms_cross_drop_and_restores_input() {
     assert!(matches!(
         engine.workspace().node(target_tabs),
         Some(Node::Tabs { items, .. })
-            if items.as_slice().contains(&ItemId::new(1))
-                && items.as_slice().contains(&ItemId::new(2))
+            if items.as_slice().contains(&TabKey::for_item(ItemId::new(1)))
+                && items.as_slice().contains(&TabKey::for_item(ItemId::new(2)))
     ));
     assert_eq!(engine.interaction().status(), InteractionStatus::Idle);
     assert_eq!(engine.viewport().drag_source(POINTER), None);
@@ -2415,8 +2416,8 @@ fn preserve_sources_cross_drop_without_pointer_hit_test_control() {
             assert!(matches!(
                 engine.workspace().node(target_tabs),
                 Some(Node::Tabs { items, .. })
-                    if items.as_slice().contains(&ItemId::new(1))
-                        && items.as_slice().contains(&ItemId::new(2))
+                    if items.as_slice().contains(&TabKey::for_item(ItemId::new(1)))
+                        && items.as_slice().contains(&TabKey::for_item(ItemId::new(2)))
             ));
             assert!(
                 engine.viewport().effects().records().all(|(_, record)| {
@@ -2983,8 +2984,8 @@ fn active_control_loss_preserves_cross_drop_or_cancels_passthrough_with_restore(
             assert_eq!(engine.interaction().status(), InteractionStatus::Idle);
             assert!(engine.pending_release_preview().is_none());
             assert!(matches!(engine.workspace().node(target_tabs),
-                Some(Node::Tabs { items, .. }) if items.as_slice().contains(&ItemId::new(1))
-                    && items.as_slice().contains(&ItemId::new(2))
+                Some(Node::Tabs { items, .. }) if items.as_slice().contains(&TabKey::for_item(ItemId::new(1)))
+                    && items.as_slice().contains(&TabKey::for_item(ItemId::new(2)))
             ));
             assert!(engine.viewport().effects().records().all(|(_, record)| !matches!(
                 record.request().effect(), PlatformEffect::SetPointerPassthrough { binding, .. }
@@ -4059,7 +4060,7 @@ fn unknown_capture_with_exact_source_delivery_commits_an_ordinary_release_once()
     assert!(matches!(
         engine.workspace().node(target_tabs),
         Some(Node::Tabs { items, .. })
-            if items.as_slice() == [ItemId::new(2), ItemId::new(1)]
+            if items.as_slice() == [ItemId::new(2), ItemId::new(1)].map(TabKey::for_item)
     ));
     assert_eq!(engine.pending_release_preview(), None);
     assert_eq!(engine.interaction().status(), InteractionStatus::Idle);
@@ -4977,7 +4978,7 @@ fn target_coordinate_change_precedes_journal_release_and_blocks_delivery() {
     assert_eq!(engine.workspace(), &before);
     assert!(matches!(
         engine.workspace().node(target_tabs),
-        Some(Node::Tabs { items, .. }) if !items.as_slice().contains(&ItemId::new(1))
+        Some(Node::Tabs { items, .. }) if !items.as_slice().contains(&TabKey::for_item(ItemId::new(1)))
     ));
 }
 
@@ -5601,8 +5602,8 @@ fn desktop_global_journal_uses_target_native_route_for_cross_surface_drop() {
     assert!(matches!(
         engine.workspace().node(target_tabs),
         Some(Node::Tabs { items, .. })
-            if items.as_slice().contains(&ItemId::new(1))
-                && items.as_slice().contains(&ItemId::new(2))
+            if items.as_slice().contains(&TabKey::for_item(ItemId::new(1)))
+                && items.as_slice().contains(&TabKey::for_item(ItemId::new(2)))
     ));
     assert!(engine.viewport().effects().records().all(|(_, record)| {
         !matches!(
@@ -5697,6 +5698,6 @@ fn platform_destruction_before_release_prevents_stale_cross_window_drop() {
     assert_eq!(engine.interaction().status(), InteractionStatus::Idle);
     assert!(matches!(
         engine.workspace().node(target_tabs),
-        Some(Node::Tabs { items, .. }) if !items.as_slice().contains(&ItemId::new(1))
+        Some(Node::Tabs { items, .. }) if !items.as_slice().contains(&TabKey::for_item(ItemId::new(1)))
     ));
 }

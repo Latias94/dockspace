@@ -309,7 +309,13 @@ fn hidden_logical_selection_cannot_claim_or_retain_pane_focus() {
     let mut pane = EditorPane::new();
     focus_editor(&context, &mut pane);
     assert_eq!(
-        hidden.view().item(EDITOR).unwrap().tabs().selected(),
+        hidden
+            .view()
+            .item(EDITOR)
+            .unwrap()
+            .tabs()
+            .selected()
+            .and_then(|tab| tab.item()),
         Some(EDITOR)
     );
 

@@ -479,7 +479,7 @@ impl DockEngine {
         matches!(
             self.workspace.node(tab.tabs),
             Some(Node::Tabs { items, selected, .. })
-                if items.contains(&tab.item) && *selected != Some(tab.item)
+                if items.contains(&tab.tab) && *selected != Some(tab.tab)
         )
         .then_some((tab, authority, point))
     }
@@ -723,7 +723,7 @@ impl DockEngine {
             .clone();
         let source = self
             .workspace
-            .capture_item_source(tab.root, tab.tabs, tab.item)
+            .capture_tab_source(tab.root, tab.tabs, tab.tab)
             .map_err(|error| invariant(error.to_string()))?;
         let prepared = match self
             .workspace
@@ -836,7 +836,7 @@ impl DockEngine {
             .map_err(|error| invariant(format!("{error:?}")))?;
         Ok(InteractionOutcome::ProductActionApplied(
             crate::model::DockspaceActionOutcome::Selected {
-                item: tab.item,
+                tab: tab.tab,
                 changed,
             },
         ))

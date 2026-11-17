@@ -1,4 +1,5 @@
 use super::support;
+use crate::ids::TabKey;
 
 use std::collections::BTreeMap;
 
@@ -1241,7 +1242,7 @@ fn arm_journal_drag(fixture: &mut Fixture, source: NativeDragSource) -> ActiveJo
         .iter()
         .find(|region| match (source, region.id().kind()) {
             (NativeDragSource::Item(item), PresentationHitRegionKind::TabBody(tab)) => {
-                tab.item == item
+                tab.tab == TabKey::for_item(item)
             }
             (
                 NativeDragSource::Group(tabs),
@@ -3785,7 +3786,7 @@ fn pending_item_create_rejects_source_selection_before_first_live_admission() {
     let input = command_input(
         &fixture.engine,
         WorkspaceCommand::Select {
-            source: changing_source,
+            source: changing_source.as_tab_source(),
         },
     );
     let rejected = submit_test_input(&mut fixture, input)
@@ -3873,7 +3874,7 @@ fn pending_complete_root_create_rejects_fingerprint_changes_atomically() {
     let input = command_input(
         &fixture.engine,
         WorkspaceCommand::Select {
-            source: changing_source,
+            source: changing_source.as_tab_source(),
         },
     );
     let rejected = submit_test_input(&mut fixture, input).expect("source mutation must reduce");

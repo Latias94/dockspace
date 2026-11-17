@@ -202,7 +202,7 @@ impl Fixture {
             .expect("the source survives")
             .tabs()
             .items()
-            .to_vec()
+            .collect::<Vec<_>>()
     }
 }
 

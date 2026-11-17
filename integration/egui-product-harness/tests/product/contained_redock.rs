@@ -22,7 +22,7 @@ fn redocking_both_tabs_of_a_central_contained_root_retires_it_and_keeps_input_li
 
     fn collect(node: egui_dockspace::DockspaceNodeView<'_>, items: &mut Vec<ItemId>) {
         if let Some(tabs) = node.tabs() {
-            items.extend_from_slice(tabs.items());
+            items.extend(tabs.items());
         } else {
             for child in node.split().unwrap().children() {
                 collect(child, items);
@@ -103,7 +103,16 @@ fn redocking_both_tabs_of_a_central_contained_root_retires_it_and_keeps_input_li
             assert!(!dock.has_active_gesture());
             if item == THIRD {
                 let source = dock.view().contained(FLOATING).unwrap().root().unwrap();
-                assert_eq!(source.content().unwrap().tabs().unwrap().items(), &[FOURTH]);
+                assert_eq!(
+                    source
+                        .content()
+                        .unwrap()
+                        .tabs()
+                        .unwrap()
+                        .items()
+                        .collect::<Vec<_>>(),
+                    &[FOURTH]
+                );
             }
         }
 
@@ -387,7 +396,7 @@ fn redock_full_surface_contained_tab(present_before_release: bool) {
     );
     assert_eq!(second.surface(), SURFACE);
     assert_ne!(second.root(), ROOT);
-    assert_eq!(second.tabs().items(), &[SECOND]);
+    assert_eq!(second.tabs().items().collect::<Vec<_>>(), &[SECOND]);
     assert_eq!(root_tabs(&dockspace), Some(vec![FIRST]));
 
     let unmodified = run_pane_frame(

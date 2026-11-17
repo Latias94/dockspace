@@ -6,7 +6,7 @@ use super::SceneCompilationError;
 use super::tabs::{reveal_tab_range, tab_local_range};
 use crate::geometry::{AxisSizing, LogicalSize, PaneSizing};
 use crate::graph::{Node, Workspace};
-use crate::ids::{NodeId, RootId};
+use crate::ids::{NodeId, RootId, TabKey};
 use crate::policy::TabBarVisibility;
 use crate::presentation::config::DockPresentationConfig;
 use crate::presentation::layout::{
@@ -103,7 +103,10 @@ fn root_leaf_sizing(
             continue;
         };
         if !workspace.node_has_visible_content(key.tabs())
-            || key.selected() != workspace.visible_tab_selection(key.tabs())
+            || key.selected()
+                != workspace
+                    .visible_tab_selection(key.tabs())
+                    .and_then(TabKey::item)
         {
             continue;
         }
@@ -167,7 +170,7 @@ pub(crate) fn selection_geometry_unchanged(
     plan: &PresentationPlan,
     config: &DockPresentationConfig,
     requirement: &TabBarRequirement,
-    selected: Option<crate::ids::ItemId>,
+    selected: Option<TabKey>,
     tab_strip_states: &TabStripStateStore,
 ) -> Result<bool, SceneCompilationError> {
     let bar = requirement.id();
@@ -178,12 +181,21 @@ pub(crate) fn selection_geometry_unchanged(
         return Ok(false);
     };
     let old_selected = plan.selected_in_tabs(bar.tabs);
-    let Some(old_sizing) = root.pane_sizing(PaneSizingKey::new(bar.root, bar.tabs, old_selected))
-    else {
+    if old_selected.is_some_and(TabKey::is_layout) || selected.is_some_and(TabKey::is_layout) {
+        return Ok(false);
+    }
+    let Some(old_sizing) = root.pane_sizing(PaneSizingKey::new(
+        bar.root,
+        bar.tabs,
+        old_selected.and_then(TabKey::item),
+    )) else {
         return Ok(false);
     };
-    let Some(new_sizing) = root.pane_sizing(PaneSizingKey::new(bar.root, bar.tabs, selected))
-    else {
+    let Some(new_sizing) = root.pane_sizing(PaneSizingKey::new(
+        bar.root,
+        bar.tabs,
+        selected.and_then(TabKey::item),
+    )) else {
         return Ok(false);
     };
     let visibility = requirement
@@ -212,7 +224,7 @@ pub(crate) fn selection_geometry_unchanged(
                 record
                     .members()
                     .iter()
-                    .position(|member| member.tab().item == item)
+                    .position(|member| member.tab().tab == item)
             })
             .and_then(|index| {
                 tab_local_range(

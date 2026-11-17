@@ -3,7 +3,7 @@
 use crate::geometry::LogicalRect;
 use crate::graph::command::{Edge, MovePayload};
 use crate::graph::{Node, Workspace};
-use crate::ids::{ItemId, RootId, SurfaceId};
+use crate::ids::{ItemId, RootId, SurfaceId, TabKey};
 use crate::interaction::targeting::targets::DropTargetId;
 use crate::model::DockEdge;
 use crate::presentation::scene::{PaneSceneId, PresentationPlan, TabBarSceneId};
@@ -34,9 +34,9 @@ pub enum DockspaceDropAction {
         /// Durable gap index, including hidden members, before removing the source payload.
         index: usize,
         /// Nearest preceding visible target item after excluding the complete payload.
-        previous: Option<ItemId>,
+        previous: Option<TabKey>,
         /// Nearest following visible target item after excluding the complete payload.
-        next: Option<ItemId>,
+        next: Option<TabKey>,
     },
     /// Split the target region; its scope distinguishes inner from outer docking.
     Split {
@@ -55,7 +55,7 @@ pub enum DockspaceDropAction {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DockspaceDropTargetFeedback {
     target: DropTargetId,
-    selected: Option<ItemId>,
+    selected: Option<TabKey>,
     bounds: LogicalRect,
     action: DockspaceDropAction,
 }
@@ -95,8 +95,17 @@ impl DockspaceDropTargetFeedback {
     ///
     /// Empty central panes, complete-root edges and empty surfaces have no unique item.
     #[must_use]
-    pub const fn selected_item(self) -> Option<ItemId> {
+    pub const fn selected_tab(self) -> Option<TabKey> {
         self.selected
+    }
+
+    /// Returns content only when the selected tab directly contains one item.
+    #[must_use]
+    pub const fn selected_item(self) -> Option<ItemId> {
+        match self.selected {
+            Some(tab) => tab.item(),
+            None => None,
+        }
     }
 
     /// Returns the current visible pane or root bounds, not the future preview rectangle.
@@ -132,8 +141,8 @@ pub(super) fn resolve(
             let Node::Tabs { items, .. } = workspace.node(tabs)? else {
                 return None;
             };
-            let excludes = |item| match payload {
-                Some(MovePayload::Item(source)) => source.item() == item,
+            let excludes = |item: TabKey| match payload {
+                Some(MovePayload::Item(source)) => item.item() == Some(source.item()),
                 Some(MovePayload::Tabs(source) | MovePayload::Subtree(source)) => {
                     // Successful tab-gap resolution rejects a target inside a split
                     // payload. Only a same-leaf group can overlap its destination.
@@ -148,12 +157,12 @@ pub(super) fn resolve(
                 .iter()
                 .rev()
                 .copied()
-                .find(|item| !workspace.item_is_hidden(*item) && !excludes(*item));
+                .find(|item| workspace.tab_is_visible(*item) && !excludes(*item));
             let next = items
                 .get(index..)?
                 .iter()
                 .copied()
-                .find(|item| !workspace.item_is_hidden(*item) && !excludes(*item));
+                .find(|item| workspace.tab_is_visible(*item) && !excludes(*item));
             (
                 Some(PaneSceneId { root, tabs }),
                 DockspaceDropAction::InsertTab {
@@ -183,7 +192,7 @@ pub(super) fn resolve(
         Some(id) => {
             let panes = plan.pane_records();
             let pane = &panes[panes.binary_search_by_key(&id, |pane| pane.id()).ok()?];
-            (plan.pane_selected(pane), pane.bounds())
+            (plan.selected_in_tabs(id.tabs), pane.bounds())
         }
         None => (
             None,

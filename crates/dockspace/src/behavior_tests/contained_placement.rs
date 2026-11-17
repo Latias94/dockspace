@@ -704,7 +704,9 @@ fn workspace_change_and_surface_mismatch_leave_contained_geometry_unchanged() {
         CONTAINED_INPUT_SOURCE,
         EngineInput::WorkspaceCommand {
             expected,
-            command: WorkspaceCommand::Select { source: select },
+            command: WorkspaceCommand::Select {
+                source: select.as_tab_source(),
+            },
         },
     )
     .expect("selection must reduce");

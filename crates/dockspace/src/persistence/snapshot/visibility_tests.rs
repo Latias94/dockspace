@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 
-use super::{SnapshotRestoreError, WorkspaceSnapshot};
+use super::{SnapshotNode, SnapshotRestoreError, SnapshotTabKey, WorkspaceSnapshot};
 use crate::graph::validation::WorkspaceValidationError;
 use crate::graph::{Axis, Node, RootRecord, SurfacePresentation, Workspace};
 use crate::ids::{ItemId, RootId, SurfaceId};
@@ -18,6 +18,56 @@ fn fixture() -> Workspace {
     );
     builder.set_hidden_items(BTreeSet::from([ItemId::new(2), ItemId::new(4)]));
     builder.build().unwrap()
+}
+
+#[test]
+fn direct_tab_snapshot_keys_are_tagged_and_reject_the_old_numeric_shape() {
+    let snapshot = WorkspaceSnapshot::capture(&fixture()).unwrap();
+    let encoded = serde_json::to_value(&snapshot).unwrap();
+    let tabs = encoded["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["node"]["kind"] == "tabs")
+        .unwrap();
+    assert_eq!(
+        tabs["node"]["items"][0],
+        serde_json::json!({"kind": "item", "id": 1})
+    );
+
+    let mut old = encoded.clone();
+    for record in old["nodes"].as_array_mut().unwrap() {
+        if record["node"]["kind"] == "tabs" {
+            record["node"]["items"][0] = serde_json::json!(1);
+            break;
+        }
+    }
+    assert!(serde_json::from_value::<WorkspaceSnapshot>(old).is_err());
+
+    let mut layout = snapshot;
+    layout.hidden_items.clear();
+    let child = layout.nodes.last().unwrap().id;
+    let record = layout
+        .nodes
+        .iter_mut()
+        .find(|record| matches!(record.node, SnapshotNode::Tabs { .. }))
+        .unwrap();
+    let SnapshotNode::Tabs {
+        items,
+        selected,
+        mru,
+    } = &mut record.node
+    else {
+        unreachable!()
+    };
+    *items = vec![SnapshotTabKey::Layout(child)];
+    *selected = Some(SnapshotTabKey::Layout(child));
+    *mru = vec![SnapshotTabKey::Layout(child)];
+    assert!(matches!(
+        layout.build_candidate(|_| true),
+        Err(SnapshotRestoreError::InvalidWorkspace(errors))
+            if errors.errors().iter().any(|error| matches!(error, WorkspaceValidationError::UnsupportedLayoutTab { .. }))
+    ));
 }
 
 #[test]
@@ -43,7 +93,7 @@ fn json_round_trip_retains_hidden_members_and_queries_the_registry_once_per_owne
     assert_eq!(restored.visible_tab_selection(tabs), None);
     assert!(
         matches!(restored.node(tabs), Some(Node::Tabs { selected: Some(item), .. })
-        if *item == ItemId::new(4))
+        if item.item() == Some(ItemId::new(4)))
     );
 }
 

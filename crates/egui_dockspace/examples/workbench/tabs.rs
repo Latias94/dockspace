@@ -111,7 +111,7 @@ pub(super) fn tab_bar_ui(panes: &mut DemoPanes, ui: &mut Ui, bar: TabBar<'_>, sl
     ui.add_space(2.0);
     match slot {
         TabBarSlot::Leading => {
-            ui.small(bar.items().len().to_string());
+            ui.small(bar.tabs().len().to_string());
         }
         TabBarSlot::Trailing => {
             if ui.small_button("Tint").clicked() {

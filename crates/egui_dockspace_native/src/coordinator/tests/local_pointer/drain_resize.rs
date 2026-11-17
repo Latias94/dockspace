@@ -133,7 +133,14 @@ fn editor_fixture(desktop: bool) -> (NativeCoordinator, NativeSurfaceBinding, Ar
 }
 
 fn encode(native: &mut NativeCoordinator) -> (EditorScene, HostFrameReport) {
-    let outline_selected = native.session.view().item(FIRST).unwrap().tabs().selected();
+    let outline_selected = native
+        .session
+        .view()
+        .item(FIRST)
+        .unwrap()
+        .tabs()
+        .selected()
+        .and_then(|tab| tab.item());
     let mut frame = native
         .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
         .unwrap();
@@ -246,7 +253,7 @@ fn assert_inventory(native: &NativeCoordinator, contained: usize) {
         let mut pending = vec![root.content().unwrap()];
         while let Some(node) = pending.pop() {
             if let Some(tabs) = node.tabs() {
-                items.extend_from_slice(tabs.items());
+                items.extend(tabs.items());
             } else {
                 pending.extend(node.split().unwrap().children());
             }

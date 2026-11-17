@@ -392,6 +392,7 @@ fn stationary_hover_selects_at_its_deadline_across_repainted_outputs_and_keeps_d
                     .unwrap()
                     .tabs()
                     .items()
+                    .collect::<Vec<_>>()
                     .contains(&FOURTH)
                 {
                     break;
@@ -404,6 +405,7 @@ fn stationary_hover_selects_at_its_deadline_across_repainted_outputs_and_keeps_d
                     .unwrap()
                     .tabs()
                     .items()
+                    .collect::<Vec<_>>()
                     .contains(&FOURTH)
             );
             assert!(!dockspace.session.has_active_gesture());
@@ -438,6 +440,7 @@ fn stationary_hover_selects_at_its_deadline_across_repainted_outputs_and_keeps_d
                 .unwrap()
                 .tabs()
                 .items()
+                .collect::<Vec<_>>()
                 .contains(&FOURTH)
             {
                 break;
@@ -450,6 +453,7 @@ fn stationary_hover_selects_at_its_deadline_across_repainted_outputs_and_keeps_d
                 .unwrap()
                 .tabs()
                 .items()
+                .collect::<Vec<_>>()
                 .contains(&FOURTH)
         );
         assert!(!dockspace.session.has_active_gesture());

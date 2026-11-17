@@ -1,7 +1,7 @@
 //! Tab-strip controls and popup paint records.
 
 use crate::geometry::LogicalRect;
-use crate::ids::{ItemId, RootId, SurfaceId};
+use crate::ids::{ItemId, RootId, SurfaceId, TabKey};
 use crate::presentation::scene::{
     TabListMenuBackdropRecord, TabListMenuRecord, TabListMenuRowRecord, TabStripControlRecord,
 };
@@ -104,8 +104,13 @@ impl TabListMenuRowPaintRecord {
     }
 
     #[must_use]
-    pub const fn item(self) -> ItemId {
-        self.record.tab().item
+    pub const fn key(self) -> TabKey {
+        self.record.tab().tab
+    }
+
+    #[must_use]
+    pub const fn item(self) -> Option<ItemId> {
+        self.key().item()
     }
 
     #[must_use]

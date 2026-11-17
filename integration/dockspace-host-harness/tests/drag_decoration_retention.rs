@@ -236,7 +236,7 @@ fn scrolling_the_source_tab_out_of_its_own_strip_preserves_the_drag_ghost() {
                 operation: Operation::Tab(tab),
                 paint,
                 ..
-            } if tab.item() == FIRST => {
+            } if tab.item() == Some(FIRST) => {
                 assert_eq!(paint, Paint::SourceGap);
                 assert_eq!(tab.visual_id(), before.visual);
             }
@@ -277,7 +277,10 @@ fn scrolling_the_source_tab_out_of_its_own_strip_preserves_the_drag_ghost() {
             ..
         } = step
         {
-            let member = bar.members().find(|member| member.item() == FIRST).unwrap();
+            let member = bar
+                .members()
+                .find(|member| member.item() == Some(FIRST))
+                .unwrap();
             assert_eq!(member.visibility(), TabStripMemberVisibility::Hidden);
             assert!(member.full_bounds().max().x() <= bar.viewport().x());
             hidden_bounds = Some(member.full_bounds());

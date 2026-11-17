@@ -1,4 +1,5 @@
 use super::support;
+use crate::ids::TabKey;
 
 use dockspace::engine::{CoreHostFrame, CoreHostFrameError, DockEngine, EngineError, EngineInput};
 use dockspace::geometry::{LogicalPoint, LogicalRect};
@@ -136,7 +137,7 @@ fn finish(
 
 fn selected_item(engine: &DockEngine, tabs: NodeId) -> Option<ItemId> {
     match engine.workspace().node(tabs) {
-        Some(Node::Tabs { selected, .. }) => *selected,
+        Some(Node::Tabs { selected, .. }) => selected.and_then(TabKey::item),
         other => panic!("property tabs node is missing: {other:?}"),
     }
 }
@@ -198,7 +199,7 @@ proptest! {
             source: engine
                 .workspace()
                 .capture_item_source(ROOT, tabs, ItemId::new(2))
-                .expect("second item is capturable"),
+                .expect("second item is capturable").as_tab_source(),
         };
 
         let mut failed = host.begin(&engine);

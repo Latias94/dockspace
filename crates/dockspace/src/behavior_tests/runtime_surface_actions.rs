@@ -579,7 +579,7 @@ fn present_multiview_source_for_pointer(
             .expect("ready candidate is paintable");
         let tab = plan
             .tabs()
-            .find(|tab| tab.item() == FIRST)
+            .find(|tab| tab.item() == Some(FIRST))
             .expect("the first tab is visible");
         let descriptor = plan
             .receiver_for_tab_body(tab)
@@ -612,7 +612,7 @@ fn present_multiview_source_for_pointer(
         .expect("target paint plan lookup succeeds")
         .expect("target candidate is paintable")
         .tabs()
-        .find(|tab| tab.item() == THIRD)
+        .find(|tab| tab.item() == Some(THIRD))
         .expect("the target tab is visible")
         .visual_id();
     let receipt = paint
@@ -1185,7 +1185,7 @@ fn host_tab_drag_into_its_source_pane_center_publishes_a_contained_preview() {
     let (source, target) = inspect_surface(&mut session, |plan| {
         let tab = plan
             .tabs()
-            .find(|tab| tab.item() == FIRST)
+            .find(|tab| tab.item() == Some(FIRST))
             .expect("the source tab is visible");
         let source = plan
             .receiver_for_tab_body(tab)
@@ -1595,7 +1595,7 @@ fn contained_tab_exits_its_source_rect_then_redocks_through_the_pane_basin() {
         .expect("the main group exists before redocking")
         .tabs()
         .items()
-        .to_vec();
+        .collect::<Vec<_>>();
     expected_items.push(SECOND);
     let (initial, target) = inspect_surface(&mut session, |plan| {
         let contained = plan
@@ -1663,7 +1663,10 @@ fn contained_tab_exits_its_source_rect_then_redocks_through_the_pane_basin() {
     assert_eq!(moved.surface(), SURFACE);
     assert_eq!(moved.root(), ROOT);
     assert_eq!(moved.contained(), None);
-    assert_eq!(moved.tabs().items(), expected_items.as_slice());
+    assert_eq!(
+        moved.tabs().items().collect::<Vec<_>>(),
+        expected_items.as_slice()
+    );
     assert!(!session.has_active_gesture());
     assert!(!session.has_pending_presentation());
     let delivered_version = session.version();
@@ -2342,7 +2345,10 @@ fn local_dock_back_without_focus_history_does_not_guess_from_selection() {
     assert_eq!(docked.root(), ROOT);
     assert_eq!(docked.contained(), None);
     assert!(docked.is_selected());
-    assert_eq!(docked.tabs().items(), &[FIRST, THIRD, SECOND]);
+    assert_eq!(
+        docked.tabs().items().collect::<Vec<_>>(),
+        &[FIRST, THIRD, SECOND]
+    );
 
     let mut inspect = session
         .begin_host_frame()
@@ -2456,7 +2462,7 @@ fn directional_presentation_commands_are_core_derived_and_execute() {
                 assert_eq!(
                     split
                         .children()
-                        .map(|child| child.tabs().unwrap().items().to_vec())
+                        .map(|child| child.tabs().unwrap().items().collect::<Vec<_>>())
                         .collect::<Vec<_>>(),
                     vec![vec![SECOND], vec![FIRST, THIRD]],
                 );
@@ -2467,7 +2473,7 @@ fn directional_presentation_commands_are_core_derived_and_execute() {
                 assert_eq!(
                     split
                         .children()
-                        .map(|child| child.tabs().unwrap().items().to_vec())
+                        .map(|child| child.tabs().unwrap().items().collect::<Vec<_>>())
                         .collect::<Vec<_>>(),
                     vec![vec![FIRST, THIRD], vec![SECOND]],
                 );
@@ -2478,7 +2484,7 @@ fn directional_presentation_commands_are_core_derived_and_execute() {
                 assert_eq!(
                     split
                         .children()
-                        .map(|child| child.tabs().unwrap().items().to_vec())
+                        .map(|child| child.tabs().unwrap().items().collect::<Vec<_>>())
                         .collect::<Vec<_>>(),
                     vec![vec![SECOND], vec![FIRST, THIRD]],
                 );
@@ -2489,7 +2495,7 @@ fn directional_presentation_commands_are_core_derived_and_execute() {
                 assert_eq!(
                     split
                         .children()
-                        .map(|child| child.tabs().unwrap().items().to_vec())
+                        .map(|child| child.tabs().unwrap().items().collect::<Vec<_>>())
                         .collect::<Vec<_>>(),
                     vec![vec![FIRST, THIRD], vec![SECOND]],
                 );
@@ -2498,7 +2504,8 @@ fn directional_presentation_commands_are_core_derived_and_execute() {
                 content
                     .tabs()
                     .expect("Dock Center merges into the central tab group")
-                    .items(),
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FIRST, THIRD, SECOND],
             ),
             DockspacePresentationCommandKind::Float
@@ -2812,7 +2819,7 @@ fn exact_surface_tab_list_actions_open_and_select_from_the_current_candidate() {
         .expect("the tab-list menu is open");
     let row = menu
         .rows()
-        .find(|row| row.item() == FOURTH)
+        .find(|row| row.item() == Some(FOURTH))
         .expect("the fourth item has a menu row");
     let select = plan
         .prepare_tab_list_menu_row_activation(row)

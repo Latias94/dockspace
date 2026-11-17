@@ -10,11 +10,7 @@ impl DockEngine {
         region: PresentationHitRegionKind,
     ) -> Option<MovePayload> {
         let payload = match region {
-            PresentationHitRegionKind::TabBody(tab) => MovePayload::Item(
-                self.workspace
-                    .capture_item_source(tab.root, tab.tabs, tab.item)
-                    .ok()?,
-            ),
+            PresentationHitRegionKind::TabBody(tab) => self.tab_drag_payload(tab).ok()?,
             PresentationHitRegionKind::TabGroupDrag { bar, .. } => MovePayload::Tabs(
                 self.workspace
                     .capture_node_source(bar.root, bar.tabs)
@@ -420,13 +416,13 @@ impl DockEngine {
             });
         };
         if touch.armed {
-            let (root, item) = touch_menu_target(region.kind(), presentation.plan())
+            let (root, tab) = touch_menu_target(region.kind(), presentation.plan())
                 .ok_or_else(|| touch_invariant(cause, "touch menu has no semantic root"))?;
             return Ok(InteractionOutcome::ContextMenuRequested {
                 pointer: owner.pointer(),
                 surface: region.surface(),
                 root,
-                item,
+                tab,
                 position: point,
             });
         }
@@ -481,7 +477,7 @@ impl DockEngine {
         if let PresentationHitRegionKind::TabBody(tab) = region.kind() {
             return Ok(InteractionOutcome::ProductActionApplied(
                 crate::model::DockspaceActionOutcome::Selected {
-                    item: tab.item,
+                    tab: tab.tab,
                     changed: self.version != before,
                 },
             ));
@@ -496,9 +492,9 @@ impl DockEngine {
 fn touch_menu_target(
     kind: PresentationHitRegionKind,
     plan: &PresentationPlan,
-) -> Option<(RootId, Option<crate::ids::ItemId>)> {
+) -> Option<(RootId, Option<crate::ids::TabKey>)> {
     match kind {
-        PresentationHitRegionKind::TabBody(tab) => Some((tab.root, Some(tab.item))),
+        PresentationHitRegionKind::TabBody(tab) => Some((tab.root, Some(tab.tab))),
         PresentationHitRegionKind::TabGroupDrag { bar, .. } => Some((bar.root, None)),
         PresentationHitRegionKind::ContainedTitle(floating)
         | PresentationHitRegionKind::ContainedResize { floating, .. } => plan

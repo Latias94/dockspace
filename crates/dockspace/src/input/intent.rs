@@ -185,7 +185,7 @@ pub enum ContainedGestureKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TabGestureSource {
     /// Drag one visible item from its exact painted tab record.
-    Item(TabSceneId),
+    Tab(TabSceneId),
     /// Drag the whole exact painted tab stack from its grip region.
     Group(TabBarSceneId),
     /// Drag the exact title region of one contained floating root.

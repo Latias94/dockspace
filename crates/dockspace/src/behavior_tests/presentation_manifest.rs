@@ -188,7 +188,7 @@ fn committed_topology_change_atomically_replaces_requirement_tickets() {
     assert!(
         requirements
             .tab_intrinsics()
-            .any(|key| key.tab().item == ItemId::new(11))
+            .any(|key| key.tab().tab.item() == Some(ItemId::new(11)))
     );
 }
 

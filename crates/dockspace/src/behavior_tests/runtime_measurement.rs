@@ -83,10 +83,14 @@ fn product_measurement_seam_hides_manifest_keys_and_builds_a_ready_plan() {
                     pane_items.insert(item);
                     SurfaceMeasurementAnswer::PaneSizing((minimum()).into())
                 }
-                SurfaceMeasurementRequest::TabIntrinsic { visual, bar, item } => {
+                SurfaceMeasurementRequest::TabIntrinsic {
+                    visual,
+                    bar,
+                    key: item,
+                } => {
                     assert_eq!(visual.kind(), DockspaceVisualKind::Tab);
                     assert_eq!(bar.kind(), DockspaceVisualKind::TabBar);
-                    tab_items.insert(item);
+                    tab_items.insert(item.item().unwrap());
                     SurfaceMeasurementAnswer::TabIntrinsic(96.0)
                 }
                 SurfaceMeasurementRequest::TabStrip { visual, visibility } => {

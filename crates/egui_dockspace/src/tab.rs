@@ -5,7 +5,7 @@ use std::sync::Arc;
 use dockspace::runtime::{DockspaceVisualId, TabBarPaintRecord};
 use egui::{Color32, CornerRadius, Galley, Painter, Rect, Response, Stroke, StrokeKind, Ui, Vec2};
 
-use crate::{ItemId, RootId};
+use crate::{ItemId, RootId, TabKey};
 
 /// Stable identity of a tab group within one docking workspace.
 ///
@@ -65,13 +65,18 @@ impl TabBar<'_> {
         self.record.root()
     }
 
-    /// Iterates every open item in group order, including scrolled-out tabs.
-    pub fn items(self) -> impl ExactSizeIterator<Item = ItemId> {
-        self.record.members().map(|member| member.item())
+    /// Iterates direct tabs in group order, including scrolled-out tabs.
+    pub fn tabs(self) -> impl ExactSizeIterator<Item = TabKey> {
+        self.record.members().map(|member| member.key())
+    }
+
+    /// Iterates direct application items, excluding layout tabs.
+    pub fn items(self) -> impl Iterator<Item = ItemId> {
+        self.tabs().filter_map(TabKey::item)
     }
 }
 
-/// Resolved defaults which a tab callback can override for one item.
+/// Resolved defaults which a tab callback can override for one direct tab.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TabVisuals {
     /// Tab background, before focus cues and the close icon are painted.
@@ -110,8 +115,8 @@ pub struct TabVisuals {
 /// leave the close-control area outside `content_rect` available to the adapter.
 #[derive(Clone, Debug)]
 pub struct Tab<'a> {
-    /// Stable application identity of this tab's pane.
-    pub item: ItemId,
+    /// Identity of this direct content or layout tab.
+    pub key: TabKey,
     /// Group identity shared with the tab-bar layout and rendering callbacks.
     pub bar: TabBarId,
     /// Full tab allocation, before horizontal scrolling clips it.
@@ -137,6 +142,12 @@ pub struct Tab<'a> {
 }
 
 impl Tab<'_> {
+    /// Returns the real application item for a direct content tab.
+    #[must_use]
+    pub const fn item(&self) -> Option<ItemId> {
+        self.key.item()
+    }
+
     /// Returns the inset background bounds before clipping and pane connection.
     /// The complete [`Self::rect`] remains the interactive tab allocation.
     pub fn background_rect(&self) -> Rect {
@@ -282,8 +293,8 @@ pub(crate) fn paint_title(
 /// adapter. Change the stroke or paint another icon inside the supplied clip.
 #[derive(Clone, Copy, Debug)]
 pub struct TabClose<'a> {
-    /// Stable application identity of the pane this control would close.
-    pub item: ItemId,
+    /// Identity of the direct tab this control would close.
+    pub key: TabKey,
     /// Core-owned close-control allocation.
     pub rect: Rect,
     /// Centered icon allocation, independent of the hit target.
@@ -299,6 +310,12 @@ pub struct TabClose<'a> {
 }
 
 impl TabClose<'_> {
+    /// Returns the real application item for a direct content tab.
+    #[must_use]
+    pub const fn item(&self) -> Option<ItemId> {
+        self.key.item()
+    }
+
     /// Paints the default cross in the supplied icon allocation.
     pub fn paint(&self, ui: &Ui) {
         let painter = ui

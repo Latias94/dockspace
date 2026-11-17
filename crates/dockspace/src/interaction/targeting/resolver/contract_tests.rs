@@ -1238,7 +1238,7 @@ fn retained_target_location_binds_current_selection_when_sealed() {
         .capture_item_source(TARGET_ROOT, fixture.target_tabs_a, ItemId::new(11))
         .expect("selection source exists");
     WorkspaceTransaction::from_commands([dockspace::graph::command::WorkspaceCommand::Select {
-        source: select,
+        source: select.as_tab_source(),
     }])
     .apply(&mut fixture.workspace, &policy)
     .expect("selection changes the plan's command basis");

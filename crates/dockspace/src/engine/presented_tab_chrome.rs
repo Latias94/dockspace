@@ -53,7 +53,7 @@ impl DockEngine {
             .presentation_authority
             .tab_strip_states
             .active_menu_for(session.key())
-            .is_some_and(|active| active.session() == session && active.items().contains(&tab.item))
+            .is_some_and(|active| active.session() == session && active.tabs().contains(&tab.tab))
         {
             return Err(InteractionRejection::TabListMenuSessionUnavailable { session });
         }
@@ -92,11 +92,10 @@ impl DockEngine {
             super::TabScrollAdjustmentKind::ScrollByPreserving { keep_visible, .. } => {
                 keep_visible.as_slice()
             }
-            super::TabScrollAdjustmentKind::RevealItem(item) => std::slice::from_ref(item),
+            super::TabScrollAdjustmentKind::RevealTab(item) => std::slice::from_ref(item),
         };
         if let Some(item) = requested.iter().copied().find(|item| {
-            !active.items().contains(item)
-                || !record.rows().iter().any(|row| row.tab().item == *item)
+            !active.tabs().contains(item) || !record.rows().iter().any(|row| row.tab().tab == *item)
         }) {
             return Err(InteractionRejection::TabListMenuScrollItemUnavailable { session, item });
         }
@@ -131,28 +130,28 @@ impl DockEngine {
             .filter(|active| active.session() == session)
             .ok_or(InteractionRejection::TabListMenuSessionUnavailable { session })?;
         let current = active
-            .items()
+            .tabs()
             .iter()
             .position(|item| *item == active.focus())
             .ok_or(InteractionRejection::TabListMenuFocusItemUnavailable {
                 session,
                 item: active.focus(),
             })?;
-        let last = active.items().len().checked_sub(1).ok_or(
+        let last = active.tabs().len().checked_sub(1).ok_or(
             InteractionRejection::TabListMenuFocusItemUnavailable {
                 session,
                 item: active.focus(),
             },
         )?;
         let target = match navigation {
-            TabListMenuNavigation::Previous => active.items()[current.saturating_sub(1)],
-            TabListMenuNavigation::Next => active.items()[current.saturating_add(1).min(last)],
-            TabListMenuNavigation::First => active.items()[0],
-            TabListMenuNavigation::Last => active.items()[last],
+            TabListMenuNavigation::Previous => active.tabs()[current.saturating_sub(1)],
+            TabListMenuNavigation::Next => active.tabs()[current.saturating_add(1).min(last)],
+            TabListMenuNavigation::First => active.tabs()[0],
+            TabListMenuNavigation::Last => active.tabs()[last],
             TabListMenuNavigation::Focus(item) => item,
         };
-        if !active.items().contains(&target)
-            || !record.rows().iter().any(|row| row.tab().item == target)
+        if !active.tabs().contains(&target)
+            || !record.rows().iter().any(|row| row.tab().tab == target)
         {
             return Err(InteractionRejection::TabListMenuFocusItemUnavailable {
                 session,

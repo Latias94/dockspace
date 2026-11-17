@@ -74,7 +74,7 @@ pub(super) fn paint_tab(
         return visuals;
     };
     let tab = Tab {
-        item: record.item(),
+        key: record.key(),
         bar: TabBarId(record.tab_bar_visual_id()),
         rect,
         visible_rect,

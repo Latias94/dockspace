@@ -1021,7 +1021,7 @@ fn retained_changed_tab_press(activate_drag: bool) {
         .iter()
         .find(|region| {
             matches!(region.id().kind(), PresentationHitRegionKind::TabBody(tab)
-                if tab.item == second)
+                if tab.tab == second.into())
         })
         .expect("the unselected second tab has a real receiver")
         .id();
@@ -1090,7 +1090,7 @@ fn retained_changed_tab_press(activate_drag: bool) {
             .expect("the edge reduces through its real receiver receipt");
         assert_eq!(
             frame.view().workspace().tab_mru(tabs),
-            Some([second, first].as_slice())
+            Some([second.into(), first.into()].as_slice())
         );
         if previous == 0 {
             let view = frame.view();
@@ -1182,7 +1182,7 @@ fn retained_changed_tab_press(activate_drag: bool) {
                             painted_panes.push(current.plan().pane_selected(pane))
                         }
                         ResolvedSurfaceProgramOperation::Tab(tab) => {
-                            painted_tabs.push((tab.id().item, current.plan().tab_selected(tab)))
+                            painted_tabs.push((tab.id().tab, current.plan().tab_selected(tab)))
                         }
                         _ => {}
                     },
@@ -1192,7 +1192,7 @@ fn retained_changed_tab_press(activate_drag: bool) {
             })
             .expect("the complete surface program records before paint confirmation");
         assert_eq!(painted_panes, [Some(second)]);
-        assert_eq!(painted_tabs, [(first, false), (second, true)]);
+        assert_eq!(painted_tabs, [(first.into(), false), (second.into(), true)]);
         assert!(!recorded.is_empty());
         let obligations = frame.issue_presentation_obligations().unwrap();
         assert_eq!(obligations.len(), 1);
@@ -1337,7 +1337,7 @@ fn retained_changed_tab_press(activate_drag: bool) {
         );
         assert_eq!(
             engine.workspace().tab_mru(tabs),
-            Some([second, first].as_slice())
+            Some([second.into(), first.into()].as_slice())
         );
         assert_eq!(provider.committed_through(), PointerEdgeSequence::new(2));
         return;
@@ -1376,7 +1376,7 @@ fn retained_changed_tab_press(activate_drag: bool) {
     );
     assert_eq!(
         engine.workspace().tab_mru(tabs),
-        Some([second, first].as_slice())
+        Some([second.into(), first.into()].as_slice())
     );
     assert_eq!(surface_compilation_count(), 0);
 }
@@ -1491,7 +1491,7 @@ fn retained_selection_encoding_restart_rejects_old_receipt_and_drops_atomically(
     assert!(session.view().item(first).unwrap().is_selected());
     assert_eq!(
         session.workspace().tab_mru(tabs),
-        Some([first, second].as_slice())
+        Some([first.into(), second.into()].as_slice())
     );
     assert!(
         session
@@ -1531,7 +1531,7 @@ fn real_host_frame_tab_press_and_release_have_bounded_clone_work() {
         .find(|region| {
             matches!(
                 region.id().kind(),
-                PresentationHitRegionKind::TabBody(tab) if tab.item == ItemId::new(1)
+                PresentationHitRegionKind::TabBody(tab) if tab.tab == ItemId::new(1).into()
             )
         })
         .expect("selected tab must have one drag receiver")
@@ -1911,7 +1911,7 @@ fn real_host_frame_dock_release_reuses_one_owned_graph_draft_and_rolls_back() {
     );
     let projection = engine.interaction_projection(SOURCE_SURFACE).unwrap();
     let tab = projection.hit_manifest().regions().iter().find(|region| {
-        matches!(region.id().kind(), PresentationHitRegionKind::TabBody(tab) if tab.item == item)
+        matches!(region.id().kind(), PresentationHitRegionKind::TabBody(tab) if tab.tab == item.into())
     }).unwrap();
     let pressed = region_center(tab);
     let target_region = projection
@@ -2055,7 +2055,7 @@ fn real_host_frame_dock_release_reuses_one_owned_graph_draft_and_rolls_back() {
             assert_eq!(engine.workspace().root(SOURCE_ROOT).unwrap().node, target);
             assert!(
                 matches!(engine.workspace().node(target), Some(Node::Tabs { selected, .. })
-                if *selected == Some(item))
+                if *selected == Some(item.into()))
             );
             assert_eq!(engine.workspace().item_multiset(), before.item_multiset());
         } else {
@@ -2356,7 +2356,7 @@ fn journal_tab_and_contained_activation_keep_one_outer_engine_clone() {
         GestureLane::SurfaceLocal,
     );
     let prepared = engine
-        .prepare_journal_tab_gesture(&presentation, TabGestureSource::Item(*tab.id()), tab_point)
+        .prepare_journal_tab_gesture(&presentation, TabGestureSource::Tab(*tab.id()), tab_point)
         .expect("real tab press must prepare");
     let policy = engine.policy.clone();
     let expected_volume =

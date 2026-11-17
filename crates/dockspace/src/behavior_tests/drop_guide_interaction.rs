@@ -1,4 +1,5 @@
 use super::support;
+use crate::ids::TabKey;
 
 use dockspace::engine::transition::EngineTransition;
 use dockspace::engine::{CoreHostFrame, DockEngine};
@@ -243,7 +244,7 @@ fn source_tab(fixture: &Fixture) -> (PresentationHitRegionId, LogicalPoint) {
         .find(|region| {
             matches!(
                 region.id().kind(),
-                PresentationHitRegionKind::TabBody(tab) if tab.item == MOVED_ITEM
+                PresentationHitRegionKind::TabBody(tab) if tab.tab == TabKey::for_item(MOVED_ITEM)
             )
         })
         .copied()
@@ -585,7 +586,7 @@ fn magnetic_edge_latch_survives_small_center_overshoot_and_release() {
         .position(|child| {
             matches!(
                 fixture.engine.workspace().node(*child),
-                Some(Node::Tabs { items, .. }) if items.contains(&MOVED_ITEM)
+                Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(MOVED_ITEM))
             )
         })
         .expect("the moved item remains present");
@@ -594,7 +595,7 @@ fn magnetic_edge_latch_survives_small_center_overshoot_and_release() {
         .position(|child| {
             matches!(
                 fixture.engine.workspace().node(*child),
-                Some(Node::Tabs { items, .. }) if items.contains(&TARGET_ITEM)
+                Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(TARGET_ITEM))
             )
         })
         .expect("the target item remains present");
@@ -922,7 +923,7 @@ fn top_and_bottom_presented_releases_commit_the_exact_target_and_conserve_items(
             .position(|child| {
                 matches!(
                     fixture.engine.workspace().node(*child),
-                    Some(Node::Tabs { items, .. }) if items.contains(&MOVED_ITEM)
+                    Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(MOVED_ITEM))
                 )
             })
             .expect("moved item must occupy one target child");
@@ -931,7 +932,7 @@ fn top_and_bottom_presented_releases_commit_the_exact_target_and_conserve_items(
             .position(|child| {
                 matches!(
                     fixture.engine.workspace().node(*child),
-                    Some(Node::Tabs { items, .. }) if items.contains(&TARGET_ITEM)
+                    Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(TARGET_ITEM))
                 )
             })
             .expect("original target item must occupy one target child");

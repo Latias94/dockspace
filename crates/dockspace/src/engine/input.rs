@@ -119,32 +119,32 @@ pub struct TabScrollAdjustment(pub(super) TabScrollAdjustmentKind);
 pub(super) enum TabScrollAdjustmentKind {
     ScrollByPreserving {
         delta: f64,
-        keep_visible: Vec<ItemId>,
+        keep_visible: Vec<TabKey>,
     },
-    RevealItem(ItemId),
+    RevealTab(TabKey),
 }
 
 impl TabScrollAdjustment {
     /// Creates a signed logical scroll delta. Positive values move toward the
     /// end of the ordered roster.
     pub fn scroll_by(delta: f64) -> Result<Self, TabScrollAdjustmentError> {
-        Self::scroll_by_preserving(delta, [])
+        Self::scroll_by_preserving(delta, std::iter::empty::<TabKey>())
     }
 
     /// Creates one signed delta while preserving the largest compatible
     /// prefix of the ordered item roster as operable tab chrome.
     pub fn scroll_by_preserving(
         delta: f64,
-        keep_visible: impl IntoIterator<Item = ItemId>,
+        keep_visible: impl IntoIterator<Item = impl Into<TabKey>>,
     ) -> Result<Self, TabScrollAdjustmentError> {
         if !delta.is_finite() {
             return Err(TabScrollAdjustmentError::NonFiniteDelta);
         }
-        let keep_visible = keep_visible.into_iter().collect::<Vec<_>>();
+        let keep_visible = keep_visible.into_iter().map(Into::into).collect::<Vec<_>>();
         let mut unique = BTreeSet::new();
         for item in &keep_visible {
             if !unique.insert(*item) {
-                return Err(TabScrollAdjustmentError::DuplicatePreservedItem { item: *item });
+                return Err(TabScrollAdjustmentError::DuplicatePreservedTab { tab: *item });
             }
         }
         Ok(Self(TabScrollAdjustmentKind::ScrollByPreserving {
@@ -155,8 +155,8 @@ impl TabScrollAdjustment {
 
     /// Requests the minimum movement needed to reveal one stable item.
     #[must_use]
-    pub const fn reveal_item(item: ItemId) -> Self {
-        Self(TabScrollAdjustmentKind::RevealItem(item))
+    pub fn reveal_tab(tab: impl Into<TabKey>) -> Self {
+        Self(TabScrollAdjustmentKind::RevealTab(tab.into()))
     }
 }
 
@@ -167,10 +167,10 @@ pub enum TabScrollAdjustmentError {
     #[error("tab scroll delta must be finite")]
     NonFiniteDelta,
     /// Preserve rosters are ordered sets; duplicate identity is ambiguous.
-    #[error("tab scroll preserve roster contains duplicate item {item}")]
-    DuplicatePreservedItem {
-        /// Duplicated stable item identity.
-        item: ItemId,
+    #[error("tab scroll preserve roster contains duplicate tab {tab:?}")]
+    DuplicatePreservedTab {
+        /// Duplicated direct-child identity.
+        tab: TabKey,
     },
 }
 
@@ -206,7 +206,7 @@ pub enum TabListMenuNavigation {
     /// Move to the last ordered item.
     Last,
     /// Focus one exact stable item, as requested by accessibility input.
-    Focus(ItemId),
+    Focus(TabKey),
 }
 
 /// Exact popup-session proof for one menu focus/navigation adjustment.
@@ -216,7 +216,7 @@ pub struct PreparedTabListMenuNavigation {
     pub(super) session: crate::presentation::tab_strip::TabListMenuSessionId,
     pub(super) revision: PopupRoutingRevision,
     pub(super) record: TabListMenuRecord,
-    pub(super) target: ItemId,
+    pub(super) target: TabKey,
 }
 
 /// One current-frame tab-strip or tab-list-menu action prepared from an exact
@@ -258,7 +258,7 @@ pub(crate) enum LocalTabChromeAction {
         session: crate::presentation::tab_strip::TabListMenuSessionId,
         revision: PopupRoutingRevision,
         record: TabListMenuRecord,
-        target: ItemId,
+        target: TabKey,
     },
 }
 

@@ -1,7 +1,7 @@
 //! Immutable, non-interactive future target tabs belonging to one exact preview.
 
 use crate::geometry::LogicalRect;
-use crate::ids::ItemId;
+use crate::ids::{ItemId, TabKey};
 use crate::presentation::compiler::{FutureTab, FutureTabStrip};
 
 use super::DockspaceDragPreview;
@@ -53,10 +53,16 @@ pub struct DockspacePreviewTabPaintRecord<'plan> {
 }
 
 impl DockspacePreviewTabPaintRecord<'_> {
-    /// Returns the application-owned item whose title should be painted.
+    /// Returns the direct child whose tab metadata should be painted.
     #[must_use]
-    pub const fn item(self) -> ItemId {
-        self.record.item
+    pub const fn key(self) -> TabKey {
+        self.record.key
+    }
+
+    /// Returns application content only for a direct content tab.
+    #[must_use]
+    pub const fn item(self) -> Option<ItemId> {
+        self.key().item()
     }
 
     /// Returns the member's index in the complete future target strip.

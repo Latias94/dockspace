@@ -77,11 +77,12 @@ impl DockEngine {
                     .workspace
                     .presentation_for_root(root)
                     .ok_or(ContentCloseRequestRejection::RootUnavailable { root })?;
-                let Some(Node::Tabs { items, .. }) = self.workspace.node(tabs) else {
+                let Some(Node::Tabs { .. }) = self.workspace.node(tabs) else {
                     return Err(ContentCloseRequestRejection::ItemUnavailable { item: anchor });
                 };
-                let mut requirements = Vec::with_capacity(items.len());
-                for item in items.iter().copied() {
+                let owned_items = self.workspace.collect_items_in_subtree(tabs);
+                let mut requirements = Vec::with_capacity(owned_items.len());
+                for item in owned_items.iter().copied() {
                     let capability = policy.pane_close_capability(item);
                     if !capability.allows_close() {
                         return Err(ContentCloseRequestRejection::ItemCloseDisabled { item });
@@ -95,7 +96,7 @@ impl DockEngine {
                         root,
                         tabs,
                         owner,
-                        items: items.iter().copied().collect(),
+                        items: owned_items.into_iter().collect(),
                         requirements,
                     },
                 })
@@ -151,7 +152,15 @@ impl DockEngine {
                         .close_bounds()
                         .ok_or(InteractionRejection::CloseControlUnavailable { target })?
                 };
-                Ok((bounds, record.layer(), ContentCloseTarget::Item(id.item)))
+                Ok((
+                    bounds,
+                    record.layer(),
+                    ContentCloseTarget::Item(
+                        id.tab
+                            .item()
+                            .ok_or(InteractionRejection::CloseSceneTargetUnavailable { target })?,
+                    ),
+                ))
             }
             CloseSceneTarget::Contained(floating) => {
                 let record = plan
@@ -1007,13 +1016,13 @@ impl DockEngine {
                 let Some(Node::Tabs { items, .. }) = self.workspace.node(*tabs) else {
                     return None;
                 };
-                let index = items.iter().position(|entry| entry == item)?;
+                let index = items.iter().position(|entry| entry.item() == Some(*item))?;
                 items
                     .iter()
                     .skip(index + 1)
                     .chain(items[..index].iter().rev())
-                    .find(|item| !candidate.item_is_hidden(**item))
-                    .copied()
+                    .filter_map(|tab| tab.item())
+                    .find(|item| !candidate.item_is_hidden(*item))
             }
             ContentCloseScope::Root { .. } | ContentCloseScope::Tabs { .. } => match observed {
                 PanelFocusRecord::Item(item)

@@ -39,8 +39,8 @@ fn visibility_is_durable_idempotent_and_keeps_tab_membership() {
     assert_eq!(pane.surface(), SURFACE);
     assert_eq!(pane.root(), ROOT);
     assert_eq!(pane.tab_index(), 1);
-    assert_eq!(pane.tabs().items(), [FIRST, SECOND]);
-    assert_eq!(pane.tabs().selected(), Some(FIRST));
+    assert_eq!(pane.tabs().items().collect::<Vec<_>>(), [FIRST, SECOND]);
+    assert_eq!(pane.tabs().selected(), Some(FIRST.into()));
     assert!(session.view().item_is_hidden(SECOND));
     assert_eq!(session.pending_content_close_plans().count(), 0);
 
@@ -61,7 +61,7 @@ fn visibility_is_durable_idempotent_and_keeps_tab_membership() {
     assert_eq!(session.view().item(SECOND).unwrap().tab_index(), 1);
     assert_eq!(
         session.view().item(FIRST).unwrap().tabs().selected(),
-        Some(FIRST)
+        Some(FIRST.into())
     );
 }
 
@@ -92,12 +92,12 @@ fn hidden_content_needs_no_measurement_metadata_until_it_is_shown_again() {
                             (LogicalSize::new(80.0, 60.0).unwrap()).into(),
                         )
                     }
-                    SurfaceMeasurementRequest::TabIntrinsic { item, .. } => {
+                    SurfaceMeasurementRequest::TabIntrinsic { key, .. } => {
                         assert!(
-                            visible || item != SECOND,
+                            visible || key.item() != Some(SECOND),
                             "hidden tabs have no text measurement"
                         );
-                        tab_items.push(item);
+                        tab_items.push(key.item());
                         SurfaceMeasurementAnswer::TabIntrinsic(96.0)
                     }
                     SurfaceMeasurementRequest::TabStrip { .. } => {
@@ -114,7 +114,10 @@ fn hidden_content_needs_no_measurement_metadata_until_it_is_shown_again() {
             vec![FIRST]
         };
         assert_eq!(pane_items, expected);
-        assert_eq!(tab_items, expected);
+        assert_eq!(
+            tab_items,
+            expected.into_iter().map(Some).collect::<Vec<_>>()
+        );
     }
 }
 
@@ -200,7 +203,7 @@ fn hiding_a_focused_pane_uses_visible_successors_and_showing_does_not_activate()
     set_visibility(&mut session, SECOND, false);
     assert_eq!(
         session.view().item(FIRST).unwrap().tabs().selected(),
-        Some(FIRST)
+        Some(FIRST.into())
     );
     assert_eq!(
         session.pane_focus_request(SURFACE).unwrap().item(),
@@ -222,7 +225,7 @@ fn hiding_a_focused_pane_uses_visible_successors_and_showing_does_not_activate()
     set_visibility(&mut session, SECOND, true);
     assert_eq!(
         session.view().item(SECOND).unwrap().tabs().selected(),
-        Some(SECOND)
+        Some(SECOND.into())
     );
     assert_eq!(session.pane_focus_request(SURFACE), Some(workspace_focus));
     let mut frame = session.begin_host_frame().unwrap();
@@ -278,7 +281,7 @@ fn closing_a_focused_pane_skips_its_hidden_neighbor() {
             .unwrap()
             .tabs()
             .visible_selected(),
-        Some(THIRD)
+        Some(THIRD.into())
     );
     assert_eq!(
         session.pane_focus_request(SURFACE).unwrap().item(),
@@ -331,7 +334,10 @@ fn hidden_items_survive_group_moves_and_reopen_visible_after_close() {
     assert!(session.view().item_is_hidden(SECOND));
     let second = session.view().item(SECOND).unwrap();
     assert_eq!(second.surface(), OTHER_SURFACE);
-    assert_eq!(second.tabs().items(), [THIRD, FOURTH, FIRST, SECOND]);
+    assert_eq!(
+        second.tabs().items().collect::<Vec<_>>(),
+        [THIRD, FOURTH, FIRST, SECOND]
+    );
 
     let mut frame = session.begin_host_frame().unwrap();
     let request = frame.request_close_item_current(SECOND).unwrap();
@@ -354,7 +360,13 @@ fn hidden_items_survive_group_moves_and_reopen_visible_after_close() {
     commit(frame);
     assert!(!session.view().item_is_hidden(SECOND));
     assert_eq!(
-        session.view().item(SECOND).unwrap().tabs().items(),
+        session
+            .view()
+            .item(SECOND)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         [THIRD, FOURTH, FIRST, SECOND]
     );
 }
@@ -422,9 +434,19 @@ fn default_center_and_dock_back_prefer_visible_content_over_a_hidden_layout_slot
                 assert!(apply_action(&mut session, action));
             }
             let view = session.view();
-            assert_eq!(view.item(FIRST).unwrap().tabs().items(), [FIRST]);
+            assert_eq!(
+                view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>(),
+                [FIRST]
+            );
             assert!(view.item(FIRST).unwrap().is_hidden());
-            assert_eq!(view.item(SECOND).unwrap().tabs().items(), [SECOND, THIRD]);
+            assert_eq!(
+                view.item(SECOND)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
+                [SECOND, THIRD]
+            );
             assert!(view.item(THIRD).unwrap().is_selected());
             assert!(view.root(OTHER_ROOT).is_none());
             assert_eq!(

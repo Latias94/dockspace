@@ -201,10 +201,9 @@ fn official_raw_egui_host_owns_terminal_settlement() {
     assert!(matches!(
         action.status(),
         DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
-            item: ITEM,
+            tab: selected_tab,
             changed: false,
-        })
-    ));
+        }) if selected_tab.item() == Some(ITEM)));
 
     let mut panes = SmokePanes::default();
     let mut local_actions_current = false;
@@ -400,10 +399,9 @@ fn missing_or_dropped_host_receipts_do_not_reapply_surrendered_focus() {
         assert!(matches!(
             selected.status(),
             DockspaceActionStatus::Applied(DockspaceActionOutcome::Selected {
-                item: SECOND_ITEM,
+                tab: selected_tab,
                 ..
-            })
-        ));
+            }) if selected_tab.item() == Some(SECOND_ITEM)));
         for _ in 0..2 {
             let mut output = run_headless(&context, raw_input(), |ui| {
                 dockspace

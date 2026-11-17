@@ -197,7 +197,7 @@ fn an_application_modal_blocks_empty_surface_docking_and_a_fresh_drag_recovers()
     assert_eq!(
         split
             .children()
-            .map(|node| node.tabs().unwrap().items().to_vec())
+            .map(|node| node.tabs().unwrap().items().collect::<Vec<_>>())
             .collect::<Vec<_>>(),
         [vec![FIRST], vec![SECOND]],
         "recovering input must dock the complete root without merging its tab groups"

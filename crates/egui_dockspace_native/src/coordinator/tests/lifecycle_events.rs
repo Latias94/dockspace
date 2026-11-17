@@ -106,7 +106,7 @@ fn native_handlers_observe_committed_selection_and_internal_close_once() {
     );
     assert!(matches!(
         selected.as_slice(),
-        [event] if event.kind() == &DockspaceEventKind::SelectionCommitted { item: first }
+        [event] if event.kind() == &DockspaceEventKind::SelectionCommitted { tab: first.into() }
     ));
     assert_eq!(receiver.try_recv().unwrap(), (2, selected));
 

@@ -456,7 +456,7 @@ fn selected_item(fixture: &FocusRevealFixture) -> Option<ItemId> {
     else {
         panic!("focus fixture node must remain tabs");
     };
-    *selected
+    selected.and_then(|tab| tab.item())
 }
 
 struct FocusEffectFixture {
@@ -666,11 +666,11 @@ fn programmatic_selection_activates_an_existing_native_window_before_pane_focus(
         transition.reduced_inputs()[0].outcome(),
         InputOutcome::ProductActionProcessed {
             outcome: crate::model::DockspaceActionOutcome::Selected {
-                item,
+                tab,
                 changed: false,
             },
             version,
-        } if *item == ItemId::new(2) && *version == expected
+        } if tab.item() == Some(ItemId::new(2)) && *version == expected
     ));
     let effect = transition
         .platform_effects()
@@ -1013,7 +1013,7 @@ fn local_tab_selection_without_a_native_binding_publishes_pane_focus() {
         .plan()
         .tab_records()
         .iter()
-        .find(|record| record.id().item == ItemId::new(2))
+        .find(|record| record.id().tab == ItemId::new(2).into())
         .map(|record| *record.id())
         .expect("the second tab must be presented");
     assert_eq!(engine.viewport_focus_binding(SOURCE_SURFACE), None);
@@ -1040,7 +1040,7 @@ fn local_tab_selection_without_a_native_binding_publishes_pane_focus() {
     else {
         panic!("local focus fixture node must remain tabs");
     };
-    assert_eq!(*selected, Some(ItemId::new(2)));
+    assert_eq!(*selected, Some(ItemId::new(2).into()));
     let request = engine
         .viewport_focus()
         .published_pane_intent()
@@ -1365,7 +1365,7 @@ fn explicit_focus_minimally_reveals_from_the_current_strip_scroll() {
         before.tab_bar_records()[0]
             .members()
             .iter()
-            .find(|member| member.tab().item == ItemId::new(4))
+            .find(|member| member.tab().tab == ItemId::new(4).into())
             .expect("focus target remains in the complete roster")
             .visibility(),
         TabStripMemberVisibility::Hidden
@@ -1402,7 +1402,7 @@ fn explicit_focus_minimally_reveals_from_the_current_strip_scroll() {
         after.tab_bar_records()[0]
             .members()
             .iter()
-            .find(|member| member.tab().item == ItemId::new(4))
+            .find(|member| member.tab().tab == ItemId::new(4).into())
             .expect("focused target remains in the complete roster")
             .visibility(),
         TabStripMemberVisibility::Visible
@@ -1437,7 +1437,9 @@ fn physical_focus_return_preserves_history_until_an_explicit_pane_activation() {
         fixture.presentation_host,
         EngineInput::WorkspaceCommand {
             expected,
-            command: WorkspaceCommand::Select { source },
+            command: WorkspaceCommand::Select {
+                source: source.as_tab_source(),
+            },
         },
     )
     .expect("selection must reduce");
@@ -1601,7 +1603,9 @@ fn joined_focus_restore_fixture(
     recorder
         .record_semantic_input(EngineInput::WorkspaceCommand {
             expected: fixture.engine.version(),
-            command: WorkspaceCommand::Select { source },
+            command: WorkspaceCommand::Select {
+                source: source.as_tab_source(),
+            },
         })
         .expect("selection must use the joined recorder");
     fixture.focus_generation += 1;

@@ -174,11 +174,10 @@ fn owned_update_suspends_without_publication_and_resumes_the_same_candidate_once
         report.inputs(),
         [HostInputOutcome::ProductActionApplied(
             DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: selected_tab,
                 changed: true,
             }
-        )]
-    ));
+        )] if selected_tab.item() == Some(SECOND)));
     assert_eq!(report.surface_commits().len(), 1);
     let output = only_output(&mut report);
     assert!(output.matches_semantic_output(semantic(&recording)));
@@ -281,8 +280,7 @@ fn suspended_pointer_update_keeps_late_output_terminals_pending_until_its_succes
                         .iter()
                         .filter(|event| matches!(
                             event.kind(),
-                            DockspaceEventKind::SelectionCommitted { item: SECOND }
-                        ))
+                            DockspaceEventKind::SelectionCommitted { tab: selected_tab } if selected_tab.item() == Some(SECOND)))
                         .count(),
                     1,
                     "the resumed pointer prefix must select its original tab exactly once"
@@ -388,8 +386,7 @@ fn suspended_pointer_update_keeps_late_output_terminals_pending_until_its_succes
                     .iter()
                     .filter(|event| matches!(
                         event.kind(),
-                        DockspaceEventKind::SelectionCommitted { item: SECOND }
-                    ))
+                        DockspaceEventKind::SelectionCommitted { tab: selected_tab } if selected_tab.item() == Some(SECOND)))
                     .count(),
                 usize::from(!commit_update),
                 "a fresh input selects once only when the suspended prefix was rolled back"
@@ -504,11 +501,10 @@ fn repeated_encoding_keeps_one_input_candidate_and_rejects_discarded_pass_receip
         report.inputs(),
         [HostInputOutcome::ProductActionApplied(
             DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: selected_tab,
                 changed: true
             }
-        )]
-    ));
+        )] if selected_tab.item() == Some(SECOND)));
     assert_eq!(report.surface_commits().len(), 1);
     let output = only_output(&mut report);
     assert!(output.matches_semantic_output(semantic(&recording)));
@@ -733,11 +729,10 @@ fn abandoned_and_failed_encoded_updates_preserve_scene_version_and_producer_wate
             report.inputs(),
             [HostInputOutcome::ProductActionApplied(
                 DockspaceActionOutcome::Selected {
-                    item: SECOND,
+                    tab: selected_tab,
                     changed: true,
                 }
-            )]
-        ));
+            )] if selected_tab.item() == Some(SECOND)));
         assert!(only_output(&mut report).matches_semantic_output(semantic(&recording)));
         assert!(session.view().item(SECOND).unwrap().is_selected());
         let mut old_time = session.begin_host_frame().unwrap();

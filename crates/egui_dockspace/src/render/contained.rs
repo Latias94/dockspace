@@ -475,7 +475,7 @@ fn title_label<'a>(
     root: &SurfacePaintProgramRoot<'_>,
 ) -> &'a str {
     root.title_item()
-        .and_then(|item| context.resources.item(item))
+        .and_then(|item| context.resources.tab(item))
         .map_or("Floating", |resource| resource.title.as_str())
 }
 

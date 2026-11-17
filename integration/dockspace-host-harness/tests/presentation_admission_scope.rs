@@ -317,8 +317,20 @@ fn assert_docked(session: &DockspaceSession, report: &HostFrameReport) {
     );
     assert_eq!(session.view().item(FIRST).unwrap().root(), CONTAINED_ROOT);
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().items(),
-        session.view().item(TARGET).unwrap().tabs().items()
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
+        session
+            .view()
+            .item(TARGET)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>()
     );
     assert!(!session.has_active_gesture());
     assert!(!session.has_pending_presentation());

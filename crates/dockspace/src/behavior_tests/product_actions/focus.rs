@@ -1,8 +1,11 @@
 use super::*;
+use crate::ids::TabKey;
 use crate::runtime::{
     DockspaceFocusTarget, DockspacePaneFocusObservation, DockspacePaneFocusRequest,
     NativeGlobalFocus,
 };
+
+const SECOND_TAB: TabKey = TabKey::for_item(SECOND);
 
 const OTHER_SURFACE: SurfaceId = SurfaceId::new(40);
 const OTHER_ROOT: RootId = RootId::new(400);
@@ -212,7 +215,7 @@ fn cross_surface_float_item_from_idle_focuses_the_exact_destination_pane() {
     assert_eq!(moved.root(), root);
     assert_eq!(moved.contained(), Some(floating));
     assert!(moved.is_selected());
-    assert_eq!(moved.tabs().items(), &[SECOND]);
+    assert_eq!(moved.tabs().items().collect::<Vec<_>>(), &[SECOND]);
     assert_eq!(
         session.view().item(FIRST).map(|item| item.surface()),
         Some(MAIN_SURFACE)
@@ -262,7 +265,10 @@ fn cross_surface_dock_item_from_idle_focuses_the_exact_destination_pane() {
     assert_eq!(moved.root(), MAIN_ROOT);
     assert_eq!(moved.contained(), None);
     assert!(moved.is_selected());
-    assert_eq!(moved.tabs().items(), &[FIRST, SECOND, FLOATING]);
+    assert_eq!(
+        moved.tabs().items().collect::<Vec<_>>(),
+        &[FIRST, SECOND, FLOATING]
+    );
     assert!(session.view().root(CONTAINED_ROOT).is_none());
 
     present_surfaces(&mut session, &[MAIN_SURFACE]);
@@ -303,7 +309,10 @@ fn root_float_and_dock_back_from_idle_focus_the_current_selected_pane() {
         assert_eq!(selected.root(), MAIN_ROOT);
         assert_eq!(selected.contained(), Some(floating));
         assert!(selected.is_selected());
-        assert_eq!(selected.tabs().items(), &[FIRST, SECOND]);
+        assert_eq!(
+            selected.tabs().items().collect::<Vec<_>>(),
+            &[FIRST, SECOND]
+        );
 
         let surfaces = if target_surface == MAIN_SURFACE {
             vec![MAIN_SURFACE, OTHER_SURFACE]
@@ -355,7 +364,7 @@ fn root_float_and_dock_back_from_idle_focus_the_current_selected_pane() {
         } else {
             &[FLOATING, FIRST, SECOND]
         };
-        assert_eq!(selected.tabs().items(), expected_items);
+        assert_eq!(selected.tabs().items().collect::<Vec<_>>(), expected_items);
 
         present_surfaces(&mut session, &surfaces);
         let docked_request = assert_pane_focus_lifecycle(&mut session, target_surface, SECOND);
@@ -396,7 +405,7 @@ fn public_select_changed_and_already_selected_both_request_pane_focus() {
                 report.inputs(),
                 &[HostInputOutcome::ProductActionApplied(
                     DockspaceActionOutcome::Selected {
-                        item: SECOND,
+                        tab: SECOND_TAB,
                         changed,
                     }
                 )]
@@ -409,7 +418,10 @@ fn public_select_changed_and_already_selected_both_request_pane_focus() {
             }
             let selected = session.view().item(SECOND).expect("selected pane survives");
             assert!(selected.is_selected());
-            assert_eq!(selected.tabs().items(), &[FIRST, SECOND]);
+            assert_eq!(
+                selected.tabs().items().collect::<Vec<_>>(),
+                &[FIRST, SECOND]
+            );
 
             present_surfaces(&mut session, &[MAIN_SURFACE, ROOTLESS_SURFACE]);
             assert_eq!(pane_focus_request(&mut session, ROOTLESS_SURFACE), None);
@@ -457,15 +469,15 @@ fn dock_back_after_focusing_a_and_selecting_b_focuses_b_instead_of_focus_history
         .and_then(|root| root.content())
         .and_then(|node| node.tabs())
         .expect("the contained root exposes its current candidate selection");
-    assert_eq!(tabs.items(), &[FIRST, SECOND]);
-    assert_eq!(tabs.selected(), Some(SECOND));
+    assert_eq!(tabs.items().collect::<Vec<_>>(), &[FIRST, SECOND]);
+    assert_eq!(tabs.selected(), Some(TabKey::for_item(SECOND)));
     let selected = commit(frame);
     assert_one_revision_advance(before, selected.after());
     assert_eq!(
         selected.inputs(),
         &[HostInputOutcome::ProductActionApplied(
             DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: SECOND_TAB,
                 changed: true,
             }
         )]
@@ -508,7 +520,10 @@ fn dock_back_after_focusing_a_and_selecting_b_focuses_b_instead_of_focus_history
     let selected = session.view().item(SECOND).expect("B survives dock-back");
     assert_eq!(selected.contained(), None);
     assert!(selected.is_selected());
-    assert_eq!(selected.tabs().items(), &[FIRST, SECOND]);
+    assert_eq!(
+        selected.tabs().items().collect::<Vec<_>>(),
+        &[FIRST, SECOND]
+    );
     present_surfaces(&mut session, &[MAIN_SURFACE, OTHER_SURFACE]);
     assert_eq!(pane_focus_request(&mut session, OTHER_SURFACE), None);
 

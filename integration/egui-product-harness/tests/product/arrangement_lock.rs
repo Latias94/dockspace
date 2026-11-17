@@ -306,7 +306,7 @@ fn locked_rear_contained_tab_and_content_keep_focus_and_raise_without_geometry_c
         );
         let root = dockspace.view().root(FLOATING_ROOT).unwrap();
         let tabs = root.content().unwrap().tabs().unwrap();
-        assert_eq!(tabs.items(), &items);
+        assert_eq!(tabs.items().collect::<Vec<_>>(), &items);
         for item in items {
             let location = dockspace.view().item(item).unwrap();
             assert_eq!(location.root(), FLOATING_ROOT);

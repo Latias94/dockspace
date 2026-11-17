@@ -343,7 +343,7 @@ fn real_splitter_hit_padding_keeps_click_occlusion_separate_from_resize_delivery
                         .unwrap();
                     let items = split
                         .children()
-                        .flat_map(|child| child.tabs().unwrap().items().iter().copied())
+                        .flat_map(|child| child.tabs().unwrap().items())
                         .collect::<Vec<_>>();
                     assert_eq!(items, [ItemId::new(1), ItemId::new(2)], "{trace}");
                     let (_, moved_draw) = fixture.publish();

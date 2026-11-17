@@ -1,3 +1,4 @@
+use crate::ids::TabKey;
 use std::collections::BTreeSet;
 
 use dockspace::graph::command::{
@@ -147,7 +148,9 @@ fn tabs(workspace: &Workspace) -> Vec<(NodeId, Vec<ItemId>)> {
     workspace
         .nodes()
         .filter_map(|(node, value)| match value {
-            Node::Tabs { items, .. } => Some((node, items.clone())),
+            Node::Tabs { items, .. } => {
+                Some((node, items.iter().filter_map(|tab| tab.item()).collect()))
+            }
             Node::Split { .. } => None,
         })
         .collect()
@@ -214,7 +217,9 @@ fn select_item_command(
         .capture_item_source(ROOT, tabs, item)
         .expect("fresh selection source must be valid");
     (
-        WorkspaceCommand::Select { source },
+        WorkspaceCommand::Select {
+            source: source.as_tab_source(),
+        },
         ModelDelta::Select { tabs, item },
     )
 }
@@ -251,14 +256,17 @@ fn reorder_item_command(
     };
     let from = current_items
         .iter()
-        .position(|candidate| *candidate == item)
+        .position(|candidate| *candidate == TabKey::for_item(item))
         .expect("selected item must still be in its tabs");
     let to = if insertion_index > from {
         insertion_index - 1
     } else {
         insertion_index
     };
-    let mut expected_items = current_items.clone();
+    let mut expected_items = current_items
+        .iter()
+        .filter_map(|tab| tab.item())
+        .collect::<Vec<_>>();
     if from != to {
         expected_items.remove(from);
         expected_items.insert(to, item);
@@ -268,7 +276,7 @@ fn reorder_item_command(
         .expect("fresh reorder source must be valid");
     (
         WorkspaceCommand::Reorder {
-            source,
+            source: source.as_tab_source(),
             insertion_index,
         },
         ModelDelta::Reorder {
@@ -465,7 +473,7 @@ fn open_item_command(
 
 fn item_tabs(workspace: &Workspace, item: ItemId) -> Option<NodeId> {
     workspace.nodes().find_map(|(node, value)| match value {
-        Node::Tabs { items, .. } if items.contains(&item) => Some(node),
+        Node::Tabs { items, .. } if items.contains(&TabKey::for_item(item)) => Some(node),
         Node::Tabs { .. } | Node::Split { .. } => None,
     })
 }
@@ -516,19 +524,25 @@ fn assert_success_postcondition(
             assert!(matches!(
                 report.outcomes(),
                 [dockspace::graph::command::CommandOutcome::Selected {
-                    item: actual_item,
+                    tab: actual_item,
                     tabs: actual_tabs,
                     ..
-                }] if actual_item == item && actual_tabs == tabs
+                }] if actual_item.item() == Some(*item) && actual_tabs == tabs
             ));
             assert!(matches!(
                 after.node(*tabs),
                 Some(Node::Tabs {
                     selected: Some(selected),
                     ..
-                }) if selected == item
+                }) if selected.item() == Some(*item)
             ));
-            assert_eq!(after.tab_mru(*tabs).and_then(|mru| mru.first()), Some(item));
+            assert_eq!(
+                after
+                    .tab_mru(*tabs)
+                    .and_then(|mru| mru.first())
+                    .and_then(|tab| tab.item()),
+                Some(*item)
+            );
         }
         ModelDelta::Reorder {
             tabs,
@@ -540,12 +554,12 @@ fn assert_success_postcondition(
             assert!(matches!(
                 report.outcomes(),
                 [dockspace::graph::command::CommandOutcome::Reordered {
-                    item: actual_item,
+                    tab: actual_item,
                     tabs: actual_tabs,
                     from: actual_from,
                     to: actual_to,
                     changed,
-                }] if actual_item == item
+                }] if actual_item.item() == Some(*item)
                     && actual_tabs == tabs
                     && actual_from == from
                     && actual_to == to
@@ -553,7 +567,7 @@ fn assert_success_postcondition(
             ));
             assert!(matches!(
                 after.node(*tabs),
-                Some(Node::Tabs { items, .. }) if items == expected_items
+                Some(Node::Tabs { items, .. }) if items.iter().filter_map(|tab| tab.item()).collect::<Vec<_>>() == *expected_items
             ));
         }
         ModelDelta::CenterMove {
@@ -572,7 +586,7 @@ fn assert_success_postcondition(
             ));
             assert!(matches!(
                 after.node(*target_tabs),
-                Some(Node::Tabs { items, .. }) if items.contains(item)
+                Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(*item))
             ));
             assert!(
                 after
@@ -640,7 +654,7 @@ fn assert_success_postcondition(
             ));
             assert!(matches!(
                 after.node(*target_tabs),
-                Some(Node::Tabs { items, .. }) if items.contains(item)
+                Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(*item))
             ));
             assert_eq!(after.item_multiset().get(item), Some(&1));
         }

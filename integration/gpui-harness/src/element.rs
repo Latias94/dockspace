@@ -5,7 +5,7 @@ use std::{cell::Cell, rc::Rc};
 use anyhow::{Context as _, Result};
 use dockspace::{
     geometry::{LogicalRect, LogicalSize},
-    model::ItemId,
+    model::{ItemId, TabKey},
     runtime::{
         DockspaceReceiverDescriptor, DockspaceReceiverRole, DockspaceUpdate,
         SurfaceMeasurementAnswer as Answer, SurfaceMeasurementRequest as Request,
@@ -46,7 +46,7 @@ impl Packet {
 
     pub(super) fn tab_bounds(&self, item: ItemId) -> Option<LogicalRect> {
         self.draws.iter().find_map(|draw| match draw {
-            Draw::Tab(bounds, candidate, _, _) if *candidate == item => Some(*bounds),
+            Draw::Tab(bounds, candidate, _, _) if candidate.item() == Some(item) => Some(*bounds),
             _ => None,
         })
     }
@@ -61,13 +61,13 @@ impl Packet {
 
 enum Draw {
     Fill(LogicalRect, Hsla),
-    Tab(LogicalRect, ItemId, Hsla, bool),
+    Tab(LogicalRect, TabKey, Hsla, bool),
     ContainedFrame(LogicalRect),
     ContainedTitle(LogicalRect, Hsla),
     Guide(LogicalRect, GuideState),
     Outline(LogicalRect, Hsla),
     Text(LogicalRect, String, Hsla),
-    TabText(LogicalRect, LogicalRect, ItemId, String, Hsla),
+    TabText(LogicalRect, LogicalRect, TabKey, String, Hsla),
     Pane(LogicalRect, ItemId),
     Receiver(DockspaceReceiverDescriptor),
     Preview(LogicalRect),
@@ -75,7 +75,7 @@ enum Draw {
 
 enum PreparedDraw {
     Fill(Bounds<Pixels>, Hsla),
-    Tab(Bounds<Pixels>, ItemId, Hsla, bool),
+    Tab(Bounds<Pixels>, TabKey, Hsla, bool),
     ContainedFrame(Bounds<Pixels>),
     ContainedTitle(Bounds<Pixels>, Hsla),
     Guide(Bounds<Pixels>, GuideState),
@@ -87,13 +87,13 @@ enum PreparedDraw {
 
 pub(crate) struct DockspaceElement {
     host: SharedHost,
-    hovered_tab: Rc<Cell<Option<ItemId>>>,
+    hovered_tab: Rc<Cell<Option<TabKey>>>,
 }
 
 pub(crate) struct PreparedFrame {
     draws: Vec<PreparedDraw>,
     hitboxes: Vec<HitboxId>,
-    tabs: Vec<(ItemId, HitboxId)>,
+    tabs: Vec<(TabKey, HitboxId)>,
     capture: PointerCaptureHandle,
     serial: u64,
     bounds: Bounds<Pixels>,
@@ -187,7 +187,7 @@ impl Element for DockspaceElement {
         };
         if let Some(id) = id {
             self.hovered_tab =
-                window.with_element_state::<Rc<Cell<Option<ItemId>>>, _>(id, |state, _| {
+                window.with_element_state::<Rc<Cell<Option<TabKey>>>, _>(id, |state, _| {
                     let state = state.unwrap_or_default();
                     (state.clone(), state)
                 });
@@ -417,7 +417,7 @@ impl DockspaceElement {
                         .text_color(*color)
                         .when_some(
                             match draw {
-                                Draw::TabText(_, _, item, _, _) => Some(*item),
+                                Draw::TabText(_, _, key, _, _) => key.item(),
                                 _ => None,
                             },
                             |text, item| {
@@ -677,10 +677,10 @@ impl DockspaceElement {
 }
 
 fn hovered_tab_at(
-    tabs: &[(ItemId, HitboxId)],
+    tabs: &[(TabKey, HitboxId)],
     position: open_gpui::Point<Pixels>,
     window: &Window,
-) -> Option<ItemId> {
+) -> Option<TabKey> {
     if window.last_input_was_keyboard() || window.last_input_was_touch() {
         return None;
     }
@@ -717,21 +717,24 @@ fn build_candidate(
                 ))
                 .into(),
             ),
-            Request::TabIntrinsic { item, .. } => {
-                let width = panels.get(&item).map_or(120.0, |pane| {
-                    let line = window.text_system().shape_line(
-                        pane.title.clone(),
-                        config.text_size,
-                        &[TextRun {
-                            len: pane.title.len(),
-                            font: config.font.clone(),
-                            color: config.colors.text,
-                            ..Default::default()
-                        }],
-                        None,
-                    );
-                    f64::from(f32::from(line.width))
-                });
+            Request::TabIntrinsic { key, .. } => {
+                let width = key
+                    .item()
+                    .and_then(|item| panels.get(&item))
+                    .map_or(120.0, |pane| {
+                        let line = window.text_system().shape_line(
+                            pane.title.clone(),
+                            config.text_size,
+                            &[TextRun {
+                                len: pane.title.len(),
+                                font: config.font.clone(),
+                                color: config.colors.text,
+                                ..Default::default()
+                            }],
+                            None,
+                        );
+                        f64::from(f32::from(line.width))
+                    });
                 Answer::TabIntrinsic(width)
             }
             Request::TabStrip { .. } => Answer::TabStrip(

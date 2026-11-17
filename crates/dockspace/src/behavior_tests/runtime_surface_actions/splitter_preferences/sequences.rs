@@ -137,7 +137,7 @@ impl Expected {
             assert_eq!(location.surface(), SURFACE);
             assert_eq!(location.is_hidden(), hidden);
             assert_eq!(location.is_selected(), selected);
-            let members = location.tabs().items();
+            let members = location.tabs().items().collect::<Vec<_>>();
             assert_eq!(
                 members,
                 if item == SECOND {

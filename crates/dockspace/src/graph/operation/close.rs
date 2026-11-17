@@ -289,15 +289,15 @@ pub(crate) fn prepare_content_close(
             let successor = match candidate.node(source.tabs()) {
                 Some(Node::Tabs {
                     items, selected, ..
-                }) if *selected == Some(item) => items
+                }) if *selected == Some(TabKey::for_item(item)) => items
                     .iter()
-                    .position(|entry| *entry == item)
+                    .position(|entry| *entry == TabKey::for_item(item))
                     .and_then(|index| {
                         items[index + 1..]
                             .iter()
                             .chain(items[..index].iter().rev())
                             .copied()
-                            .find(|item| !candidate.item_is_hidden(*item))
+                            .find(|tab| candidate.tab_is_visible(*tab))
                     }),
                 _ => None,
             };
@@ -329,7 +329,11 @@ pub(crate) fn prepare_content_close(
                 Some(Node::Tabs { items, .. }) => items,
                 _ => return Err(close_invariant("validate frozen close-tabs node")),
             };
-            if actual.len() != items.len() || !actual.iter().all(|item| items.contains(item)) {
+            if actual.len() != items.len()
+                || !actual
+                    .iter()
+                    .all(|tab| tab.item().is_some_and(|item| items.contains(&item)))
+            {
                 return Err(close_invariant("validate frozen close-tabs membership"));
             }
             for item in items {

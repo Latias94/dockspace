@@ -45,8 +45,8 @@ fn layout_checkpoints_remain_read_only_while_busy_and_after_fatal_shutdown() {
             .item(ItemId::new(1))
             .unwrap()
             .tabs()
-            .items(),
-        before.view().item(ItemId::new(1)).unwrap().tabs().items()
+            .tabs(),
+        before.view().item(ItemId::new(1)).unwrap().tabs().tabs()
     );
     assert_eq!(
         checkpoint.view().item(ItemId::new(1)).unwrap().surface(),

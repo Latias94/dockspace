@@ -463,7 +463,7 @@ fn window_dpi_and_framebuffer_density_are_independent_for_cross_surface_batches(
                             item,
                             view.surface(),
                             view.root(),
-                            view.tabs().items().to_vec(),
+                            view.tabs().items().collect::<Vec<_>>(),
                         )
                     })
                     .into_iter()

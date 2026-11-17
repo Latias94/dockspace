@@ -589,8 +589,8 @@ fn inspect_two_strips(frame: &mut DockspaceHostFrame<'_>) -> TwoStripSnapshot {
         } = step
         {
             let index = match bar.members().next().unwrap().item() {
-                item if item == ItemId::new(10) => 0,
-                item if item == ItemId::new(20) => 1,
+                Some(item) if item == ItemId::new(10) => 0,
+                Some(item) if item == ItemId::new(20) => 1,
                 item => panic!("unexpected target strip: {item:?}"),
             };
             assert!(

@@ -47,7 +47,9 @@ pub(super) fn inspect(plan: SurfacePaintPlan<'_>) -> AppResult<Snapshot> {
                 paint,
             } if !paint.is_source_gap() => match operation {
                 Operation::Tab(tab) => {
-                    snapshot.tabs.insert(tab.item(), tab.visible_bounds());
+                    if let Some(item) = tab.item() {
+                        snapshot.tabs.insert(item, tab.visible_bounds());
+                    }
                 }
                 Operation::Pane(pane) => {
                     if let Some(item) = pane.selected() {
@@ -184,6 +186,7 @@ impl Smoke {
                                 .ok_or("item 2 disappeared")?
                                 .tabs()
                                 .items()
+                                .collect::<Vec<_>>()
                                 == [ItemId::new(1), ItemId::new(2)],
                             "invalidated release changed the source group",
                         )?;
@@ -195,6 +198,7 @@ impl Smoke {
                             .ok_or("item 2 disappeared")?
                             .tabs()
                             .items()
+                            .collect::<Vec<_>>()
                             == [ItemId::new(3), ItemId::new(2)],
                         "dock release did not produce the exact target group",
                     )?,

@@ -58,7 +58,7 @@ impl SurfacePaintPlan<'_> {
         bar: TabBarPaintRecord<'_>,
     ) -> Option<PreparedTabsGroup> {
         self.tabs_group_menu_operable(bar).then_some(())?;
-        let item = bar.record.members().first()?.tab().item;
+        let item = bar.record.members().first()?.tab().tab.item()?;
         self.candidate
             .capture_tabs_group(DockAnchor::Item(item))
             .ok()

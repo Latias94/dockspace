@@ -212,8 +212,8 @@ impl Workbench {
                 Some(serde_json::json!({
                     "item": id.get(),
                     "root": item.root().get(),
-                    "group": item.tabs().items().iter().map(|id| id.get()).collect::<Vec<_>>(),
-                    "selected": item.tabs().selected().map(|id| id.get()),
+                    "group": item.tabs().items().collect::<Vec<_>>().iter().map(|id| id.get()).collect::<Vec<_>>(),
+                    "selected": item.tabs().selected().and_then(|tab| tab.item()).map(|id| id.get()),
                     "contentRect": self.panes.panes.get(&id).and_then(|pane| pane.content).map(rect),
                 }))
             })

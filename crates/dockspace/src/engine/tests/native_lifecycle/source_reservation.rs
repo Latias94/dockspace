@@ -174,13 +174,15 @@ fn assert_source_edits_are_frozen(fixture: &mut BackgroundFixture, request: Nati
         .expect("the peer selection must capture")
         .expect("the peer item must remain in the source root");
     for command in [
-        WorkspaceCommand::Select { source: select },
+        WorkspaceCommand::Select {
+            source: select.as_tab_source(),
+        },
         WorkspaceCommand::Reorder {
-            source: reorder,
+            source: reorder.as_tab_source(),
             insertion_index: 2,
         },
         WorkspaceCommand::Select {
-            source: peer_select,
+            source: peer_select.as_tab_source(),
         },
     ] {
         assert!(matches!(
@@ -242,7 +244,9 @@ fn assert_source_edits_are_frozen(fixture: &mut BackgroundFixture, request: Nati
         fixture.presentation_host,
         EngineInput::WorkspaceCommand {
             expected: version,
-            command: WorkspaceCommand::Select { source: unrelated },
+            command: WorkspaceCommand::Select {
+                source: unrelated.as_tab_source(),
+            },
         },
     )
     .expect("an unrelated root edit must remain a normal host frame commit");
@@ -446,7 +450,7 @@ fn submit_native_reservation_edge(
                 .iter()
                 .find(|region| {
                     matches!(region.id().kind(), PresentationHitRegionKind::TabBody(tab)
-                        if tab.item == ItemId::new(1))
+                        if tab.tab == ItemId::new(1).into())
                 })
                 .expect("the selected source tab must have an exact receiver")
                 .id();
@@ -555,7 +559,7 @@ fn native_drag_reservation_fixture() -> (BackgroundFixture, PointerInputLease, D
         .iter()
         .find(|region| {
             matches!(region.id().kind(), PresentationHitRegionKind::TabBody(tab)
-                if tab.item == ItemId::new(1))
+                if tab.tab == ItemId::new(1).into())
         })
         .expect("the partial source tab must have a presented receiver");
     let point = region_center(source);

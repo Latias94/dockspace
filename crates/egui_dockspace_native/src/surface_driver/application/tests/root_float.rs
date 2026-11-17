@@ -11,7 +11,7 @@ fn assert_same_content(
         assert_eq!(before.is_central(), after.is_central());
         if let Some(tabs) = before.tabs() {
             let actual = after.tabs().expect("floating preserves tabs leaves");
-            assert_eq!(actual.items(), tabs.items());
+            assert_eq!(actual.tabs(), tabs.tabs());
             assert_eq!(actual.selected(), tabs.selected());
         } else {
             let split = before.split().unwrap();

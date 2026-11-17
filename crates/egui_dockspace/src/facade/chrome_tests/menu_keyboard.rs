@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::TabKey;
 use dockspace::runtime::SurfacePaintProgramStep as Step;
 
 use super::*;
@@ -59,7 +60,7 @@ fn setup(callback: bool) -> Harness {
             .map(|id| id.value()),
         Some(first.0)
     );
-    assert_eq!(menu_state(&mut harness).unwrap().0, ItemId::new(1));
+    assert_eq!(menu_state(&mut harness).unwrap().0, ItemId::new(1).into());
     harness
 }
 
@@ -69,16 +70,16 @@ fn settle(harness: &mut Harness) -> FullOutput {
     harness.run(WIDTH, Vec::new())
 }
 
-fn menu_state(harness: &mut Harness) -> Option<(ItemId, f64, bool)> {
+fn menu_state(harness: &mut Harness) -> Option<(TabKey, f64, bool)> {
     let mut frame = harness.dockspace.session.begin_host_frame().unwrap();
     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
     let mut state = None;
     plan.visit_surface_program(|step| {
         if let Step::PopupMenu { menu, .. } = step {
-            let focused = menu.rows().find(|row| row.focused()).unwrap().item();
+            let focused = menu.rows().find(|row| row.focused()).unwrap().key();
             let last_visible = menu
                 .rows()
-                .find(|row| row.item() == LAST)
+                .find(|row| row.item() == Some(LAST))
                 .unwrap()
                 .interaction_bounds()
                 .is_some();
@@ -166,7 +167,7 @@ fn tab_list_keyboard_batch_keeps_repeated_and_ordered_navigation() {
                 let output = settle(&mut harness);
                 assert_eq!(
                     menu_state(&mut harness).unwrap().0,
-                    expected,
+                    TabKey::from(expected),
                     "{keys:?}, callback={callback}, discards={discards}"
                 );
                 assert!(

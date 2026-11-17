@@ -340,11 +340,23 @@ fn assert_durable_unchanged(session: &DockspaceSession, version: WorkspaceVersio
         assert_eq!(item.is_selected(), selected);
     }
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
     assert_eq!(
-        session.view().item(ItemId::new(10)).unwrap().tabs().items(),
+        session
+            .view()
+            .item(ItemId::new(10))
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         target_items().collect::<Vec<_>>()
     );
 }

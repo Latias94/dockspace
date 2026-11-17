@@ -70,6 +70,7 @@ fn open_menu_reconciles_hidden_members_and_focus_before_its_next_published_frame
             .items
             .into_iter()
             .filter(|item| *item != hidden)
+            .map(crate::ids::TabKey::from)
             .collect::<Vec<_>>();
         let active = fixture
             .engine
@@ -78,7 +79,7 @@ fn open_menu_reconciles_hidden_members_and_focus_before_its_next_published_frame
             .active_menu()
             .unwrap();
         assert_eq!(active.session(), menu);
-        assert_eq!(active.items(), visible);
+        assert_eq!(active.tabs(), visible);
         assert!(visible.contains(&active.focus()));
         let focus = active.focus();
         publish_tab_strip_reducer_projection(&mut fixture, host, true);
@@ -96,7 +97,7 @@ fn open_menu_reconciles_hidden_members_and_focus_before_its_next_published_frame
             record
                 .rows()
                 .iter()
-                .map(|row| row.tab().item)
+                .map(|row| row.tab().tab)
                 .collect::<Vec<_>>(),
             visible
         );
@@ -107,7 +108,7 @@ fn open_menu_reconciles_hidden_members_and_focus_before_its_next_published_frame
                 .find(|row| row.focused())
                 .unwrap()
                 .tab()
-                .item,
+                .tab,
             focus
         );
 
@@ -120,7 +121,7 @@ fn open_menu_reconciles_hidden_members_and_focus_before_its_next_published_frame
             .active_menu()
             .unwrap();
         assert_eq!(active.session(), menu);
-        assert_eq!(active.items(), fixture.items);
+        assert_eq!(active.tabs(), fixture.items.map(crate::ids::TabKey::from));
         assert_eq!(
             active.focus(),
             focus,
@@ -241,7 +242,7 @@ fn deferred_tab_chrome_actions_use_the_visible_roster_across_real_publications()
             session: menu,
             revision: witness.plan().popup().revision(),
             record: witness.plan().tab_list_menu_records()[0].clone(),
-            target: fixture.items[3],
+            target: fixture.items[3].into(),
         },
     };
     let expected = fixture.engine.version();
@@ -257,8 +258,8 @@ fn deferred_tab_chrome_actions_use_the_visible_roster_across_real_publications()
     .unwrap();
     assert!(matches!(navigated.reduced_inputs()[0].outcome(),
         InputOutcome::InteractionProcessed {
-            outcome: InteractionOutcome::TabListMenuFocusMoved { item, changed: true, .. }, ..
-        } if *item == fixture.items[3]));
+            outcome: InteractionOutcome::TabListMenuFocusMoved { tab, changed: true, .. }, ..
+        } if *tab == fixture.items[3].into()));
     publish_tab_strip_reducer_projection(&mut fixture, host, true);
     let active = fixture
         .engine
@@ -267,16 +268,16 @@ fn deferred_tab_chrome_actions_use_the_visible_roster_across_real_publications()
         .active_menu()
         .unwrap();
     assert_eq!(
-        active.items(),
-        [fixture.items[0], fixture.items[2], fixture.items[3]]
+        active.tabs(),
+        [fixture.items[0], fixture.items[2], fixture.items[3]].map(crate::ids::TabKey::from)
     );
     assert_eq!(
         fixture.engine.workspace().visible_tab_selection(bar.tabs),
-        Some(fixture.items[0])
+        Some(fixture.items[0].into())
     );
     assert!(fixture.engine.workspace().item_is_hidden(hidden));
     assert!(
-        matches!(fixture.engine.workspace().node(bar.tabs), Some(Node::Tabs { items, .. }) if items == &fixture.items)
+        matches!(fixture.engine.workspace().node(bar.tabs), Some(Node::Tabs { items, .. }) if items.as_slice() == fixture.items.map(crate::ids::TabKey::from))
     );
 }
 
@@ -323,8 +324,8 @@ fn auto_hidden_bar_reveals_when_its_other_logical_members_are_hidden() {
         .plan();
     assert_eq!(plan.tab_bar_records().len(), 1);
     assert_eq!(
-        plan.tab_bar_records()[0].members()[0].tab().item,
-        fixture.items[0]
+        plan.tab_bar_records()[0].members()[0].tab().tab,
+        fixture.items[0].into()
     );
     assert_eq!(plan.tab_bar_records()[0].members().len(), 1);
     assert!(
@@ -333,7 +334,7 @@ fn auto_hidden_bar_reveals_when_its_other_logical_members_are_hidden() {
             .all(|record| record.id() != control)
     );
     assert!(
-        matches!(fixture.engine.workspace().node(bar.tabs), Some(Node::Tabs { items, .. }) if items == &fixture.items)
+        matches!(fixture.engine.workspace().node(bar.tabs), Some(Node::Tabs { items, .. }) if items.as_slice() == fixture.items.map(crate::ids::TabKey::from))
     );
     assert_eq!(
         fixture
@@ -368,7 +369,7 @@ fn deferred_tab_close_rejects_hidden_receivers_after_a_new_projection() {
                 .plan()
                 .tab_records()
                 .iter()
-                .find(|record| record.id().item == target_item)
+                .find(|record| record.id().tab == target_item.into())
                 .unwrap()
                 .id();
             let (target, kind) = if close_body {
@@ -411,7 +412,7 @@ fn deferred_tab_close_rejects_hidden_receivers_after_a_new_projection() {
                     .plan()
                     .tab_records()
                     .iter()
-                    .any(|record| record.id().item == target_item),
+                    .any(|record| record.id().tab == target_item.into()),
                 !hide_target
             );
             let before = fixture.engine.workspace().clone();

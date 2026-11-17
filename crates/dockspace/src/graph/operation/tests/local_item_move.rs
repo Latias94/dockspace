@@ -222,7 +222,11 @@ fn last_item_retires_only_its_source_presentation_and_candidate_can_be_discarded
         );
         assert_eq!(
             candidate.tab_mru(target),
-            Some([MOVED, ItemId::new(3), ItemId::new(4)].as_slice())
+            Some(
+                [MOVED, ItemId::new(3), ItemId::new(4)]
+                    .map(TabKey::for_item)
+                    .as_slice()
+            )
         );
         candidate.validate().unwrap();
         let expected = candidate.clone();
@@ -245,7 +249,8 @@ fn a_mixed_program_selects_complete_fallback_before_any_edit() {
         source: fixture
             .workspace
             .capture_item_source(LOCAL_ROOT, fixture.source, MOVED)
-            .unwrap(),
+            .unwrap()
+            .as_tab_source(),
     };
     let (local, _) = prepare_transaction(
         &fixture.workspace,
@@ -507,7 +512,7 @@ fn source_collapse_of_wide_split_matches_general_success_and_preserves_items() {
     assert_eq!(workspace.item_multiset(), original_items);
     assert!(matches!(
         workspace.node(target),
-        Some(Node::Tabs { items, .. }) if items == &[ItemId::new(3), ItemId::new(4), MOVED]
+        Some(Node::Tabs { items, .. }) if items == &[ItemId::new(3), ItemId::new(4), MOVED].map(TabKey::for_item)
     ));
     assert!(matches!(
         workspace.node(source_split),

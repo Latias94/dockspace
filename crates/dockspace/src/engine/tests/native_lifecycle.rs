@@ -2030,7 +2030,7 @@ fn product_native_root_to_contained_waits_for_presented_target_before_transfer()
         .find(|region| {
             matches!(
                 region.id().kind(),
-                PresentationHitRegionKind::TabBody(tab) if tab.item == ItemId::new(3)
+                PresentationHitRegionKind::TabBody(tab) if tab.tab == ItemId::new(3).into()
             )
         })
         .expect("the target tab has an exact pointer receiver")
@@ -2884,7 +2884,7 @@ fn active_surface_local_drag_rejects_programmatic_native_tear_off_atomically() {
         .find(|region| {
             matches!(
                 region.id().kind(),
-                PresentationHitRegionKind::TabBody(tab) if tab.item == ItemId::new(1)
+                PresentationHitRegionKind::TabBody(tab) if tab.tab == ItemId::new(1).into()
             )
         })
         .expect("the source tab has one exact hit region")
@@ -3164,7 +3164,7 @@ fn pending_native_create_reserves_complete_source_root_for_shared_and_public_com
         .find(|region| {
             matches!(
                 region.id().kind(),
-                PresentationHitRegionKind::TabBody(tab) if tab.item == ItemId::new(1)
+                PresentationHitRegionKind::TabBody(tab) if tab.tab == ItemId::new(1).into()
             )
         })
         .expect("the source tab has one exact hit region")
@@ -3838,7 +3838,8 @@ fn explicit_tick_fatal_reduction_rolls_back_provenance_and_complete_state() {
     let command = WorkspaceCommand::Select {
         source: workspace
             .capture_item_source(root, tabs, ItemId::new(2))
-            .expect("source must be capturable"),
+            .expect("source must be capturable")
+            .as_tab_source(),
     };
     let mut engine =
         DockEngine::new(workspace, DockPolicy::default()).expect("engine must be valid");
@@ -4566,7 +4567,7 @@ fn stale_roster_precondition_is_a_nonpublishing_recovery_rejection() {
         .capture_item_source(source_root, source_tabs, ItemId::new(42))
         .unwrap();
     crate::graph::transaction::WorkspaceTransaction::from_commands([WorkspaceCommand::Select {
-        source,
+        source: source.as_tab_source(),
     }])
     .apply(&mut changed, &engine.policy)
     .unwrap();

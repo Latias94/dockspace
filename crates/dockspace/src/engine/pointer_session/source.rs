@@ -423,7 +423,7 @@ impl DockEngine {
         let source = match payload {
             MovePayload::Item(source) => return Some(source.item()),
             MovePayload::Tabs(source) => {
-                return self.workspace.visible_tab_selection(source.node());
+                return self.workspace.first_active_item(source.node());
             }
             MovePayload::Subtree(source) => source,
         };
@@ -436,7 +436,8 @@ impl DockEngine {
                     .is_some_and(|(root, tabs, _)| {
                         root == source.root()
                             && self.workspace.subtree_contains(source.node(), tabs)
-                            && self.workspace.visible_tab_selection(tabs) == Some(*item)
+                            && self.workspace.visible_tab_selection(tabs)
+                                == Some(TabKey::for_item(*item))
                     })
         };
         self.viewport_focus

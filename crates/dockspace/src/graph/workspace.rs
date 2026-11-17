@@ -7,11 +7,11 @@ use crate::engine::transition::WorkspaceVersion;
 use crate::graph::command::{
     ContainedRosterSource, DockFraction, Edge, EdgeTarget, EdgeTargetScope, FingerprintNode,
     FingerprintPresentation, ItemSource, MovePayload, NodeFingerprint, NodeFingerprintRecord,
-    NodeSource, RootFingerprintData, RootReference, SurfaceRosterSource, TabTarget,
+    NodeSource, RootFingerprintData, RootReference, SurfaceRosterSource, TabSource, TabTarget,
 };
 use crate::graph::error::{CommandError, ReferenceRole};
 use crate::graph::{Node, Workspace};
-use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
+use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
 use crate::policy::DockTargetRuleKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,12 +308,14 @@ impl WorkspaceIndex {
         let indexed =
             self.capture_reference(workspace, version, root, tabs, ReferenceRole::Source)?;
         match workspace.node(tabs) {
-            Some(Node::Tabs { items, .. }) if items.contains(&item) => Ok(ItemSource {
-                root,
-                tabs,
-                item,
-                reference: indexed.reference.clone(),
-            }),
+            Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(item)) => {
+                Ok(ItemSource {
+                    root,
+                    tabs,
+                    item,
+                    reference: indexed.reference.clone(),
+                })
+            }
             Some(Node::Tabs { .. }) => Err(CommandError::ItemNotInTabs { tabs, item }),
             Some(Node::Split { .. }) => Err(CommandError::NodeIsNotTabs { node: tabs }),
             None => Err(CommandError::MissingNode {
@@ -344,7 +346,7 @@ impl WorkspaceIndex {
                 workspace.item_move_removes_root(root, indexed.item_count)
                     && matches!(
                         workspace.node(source.tabs()),
-                        Some(Node::Tabs { items, .. }) if items.contains(&source.item())
+                        Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(source.item()))
                     )
             }
             MovePayload::Tabs(source) => {
@@ -563,13 +565,44 @@ impl Workspace {
     ) -> Result<ItemSource, CommandError> {
         let reference = self.capture_reference(root, tabs, ReferenceRole::Source)?;
         match self.storage().nodes.get(tabs) {
-            Some(Node::Tabs { items, .. }) if items.contains(&item) => Ok(ItemSource {
-                root,
-                tabs,
-                item,
-                reference,
-            }),
+            Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(item)) => {
+                Ok(ItemSource {
+                    root,
+                    tabs,
+                    item,
+                    reference,
+                })
+            }
             Some(Node::Tabs { .. }) => Err(CommandError::ItemNotInTabs { tabs, item }),
+            Some(Node::Split { .. }) => Err(CommandError::NodeIsNotTabs { node: tabs }),
+            None => Err(CommandError::MissingNode {
+                role: ReferenceRole::Source,
+                node: tabs,
+            }),
+        }
+    }
+
+    /// Captures one direct tab child and its exact root-owner authority.
+    pub fn capture_tab_source(
+        &self,
+        root: RootId,
+        tabs: NodeId,
+        tab: TabKey,
+    ) -> Result<TabSource, CommandError> {
+        let reference = self.capture_reference(root, tabs, ReferenceRole::Source)?;
+        match self.node(tabs) {
+            Some(Node::Tabs { items, .. }) if items.contains(&tab) => {
+                if tab.is_layout() {
+                    return Err(CommandError::UnsupportedLayoutTab { tabs, tab });
+                }
+                Ok(TabSource {
+                    root,
+                    tabs,
+                    tab,
+                    reference,
+                })
+            }
+            Some(Node::Tabs { .. }) => Err(CommandError::TabNotInTabs { tabs, tab }),
             Some(Node::Split { .. }) => Err(CommandError::NodeIsNotTabs { node: tabs }),
             None => Err(CommandError::MissingNode {
                 role: ReferenceRole::Source,
@@ -606,7 +639,7 @@ impl Workspace {
                 .find_map(|(tabs, node)| match node {
                     Node::Tabs { items, .. } => items
                         .iter()
-                        .position(|candidate| *candidate == item)
+                        .position(|candidate| candidate.item() == Some(item))
                         .map(|index| (tabs, index)),
                     Node::Split { .. } => None,
                 })?;
@@ -873,6 +906,7 @@ impl Workspace {
                             items
                                 .iter()
                                 .copied()
+                                .filter_map(|tab| tab.item())
                                 .filter(|item| self.item_is_hidden(*item))
                                 .collect()
                         },
@@ -988,6 +1022,24 @@ impl Workspace {
         false
     }
 
+    /// Finds the first visible application item along the active layout branches.
+    ///
+    /// This chooses a default content focus; it never supplies a tab identity.
+    pub(crate) fn first_active_item(&self, node: NodeId) -> Option<ItemId> {
+        let mut pending = vec![node];
+        while let Some(node) = pending.pop() {
+            match self.node(node)? {
+                Node::Tabs { .. } => {
+                    if let Some(item) = self.visible_tab_selection(node).and_then(TabKey::item) {
+                        return Some(item);
+                    }
+                }
+                Node::Split { children, .. } => pending.extend(children.iter().rev().copied()),
+            }
+        }
+        None
+    }
+
     pub(crate) fn collect_items_in_subtree(&self, root: NodeId) -> Vec<ItemId> {
         let mut items = Vec::new();
         let mut stack = vec![root];
@@ -999,7 +1051,7 @@ impl Workspace {
             match self.storage().nodes.get(node_id) {
                 Some(Node::Tabs {
                     items: tab_items, ..
-                }) => items.extend(tab_items.iter().copied()),
+                }) => items.extend(tab_items.iter().filter_map(|tab| tab.item())),
                 Some(Node::Split { children, .. }) => {
                     stack.extend(children.iter().rev().copied());
                 }
@@ -1053,7 +1105,10 @@ fn pane_local_target_rule(
         Some(Node::Tabs {
             selected: Some(item),
             ..
-        }) => Ok(DockTargetRuleKey::Item(*item)),
+        }) => item
+            .item()
+            .map(DockTargetRuleKey::Item)
+            .ok_or(CommandError::UnsupportedLayoutTab { tabs, tab: *item }),
         // An empty central leaf is a deliberate docking sink, not an
         // unselected pane. It has no item identity, so root scope is the
         // only stable policy identity available to the core.
@@ -1248,7 +1303,9 @@ mod tests {
             .capture_item_source(root, tabs, ItemId::new(2))
             .unwrap();
         crate::graph::transaction::WorkspaceTransaction::from_commands([
-            crate::graph::command::WorkspaceCommand::Select { source },
+            crate::graph::command::WorkspaceCommand::Select {
+                source: source.as_tab_source(),
+            },
         ])
         .apply(
             &mut workspace,

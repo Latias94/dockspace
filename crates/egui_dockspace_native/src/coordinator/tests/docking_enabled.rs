@@ -484,7 +484,7 @@ fn source_and_target(
                 operation: SurfacePaintProgramOperation::Tab(tab),
                 ..
             } = step
-                && tab.item() == ItemId::new(2)
+                && tab.item() == Some(ItemId::new(2))
             {
                 receiver = source_plan.receiver_for_tab_body(tab);
             }

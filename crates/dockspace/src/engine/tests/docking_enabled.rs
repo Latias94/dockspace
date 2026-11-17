@@ -383,7 +383,7 @@ fn focused_root_controls_child_magnetism_but_unfocused_binding_is_inert() {
     let mut inspect = session.begin_host_frame().unwrap();
     let plan = inspect.paint_plan(CHILD).unwrap().unwrap();
     let source = plan
-        .receiver_for_tab_body(plan.tabs().find(|tab| tab.item() == FIRST).unwrap())
+        .receiver_for_tab_body(plan.tabs().find(|tab| tab.item() == Some(FIRST)).unwrap())
         .unwrap();
     let mut magnetic = None;
     let mut guides = Vec::new();

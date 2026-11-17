@@ -24,7 +24,7 @@ pub(super) fn paint(
     };
     let resource = decoration
         .ghost_item()
-        .and_then(|item| context.resources.item(item))
+        .and_then(|item| context.resources.tab(item))
         .cloned();
     let projected_root = decoration.projected_root_bounds().and_then(egui_rect);
     let ghost_size = match decoration.kind() {

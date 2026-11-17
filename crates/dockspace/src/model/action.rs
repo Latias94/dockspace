@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::geometry::{LogicalRect, PhysicalRect};
-use crate::ids::{EngineAuthorityDomainId, ItemId, RootId, SurfaceId};
+use crate::ids::{EngineAuthorityDomainId, ItemId, RootId, SurfaceId, TabKey};
 
 use super::WorkspaceVersion;
 
@@ -178,8 +178,8 @@ pub enum NativeTearOffSource {
 pub enum DockspaceActionOutcome {
     /// Selection was checked and optionally changed.
     Selected {
-        /// Selected item.
-        item: ItemId,
+        /// Selected direct tab child.
+        tab: TabKey,
         /// Whether durable selection or MRU state changed.
         changed: bool,
     },

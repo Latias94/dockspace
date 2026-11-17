@@ -41,7 +41,10 @@ impl PaneView for Documents {
     }
 
     fn tab_ui(&mut self, ui: &mut Ui, tab: &Tab<'_>) -> TabVisuals {
-        self.groups.insert(tab.item, tab.bar);
+        let Some(item) = tab.item() else {
+            return tab.paint(ui);
+        };
+        self.groups.insert(item, tab.bar);
         tab.paint(ui)
     }
 

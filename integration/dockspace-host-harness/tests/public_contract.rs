@@ -970,11 +970,10 @@ fn late_presented_output_keeps_its_exact_tab_receivers_after_selection() {
         selected.submitted_action_outcome(submitted),
         Some(HostInputOutcome::ProductActionApplied(
             DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab: selected_tab,
                 changed: true,
             }
-        ))
-    ));
+        )) if selected_tab.item() == Some(SECOND)));
     assert!(session.view().surface(A).is_some());
     assert!(session.view().item(SECOND).unwrap().is_selected());
     assert!(session.presented_surface(A).is_none());
@@ -1109,7 +1108,10 @@ fn semantic_layout_command_moves_an_item_without_pointer_registration() {
     ) if *source_root == RootId::new(1) && *target_root == RootId::new(2)));
     let moved = session.view().item(SECOND).unwrap();
     assert_eq!(moved.surface(), B);
-    assert_eq!(moved.tabs().items(), &[THIRD, FOURTH, SECOND]);
+    assert_eq!(
+        moved.tabs().items().collect::<Vec<_>>(),
+        &[THIRD, FOURTH, SECOND]
+    );
     assert_eq!(session.view().item(FIRST).unwrap().surface(), A);
     assert!(session.presented_surface(A).is_none());
     assert!(session.presented_surface(B).is_none());
@@ -1616,11 +1618,23 @@ fn host_pointer_input_only_preview_cancel_and_repress_allow_independent_prepare_
     assert!(released.take_painted_outputs().is_empty());
     assert_eq!(session.view().item(FIRST).unwrap().surface(), B);
     assert_eq!(
-        session.view().item(SECOND).unwrap().tabs().items(),
+        session
+            .view()
+            .item(SECOND)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[SECOND]
     );
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[THIRD, FOURTH, FIRST]
     );
     assert!(!session.has_active_gesture());
@@ -1786,11 +1800,23 @@ fn backpressured_cancel_and_repress_survive_late_preview_terminals_without_repai
         assert!(released.take_painted_outputs().is_empty());
         assert_eq!(session.view().item(FIRST).unwrap().surface(), B);
         assert_eq!(
-            session.view().item(SECOND).unwrap().tabs().items(),
+            session
+                .view()
+                .item(SECOND)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[SECOND]
         );
         assert_eq!(
-            session.view().item(FIRST).unwrap().tabs().items(),
+            session
+                .view()
+                .item(FIRST)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[THIRD, FOURTH, FIRST]
         );
         assert!(!session.has_active_gesture());
@@ -2112,11 +2138,23 @@ fn host_pointer_ordinary_release_delivers_in_its_successful_frame_without_previe
     assert!(report.take_painted_outputs().is_empty());
     assert_eq!(session.view().item(FIRST).unwrap().surface(), B);
     assert_eq!(
-        session.view().item(SECOND).unwrap().tabs().items(),
+        session
+            .view()
+            .item(SECOND)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[SECOND]
     );
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[THIRD, FOURTH, FIRST]
     );
     assert!(!session.has_active_gesture());
@@ -2243,8 +2281,8 @@ fn host_pointer_two_ordinary_releases_against_p0_are_invariant_under_batch_parti
                 item,
                 view.surface(),
                 view.root(),
-                view.tabs().items().to_vec(),
-                view.tabs().selected(),
+                view.tabs().items().collect::<Vec<_>>(),
+                view.tabs().selected().and_then(|tab| tab.item()),
             )
         })
     };
@@ -2299,11 +2337,23 @@ fn host_pointer_two_ordinary_releases_against_p0_are_invariant_under_batch_parti
         assert!(!session.has_active_gesture());
         assert!(!session.has_pending_presentation());
         assert_eq!(
-            session.view().item(FIRST).unwrap().tabs().items(),
+            session
+                .view()
+                .item(FIRST)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[THIRD, FOURTH, FIRST]
         );
         assert_eq!(
-            session.view().item(SECOND).unwrap().tabs().items(),
+            session
+                .view()
+                .item(SECOND)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[FIFTH, SECOND]
         );
         let accepted = topology(&session);
@@ -2367,7 +2417,13 @@ fn host_pointer_old_group_grip_rejects_unseen_members_but_current_item_stays_usa
     assert!(added.workspace_changed());
     assert!(added.take_painted_outputs().is_empty());
     assert_eq!(
-        session.view().item(FIFTH).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIFTH)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND, FIFTH]
     );
     assert_eq!(session.presented_surface(A), Some(scene.a));
@@ -2426,7 +2482,13 @@ fn host_pointer_old_group_grip_rejects_unseen_members_but_current_item_stays_usa
             ))
     );
     assert_eq!(
-        session.view().item(FIFTH).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIFTH)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND, FIFTH]
     );
     assert!(!session.has_active_gesture());
@@ -2442,7 +2504,13 @@ fn host_pointer_old_group_grip_rejects_unseen_members_but_current_item_stays_usa
     assert_eq!(session.view().item(FIRST).unwrap().surface(), B);
     assert_eq!(session.view().item(FIFTH).unwrap().surface(), A);
     assert_eq!(
-        session.view().item(FIFTH).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIFTH)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[SECOND, FIFTH]
     );
 }
@@ -2539,6 +2607,7 @@ fn host_pointer_unselected_source_continues_same_batch_drag_after_selection() {
             .unwrap()
             .tabs()
             .items()
+            .collect::<Vec<_>>()
             .iter()
             .filter(|item| **item == SECOND)
             .count(),
@@ -2694,7 +2763,13 @@ fn host_pointer_unknown_release_on_current_target_clears_preview_without_poisoni
     assert_eq!(session.view().item(FIRST).unwrap().root(), RootId::new(1));
     assert!(session.view().item(FIRST).unwrap().contained().is_none());
     assert_eq!(
-        session.view().item(FIRST).unwrap().tabs().items(),
+        session
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
 
@@ -2812,6 +2887,7 @@ fn host_pointer_dropped_frame_retries_the_batch_and_duplicate_release_cannot_del
             .unwrap()
             .tabs()
             .items()
+            .collect::<Vec<_>>()
             .iter()
             .filter(|item| **item == FIRST)
             .count(),
@@ -3247,6 +3323,7 @@ fn host_pointer_wrong_winner_suffix_rolls_back_its_valid_prefix_and_retries_once
             .unwrap()
             .tabs()
             .items()
+            .collect::<Vec<_>>()
             .iter()
             .filter(|item| **item == SECOND)
             .count(),

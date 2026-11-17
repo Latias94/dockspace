@@ -289,7 +289,8 @@ fn assert_child_retained(native: &NativeCoordinator, child: NativeSurfaceBinding
             .unwrap()
             .tabs()
             .unwrap()
-            .items(),
+            .items()
+            .collect::<Vec<_>>(),
         &[MOVING]
     );
     assert_eq!(
@@ -301,7 +302,8 @@ fn assert_child_retained(native: &NativeCoordinator, child: NativeSurfaceBinding
             .unwrap()
             .tabs()
             .unwrap()
-            .items(),
+            .items()
+            .collect::<Vec<_>>(),
         &[
             ItemId::new(1),
             ItemId::new(3),

@@ -1,4 +1,5 @@
 use super::support;
+use crate::ids::TabKey;
 
 use dockspace::engine::transition::{InputOutcome, InputPriority, WorkspaceVersion};
 use dockspace::engine::{DockEngine, EngineInput};
@@ -40,7 +41,8 @@ fn select_command(
     WorkspaceCommand::Select {
         source: workspace
             .capture_item_source(RootId::new(root), tabs, ItemId::new(item))
-            .expect("test item source must be capturable"),
+            .expect("test item source must be capturable")
+            .as_tab_source(),
     }
 }
 
@@ -187,14 +189,14 @@ fn independent_commands_from_one_published_version_commit_in_one_boundary() {
         Some(Node::Tabs {
             selected: Some(item),
             ..
-        }) if *item == ItemId::new(2)
+        }) if *item == TabKey::for_item(ItemId::new(2))
     ));
     assert!(matches!(
         engine.workspace().node(tabs[1]),
         Some(Node::Tabs {
             selected: Some(item),
             ..
-        }) if *item == ItemId::new(4)
+        }) if *item == TabKey::for_item(ItemId::new(4))
     ));
 }
 
@@ -317,7 +319,7 @@ fn expected_rejection_does_not_block_a_later_valid_command() {
         Some(Node::Tabs {
             selected: Some(selected),
             ..
-        }) if *selected == ItemId::new(2)
+        }) if *selected == TabKey::for_item(ItemId::new(2))
     ));
 }
 
@@ -476,7 +478,7 @@ fn same_root_commands_from_one_version_commit_then_reject_stale_source() {
         Some(Node::Tabs {
             selected: Some(selected),
             ..
-        }) if *selected == ItemId::new(2)
+        }) if *selected == TabKey::for_item(ItemId::new(2))
     ));
 }
 

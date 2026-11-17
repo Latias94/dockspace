@@ -131,7 +131,8 @@ fn resolve_action(
                     WorkspaceCommand::Reorder {
                         source: workspace
                             .capture_item_source(ROOT, tabs, item)
-                            .expect("fresh source"),
+                            .expect("fresh source")
+                            .as_tab_source(),
                         insertion_index: insertion,
                     },
                     None,

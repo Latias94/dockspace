@@ -3,7 +3,7 @@
 use std::convert::Infallible;
 
 use dockspace::geometry::{LogicalRect, LogicalSize};
-use dockspace::model::{ItemId, SurfaceId};
+use dockspace::model::{ItemId, SurfaceId, TabKey};
 use dockspace::runtime::{
     ContainedPaintRecord, DockspaceDragPreview, DockspaceDropDirection, DockspaceDropEligibility,
     DockspaceHostFrame, DockspacePreviewVisual, PanePaintRecord,
@@ -36,13 +36,17 @@ pub(super) fn measure(
         Ok::<_, dockspace::runtime::DockspaceRuntimeError>(match request {
             Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => Answer::Bounds(bounds),
             Request::PaneSizing { .. } => Answer::PaneSizing((minimum).into()),
-            Request::TabIntrinsic { item, .. } => {
-                Answer::TabIntrinsic(title(item).len() as f64 * 8.0)
+            Request::TabIntrinsic { key, .. } => {
+                Answer::TabIntrinsic(tab_title(key).len() as f64 * 8.0)
             }
             Request::TabStrip { .. } => Answer::TabStrip(strip),
         })
     })?;
     Ok(())
+}
+
+fn tab_title(key: TabKey) -> &'static str {
+    key.item().map_or("Layout", title)
 }
 
 pub(super) fn title(item: ItemId) -> &'static str {
@@ -179,13 +183,13 @@ fn paint_operation(
                 paint,
                 rect(tab.full_bounds()),
                 visible,
-                tab.item(),
+                tab.key(),
                 tab.selected(),
             );
             paint.label(
                 rect(tab.text_layout_bounds()),
                 intersect(visible, rect(tab.text_bounds())),
-                title(tab.item()),
+                tab_title(tab.key()),
                 TEXT,
             );
             if let Some(close) = tab.close_visual_bounds() {
@@ -307,7 +311,7 @@ fn paint_menu(paint: &mut Pixels<'_>, menu: TabListMenuPaintRecord<'_>) {
         paint.label(
             inset(row_bounds, 6.0),
             intersect(row_bounds, viewport),
-            title(row.item()),
+            tab_title(row.key()),
             TEXT,
         );
     }
@@ -357,7 +361,7 @@ fn paint_preview(
                     paint,
                     rect(tab.full_bounds()),
                     clip,
-                    tab.item(),
+                    tab.key(),
                     tab.selected(),
                 );
                 if let (Some(layout), Some(text_clip)) =
@@ -366,7 +370,7 @@ fn paint_preview(
                     paint.label(
                         rect(layout),
                         intersect(clip, rect(text_clip)),
-                        title(tab.item()),
+                        tab_title(tab.key()),
                         TEXT,
                     );
                 }
@@ -385,14 +389,14 @@ fn paint_preview(
     }
 }
 
-fn paint_tab(paint: &mut Pixels<'_>, bounds: Rect, clip: Rect, item: ItemId, selected: bool) {
+fn paint_tab(paint: &mut Pixels<'_>, bounds: Rect, clip: Rect, key: TabKey, selected: bool) {
     paint.fill_clipped(bounds, clip, if selected { 0x0034_506f } else { BAR });
     paint.border_clipped(bounds, clip, LINE);
     if selected {
         paint.fill_clipped(
             [bounds[0], bounds[3] - 2.0, bounds[2], bounds[3]],
             clip,
-            accent(item),
+            key.item().map_or(BLUE, accent),
         );
     }
 }

@@ -158,11 +158,11 @@ impl CommandSmoke {
                 if self.step == 0 {
                     let extracted = app.with_view(|view| {
                         view.item(INSPECTOR).is_some_and(|pane| {
-                            pane.root() == INSPECTOR_ROOT && pane.tabs().items() == [INSPECTOR]
+                            pane.root() == INSPECTOR_ROOT && pane.tabs().items().eq([INSPECTOR])
                         }) && view.item(EDITOR).is_some_and(|pane| {
                             pane.root() != INSPECTOR_ROOT
                                 && pane.contained().is_some()
-                                && pane.tabs().items() == [EDITOR]
+                                && pane.tabs().items().eq([EDITOR])
                         })
                     });
                     if !extracted {

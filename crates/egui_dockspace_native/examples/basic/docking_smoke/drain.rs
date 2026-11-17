@@ -68,7 +68,10 @@ impl DrainSmoke {
                         let remaining = view.item(self.order[1]).unwrap();
                         assert_eq!(remaining.root(), INSPECTOR_ROOT);
                         assert_eq!(remaining.contained(), Some(INSPECTOR_FLOATING));
-                        assert_eq!(remaining.tabs().items(), [self.order[1]]);
+                        assert_eq!(
+                            remaining.tabs().items().collect::<Vec<_>>(),
+                            [self.order[1]]
+                        );
                     });
                     self.phase = Phase::Second(MergeSmoke::new(self.order[1], OUTLINE));
                 }
@@ -185,7 +188,11 @@ fn assert_drained(app: &NativeExampleApp, order: [ItemId; 2]) {
             assert!(pane.contained().is_none());
         }
         assert_eq!(
-            view.item(OUTLINE).unwrap().tabs().items(),
+            view.item(OUTLINE)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             [OUTLINE, ASSETS, order[0], order[1]]
         );
     });
@@ -195,9 +202,13 @@ fn pane_bounds(app: &NativeExampleApp, axis: DockspaceAxis) -> Option<[egui::Rec
     let items = match axis {
         // The merged left group keeps the second dragged tab selected.
         DockspaceAxis::Horizontal => {
-            let selected = app
-                .dockspace
-                .with_view(|view| view.item(OUTLINE).unwrap().tabs().selected())?;
+            let selected = app.dockspace.with_view(|view| {
+                view.item(OUTLINE)
+                    .unwrap()
+                    .tabs()
+                    .selected()
+                    .and_then(|tab| tab.item())
+            })?;
             [selected, EDITOR]
         }
         DockspaceAxis::Vertical => [EDITOR, CONSOLE],

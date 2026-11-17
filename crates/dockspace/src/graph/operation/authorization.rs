@@ -14,10 +14,15 @@ pub(crate) fn authorize_workspace_command(
     match command {
         // Selection is a programmatic focus semantic, not a docking mutation.
         WorkspaceCommand::Select { source } => {
-            if workspace.item_is_hidden(source.item()) {
-                Err(CommandError::ItemHidden {
-                    item: source.item(),
-                })
+            let item = source
+                .tab()
+                .item()
+                .ok_or(CommandError::UnsupportedLayoutTab {
+                    tabs: source.tabs(),
+                    tab: source.tab(),
+                })?;
+            if workspace.item_is_hidden(item) {
+                Err(CommandError::ItemHidden { item })
             } else {
                 Ok(())
             }
@@ -208,18 +213,23 @@ struct TabReorderBarriers {
 
 impl TabReorderBarriers {
     fn capture(
-        items: &[ItemId],
+        items: &[TabKey],
         policy: &DockPolicySnapshot,
         source: &ItemSource,
     ) -> Result<Option<Self>, CommandError> {
-        let from = items.iter().position(|item| *item == source.item()).ok_or(
-            CommandError::ItemNotInTabs {
+        let from = items
+            .iter()
+            .position(|item| *item == TabKey::for_item(source.item()))
+            .ok_or(CommandError::ItemNotInTabs {
                 tabs: source.tabs(),
                 item: source.item(),
-            },
-        )?;
+            })?;
         let mut blocked = Vec::new();
-        for (index, &item) in items.iter().enumerate() {
+        for (index, &tab) in items.iter().enumerate() {
+            let item = tab.item().ok_or(CommandError::UnsupportedLayoutTab {
+                tabs: source.tabs(),
+                tab,
+            })?;
             if policy
                 .policy()
                 .item_rule(item)
@@ -351,10 +361,23 @@ impl<'a> DropCommandEligibility<'a> {
 fn authorize_reorder(
     workspace: &Workspace,
     policy: &DockPolicySnapshot,
-    source: &ItemSource,
+    source: &TabSource,
     insertion_index: usize,
 ) -> Result<(), CommandError> {
-    validate_item_source(workspace, source)?;
+    validate_tab_source(workspace, source)?;
+    let item = source
+        .tab()
+        .item()
+        .ok_or(CommandError::UnsupportedLayoutTab {
+            tabs: source.tabs(),
+            tab: source.tab(),
+        })?;
+    let item_source = ItemSource {
+        root: source.root(),
+        tabs: source.tabs(),
+        item,
+        reference: source.reference().clone(),
+    };
     let len = tabs_len(workspace, source.tabs())?;
     if insertion_index > len {
         return Err(CommandError::TabIndexOutOfBounds {
@@ -369,9 +392,9 @@ fn authorize_reorder(
     };
     authorize_tab_bar(policy, &target)?;
     if policy.has_item_rules() {
-        authorize_reorder_barriers(workspace, policy, source, insertion_index)?;
+        authorize_reorder_barriers(workspace, policy, &item_source, insertion_index)?;
     }
-    let payload = move_payload_policy_facts(workspace, &MovePayload::Item(source.clone()), false)?;
+    let payload = move_payload_policy_facts(workspace, &MovePayload::Item(item_source), false)?;
     authorize_drop(policy, DockDropOperation::TabMerge, &payload, &target)
 }
 
@@ -457,12 +480,13 @@ fn authorize_reorder_barriers(
     let Some(Node::Tabs { items, .. }) = workspace.storage.nodes.get(tabs) else {
         return Err(CommandError::NodeIsNotTabs { node: tabs });
     };
-    let from = items.iter().position(|item| *item == source.item()).ok_or(
-        CommandError::ItemNotInTabs {
+    let from = items
+        .iter()
+        .position(|item| *item == TabKey::for_item(source.item()))
+        .ok_or(CommandError::ItemNotInTabs {
             tabs,
             item: source.item(),
-        },
-    )?;
+        })?;
     let to = if insertion_index > from {
         insertion_index - 1
     } else {
@@ -479,13 +503,17 @@ fn authorize_reorder_barriers(
                 index: insertion_index,
                 len: items.len(),
             })?;
-    if let Some(&item) = crossed.iter().find(|item| {
-        policy
+    for tab in crossed {
+        let item = tab
+            .item()
+            .ok_or(CommandError::UnsupportedLayoutTab { tabs, tab: *tab })?;
+        if policy
             .policy()
-            .item_rule(**item)
+            .item_rule(item)
             .is_some_and(|rule| !rule.allows_tab_reorder())
-    }) {
-        return Err(crate::policy::PolicyRejection::TabReorderDisabled { item }.into());
+        {
+            return Err(crate::policy::PolicyRejection::TabReorderDisabled { item }.into());
+        }
     }
     Ok(())
 }

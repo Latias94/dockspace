@@ -55,7 +55,8 @@ fn semantic_edits_share_root_records_and_discarded_root_wrapping_is_isolated() {
     let command = WorkspaceCommand::Select {
         source: workspace
             .capture_item_source(A, tabs[0], ItemId::new(2))
-            .unwrap(),
+            .unwrap()
+            .as_tab_source(),
     };
     apply_shared(&mut workspace, command);
     let command = movement(&workspace, tabs);
@@ -156,12 +157,22 @@ fn center_move_copies_only_two_complete_tabs_payloads_and_unique_followup_copies
     }
     assert_eq!(
         workspace.tab_mru(tabs[0]).unwrap(),
-        [ItemId::new(1), ItemId::new(2)]
+        [
+            TabKey::for_item(ItemId::new(1)),
+            TabKey::for_item(ItemId::new(2))
+        ]
     );
-    assert_eq!(candidate.tab_mru(tabs[0]).unwrap(), [ItemId::new(1)]);
+    assert_eq!(
+        candidate.tab_mru(tabs[0]).unwrap(),
+        [TabKey::for_item(ItemId::new(1))]
+    );
     assert_eq!(
         candidate.tab_mru(tabs[2]).unwrap(),
-        [ItemId::new(2), ItemId::new(3), ItemId::new(4)]
+        [
+            TabKey::for_item(ItemId::new(2)),
+            TabKey::for_item(ItemId::new(3)),
+            TabKey::for_item(ItemId::new(4))
+        ]
     );
     workspace
         .verify_reference(A, tabs[0], old.reference(), ReferenceRole::Source)
@@ -181,7 +192,9 @@ fn center_move_copies_only_two_complete_tabs_payloads_and_unique_followup_copies
     crate::graph::operation::apply_owned_draft_command(
         &mut candidate,
         &policy,
-        &WorkspaceCommand::Select { source },
+        &WorkspaceCommand::Select {
+            source: source.as_tab_source(),
+        },
     )
     .unwrap();
     let copies = structural_work::snapshot().workspace_storage;
@@ -190,9 +203,15 @@ fn center_move_copies_only_two_complete_tabs_payloads_and_unique_followup_copies
     assert_eq!(copies.mru_item_copies, 0);
     assert_eq!(
         workspace.tab_mru(tabs[2]).unwrap(),
-        [ItemId::new(3), ItemId::new(4)]
+        [
+            TabKey::for_item(ItemId::new(3)),
+            TabKey::for_item(ItemId::new(4))
+        ]
     );
-    assert_eq!(candidate.tab_mru(tabs[2]).unwrap()[0], ItemId::new(3));
+    assert_eq!(
+        candidate.tab_mru(tabs[2]).unwrap()[0],
+        TabKey::for_item(ItemId::new(3))
+    );
     candidate.validate().unwrap();
     workspace.validate().unwrap();
 }
@@ -207,7 +226,7 @@ fn raw_builder_writes_copy_shared_values_and_leave_the_issued_workspace_untouche
     else {
         unreachable!()
     };
-    *selected = Some(ItemId::new(2));
+    *selected = Some(TabKey::for_item(ItemId::new(2)));
     mru.swap(0, 1);
     let changed = builder.build().unwrap();
     let copies = structural_work::snapshot().workspace_storage;
@@ -215,11 +234,17 @@ fn raw_builder_writes_copy_shared_values_and_leave_the_issued_workspace_untouche
     assert_eq!(copies.mru_item_copies, 2);
     assert_eq!(
         workspace.tab_mru(tabs[0]).unwrap(),
-        [ItemId::new(1), ItemId::new(2)]
+        [
+            TabKey::for_item(ItemId::new(1)),
+            TabKey::for_item(ItemId::new(2))
+        ]
     );
     assert_eq!(
         changed.tab_mru(tabs[0]).unwrap(),
-        [ItemId::new(2), ItemId::new(1)]
+        [
+            TabKey::for_item(ItemId::new(2)),
+            TabKey::for_item(ItemId::new(1))
+        ]
     );
     assert!(std::ptr::eq(
         workspace.node(tabs[3]).unwrap(),
@@ -281,11 +306,17 @@ fn replacing_a_shared_builder_node_preserves_its_owned_return_and_other_payloads
     ));
     assert_eq!(
         workspace.tab_mru(tabs[0]).unwrap(),
-        [ItemId::new(1), ItemId::new(2)]
+        [
+            TabKey::for_item(ItemId::new(1)),
+            TabKey::for_item(ItemId::new(2))
+        ]
     );
     assert_eq!(
         changed.tab_mru(tabs[0]).unwrap(),
-        [ItemId::new(9), ItemId::new(10)]
+        [
+            TabKey::for_item(ItemId::new(9)),
+            TabKey::for_item(ItemId::new(10))
+        ]
     );
 }
 
@@ -293,9 +324,17 @@ fn replacing_a_shared_builder_node_preserves_its_owned_return_and_other_payloads
 fn a_complete_tabs_replacement_keeps_explicit_history_and_returns_the_previous_history() {
     let mut builder = Workspace::builder();
     let tabs = builder.insert_node(Node::Tabs {
-        items: vec![ItemId::new(1), ItemId::new(2), ItemId::new(3)],
-        selected: Some(ItemId::new(2)),
-        mru: vec![ItemId::new(2), ItemId::new(3), ItemId::new(1)],
+        items: vec![
+            TabKey::for_item(ItemId::new(1)),
+            TabKey::for_item(ItemId::new(2)),
+            TabKey::for_item(ItemId::new(3)),
+        ],
+        selected: Some(TabKey::for_item(ItemId::new(2))),
+        mru: vec![
+            TabKey::for_item(ItemId::new(2)),
+            TabKey::for_item(ItemId::new(3)),
+            TabKey::for_item(ItemId::new(1)),
+        ],
     });
     builder.set_root(A, RootRecord::new(tabs));
     builder.set_surface(SurfaceId::new(1), SurfacePresentation::with_main(A));
@@ -305,16 +344,31 @@ fn a_complete_tabs_replacement_keeps_explicit_history_and_returns_the_previous_h
         .replace_node(
             tabs,
             Node::Tabs {
-                items: vec![ItemId::new(4), ItemId::new(5), ItemId::new(6)],
-                selected: Some(ItemId::new(5)),
-                mru: vec![ItemId::new(5), ItemId::new(6), ItemId::new(4)],
+                items: vec![
+                    TabKey::for_item(ItemId::new(4)),
+                    TabKey::for_item(ItemId::new(5)),
+                    TabKey::for_item(ItemId::new(6)),
+                ],
+                selected: Some(TabKey::for_item(ItemId::new(5))),
+                mru: vec![
+                    TabKey::for_item(ItemId::new(5)),
+                    TabKey::for_item(ItemId::new(6)),
+                    TabKey::for_item(ItemId::new(4)),
+                ],
             },
         )
         .unwrap();
     assert_eq!(&previous, original.node(tabs).unwrap());
     assert_eq!(
         draft.draft().tab_mru(tabs),
-        Some([ItemId::new(5), ItemId::new(6), ItemId::new(4)].as_slice())
+        Some(
+            [
+                TabKey::for_item(ItemId::new(5)),
+                TabKey::for_item(ItemId::new(6)),
+                TabKey::for_item(ItemId::new(4))
+            ]
+            .as_slice()
+        )
     );
     draft
         .set_tab_mru(tabs, [ItemId::new(5), ItemId::new(4), ItemId::new(6)])
@@ -322,11 +376,25 @@ fn a_complete_tabs_replacement_keeps_explicit_history_and_returns_the_previous_h
     let changed = draft.build().unwrap();
     assert_eq!(
         changed.tab_mru(tabs),
-        Some([ItemId::new(5), ItemId::new(4), ItemId::new(6)].as_slice())
+        Some(
+            [
+                TabKey::for_item(ItemId::new(5)),
+                TabKey::for_item(ItemId::new(4)),
+                TabKey::for_item(ItemId::new(6))
+            ]
+            .as_slice()
+        )
     );
     assert_eq!(
         original.tab_mru(tabs),
-        Some([ItemId::new(2), ItemId::new(3), ItemId::new(1)].as_slice())
+        Some(
+            [
+                TabKey::for_item(ItemId::new(2)),
+                TabKey::for_item(ItemId::new(3)),
+                TabKey::for_item(ItemId::new(1))
+            ]
+            .as_slice()
+        )
     );
 }
 
@@ -339,7 +407,7 @@ fn visual_reorder_copies_owned_history_without_changing_its_order() {
         .unwrap();
     structural_work::reset();
     let report = WorkspaceTransaction::from_commands([WorkspaceCommand::Reorder {
-        source,
+        source: source.as_tab_source(),
         insertion_index: 0,
     }])
     .apply(&mut workspace, &DockPolicySnapshot::default())
@@ -351,7 +419,7 @@ fn visual_reorder_copies_owned_history_without_changing_its_order() {
     assert_eq!(copies.mru_item_copies, 2);
     assert_eq!(workspace.tab_mru(tabs[0]), original.tab_mru(tabs[0]));
     assert!(
-        matches!(workspace.node(tabs[0]), Some(Node::Tabs { items, .. }) if items == &[ItemId::new(2), ItemId::new(1)])
+        matches!(workspace.node(tabs[0]), Some(Node::Tabs { items, .. }) if items == &[ItemId::new(2), ItemId::new(1)].map(TabKey::for_item))
     );
     original.validate().unwrap();
     workspace.validate().unwrap();

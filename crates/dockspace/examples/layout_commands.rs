@@ -35,7 +35,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let selected = frame.select_item_current(PREVIEW)?;
     commit_action(frame, selected)?;
     assert_eq!(
-        session.view().item(EDITOR).unwrap().tabs().selected(),
+        session
+            .view()
+            .item(EDITOR)
+            .unwrap()
+            .tabs()
+            .selected()
+            .and_then(|tab| tab.item()),
         Some(PREVIEW)
     );
 
@@ -44,8 +50,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         frame.open_item_current(INSPECTOR, DockPlacement::Center(DockAnchor::Item(EDITOR)))?;
     commit_action(frame, opened)?;
     assert_eq!(
-        session.view().item(EDITOR).unwrap().tabs().items(),
-        &[EDITOR, PREVIEW, INSPECTOR],
+        session
+            .view()
+            .item(EDITOR)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
+        [EDITOR, PREVIEW, INSPECTOR],
     );
 
     let mut frame = session.begin_host_frame()?;
@@ -53,8 +65,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         frame.dock_item_current(INSPECTOR, DockPlacement::Center(DockAnchor::Item(OUTLINE)))?;
     commit_action(frame, moved)?;
     assert_eq!(
-        session.view().item(OUTLINE).unwrap().tabs().items(),
-        &[OUTLINE, INSPECTOR],
+        session
+            .view()
+            .item(OUTLINE)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
+        [OUTLINE, INSPECTOR],
     );
 
     // Dropping an uncommitted frame publishes none of its proposed actions.
@@ -64,7 +82,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     drop(abandoned);
     assert_eq!(session.version(), before);
     assert_eq!(
-        session.view().item(OUTLINE).unwrap().tabs().selected(),
+        session
+            .view()
+            .item(OUTLINE)
+            .unwrap()
+            .tabs()
+            .selected()
+            .and_then(|tab| tab.item()),
         Some(INSPECTOR)
     );
 
@@ -88,8 +112,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shown = frame.set_item_visibility_current(INSPECTOR, true)?;
     commit_action(frame, shown)?;
     assert_eq!(
-        session.view().item(OUTLINE).unwrap().tabs().items(),
-        &[OUTLINE, INSPECTOR],
+        session
+            .view()
+            .item(OUTLINE)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
+        [OUTLINE, INSPECTOR],
     );
     assert!(session.view().item(OUTLINE).unwrap().is_selected());
     println!("Inspector was hidden and restored in place without stealing selection.");

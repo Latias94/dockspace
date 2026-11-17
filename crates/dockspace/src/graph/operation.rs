@@ -11,7 +11,8 @@ use crate::graph::canonical::canonicalize_draft;
 use crate::graph::command::{
     CloseCommitOutcome, CommandOutcome, ContainedPosition, ContainedRosterSource, DockTarget, Edge,
     EdgeTarget, EdgeTargetScope, ItemSource, MovePayload, NodeSource, RootContent,
-    RootPresentationTarget, SplitResize, SurfaceRosterSource, TabTarget, WorkspaceCommand,
+    RootPresentationTarget, SplitResize, SurfaceRosterSource, TabSource, TabTarget,
+    WorkspaceCommand,
 };
 use crate::graph::error::{
     CommandError, ReferenceRole, TransactionError, TransactionPreconditionError,
@@ -23,7 +24,7 @@ use crate::graph::{
     Axis, ContainedFloating, NORMALIZED_WEIGHT_TOLERANCE, Node, RootRecord, SplitWeight,
     SurfacePresentation, Workspace,
 };
-use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
+use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
 use crate::policy::{
     DockContainedTransformPolicyRequest, DockDropOperation, DockDropTargetFacts, DockPayloadKind,
     DockPayloadPolicyFacts, DockPolicyRequest, DockPolicySnapshot, DockPresentationPolicyRequest,
@@ -46,8 +47,8 @@ pub(crate) use close::{
 };
 use references::{
     ReferenceAuthority, validate_item_source, validate_move_payload, validate_move_payload_with,
-    validate_node_source, validate_root_content, validate_root_source, validate_target,
-    validate_target_with,
+    validate_node_source, validate_root_content, validate_root_source, validate_tab_source,
+    validate_target, validate_target_with,
 };
 use root_lifecycle::{
     cleanup_empty_source_root, detach_root, detach_root_presentation, retire_root,
@@ -81,12 +82,12 @@ impl PreparedTransaction {
         }
     }
 
-    fn unchanged_selection(candidate: WorkspaceSnapshot, source: &ItemSource) -> Self {
+    fn unchanged_selection(candidate: WorkspaceSnapshot, source: &TabSource) -> Self {
         Self {
             candidate: PreparedWorkspace::Unchanged(candidate),
             report: TransactionReport::new(
                 vec![CommandOutcome::Selected {
-                    item: source.item(),
+                    tab: source.tab(),
                     tabs: source.tabs(),
                     changed: false,
                 }],
@@ -168,14 +169,14 @@ impl WorkspaceSnapshot {
     ) -> Result<PreparedTransaction, TransactionError> {
         if let [command @ WorkspaceCommand::Select { source }] = commands
             && matches!(self.node(source.tabs()), Some(Node::Tabs { selected, .. })
-                if *selected == Some(source.item()))
+                if *selected == Some(source.tab()))
         {
             #[cfg(test)]
             crate::interaction::targeting::resolver::structural_work::record_transaction_prepare(
                 commands.len(),
             );
             authorize_workspace_command(self, policy, command)
-                .and_then(|()| validate_item_source(self, source))
+                .and_then(|()| validate_tab_source(self, source))
                 .map_err(|source| TransactionError::Command { index: 0, source })?;
             // A validated snapshot has selected-first MRU. This exact command
             // cannot change values or issuance; batches retain their own draft

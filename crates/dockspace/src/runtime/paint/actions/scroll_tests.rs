@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::geometry::{LogicalRect, LogicalSize};
+use crate::ids::ItemId;
 use crate::model::{
     DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, RootId, SurfaceId,
 };

@@ -17,7 +17,7 @@ pub(super) fn capture_body_click(
     response: &egui::Response,
 ) {
     if let Some(origin) = middle_click_origin(context, tab, response)
-        && let Some(action) = context.plan.prepare_tab_body_close(tab.item())
+        && let Some(action) = context.plan.prepare_tab_body_close(tab.key())
     {
         context.push_local_action(origin, action);
     }
@@ -36,7 +36,7 @@ fn middle_click_origin(
     .then(|| {
         context
             .ui
-            .make_persistent_id((context.instance_id, "middle-tab-close", tab.item()))
+            .make_persistent_id((context.instance_id, "middle-tab-close", tab.key()))
     })
 }
 
@@ -52,9 +52,14 @@ pub(super) fn paint(
     };
     let id = context
         .ui
-        .make_persistent_id((context.instance_id, "tab-close", tab.item()));
+        .make_persistent_id((context.instance_id, "tab-close", tab.key()));
     let receiver = context.plan.receiver_for_tab_close(tab);
     let enabled = effective_enabled(context.ui, receiver.is_some());
+    let close_label = if tab.key().is_layout() {
+        format!("Close Layout Tab {}", resource.title)
+    } else {
+        format!("Close {}", resource.title)
+    };
     let response = context
         .interact_receiver(
             rect,
@@ -66,7 +71,7 @@ pub(super) fn paint(
             },
             enabled.then_some(receiver).flatten(),
         )
-        .on_hover_text(format!("Close {}", resource.title));
+        .on_hover_text(close_label.clone());
     let hovered = tab_response.hovered() || response.hovered();
     let visible = tab_response.has_focus()
         || response.has_focus()
@@ -84,7 +89,7 @@ pub(super) fn paint(
             .tab_close_icon_size
             .min(rect.width().min(rect.height()));
         let close = TabClose {
-            item: tab.item(),
+            key: tab.key(),
             rect,
             icon_rect: egui::Rect::from_center_size(rect.center(), vec2(size, size)),
             response: &response,
@@ -108,7 +113,7 @@ pub(super) fn paint(
     context.ui.ctx().accesskit_node_builder(id, |node| {
         node.set_role(Role::Button);
         node.set_bounds(accesskit_bounds(rect));
-        node.set_label(format!("Close {}", resource.title));
+        node.set_label(close_label);
         if enabled {
             node.add_action(Action::Click);
         } else {
@@ -119,7 +124,7 @@ pub(super) fn paint(
         && let Some(origin) =
             button_activation_origin(context.ui, &response, context.pointer_authority)
                 .or_else(|| middle_click_origin(context, tab, &response))
-        && let Some(action) = context.plan.prepare_tab_close(tab.item())
+        && let Some(action) = context.plan.prepare_tab_close(tab.key())
     {
         context.push_local_action(origin, action);
     }

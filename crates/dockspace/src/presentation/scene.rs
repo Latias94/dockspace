@@ -45,7 +45,7 @@ use crate::graph::command::NodeFingerprint;
 use crate::graph::workspace::RootPresentationOwner;
 use crate::graph::{Node, Workspace};
 use crate::ids::{
-    EngineAuthorityDomainId, FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId,
+    EngineAuthorityDomainId, FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey,
 };
 use crate::interaction::targeting::field::{
     MagneticEdgeTargets, MagneticTargetCandidate, MagneticTargetField,
@@ -214,7 +214,7 @@ pub struct PresentationPlan {
     surface: SurfaceId,
     provenance: PresentationPlanProvenance,
     layout_facts: Option<PresentationLayoutFacts>,
-    selection: Arc<slotmap::SparseSecondaryMap<NodeId, Option<ItemId>>>,
+    selection: Arc<slotmap::SparseSecondaryMap<NodeId, Option<TabKey>>>,
     command_basis: BTreeMap<RootId, NodeFingerprint>,
     facts: Arc<SurfaceFacts>,
 }
@@ -399,20 +399,20 @@ impl PresentationPlan {
         self.command_basis.get(&root)
     }
 
-    pub(crate) fn selected_in_tabs(&self, tabs: NodeId) -> Option<ItemId> {
+    pub(crate) fn selected_in_tabs(&self, tabs: NodeId) -> Option<TabKey> {
         self.selection.get(tabs).copied().flatten()
     }
 
     /// Returns the selected item from this plan's current semantic binding.
     #[must_use]
     pub fn pane_selected(&self, pane: &PaneRecord) -> Option<ItemId> {
-        self.selected_in_tabs(pane.id().tabs)
+        self.selected_in_tabs(pane.id().tabs).and_then(TabKey::item)
     }
 
     /// Returns whether this tab is selected in this plan's current semantic binding.
     #[must_use]
     pub fn tab_selected(&self, tab: &TabRecord) -> bool {
-        self.selected_in_tabs(tab.id().tabs) == Some(tab.id().item)
+        self.selected_in_tabs(tab.id().tabs) == Some(tab.id().tab)
     }
 
     pub(crate) fn shares_facts(&self, other: &Self) -> bool {
@@ -424,7 +424,7 @@ impl PresentationPlan {
         &self,
         ticket: SurfaceMeasurementTicket,
         bar: TabBarSceneId,
-        selected: Option<ItemId>,
+        selected: Option<TabKey>,
         basis: NodeFingerprint,
         measurements: crate::presentation::manifest::SurfaceMeasurements,
     ) -> Option<Self> {

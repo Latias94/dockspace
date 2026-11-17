@@ -1,4 +1,5 @@
 use super::support;
+use crate::ids::TabKey;
 
 use dockspace::engine::DockEngine;
 use dockspace::engine::transition::EngineTransition;
@@ -20,6 +21,8 @@ use dockspace::input::receiver::{
 use dockspace::interaction::{InteractionOutcome, InteractionStatus};
 use dockspace::presentation::hit::PresentationHitRegionKind;
 use dockspace::presentation::scene::{SurfaceSceneStamp, TabBarSceneId, TabGroupDragRegionKind};
+
+const INACTIVE_MAIN_ITEM_TAB: TabKey = TabKey::for_item(INACTIVE_MAIN_ITEM);
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const MAIN_ROOT: RootId = RootId::new(10);
@@ -92,11 +95,11 @@ fn tab_press(
         .plan()
         .tab_records()
         .iter()
-        .find(|record| record.id().root == root && record.id().item == item)
+        .find(|record| record.id().root == root && record.id().tab == TabKey::for_item(item))
         .expect("tab record exists");
     (
         ready.stamp(),
-        TabGestureSource::Item(*record.id()),
+        TabGestureSource::Tab(*record.id()),
         SurfacePointer::new(SURFACE, center(record.drag_hit().rect())),
     )
 }
@@ -151,7 +154,7 @@ fn activate(
         .regions()
         .iter()
         .find(|region| match (source, region.id().kind()) {
-            (TabGestureSource::Item(expected), PresentationHitRegionKind::TabBody(actual)) => {
+            (TabGestureSource::Tab(expected), PresentationHitRegionKind::TabBody(actual)) => {
                 actual == expected
             }
             (
@@ -243,7 +246,7 @@ fn selected_item(engine: &DockEngine, root: RootId) -> Option<ItemId> {
     let Node::Tabs { selected, .. } = engine.workspace().node(tabs).expect("tabs exist") else {
         panic!("fixture root must contain tabs");
     };
-    *selected
+    selected.and_then(TabKey::item)
 }
 
 #[test]
@@ -368,7 +371,7 @@ fn inactive_tab_selection_and_drag_arm_publish_atomically_at_one_revision() {
                 event.kind(),
                 dockspace::engine::event::WorkspaceEventKind::CommandCommitted(
                     dockspace::graph::command::CommandOutcome::Selected {
-                        item: INACTIVE_MAIN_ITEM,
+                        tab: INACTIVE_MAIN_ITEM_TAB,
                         changed: true,
                         ..
                     }

@@ -7,7 +7,7 @@ use dockspace::geometry::{LogicalRect, PhysicalRect};
 use dockspace::model::{
     DockspaceActionOutcome, DockspaceAxis, DockspaceContainedLayout, DockspaceLayout,
     DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, FloatingPresentationId, ItemId,
-    NativeWindowPlacement, RootId, SurfaceId,
+    NativeWindowPlacement, RootId, SurfaceId, TabKey,
 };
 use dockspace::policy::{CloseCapability, DockPolicy};
 use dockspace::runtime::DockspaceSession;

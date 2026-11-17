@@ -1383,7 +1383,7 @@ fn joined_replacement_revokes_all_lanes_and_cancels_owned_gesture() {
     )
     .expect("tab midpoint must be finite");
     let prepared = engine
-        .prepare_journal_tab_gesture(&presentation, TabGestureSource::Item(*tab.id()), tab_point)
+        .prepare_journal_tab_gesture(&presentation, TabGestureSource::Tab(*tab.id()), tab_point)
         .expect("published tab gesture must prepare");
     let owner = GestureOwner::new(
         PointerStreamId::new(joined.pointer_provider(), TEST_POINTER, 1),
@@ -1471,7 +1471,9 @@ fn backend_ingress_interleaves_semantic_input_between_pointer_checkpoints() {
     let semantic_ordinal = recorder
         .record_semantic_input(EngineInput::WorkspaceCommand {
             expected,
-            command: WorkspaceCommand::Select { source },
+            command: WorkspaceCommand::Select {
+                source: source.as_tab_source(),
+            },
         })
         .expect("semantic command must record between pointer checkpoints");
     recorder
@@ -1514,7 +1516,7 @@ fn backend_ingress_interleaves_semantic_input_between_pointer_checkpoints() {
         Some(Node::Tabs {
             selected: Some(item),
             ..
-        }) if *item == ItemId::new(2)
+        }) if *item == ItemId::new(2).into()
     ));
     assert_eq!(
         frame

@@ -80,7 +80,7 @@ fn auto_hidden_single_bar_reveals_through_its_exact_presented_corner_control() {
         revealed
             .tab_records()
             .iter()
-            .any(|tab| tab.id().item == item)
+            .any(|tab| tab.id().tab == item.into())
     );
     assert!(
         revealed.tab_bar_records()[0].group_drag().is_some(),
@@ -117,7 +117,7 @@ fn becoming_auto_hidden_retires_an_open_overflow_popup_before_manifest_publicati
         .tab_strip_states
         .clone();
     states
-        .open_tab_list_menu(key, Some(fixture.items[0]))
+        .open_tab_list_menu(key, Some(fixture.items[0].into()))
         .unwrap();
     let mut builder = fixture.engine.workspace().clone().into_builder();
     builder
@@ -164,7 +164,7 @@ fn requirement_pipeline_reconciles_popup_before_finalizing_disabled_policy() {
         .engine
         .presentation_authority
         .tab_strip_states
-        .open_tab_list_menu(key, Some(fixture.items[2]))
+        .open_tab_list_menu(key, Some(fixture.items[2].into()))
         .expect("fresh engine must open a live strip without a prior revision");
     assert_eq!(session.key(), key);
     let mut disabled_replacement = DockPolicy::default();
@@ -261,7 +261,9 @@ fn prepared_tab_strip_scroll_is_finite_clamped_and_reveals_hidden_members() {
     let duplicate = ItemId::new(510);
     assert_eq!(
         TabScrollAdjustment::scroll_by_preserving(1.0, [duplicate, duplicate]),
-        Err(TabScrollAdjustmentError::DuplicatePreservedItem { item: duplicate })
+        Err(TabScrollAdjustmentError::DuplicatePreservedTab {
+            tab: duplicate.into()
+        })
     );
 
     let mut fixture = tab_strip_reducer_fixture_with_selection(DockPolicy::default(), 1);
@@ -377,7 +379,7 @@ fn prepared_tab_strip_scroll_is_finite_clamped_and_reveals_hidden_members() {
         .tab_bar_records()[0]
         .members()
         .iter()
-        .find(|member| member.tab().item == hidden)
+        .find(|member| member.tab().tab == hidden.into())
         .copied()
         .expect("hidden member remains in the complete roster");
     assert_eq!(before.visibility(), TabStripMemberVisibility::Hidden);
@@ -385,7 +387,7 @@ fn prepared_tab_strip_scroll_is_finite_clamped_and_reveals_hidden_members() {
         view.prepare_tab_strip_scroll(
             reveal.surface,
             reveal.bar,
-            TabScrollAdjustment::reveal_item(hidden),
+            TabScrollAdjustment::reveal_tab(hidden),
         )
         .map(|prepared| EngineInput::AdjustTabStripScroll { prepared })
     });
@@ -406,7 +408,7 @@ fn prepared_tab_strip_scroll_is_finite_clamped_and_reveals_hidden_members() {
     let member = bar
         .members()
         .iter()
-        .find(|member| member.tab().item == hidden)
+        .find(|member| member.tab().tab == hidden.into())
         .expect("revealed item remains in the roster");
     assert!(member.full_bounds().x() >= bar.viewport().x());
     assert!(member.full_bounds().max().x() <= bar.viewport().max().x());
@@ -460,7 +462,7 @@ fn prepared_strip_scroll_preserves_highest_priority_operability() {
             .plan()
             .tab_records()
             .iter()
-            .any(|tab| tab.id().item == preserved),
+            .any(|tab| tab.id().tab == preserved.into()),
         "the highest-priority item must retain operable tab chrome",
     );
 }
@@ -512,7 +514,9 @@ fn prepared_strip_scroll_preserves_compatible_operable_tab_ranges() {
         .plan();
     for item in retained {
         assert!(
-            plan.tab_records().iter().any(|tab| tab.id().item == item),
+            plan.tab_records()
+                .iter()
+                .any(|tab| tab.id().tab == item.into()),
             "preserved tab {item} must retain its configured drag/close operability",
         );
     }
@@ -545,7 +549,7 @@ fn direct_selection_reveals_the_new_priority_item_after_explicit_strip_scroll() 
         .tab_bar_records()[0]
         .members()
         .iter()
-        .find(|member| member.tab().item == selected)
+        .find(|member| member.tab().tab == selected.into())
         .copied()
         .expect("target item remains in the complete roster");
     assert_eq!(before.visibility(), TabStripMemberVisibility::Hidden);
@@ -561,7 +565,9 @@ fn direct_selection_reveals_the_new_priority_item_after_explicit_strip_scroll() 
         host,
         EngineInput::WorkspaceCommand {
             expected,
-            command: WorkspaceCommand::Select { source },
+            command: WorkspaceCommand::Select {
+                source: source.as_tab_source(),
+            },
         },
     )
     .expect("direct selection must commit");
@@ -586,7 +592,7 @@ fn direct_selection_reveals_the_new_priority_item_after_explicit_strip_scroll() 
     let member = bar
         .members()
         .iter()
-        .find(|member| member.tab().item == selected)
+        .find(|member| member.tab().tab == selected.into())
         .expect("selected item remains in the complete roster");
     assert_eq!(member.visibility(), TabStripMemberVisibility::Visible);
     assert!(member.full_bounds().x() >= bar.viewport().x());
@@ -622,7 +628,7 @@ fn deferred_tab_navigation_rejects_reordered_members_before_revealing_a_frozen_t
         let expected = fixture.engine.version();
         let source = *witness.plan().tab_records().first().unwrap().id();
         let target = TabSceneId {
-            item: fixture.items[3],
+            tab: fixture.items[3].into(),
             ..source
         };
         let action = LocalSurfaceAction::SelectTab {
@@ -636,7 +642,7 @@ fn deferred_tab_navigation_rejects_reordered_members_before_revealing_a_frozen_t
         let item = fixture
             .engine
             .workspace()
-            .capture_item_source(target.root, target.tabs, target.item)
+            .capture_tab_source(target.root, target.tabs, target.tab)
             .unwrap();
         submit_test_input(
             &mut fixture.engine,
@@ -1037,7 +1043,7 @@ fn prepared_menu_scroll_revalidates_popup_authority_and_dismisses_exactly() {
         view.prepare_tab_list_menu_scroll(
             fixture.surface,
             session,
-            TabScrollAdjustment::reveal_item(fixture.items[0]),
+            TabScrollAdjustment::reveal_tab(fixture.items[0]),
         )
         .map(|prepared| EngineInput::AdjustTabListMenuScroll { prepared })
     });
@@ -1108,7 +1114,7 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
             .tab_strip_states
             .active_menu()
             .map(|menu| menu.focus()),
-        Some(items[3])
+        Some(items[3].into())
     );
     publish_tab_strip_reducer_projection(&mut fixture, host, true);
 
@@ -1120,13 +1126,13 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
         first.reduced_inputs()[0].outcome(),
         InputOutcome::InteractionProcessed {
             outcome: InteractionOutcome::TabListMenuFocusMoved {
-                item,
+                tab,
                 offset: 0.0,
                 changed: true,
                 ..
             },
             ..
-        } if *item == items[0]
+        } if *tab == items[0].into()
     ));
 
     publish_tab_strip_reducer_projection(&mut fixture, host, true);
@@ -1138,12 +1144,12 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
         next.reduced_inputs()[0].outcome(),
         InputOutcome::InteractionProcessed {
             outcome: InteractionOutcome::TabListMenuFocusMoved {
-                item,
+                tab,
                 changed: true,
                 ..
             },
             ..
-        } if *item == items[1]
+        } if *tab == items[1].into()
     ));
 
     publish_tab_strip_reducer_projection(&mut fixture, host, true);
@@ -1156,7 +1162,7 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
         view.prepare_tab_list_menu_navigation(
             surface,
             session,
-            TabListMenuNavigation::Focus(items[3]),
+            TabListMenuNavigation::Focus(items[3].into()),
         )
         .map(|prepared| EngineInput::NavigateTabListMenu { prepared })
     });
@@ -1164,13 +1170,13 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
         InputOutcome::InteractionProcessed {
             outcome:
                 InteractionOutcome::TabListMenuFocusMoved {
-                    item,
+                    tab,
                     offset,
                     changed: true,
                     ..
                 },
             ..
-        } if *item == items[3] => *offset,
+        } if *tab == items[3].into() => *offset,
         outcome => panic!("focus and reveal must commit atomically: {outcome:?}"),
     };
     assert!(revealed_offset > 0.0);
@@ -1190,7 +1196,7 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
         .tab_strip_states
         .active_menu()
         .expect("navigation keeps the menu open");
-    assert_eq!(active.focus(), items[3]);
+    assert_eq!(active.focus(), items[3].into());
     assert_eq!(active.scroll_offset(), revealed_offset);
     assert!(fixture.engine.interaction_projection(surface).is_none());
 
@@ -1211,7 +1217,7 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
         .filter(|row| row.focused())
         .collect::<Vec<_>>();
     assert_eq!(focused.len(), 1);
-    assert_eq!(focused[0].tab().item, items[3]);
+    assert_eq!(focused[0].tab().tab, items[3].into());
 
     let boundary = submit_prepared_interaction(&mut fixture.engine, host, |view| {
         view.prepare_tab_list_menu_navigation(surface, session, TabListMenuNavigation::Next)
@@ -1221,13 +1227,13 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
         boundary.reduced_inputs()[0].outcome(),
         InputOutcome::InteractionProcessed {
             outcome: InteractionOutcome::TabListMenuFocusMoved {
-                item,
+                tab,
                 offset,
                 changed: false,
                 ..
             },
             ..
-        } if *item == items[3] && *offset == revealed_offset
+        } if *tab == items[3].into() && *offset == revealed_offset
     ));
 }
 
@@ -1265,11 +1271,11 @@ fn prepared_menu_navigation_rejects_missing_targets_and_stale_session_aba() {
         frame.view().prepare_tab_list_menu_navigation(
             surface,
             first_session,
-            TabListMenuNavigation::Focus(missing),
+            TabListMenuNavigation::Focus(missing.into()),
         ),
         Err(InteractionRejection::TabListMenuFocusItemUnavailable {
             session: first_session,
-            item: missing,
+            item: missing.into(),
         })
     );
     let stale = frame
@@ -1327,7 +1333,7 @@ fn prepared_menu_navigation_rejects_missing_targets_and_stale_session_aba() {
         .active_menu()
         .expect("stale predecessor input must not close the successor");
     assert_eq!(active.session(), successor);
-    assert_eq!(active.focus(), items[3]);
+    assert_eq!(active.focus(), items[3].into());
 }
 
 #[test]
@@ -1448,19 +1454,19 @@ fn prepared_menu_end_then_enter_binds_the_event_cause_and_requests_pane_focus() 
             navigated.reduced_inputs()[0].outcome(),
             InputOutcome::InteractionProcessed {
                 outcome: InteractionOutcome::TabListMenuFocusMoved {
-                    item,
+                    tab,
                     changed: true,
                     ..
                 },
                 ..
-            } if *item == target
+            } if *tab == target.into()
         ));
         publish_tab_strip_reducer_projection(&mut fixture, host, true);
 
         let tab = TabSceneId {
             root: bar.root,
             tabs: bar.tabs,
-            item: target,
+            tab: target.into(),
         };
         let selected = submit_prepared_interaction(&mut fixture.engine, host, |view| {
             view.prepare_tab_list_menu_row_activation(surface, session, tab)
@@ -1942,7 +1948,7 @@ fn menu_control_replaces_cross_surface_session_and_invalidates_both_owners() {
             Some(Node::Tabs { selected, .. }) => *selected,
             _ => panic!("first bar must remain tabs"),
         },
-        Some(selected_before.0),
+        Some(selected_before.0.into()),
         "opening on another surface cannot select a menu row on the old owner"
     );
     assert_eq!(
@@ -1950,7 +1956,7 @@ fn menu_control_replaces_cross_surface_session_and_invalidates_both_owners() {
             Some(Node::Tabs { selected, .. }) => *selected,
             _ => panic!("second bar must remain tabs"),
         },
-        Some(selected_before.1),
+        Some(selected_before.1.into()),
         "the replacement opening edge cannot be reinterpreted as a menu row"
     );
 
@@ -2218,7 +2224,7 @@ fn menu_row_selection_and_close_publish_atomically_and_stale_sessions_reject() {
             Some(Node::Tabs { selected, .. }) => *selected,
             _ => panic!("fixture bar must remain tabs"),
         },
-        Some(row.tab().item)
+        Some(row.tab().tab)
     );
     let selected_measurements = tab_strip_reducer_measurements(&fixture, true);
     let selected_plan = compile_tab_strip_reducer_plan(&fixture, &selected_measurements);
@@ -2302,7 +2308,7 @@ fn menu_backdrop_rejects_stale_session_and_revision_without_dismissing_current_m
         .engine
         .presentation_authority
         .tab_strip_states
-        .open_tab_list_menu(key, Some(fixture.items[1]))
+        .open_tab_list_menu(key, Some(fixture.items[1].into()))
         .expect("the live strip must open a successor session");
     fixture
         .engine

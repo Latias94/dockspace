@@ -436,7 +436,13 @@ fn configured_drag_cancellation_replaces_escape_and_allows_extra_modifiers() {
         )],
     );
     assert_eq!(
-        dockspace.view().item(FIRST).unwrap().tabs().items(),
+        dockspace
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
 }
@@ -574,7 +580,13 @@ fn a_foreign_payload_takes_capture_without_motion_and_cannot_finish_a_docking_dr
         vec![Event::PointerMoved(second), button(second, false)],
     );
     assert_eq!(
-        dockspace.view().item(FIRST).unwrap().tabs().items(),
+        dockspace
+            .view()
+            .item(FIRST)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         &[FIRST, SECOND]
     );
     assert_eq!(

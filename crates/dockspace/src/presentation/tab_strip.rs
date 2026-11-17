@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use thiserror::Error;
 
-use crate::ids::{ItemId, SurfaceId};
+use crate::ids::{SurfaceId, TabKey};
 use crate::presentation::scene::{PresentationPlan, TabBarSceneId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -254,9 +254,9 @@ impl TabStripControlId {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct TabStripState {
     scroll_offset: Option<f64>,
-    resolved_selection: Option<ItemId>,
+    resolved_selection: Option<TabKey>,
     resolved_viewport_width: Option<f64>,
-    revealed_single_item: Option<ItemId>,
+    revealed_single_tab: Option<TabKey>,
 }
 
 impl TabStripState {
@@ -266,7 +266,7 @@ impl TabStripState {
         self.scroll_offset
     }
 
-    pub(crate) const fn resolved_selection(&self) -> Option<ItemId> {
+    pub(crate) const fn resolved_selection(&self) -> Option<TabKey> {
         self.resolved_selection
     }
 
@@ -292,9 +292,9 @@ impl TabStripState {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ActiveTabListMenu {
     session: TabListMenuSessionId,
-    focus: ItemId,
+    focus: TabKey,
     scroll_offset: f64,
-    items: Vec<ItemId>,
+    tabs: Vec<TabKey>,
 }
 
 impl ActiveTabListMenu {
@@ -306,7 +306,7 @@ impl ActiveTabListMenu {
         self.session
     }
 
-    pub(crate) const fn focus(&self) -> ItemId {
+    pub(crate) const fn focus(&self) -> TabKey {
         self.focus
     }
 
@@ -314,8 +314,8 @@ impl ActiveTabListMenu {
         self.scroll_offset
     }
 
-    pub(crate) fn items(&self) -> &[ItemId] {
-        &self.items
+    pub(crate) fn tabs(&self) -> &[TabKey] {
+        &self.tabs
     }
 }
 
@@ -323,7 +323,7 @@ impl ActiveTabListMenu {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct TabStripStateStore {
     states: BTreeMap<TabStripStateKey, TabStripState>,
-    live_rosters: BTreeMap<TabStripStateKey, Vec<ItemId>>,
+    live_rosters: BTreeMap<TabStripStateKey, Vec<TabKey>>,
     active_menu: Option<ActiveTabListMenu>,
     last_menu_generation: TabListMenuGeneration,
     popup_routing_revision: PopupRoutingRevision,
@@ -415,8 +415,8 @@ impl TabStripStateStore {
         self.states.get(&key)
     }
 
-    pub(crate) fn revealed_single_item(&self, key: TabStripStateKey) -> Option<ItemId> {
-        self.states.get(&key)?.revealed_single_item
+    pub(crate) fn revealed_single_tab(&self, key: TabStripStateKey) -> Option<TabKey> {
+        self.states.get(&key)?.revealed_single_tab
     }
 
     pub(crate) fn reveal_single_tab_bar(
@@ -430,10 +430,10 @@ impl TabStripStateStore {
             .states
             .get_mut(&key)
             .ok_or(TabStripStateError::UnknownTabStrip { key })?;
-        if state.revealed_single_item == Some(*item) {
+        if state.revealed_single_tab == Some(*item) {
             return Ok(TabStripStateDelta::unchanged());
         }
-        state.revealed_single_item = Some(*item);
+        state.revealed_single_tab = Some(*item);
         Ok(TabStripStateDelta::new(
             true,
             TabStripInfluenceDomain::local(key.surface()),
@@ -464,17 +464,17 @@ impl TabStripStateStore {
     pub(crate) fn open_tab_list_menu(
         &mut self,
         key: TabStripStateKey,
-        preferred_focus: Option<ItemId>,
+        preferred_focus: Option<TabKey>,
     ) -> Result<(TabListMenuSessionId, TabStripStateDelta), TabStripStateError> {
-        let items = self
+        let tabs = self
             .live_rosters
             .get(&key)
             .ok_or(TabStripStateError::UnknownTabStrip { key })?;
-        let Some(first) = items.first().copied() else {
+        let Some(first) = tabs.first().copied() else {
             return Err(TabStripStateError::EmptyTabListMenu { key });
         };
-        let unique = items.iter().copied().collect::<BTreeSet<_>>();
-        if unique.len() != items.len() {
+        let unique = tabs.iter().copied().collect::<BTreeSet<_>>();
+        if unique.len() != tabs.len() {
             return Err(TabStripStateError::DuplicateTabListMenuItem { key });
         }
         let generation = self
@@ -493,7 +493,7 @@ impl TabStripStateStore {
             session,
             focus,
             scroll_offset: 0.0,
-            items: items.clone(),
+            tabs: tabs.clone(),
         };
 
         self.last_menu_generation = generation;
@@ -560,7 +560,7 @@ impl TabStripStateStore {
     pub(crate) fn adopt_resolved_scroll_offsets(
         &mut self,
         surface: SurfaceId,
-        offsets: impl IntoIterator<Item = (TabBarSceneId, f64, Option<ItemId>, f64)>,
+        offsets: impl IntoIterator<Item = (TabBarSceneId, f64, Option<TabKey>, f64)>,
     ) -> Result<(), TabStripStateError> {
         let offsets = offsets
             .into_iter()
@@ -590,10 +590,10 @@ impl TabStripStateStore {
     pub(crate) fn set_active_menu_focus(
         &mut self,
         session: TabListMenuSessionId,
-        focus: ItemId,
+        focus: TabKey,
     ) -> Result<TabStripStateDelta, TabStripStateError> {
         let active = self.active_menu_mut(session)?;
-        if !active.items.contains(&focus) {
+        if !active.tabs.contains(&focus) {
             return Err(TabStripStateError::MenuFocusUnavailable { session, focus });
         }
         if active.focus == focus {
@@ -642,13 +642,13 @@ impl TabStripStateStore {
 
     pub(crate) fn reconcile_exact_for_surface_roster<'a>(
         &mut self,
-        live: impl IntoIterator<Item = (TabStripStateKey, &'a [ItemId])>,
+        live: impl IntoIterator<Item = (TabStripStateKey, &'a [TabKey])>,
         _surface_roster_changed: bool,
     ) -> Result<TabStripStateDelta, TabStripStateError> {
         let mut candidate = self.clone();
         let live = live
             .into_iter()
-            .map(|(key, items)| (key, items.to_vec()))
+            .map(|(key, tabs)| (key, tabs.to_vec()))
             .collect::<BTreeMap<_, _>>();
         candidate.live_rosters = live;
         let live_rosters = &candidate.live_rosters;
@@ -661,11 +661,11 @@ impl TabStripStateStore {
             }
         }
         for (key, state) in &mut candidate.states {
-            let items = &live_rosters[key];
-            if self.live_rosters.get(key) != Some(items) {
-                state.revealed_single_item = None;
+            let tabs = &live_rosters[key];
+            if self.live_rosters.get(key) != Some(tabs) {
+                state.revealed_single_tab = None;
             }
-            if items.is_empty()
+            if tabs.is_empty()
                 && self
                     .live_rosters
                     .get(key)
@@ -700,20 +700,20 @@ impl TabStripStateStore {
         let Some(active) = self.active_menu.as_mut() else {
             return false;
         };
-        let Some(items) = self.live_rosters.get(&active.key()) else {
+        let Some(tabs) = self.live_rosters.get(&active.key()) else {
             self.active_menu = None;
             return true;
         };
-        let Some(fallback_focus) = items.first().copied() else {
+        let Some(fallback_focus) = tabs.first().copied() else {
             self.active_menu = None;
             return true;
         };
-        if active.items == *items {
+        if active.tabs == *tabs {
             return false;
         }
 
-        active.focus = restored_menu_focus(&active.items, active.focus, items, fallback_focus);
-        active.items.clone_from(items);
+        active.focus = restored_menu_focus(&active.tabs, active.focus, tabs, fallback_focus);
+        active.tabs.clone_from(tabs);
         true
     }
 
@@ -764,7 +764,7 @@ pub(crate) enum TabStripStateError {
     EmptyTabListMenu { key: TabStripStateKey },
     /// A malformed item roster contained a duplicate stable identity.
     #[allow(dead_code, reason = "reserved for the typed tab-strip input reducer")]
-    #[error("tab-list menu strip {key:?} contains duplicate items")]
+    #[error("tab-list menu strip {key:?} contains duplicate tabs")]
     DuplicateTabListMenuItem { key: TabStripStateKey },
     /// The core-owned menu generation cannot advance without wrapping.
     #[allow(dead_code, reason = "reserved for the typed tab-strip input reducer")]
@@ -783,19 +783,19 @@ pub(crate) enum TabStripStateError {
         actual: TabListMenuSessionId,
     },
     /// A reducer input attempted to focus an item outside the frozen roster.
-    #[error("item {focus} is unavailable in tab-list menu {session:?}")]
+    #[error("tab {focus:?} is unavailable in tab-list menu {session:?}")]
     MenuFocusUnavailable {
         session: TabListMenuSessionId,
-        focus: ItemId,
+        focus: TabKey,
     },
 }
 
 fn restored_menu_focus(
-    previous: &[ItemId],
-    previous_focus: ItemId,
-    current: &[ItemId],
-    fallback: ItemId,
-) -> ItemId {
+    previous: &[TabKey],
+    previous_focus: TabKey,
+    current: &[TabKey],
+    fallback: TabKey,
+) -> TabKey {
     let current_set = current.iter().copied().collect::<BTreeSet<_>>();
     if current_set.contains(&previous_focus) {
         return previous_focus;
@@ -832,7 +832,7 @@ fn validate_offset(field: &'static str, value: f64) -> Result<(), TabStripStateE
 mod tests {
     use super::*;
     use crate::graph::{Node, Workspace};
-    use crate::ids::{ItemId, NodeId, RootId, SurfaceId};
+    use crate::ids::{ItemId, NodeId, RootId, SurfaceId, TabKey};
     use crate::presentation::scene::TabBarSceneId;
 
     fn key(surface: u64, root: u64, node: NodeId) -> TabStripStateKey {
@@ -858,8 +858,8 @@ mod tests {
         let [first, second] = nodes();
         let first = key(1, 1, first);
         let second = key(1, 1, second);
-        let item = ItemId::new(1);
-        let peer = ItemId::new(2);
+        let item = TabKey::for_item(ItemId::new(1));
+        let peer = TabKey::for_item(ItemId::new(2));
         let mut states = TabStripStateStore::default();
         states
             .reconcile_exact_for_surface_roster(
@@ -875,7 +875,7 @@ mod tests {
                 false,
             )
             .unwrap();
-        assert_eq!(states.revealed_single_item(first), Some(item));
+        assert_eq!(states.revealed_single_tab(first), Some(item));
         states
             .reconcile_exact_for_surface_roster(
                 [
@@ -885,8 +885,8 @@ mod tests {
                 false,
             )
             .unwrap();
-        assert_eq!(states.revealed_single_item(first), None);
-        assert_eq!(states.revealed_single_item(second), Some(peer));
+        assert_eq!(states.revealed_single_tab(first), None);
+        assert_eq!(states.revealed_single_tab(second), Some(peer));
         states
             .reconcile_exact_for_surface_roster(
                 [(first, [item].as_slice()), (second, [peer].as_slice())],
@@ -894,7 +894,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            states.revealed_single_item(first),
+            states.revealed_single_tab(first),
             None,
             "2→1 starts a fresh automatic hiding cycle"
         );
@@ -903,15 +903,36 @@ mod tests {
             .reconcile_exact_for_surface_roster([(first, [peer].as_slice())], false)
             .unwrap();
         assert_eq!(
-            states.revealed_single_item(first),
+            states.revealed_single_tab(first),
             None,
             "a replacement single item cannot inherit the old item's reveal"
         );
         assert_eq!(
-            states.revealed_single_item(second),
+            states.revealed_single_tab(second),
             None,
             "retiring an owner drops its temporary reveal"
         );
+    }
+
+    #[test]
+    fn menu_focus_retains_layout_tab_identity_without_content_aliases() {
+        let [owner, layout] = nodes();
+        let key = key(1, 1, owner);
+        let content = TabKey::for_item(ItemId::new(1));
+        let layout = TabKey::for_layout(layout);
+        let tabs = [content, layout];
+        let mut states = TabStripStateStore::default();
+        states
+            .reconcile_exact_for_surface_roster([(key, tabs.as_slice())], false)
+            .unwrap();
+        states.open_tab_list_menu(key, Some(layout)).unwrap();
+        let menu = states.active_menu_for(key).unwrap();
+        assert_eq!(menu.tabs(), tabs);
+        assert_eq!(menu.focus(), layout);
+        assert_eq!(menu.focus().item(), None);
+        let session = menu.session();
+        states.set_active_menu_focus(session, content).unwrap();
+        assert_eq!(states.active_menu_for(key).unwrap().focus(), content);
     }
 
     #[test]
@@ -938,7 +959,7 @@ mod tests {
         let removed_node = key(1, 10, replacement_node);
         let mut states = TabStripStateStore::default();
 
-        let live_items = [ItemId::new(7)];
+        let live_items = [TabKey::for_item(ItemId::new(7))];
         assert!(
             states
                 .reconcile_exact_for_surface_roster(
@@ -980,8 +1001,14 @@ mod tests {
         let first = key(1, 10, first_node);
         let second = key(2, 20, second_node);
         let mut states = TabStripStateStore::default();
-        let first_items = [ItemId::new(1), ItemId::new(2)];
-        let second_items = [ItemId::new(3), ItemId::new(4)];
+        let first_items = [
+            TabKey::for_item(ItemId::new(1)),
+            TabKey::for_item(ItemId::new(2)),
+        ];
+        let second_items = [
+            TabKey::for_item(ItemId::new(3)),
+            TabKey::for_item(ItemId::new(4)),
+        ];
         assert!(
             states
                 .reconcile_exact_for_surface_roster(
@@ -1033,7 +1060,7 @@ mod tests {
         assert_eq!(active.key(), second);
         assert_eq!(active.session(), second_session);
         assert_eq!(active.focus(), second_items[0]);
-        assert_eq!(active.items(), second_items);
+        assert_eq!(active.tabs(), second_items);
     }
 
     #[test]
@@ -1042,10 +1069,10 @@ mod tests {
         let key = key(1, 10, node);
         let mut states = TabStripStateStore::default();
         let initial = [
-            ItemId::new(1),
-            ItemId::new(2),
-            ItemId::new(3),
-            ItemId::new(4),
+            TabKey::for_item(ItemId::new(1)),
+            TabKey::for_item(ItemId::new(2)),
+            TabKey::for_item(ItemId::new(3)),
+            TabKey::for_item(ItemId::new(4)),
         ];
         assert!(
             states
@@ -1096,7 +1123,7 @@ mod tests {
         );
         let active = states.active_menu().expect("the live menu remains active");
         assert_eq!(active.focus(), initial[2]);
-        assert_eq!(active.items(), removed_focus);
+        assert_eq!(active.tabs(), removed_focus);
         assert_eq!(active.scroll_offset(), 18.0);
 
         let removed_next_neighbor = [initial[0], initial[3]];
@@ -1132,10 +1159,10 @@ mod tests {
         let [node, _] = nodes();
         let key = key(1, 10, node);
         let mut states = TabStripStateStore::default();
-        let items = [ItemId::new(7)];
+        let tabs = [TabKey::for_item(ItemId::new(7))];
         assert!(
             states
-                .reconcile_exact_for_surface_roster([(key, items.as_slice())], false)
+                .reconcile_exact_for_surface_roster([(key, tabs.as_slice())], false)
                 .expect("initial roster reconciles")
                 .state_changed()
         );
@@ -1144,7 +1171,7 @@ mod tests {
             .set_scroll_offset(42.0)
             .expect("offset is valid");
         states
-            .open_tab_list_menu(key, Some(items[0]))
+            .open_tab_list_menu(key, Some(tabs[0]))
             .expect("the live strip can open its menu");
 
         assert!(
@@ -1161,7 +1188,7 @@ mod tests {
 
         assert!(
             states
-                .reconcile_exact_for_surface_roster([(key, items.as_slice())], false)
+                .reconcile_exact_for_surface_roster([(key, tabs.as_slice())], false)
                 .expect("repopulated roster reconciles")
                 .state_changed()
         );
@@ -1183,8 +1210,8 @@ mod tests {
         let [first_node, second_node] = nodes();
         let first = key(1, 10, first_node);
         let second = key(1, 20, second_node);
-        let first_items = [ItemId::new(1)];
-        let second_items = [ItemId::new(2)];
+        let first_items = [TabKey::for_item(ItemId::new(1))];
+        let second_items = [TabKey::for_item(ItemId::new(2))];
         let mut states = TabStripStateStore::default();
         assert!(
             states
@@ -1218,8 +1245,8 @@ mod tests {
         let [first_node, second_node] = nodes();
         let first = key(1, 10, first_node);
         let second = key(2, 20, second_node);
-        let first_items = [ItemId::new(1)];
-        let second_items = [ItemId::new(2)];
+        let first_items = [TabKey::for_item(ItemId::new(1))];
+        let second_items = [TabKey::for_item(ItemId::new(2))];
         let mut states = TabStripStateStore::default();
         states
             .reconcile_exact_for_surface_roster(
@@ -1260,10 +1287,10 @@ mod tests {
     fn unrelated_surface_rosters_preserve_popup_routing() {
         let [node, _] = nodes();
         let key = key(1, 10, node);
-        let items = [ItemId::new(1)];
+        let tabs = [TabKey::for_item(ItemId::new(1))];
         let mut states = TabStripStateStore::default();
         states
-            .reconcile_exact_for_surface_roster([(key, items.as_slice())], false)
+            .reconcile_exact_for_surface_roster([(key, tabs.as_slice())], false)
             .expect("the live strip reconciles");
         let revision_before_open = states.popup_requirement().revision();
         let (session, open) = states
@@ -1287,7 +1314,7 @@ mod tests {
 
         let revision_before_roster = states.popup_requirement().revision();
         let roster = states
-            .reconcile_exact_for_surface_roster([(key, items.as_slice())], true)
+            .reconcile_exact_for_surface_roster([(key, tabs.as_slice())], true)
             .expect("an exact surface-roster change reconciles");
         assert!(!roster.state_changed());
         assert!(roster.influence().is_empty());
@@ -1301,7 +1328,7 @@ mod tests {
             .expect("the same strip can open a new exact popup session");
         let revision_before_roster = states.popup_requirement().revision();
         let roster = states
-            .reconcile_exact_for_surface_roster([(key, items.as_slice())], true)
+            .reconcile_exact_for_surface_roster([(key, tabs.as_slice())], true)
             .expect("unrelated surface membership preserves the active popup");
         assert!(!roster.state_changed());
         assert!(roster.influence().is_empty());

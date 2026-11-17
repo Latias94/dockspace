@@ -60,8 +60,8 @@ fn remove_subtree_nodes(workspace: &mut Workspace, root: NodeId) -> Result<(), C
             Node::Tabs { items, .. } => {
                 if !workspace.storage.hidden_items.is_empty() {
                     let hidden_items = Arc::make_mut(&mut workspace.storage.hidden_items);
-                    for item in items {
-                        hidden_items.remove(item);
+                    for item in items.iter().filter_map(|tab| tab.item()) {
+                        hidden_items.remove(&item);
                     }
                 }
             }

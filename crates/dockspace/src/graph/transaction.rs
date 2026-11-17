@@ -61,7 +61,7 @@ mod tests {
     use crate::graph::operation::prepare_transaction;
     use crate::graph::validation::WorkspaceValidationError;
     use crate::graph::{Axis, Node, RootRecord, SurfacePresentation};
-    use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
+    use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
     use crate::interaction::targeting::resolver::structural_work::{self, WorkspaceCloneVolume};
     use crate::policy::DockPolicySnapshot;
 
@@ -116,7 +116,13 @@ mod tests {
         let target = candidate.root(TARGET).expect("target survives").node;
         assert_eq!(
             candidate.tab_mru(target),
-            Some([ItemId::new(1), ItemId::new(2)].as_slice())
+            Some(
+                [
+                    TabKey::for_item(ItemId::new(1)),
+                    TabKey::for_item(ItemId::new(2))
+                ]
+                .as_slice()
+            )
         );
         candidate
             .validate()

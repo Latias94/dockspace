@@ -20,17 +20,17 @@ fn hidden_members_do_not_publish_chrome_and_visible_gaps_keep_durable_insertion_
     assert_eq!(
         plan.tab_records()
             .iter()
-            .map(|record| record.id().item)
+            .map(|record| record.id().tab)
             .collect::<BTreeSet<_>>(),
-        [items[0], items[2]].into()
+        [items[0], items[2]].map(TabKey::for_item).into()
     );
     let bar = &plan.tab_bar_records()[0];
     assert_eq!(
         bar.members()
             .iter()
-            .map(|member| member.tab().item)
+            .map(|member| member.tab().tab)
             .collect::<Vec<_>>(),
-        [items[0], items[2]]
+        [items[0], items[2]].map(TabKey::for_item)
     );
     assert_eq!(
         bar.members()
@@ -132,7 +132,7 @@ fn tab_gap_positions_survive_hidden_roster_members_and_scrolling_to_the_end() {
         let mut states = TabStripStateStore::default();
         states
             .reconcile_exact_for_surface_roster(
-                [(key, workspace.visible_tab_items(tabs).as_ref())],
+                [(key, workspace.visible_tab_keys(tabs).as_ref())],
                 false,
             )
             .unwrap();
@@ -243,7 +243,7 @@ fn hidden_contained_root_keeps_ownership_without_frame_occlusion_or_drop_targets
         restored
             .tab_records()
             .iter()
-            .any(|tab| tab.id().item == contained_item)
+            .any(|tab| tab.id().tab == contained_item.into())
     );
 }
 

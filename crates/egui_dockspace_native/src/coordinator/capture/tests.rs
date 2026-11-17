@@ -385,7 +385,11 @@ fn present(
                 } = step
                     && let Some(receiver) = plan.receiver_for_tab_body(tab)
                 {
-                    tabs.push((tab.item(), receiver, tab.visible_bounds()));
+                    tabs.push((
+                        tab.item().expect("fixture tabs contain application items"),
+                        receiver,
+                        tab.visible_bounds(),
+                    ));
                 }
                 Ok::<(), ()>(())
             })

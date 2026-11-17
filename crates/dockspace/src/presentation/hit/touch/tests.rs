@@ -1109,7 +1109,7 @@ fn touch_replacements_are_device_specific_and_empty_never_falls_back() {
         PresentationHitRegionKind::TabBody(TabSceneId {
             root: id.root,
             tabs: id.split,
-            item: ItemId::new(1),
+            tab: (ItemId::new(1)).into(),
         }),
         rect(200.0, 200.0, 100.0, 20.0),
         0,
@@ -1184,7 +1184,7 @@ fn only_final_maximum_stack_can_be_ambiguous() {
     let tab = TabSceneId {
         root: id.root,
         tabs: id.split,
-        item: ItemId::new(1),
+        tab: (ItemId::new(1)).into(),
     };
     let first = region(
         PresentationHitRegionKind::TabBody(tab),
@@ -1194,7 +1194,7 @@ fn only_final_maximum_stack_can_be_ambiguous() {
     );
     let second = region(
         PresentationHitRegionKind::TabBody(TabSceneId {
-            item: ItemId::new(2),
+            tab: (ItemId::new(2)).into(),
             ..tab
         }),
         bounds,
@@ -1304,7 +1304,7 @@ fn touch_protection_uses_visible_chrome_and_real_front_occlusion() {
     let tab = TabSceneId {
         root: RootId::new(1),
         tabs,
-        item: ItemId::new(1),
+        tab: (ItemId::new(1)).into(),
     };
     let west = region(
         PresentationHitRegionKind::ContainedResize {

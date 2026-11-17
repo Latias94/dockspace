@@ -83,6 +83,41 @@ impl ReferenceAuthority<'_> {
     }
 }
 
+pub(super) fn validate_tab_source(
+    workspace: &Workspace,
+    source: &TabSource,
+) -> Result<(), CommandError> {
+    workspace.verify_reference(
+        source.root(),
+        source.tabs(),
+        source.reference(),
+        ReferenceRole::Source,
+    )?;
+    match workspace.node(source.tabs()) {
+        Some(Node::Tabs { items, .. }) if items.contains(&source.tab()) => {
+            if source.tab().is_layout() {
+                Err(CommandError::UnsupportedLayoutTab {
+                    tabs: source.tabs(),
+                    tab: source.tab(),
+                })
+            } else {
+                Ok(())
+            }
+        }
+        Some(Node::Tabs { .. }) => Err(CommandError::TabNotInTabs {
+            tabs: source.tabs(),
+            tab: source.tab(),
+        }),
+        Some(Node::Split { .. }) => Err(CommandError::NodeIsNotTabs {
+            node: source.tabs(),
+        }),
+        None => Err(CommandError::MissingNode {
+            role: ReferenceRole::Source,
+            node: source.tabs(),
+        }),
+    }
+}
+
 pub(super) fn validate_item_source(
     workspace: &Workspace,
     source: &ItemSource,
@@ -103,7 +138,9 @@ fn validate_item_source_with(
         ReferenceRole::Source,
     )?;
     match workspace.storage.nodes.get(source.tabs()) {
-        Some(Node::Tabs { items, .. }) if items.contains(&source.item()) => Ok(()),
+        Some(Node::Tabs { items, .. }) if items.contains(&TabKey::for_item(source.item())) => {
+            Ok(())
+        }
         Some(Node::Tabs { .. }) => Err(CommandError::ItemNotInTabs {
             tabs: source.tabs(),
             item: source.item(),

@@ -219,9 +219,11 @@ fn paint_all_with_report(
                     operation: SurfacePaintProgramOperation::Tab(tab),
                     ..
                 } => {
-                    if let Some(receiver) = plan.receiver_for_tab_body(tab) {
+                    if let Some(item) = tab.item()
+                        && let Some(receiver) = plan.receiver_for_tab_body(tab)
+                    {
                         assert_eq!(receiver.role(), DockspaceReceiverRole::TabBody);
-                        tabs.push((tab.item(), receiver, tab.visible_bounds()));
+                        tabs.push((item, receiver, tab.visible_bounds()));
                     }
                 }
                 SurfacePaintProgramStep::Operation {

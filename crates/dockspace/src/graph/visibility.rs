@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::error::{CommandError, ReferenceRole};
 use super::{Node, Workspace, WorkspaceBuilder};
-use crate::ids::{ItemId, NodeId};
+use crate::ids::{ItemId, NodeId, TabKey};
 
 #[cfg(test)]
 mod tests;
@@ -16,6 +16,12 @@ impl Workspace {
     #[must_use]
     pub fn item_is_hidden(&self, item: ItemId) -> bool {
         self.storage.hidden_items.contains(&item)
+    }
+
+    /// Returns whether a supported direct tab child contributes visible content.
+    #[must_use]
+    pub(crate) fn tab_is_visible(&self, tab: TabKey) -> bool {
+        tab.item().is_some_and(|item| !self.item_is_hidden(item))
     }
 
     /// Iterates hidden owned items in stable identity order.
@@ -28,12 +34,11 @@ impl Workspace {
     /// Fully visible tabs borrow their roster without allocating. Missing nodes
     /// and split nodes have no visible tab members.
     #[must_use]
-    pub fn visible_tab_items(&self, tabs: NodeId) -> Cow<'_, [ItemId]> {
+    pub fn visible_tab_keys(&self, tabs: NodeId) -> Cow<'_, [TabKey]> {
         let Some(Node::Tabs { items, .. }) = self.node(tabs) else {
             return Cow::Borrowed(&[]);
         };
-        if self.storage.hidden_items.is_empty()
-            || !items.iter().any(|item| self.item_is_hidden(*item))
+        if self.storage.hidden_items.is_empty() || items.iter().all(|tab| self.tab_is_visible(*tab))
         {
             Cow::Borrowed(items)
         } else {
@@ -41,7 +46,7 @@ impl Workspace {
                 items
                     .iter()
                     .copied()
-                    .filter(|item| !self.item_is_hidden(*item))
+                    .filter(|tab| self.tab_is_visible(*tab))
                     .collect(),
             )
         }
@@ -53,7 +58,7 @@ impl Workspace {
     /// When repairing an edit, a hidden selection yields to the next visible
     /// member, then the preceding visible member in reverse visual order.
     #[must_use]
-    pub fn visible_tab_selection(&self, tabs: NodeId) -> Option<ItemId> {
+    pub fn visible_tab_selection(&self, tabs: NodeId) -> Option<TabKey> {
         let Node::Tabs {
             items, selected, ..
         } = self.node(tabs)?
@@ -61,7 +66,7 @@ impl Workspace {
             return None;
         };
         if let Some(item) = selected
-            && !self.item_is_hidden(*item)
+            && self.tab_is_visible(*item)
         {
             return Some(*item);
         }
@@ -72,11 +77,11 @@ impl Workspace {
                 .iter()
                 .chain(items[..index].iter().rev())
                 .copied()
-                .find(|item| !self.item_is_hidden(*item)),
+                .find(|item| self.tab_is_visible(*item)),
             None => items
                 .iter()
                 .copied()
-                .find(|item| !self.item_is_hidden(*item)),
+                .find(|item| self.tab_is_visible(*item)),
         }
     }
 
@@ -86,14 +91,14 @@ impl Workspace {
     /// populated leaf whose members are all hidden contributes no rectangle.
     #[must_use]
     pub fn node_has_visible_content(&self, node: NodeId) -> bool {
-        let tabs_have_content = |node, items: &[ItemId]| {
+        let tabs_have_content = |node, items: &[TabKey]| {
             if items.is_empty() {
                 self.node_root(node)
                     .and_then(|root| self.root(root))
                     .is_some_and(|record| record.central == Some(node))
             } else {
                 self.storage.hidden_items.is_empty()
-                    || items.iter().any(|item| !self.item_is_hidden(*item))
+                    || items.iter().any(|item| self.tab_is_visible(*item))
             }
         };
         let mut pending = match self.node(node) {
@@ -156,10 +161,13 @@ impl Workspace {
     pub(super) fn set_visible_tab_selection(
         &mut self,
         tabs: NodeId,
-        item: ItemId,
+        item: TabKey,
     ) -> Result<bool, CommandError> {
-        if self.item_is_hidden(item) {
-            return Err(CommandError::ItemHidden { item });
+        let content = item
+            .item()
+            .ok_or(CommandError::UnsupportedLayoutTab { tabs, tab: item })?;
+        if self.item_is_hidden(content) {
+            return Err(CommandError::ItemHidden { item: content });
         }
         if matches!(self.node(tabs), Some(Node::Tabs { selected, .. }) if *selected == Some(item)) {
             return Ok(false);
@@ -178,7 +186,7 @@ impl Workspace {
         let index = mru
             .iter()
             .position(|candidate| *candidate == item)
-            .ok_or(CommandError::ItemNotInTabs { tabs, item })?;
+            .ok_or(CommandError::TabNotInTabs { tabs, tab: item })?;
         let changed = *selected != Some(item);
         *selected = Some(item);
         if index != 0 {

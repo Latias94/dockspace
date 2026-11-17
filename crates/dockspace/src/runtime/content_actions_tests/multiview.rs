@@ -187,7 +187,7 @@ fn apply_random_action(
 
 struct GroupExpectation {
     members: Vec<ItemId>,
-    selected: Option<ItemId>,
+    selected: Option<TabKey>,
     source: SurfaceId,
     target: SurfaceId,
     target_items: Vec<ItemId>,
@@ -211,7 +211,11 @@ impl GroupExpectation {
             let view = session.view();
             let location = view.item(*item).expect(trace);
             assert_eq!(location.surface(), self.target, "{trace}");
-            assert_eq!(location.tabs().items(), target_items, "{trace}");
+            assert_eq!(
+                location.tabs().items().collect::<Vec<_>>(),
+                target_items,
+                "{trace}"
+            );
             if let Some(selected) = self.selected {
                 assert_eq!(
                     location.tabs().visible_selected(),
@@ -351,7 +355,7 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
                             .iter()
                             .copied()
                             .filter(|item| {
-                                session.view().item(*item).unwrap().tabs().items().len() > 1
+                                session.view().item(*item).unwrap().tabs().items().count() > 1
                             })
                             .collect();
                         let source = if grouped.is_empty() {
@@ -371,7 +375,7 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
                                         root.central().map(|central| {
                                             (
                                                 DockAnchor::Central(root.id()),
-                                                central.tabs().unwrap().items().to_vec(),
+                                                central.tabs().unwrap().items().collect::<Vec<_>>(),
                                             )
                                         })
                                     })
@@ -392,7 +396,7 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
                                                 .unwrap()
                                                 .tabs()
                                                 .items()
-                                                .to_vec(),
+                                                .collect::<Vec<_>>(),
                                         )
                                     });
                                 (surface.id(), destination)
@@ -402,7 +406,7 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
                             &destinations[rng.index(destinations.len())];
                         let location = session.view().item(source).unwrap();
                         group_expectation = Some(GroupExpectation {
-                            members: location.tabs().items().to_vec(),
+                            members: location.tabs().items().collect::<Vec<_>>(),
                             selected: location.tabs().visible_selected(),
                             source: owner,
                             target: *target,
@@ -481,6 +485,7 @@ fn seeded_multiview_actions_preserve_item_ownership_and_surface_liveness() {
                 );
                 assert!(
                     tabs.visible_selected()
+                        .and_then(TabKey::item)
                         .is_none_or(|item| !hidden.contains(&item)),
                     "{trace}"
                 );
@@ -541,7 +546,7 @@ fn multiview_root_lifecycle_boundaries_are_explicit_and_atomic() {
         main_root
             .central()
             .and_then(|node| node.tabs())
-            .is_some_and(|tabs| tabs.items().is_empty())
+            .is_some_and(|tabs| tabs.items().next().is_none())
     );
     assert!(view.root(ROOT).is_some());
 
@@ -617,6 +622,6 @@ fn multiview_root_lifecycle_boundaries_are_explicit_and_atomic() {
         view.root(ROOT)
             .and_then(|root| root.central())
             .and_then(|node| node.tabs())
-            .is_some_and(|tabs| tabs.items().is_empty())
+            .is_some_and(|tabs| tabs.items().next().is_none())
     );
 }

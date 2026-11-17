@@ -121,8 +121,8 @@ pub enum PaneFocusState {
 /// Resolves and renders application-owned panes by stable item identity.
 ///
 /// The adapter borrows this object only while painting a frame. Implementors
-/// retain ownership of pane state; the docking workspace stores only
-/// [`ItemId`] values.
+/// retain ownership of pane state; the docking workspace stores stable
+/// [`ItemId`] content identities and layout metadata.
 ///
 /// Callbacks run synchronously within the current egui pass. Start background
 /// work in application-owned tasks, apply completed results on the UI thread,
@@ -172,6 +172,9 @@ pub trait PaneView {
     /// Application widgets remain ordinary egui widgets; no [`PaneResponse`]
     /// registration is needed or accepted for tab chrome.
     /// Return the final appearance so built-in focus and close cues follow it.
+    /// `tab.key` identifies the direct tab; `tab.item()` is present only for
+    /// real application content. Layout tabs use their own title and retain
+    /// the default appearance without a content registration.
     fn tab_ui(&mut self, ui: &mut Ui, tab: &Tab<'_>) -> TabVisuals {
         tab.paint(ui)
     }

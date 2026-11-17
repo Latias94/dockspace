@@ -11,7 +11,9 @@ use crate::geometry::{LogicalRect, PaneSizing};
 use crate::graph::error::CommandError;
 use crate::graph::workspace::{RootPresentationOwner, WorkspaceIndex};
 use crate::graph::{Node, Workspace};
-use crate::ids::{EngineAuthorityDomainId, ItemId, NodeId, RootId, SurfaceId, WorkspaceEpoch};
+use crate::ids::{
+    EngineAuthorityDomainId, ItemId, NodeId, RootId, SurfaceId, TabKey, WorkspaceEpoch,
+};
 pub use crate::policy::rules::PolicyRevision;
 use crate::policy::{CloseCapability, DockPolicySnapshot, TabBarInteraction, TabBarPolicy};
 use crate::presentation::compiler::SceneRequirementDerivationError;
@@ -688,14 +690,14 @@ pub struct SurfaceRequirements {
 pub struct TabBarRequirement {
     id: TabBarSceneId,
     policy: TabBarPolicy,
-    close_capabilities: BTreeMap<ItemId, CloseCapability>,
+    close_capabilities: BTreeMap<TabKey, CloseCapability>,
 }
 
 impl TabBarRequirement {
     pub(crate) fn new(
         id: TabBarSceneId,
         policy: TabBarPolicy,
-        close_capabilities: BTreeMap<ItemId, CloseCapability>,
+        close_capabilities: BTreeMap<TabKey, CloseCapability>,
     ) -> Self {
         Self {
             id,
@@ -727,7 +729,7 @@ impl TabBarRequirement {
         let revealed = self.policy.visibility() == crate::policy::TabBarVisibility::AutoHideSingle
             && self.close_capabilities.len() == 1
             && states
-                .revealed_single_item(TabStripStateKey::new(surface, self.id))
+                .revealed_single_tab(TabStripStateKey::new(surface, self.id))
                 .is_some_and(|item| self.close_capabilities.contains_key(&item));
         self.policy
             .resolved(self.close_capabilities.len(), revealed)
@@ -735,7 +737,7 @@ impl TabBarRequirement {
 
     /// Returns the frozen close capability for an item in this tabs leaf.
     #[must_use]
-    pub fn close_capability(&self, item: ItemId) -> Option<CloseCapability> {
+    pub fn close_capability(&self, item: TabKey) -> Option<CloseCapability> {
         self.close_capabilities.get(&item).copied()
     }
 
@@ -743,7 +745,7 @@ impl TabBarRequirement {
     #[must_use]
     pub fn close_capabilities(
         &self,
-    ) -> impl ExactSizeIterator<Item = (ItemId, CloseCapability)> + '_ {
+    ) -> impl ExactSizeIterator<Item = (TabKey, CloseCapability)> + '_ {
         self.close_capabilities
             .iter()
             .map(|(item, capability)| (*item, *capability))
@@ -958,8 +960,11 @@ impl SceneRequirementManifest {
         let effective_policy = policy.tab_bar_declaration(surface, Some(rule));
         if previous.policy() != effective_policy
             || previous.close_capabilities().len() != items.len()
-            || items.iter().any(|&item| {
-                previous.close_capability(item) != Some(policy.pane_close_capability(item))
+            || items.iter().any(|&tab| {
+                let capability = tab.item().map_or(CloseCapability::Disabled, |item| {
+                    policy.pane_close_capability(item)
+                });
+                previous.close_capability(tab) != Some(capability)
             })
         {
             return Ok(None);
@@ -2053,7 +2058,7 @@ mod tests {
         let tab = TabSceneId {
             root,
             tabs,
-            item: ItemId::new(3),
+            tab: (ItemId::new(3)).into(),
         };
         (
             SurfaceMeasurementTicket::new(
@@ -2064,7 +2069,7 @@ mod tests {
                 SurfaceRequirementRevision::new(8),
                 surface,
             ),
-            PaneSizingKey::new(root, tabs, Some(tab.item)),
+            PaneSizingKey::new(root, tabs, tab.tab.item()),
             TabIntrinsicKey::new(surface, tab),
             TabStripKey::new(surface, TabBarSceneId { root, tabs }),
         )
@@ -2221,7 +2226,9 @@ mod tests {
             .capture_item_source(root, tabs, ItemId::new(2))
             .unwrap();
         crate::graph::transaction::WorkspaceTransaction::from_commands([
-            crate::graph::command::WorkspaceCommand::Select { source },
+            crate::graph::command::WorkspaceCommand::Select {
+                source: source.as_tab_source(),
+            },
         ])
         .apply(&mut changed, &policy)
         .unwrap();

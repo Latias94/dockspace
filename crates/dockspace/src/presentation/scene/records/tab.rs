@@ -1,7 +1,7 @@
 //! Tab, tab-bar, pane, and tab-list presentation records.
 
 use crate::geometry::LogicalRect;
-use crate::ids::{ItemId, NodeId, RootId};
+use crate::ids::{NodeId, RootId, TabKey};
 use crate::interaction::targeting::targets::SceneLayerKey;
 use crate::policy::TabBarInteraction;
 use crate::presentation::hit::region::HitRegion;
@@ -23,10 +23,10 @@ pub struct TabBarSceneId {
 pub struct TabSceneId {
     /// Owning root.
     pub root: RootId,
-    /// Tabs node owning the item.
+    /// Tabs node owning the direct child.
     pub tabs: NodeId,
-    /// Stable item identity.
-    pub item: ItemId,
+    /// Stable direct-child identity.
+    pub tab: TabKey,
 }
 
 /// Stable identity of one rendered tabs leaf and its pane content.
@@ -312,7 +312,7 @@ pub struct TabBarRecord {
     viewport: LogicalRect,
     scroll_offset: f64,
     maximum_scroll_offset: f64,
-    hidden_items: Vec<ItemId>,
+    hidden_tabs: Vec<TabKey>,
     members: Vec<TabStripMemberRecord>,
     group_grip_bounds: Option<LogicalRect>,
     group_menu_bounds: Option<LogicalRect>,
@@ -353,7 +353,7 @@ impl TabBarRecord {
         viewport: LogicalRect,
         scroll_offset: f64,
         maximum_scroll_offset: f64,
-        hidden_items: Vec<ItemId>,
+        hidden_tabs: Vec<TabKey>,
         members: Vec<TabStripMemberRecord>,
         group_grip_bounds: Option<LogicalRect>,
         group_drag: Option<TabGroupDragRecord>,
@@ -367,7 +367,7 @@ impl TabBarRecord {
             viewport,
             scroll_offset,
             maximum_scroll_offset,
-            hidden_items,
+            hidden_tabs,
             members,
             group_grip_bounds,
             group_menu_bounds: None,
@@ -413,8 +413,8 @@ impl TabBarRecord {
 
     /// Returns hidden items in their stable tabs-node order.
     #[must_use]
-    pub fn hidden_items(&self) -> &[ItemId] {
-        &self.hidden_items
+    pub fn hidden_tabs(&self) -> &[TabKey] {
+        &self.hidden_tabs
     }
 
     /// Returns every tab in stable workspace order with explicit visibility.

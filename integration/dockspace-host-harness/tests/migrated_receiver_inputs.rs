@@ -273,8 +273,7 @@ fn scroll_on_a_migrated_receiver_does_not_poison_an_independent_action() {
     assert!(report.inputs().iter().any(|outcome| matches!(
         outcome,
         HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-            item: A_SECOND,
+            tab: selected_tab,
             changed: true,
-        })
-    )));
+        }) if selected_tab.item() == Some(A_SECOND))));
 }

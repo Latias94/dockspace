@@ -225,7 +225,13 @@ fn release(
     assert!(!session.has_pending_presentation());
     match gesture {
         Gesture::Dock => assert_eq!(
-            session.view().item(SECOND).unwrap().tabs().items(),
+            session
+                .view()
+                .item(SECOND)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[FIRST, SECOND]
         ),
         Gesture::ContainedResize => assert_eq!(
@@ -398,8 +404,15 @@ fn splitter_release_delivers_or_rejects_once_and_new_gestures_keep_distinct_iden
 fn durable(session: &DockspaceSession) -> (WorkspaceVersion, [Vec<ItemId>; 3], LogicalRect) {
     (
         session.version(),
-        [FIRST, SECOND, ItemId::new(3)]
-            .map(|item| session.view().item(item).unwrap().tabs().items().to_vec()),
+        [FIRST, SECOND, ItemId::new(3)].map(|item| {
+            session
+                .view()
+                .item(item)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>()
+        }),
         session
             .view()
             .contained(FloatingPresentationId::new(1))

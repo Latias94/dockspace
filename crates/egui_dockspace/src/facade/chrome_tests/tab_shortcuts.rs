@@ -253,6 +253,58 @@ fn cycling_from_strip_controls_uses_their_group() {
 }
 
 #[test]
+fn cycling_from_content_or_strip_controls_uses_the_offscreen_selection() {
+    for content_focus in [false, true] {
+        for (binding, expected) in [
+            (bindings().next_tab.unwrap(), 1),
+            (bindings().previous_tab.unwrap(), 5),
+        ] {
+            let mut harness = Harness::tabs(6);
+            harness.dockspace.set_input(bindings());
+            let output = present(&mut harness, 360.0, Vec::new());
+            let backward = nodes(&output)
+                .iter()
+                .find_map(|(id, node)| {
+                    (node.label() == Some("Scroll tabs backward")).then_some(*id)
+                })
+                .unwrap();
+            for _ in 0..4 {
+                present(
+                    &mut harness,
+                    360.0,
+                    vec![Event::AccessKitActionRequest(
+                        egui::accesskit::ActionRequest {
+                            action: egui::accesskit::Action::Click,
+                            target_tree: egui::accesskit::TreeId::ROOT,
+                            target_node: backward,
+                            data: None,
+                        },
+                    )],
+                );
+            }
+            if content_focus {
+                harness.context.memory_mut(|memory| {
+                    memory.request_focus(harness.panes.focus_target(ItemId::new(6)).unwrap());
+                });
+            } else {
+                harness.focus(360.0, Role::Button, "Scroll tabs forward");
+            }
+            let output = present(&mut harness, 360.0, Vec::new());
+            assert_selected(&harness, 6);
+            assert!(
+                !nodes(&output).iter().any(|(_, node)| {
+                    node.role() == Role::Tab && node.label() == Some("Document 6")
+                }),
+                "manual scrolling must leave the selected header completely offscreen"
+            );
+            let output = present(&mut harness, 360.0, vec![shortcut(binding)]);
+            assert_selected(&harness, expected);
+            assert_tab_focus(&harness, &output, expected);
+        }
+    }
+}
+
+#[test]
 fn late_discarded_passes_cycle_once_with_the_same_deferred_intent() {
     for callback in [false, true] {
         for count in [1, 3] {

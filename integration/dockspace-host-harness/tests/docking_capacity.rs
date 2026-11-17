@@ -104,13 +104,13 @@ fn measure(
                     Question::PaneSizing { item, .. } => {
                         Answer::PaneSizing((pane_sizing(item)).into())
                     }
-                    Question::TabIntrinsic { item, .. } => {
-                        Answer::TabIntrinsic(if item.get().is_multiple_of(2) {
+                    Question::TabIntrinsic { key, .. } => Answer::TabIntrinsic(
+                        if key.item().is_some_and(|item| item.get().is_multiple_of(2)) {
                             4096.0
                         } else {
                             96.0
-                        })
-                    }
+                        },
+                    ),
                     Question::TabStrip { .. } => {
                         Answer::TabStrip(TabStripMetrics::new(0.0, 0.0).unwrap())
                     }
@@ -174,11 +174,13 @@ fn paint_present(session: &mut DockspaceSession) -> BTreeMap<SurfaceId, Snapshot
                     operation: Operation::Tab(tab),
                     ..
                 } => {
-                    if let Some(receiver) = plan.receiver_for_tab_body(tab) {
-                        snapshot.tabs.insert(tab.item(), receiver);
-                    }
-                    if let Some(receiver) = plan.center_drop_receiver_for_item(tab.item()) {
-                        snapshot.centers.insert(tab.item(), receiver.center());
+                    if let Some(item) = tab.item() {
+                        if let Some(receiver) = plan.receiver_for_tab_body(tab) {
+                            snapshot.tabs.insert(item, receiver);
+                        }
+                        if let Some(receiver) = plan.center_drop_receiver_for_item(item) {
+                            snapshot.centers.insert(item, receiver.center());
+                        }
                     }
                 }
                 Step::Operation {
@@ -261,7 +263,7 @@ fn assert_items(session: &DockspaceSession, expected: &[ItemId]) {
             let mut nodes = vec![root.content().unwrap()];
             while let Some(node) = nodes.pop() {
                 if let Some(tabs) = node.tabs() {
-                    actual.extend_from_slice(tabs.items());
+                    actual.extend(tabs.items());
                 } else {
                     nodes.extend(node.split().unwrap().children());
                 }
@@ -419,6 +421,7 @@ fn repeated_splits_and_merges(policy: PaneOverflowPolicy) {
             .unwrap()
             .tabs()
             .items()
+            .collect::<Vec<_>>()
             .len(),
         items.len() + 1
     );
@@ -624,7 +627,13 @@ fn zero_area_target_revokes_drop_preview_and_recovers_without_losing_the_drag_so
         target_edge(&mut session, Event::ButtonReleased(Button::Primary), aim).workspace_changed()
     );
     assert_eq!(
-        session.view().item(item).unwrap().tabs().items(),
+        session
+            .view()
+            .item(item)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
         [second, item]
     );
     assert!(!session.has_active_gesture());

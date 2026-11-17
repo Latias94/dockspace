@@ -5,7 +5,7 @@ use crate::close::plan::{
     CloseDecision, CloseItemDecisionState, ClosePlanTarget, DeferredCloseDecision,
 };
 use crate::geometry::{LogicalRect, LogicalSize};
-use crate::ids::{ItemId, WorkspaceRevision};
+use crate::ids::{ItemId, TabKey, WorkspaceRevision};
 use crate::model::{
     DockAnchor, DockPlacement, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
     DockspaceSurfaceLayout,
@@ -383,10 +383,10 @@ fn multiple_policy_replacements_correlate_noops_changes_and_intermediate_version
         report.submitted_action_outcome(selection),
         Some(HostInputOutcome::ProductActionApplied(
             DockspaceActionOutcome::Selected {
-                item: SECOND,
+                tab,
                 changed: true,
             }
-        ))
+        )) if *tab == SECOND.into()
     ));
     let intermediate = WorkspaceVersion::new(
         selected_version.epoch(),

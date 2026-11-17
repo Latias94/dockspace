@@ -91,7 +91,7 @@ impl ContentCloseScope {
                 workspace.presentation_for_root(*root) == Some(*owner)
                     && workspace.node_root(*tabs) == Some(*root)
                     && matches!(workspace.node(*tabs), Some(crate::graph::Node::Tabs { items: actual, .. })
-                        if actual.len() == items.len() && actual.iter().all(|item| items.contains(item)))
+                        if actual.len() == items.len() && actual.iter().all(|tab| tab.item().is_some_and(|item| items.contains(&item))))
                     && requirements
                         .iter()
                         .all(|requirement| requirement_matches(*requirement, policy))

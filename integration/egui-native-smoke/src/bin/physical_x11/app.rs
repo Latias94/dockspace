@@ -117,7 +117,7 @@ fn observed_redock_layout(view: DockspaceView<'_>) -> Option<RedockLayout> {
     }
     let content = view.surface(ROOT_SURFACE)?.main_root()?.content()?;
     if let Some(tabs) = content.tabs() {
-        return match tabs.items() {
+        return match tabs.items().collect::<Vec<_>>().as_slice() {
             [MAIN_ITEM, CHILD_ITEM] => Some(RedockLayout::Center),
             [CHILD_ITEM, MAIN_ITEM] => Some(RedockLayout::TabBefore),
             _ => None,
@@ -132,9 +132,9 @@ fn observed_redock_layout(view: DockspaceView<'_>) -> Option<RedockLayout> {
         return None;
     }
     let mut children = split.children();
-    let first = children.next()?.tabs()?.items();
-    let second = children.next()?.tabs()?.items();
-    let child_before = match (first, second) {
+    let first = children.next()?.tabs()?.items().collect::<Vec<_>>();
+    let second = children.next()?.tabs()?.items().collect::<Vec<_>>();
+    let child_before = match (first.as_slice(), second.as_slice()) {
         ([CHILD_ITEM], [MAIN_ITEM]) => true,
         ([MAIN_ITEM], [CHILD_ITEM]) => false,
         _ => return None,
@@ -164,8 +164,8 @@ fn observed_stationary_redock_layout(view: DockspaceView<'_>) -> Option<RedockLa
     let tabs = root.content()?.tabs()?;
     (root.id() == MAIN_ROOT
         && tabs.is_central()
-        && tabs.items() == [ANCHOR_ITEM, MAIN_ITEM, CHILD_ITEM]
-        && tabs.selected() == Some(CHILD_ITEM))
+        && tabs.items().collect::<Vec<_>>() == [ANCHOR_ITEM, MAIN_ITEM, CHILD_ITEM]
+        && tabs.selected().and_then(|tab| tab.item()) == Some(CHILD_ITEM))
     .then_some(RedockLayout::StationaryCenter)
 }
 
@@ -176,8 +176,8 @@ fn observed_overflow_redock_layout(view: DockspaceView<'_>) -> Option<RedockLayo
         && view.surface(ROOT_SURFACE)?.contained_count() == 0
         && root.id() == MAIN_ROOT
         && tabs.is_central()
-        && tabs.items() == [ANCHOR_ITEM, CHILD_ITEM, MAIN_ITEM]
-        && tabs.selected() == Some(CHILD_ITEM)
+        && tabs.items().collect::<Vec<_>>() == [ANCHOR_ITEM, CHILD_ITEM, MAIN_ITEM]
+        && tabs.selected().and_then(|tab| tab.item()) == Some(CHILD_ITEM)
         && [ANCHOR_ITEM, CHILD_ITEM, MAIN_ITEM].iter().all(|item| {
             view.item(*item)
                 .is_some_and(|item| item.root() == MAIN_ROOT && item.contained().is_none())

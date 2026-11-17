@@ -121,8 +121,8 @@ fn rearranging_the_editor_tabs_does_not_leave_an_unlabelled_empty_pane() {
     let mut populated = 0;
     while let Some(node) = pending.pop() {
         if let Some(tabs) = node.tabs() {
-            empty += usize::from(tabs.items().is_empty());
-            populated += usize::from(!tabs.items().is_empty());
+            empty += usize::from(tabs.items().collect::<Vec<_>>().is_empty());
+            populated += usize::from(!tabs.items().collect::<Vec<_>>().is_empty());
         } else if let Some(split) = node.split() {
             pending.extend(split.children());
         }
@@ -212,7 +212,12 @@ fn an_animated_editor_tab_can_start_another_docking_gesture() {
             vec![Event::PointerMoved(guide), button(guide, false)],
         );
         assert_eq!(
-            dock.view().item(EDITOR).unwrap().tabs().items(),
+            dock.view()
+                .item(EDITOR)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             &[target, EDITOR],
             "the visible Editor tab must authorize the next gesture during layout reflow",
         );
@@ -298,7 +303,10 @@ fn inspector_docks_through_stationary_guides_and_its_tab_can_float_again() {
         let inspector = dock.view().item(INSPECTOR).unwrap();
         assert_eq!(inspector.root(), MAIN_ROOT);
         assert!(inspector.contained().is_none());
-        assert_eq!(inspector.tabs().items(), &[OUTLINE, INSPECTOR]);
+        assert_eq!(
+            inspector.tabs().items().collect::<Vec<_>>(),
+            &[OUTLINE, INSPECTOR]
+        );
 
         let source = semantic_rect(&docked, Role::Tab, "Inspector").center();
         let pointer = {

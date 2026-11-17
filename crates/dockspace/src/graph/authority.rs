@@ -447,7 +447,7 @@ mod tests {
     use crate::graph::error::{CommandError, ReferenceRole};
     use crate::graph::transaction::WorkspaceTransaction;
     use crate::graph::{Axis, RootRecord, SurfacePresentation};
-    use crate::ids::{ItemId, SurfaceId};
+    use crate::ids::{ItemId, SurfaceId, TabKey};
     use crate::policy::{DockPolicy, PolicyRevision};
 
     #[test]
@@ -477,7 +477,8 @@ mod tests {
         let command = WorkspaceCommand::Select {
             source: workspace
                 .capture_item_source(root, tabs[0], ItemId::new(2))
-                .unwrap(),
+                .unwrap()
+                .as_tab_source(),
         };
         apply_shared(&mut workspace, command);
         let command = WorkspaceCommand::Move {
@@ -505,7 +506,13 @@ mod tests {
         ));
         assert_eq!(
             original.tab_mru(tabs[0]),
-            Some([ItemId::new(1), ItemId::new(2)].as_slice())
+            Some(
+                [
+                    TabKey::for_item(ItemId::new(1)),
+                    TabKey::for_item(ItemId::new(2))
+                ]
+                .as_slice()
+            )
         );
 
         let before = workspace.clone();

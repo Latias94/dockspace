@@ -31,7 +31,9 @@ fn local_selection_and_reselection_preserve_revision_events_and_focus() {
             } else {
                 EngineInput::WorkspaceCommand {
                     expected: before,
-                    command: WorkspaceCommand::Select { source },
+                    command: WorkspaceCommand::Select {
+                        source: source.as_tab_source(),
+                    },
                 }
             };
             let transition = submit_test_input(&mut engine, host, input).unwrap();
@@ -66,7 +68,7 @@ fn local_selection_and_reselection_preserve_revision_events_and_focus() {
             );
             assert_eq!(
                 engine.workspace().tab_mru(tabs),
-                Some([ItemId::new(2), ItemId::new(1)].as_slice())
+                Some([ItemId::new(2).into(), ItemId::new(1).into()].as_slice())
             );
             assert_eq!(
                 engine.viewport_focus().published_pane_intent().is_some(),
@@ -134,7 +136,7 @@ fn journal_selection_keeps_the_checked_result_and_discarded_frame_is_atomic() {
         .capture_item_source(SOURCE_ROOT, tabs, ItemId::new(2))
         .unwrap();
     let command = WorkspaceCommand::Select {
-        source: source.clone(),
+        source: source.as_tab_source(),
     };
     structural_work::reset();
     let staged = engine
@@ -166,7 +168,7 @@ fn journal_selection_keeps_the_checked_result_and_discarded_frame_is_atomic() {
         .unwrap();
     assert_eq!(
         frame.candidate.workspace().tab_mru(tabs),
-        Some([ItemId::new(2), ItemId::new(1)].as_slice())
+        Some([ItemId::new(2).into(), ItemId::new(1).into()].as_slice())
     );
     let mut invalid = engine.workspace().clone().into_builder();
     invalid.set_tab_mru(tabs, []).unwrap();
@@ -185,7 +187,9 @@ fn journal_selection_keeps_the_checked_result_and_discarded_frame_is_atomic() {
         },
     )
     .unwrap();
-    let stale = WorkspaceCommand::Select { source };
+    let stale = WorkspaceCommand::Select {
+        source: source.as_tab_source(),
+    };
     let (_, application) = engine
         .stage_workspace_command(engine.last_input, &engine.policy, &stale, None)
         .unwrap();

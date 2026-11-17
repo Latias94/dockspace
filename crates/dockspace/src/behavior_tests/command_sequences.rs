@@ -1,4 +1,5 @@
 use super::support;
+use crate::ids::TabKey;
 
 use std::collections::BTreeMap;
 
@@ -110,18 +111,18 @@ fn two_roots() -> (Workspace, NodeId, NodeId) {
     )
 }
 
-fn tabs_items(workspace: &Workspace, tabs: NodeId) -> &[ItemId] {
+fn tabs_items(workspace: &Workspace, tabs: NodeId) -> Vec<ItemId> {
     let Some(Node::Tabs { items, .. }) = workspace.node(tabs) else {
         panic!("expected tabs node {tabs:?}");
     };
-    items
+    items.iter().filter_map(|tab| tab.item()).collect()
 }
 
 fn selected_item(workspace: &Workspace, tabs: NodeId) -> Option<ItemId> {
     let Some(Node::Tabs { selected, .. }) = workspace.node(tabs) else {
         panic!("expected tabs node {tabs:?}");
     };
-    *selected
+    selected.and_then(TabKey::item)
 }
 
 #[test]
@@ -131,7 +132,7 @@ fn same_stack_reorder_uses_pre_removal_gap_indices() {
         .capture_item_source(ROOT_A, tabs, item(1))
         .expect("source exists");
     let report = WorkspaceTransaction::from_commands([WorkspaceCommand::Reorder {
-        source,
+        source: source.as_tab_source(),
         insertion_index: 3,
     }])
     .apply(&mut workspace, &DockPolicySnapshot::default())
@@ -152,7 +153,7 @@ fn same_stack_reorder_uses_pre_removal_gap_indices() {
         .capture_item_source(ROOT_A, tabs, item(1))
         .expect("reordered source exists");
     let report = WorkspaceTransaction::from_commands([WorkspaceCommand::Reorder {
-        source,
+        source: source.as_tab_source(),
         insertion_index: 3,
     }])
     .apply(&mut workspace, &DockPolicySnapshot::default())
@@ -178,7 +179,7 @@ fn reorder_is_rejected_when_tab_merge_policy_is_disabled() {
         &mut workspace,
         &policy,
         WorkspaceCommand::Reorder {
-            source,
+            source: source.as_tab_source(),
             insertion_index: 3,
         },
     )
@@ -328,7 +329,7 @@ fn stale_source_and_target_snapshots_fail_closed() {
         &mut workspace,
         &DockPolicySnapshot::default(),
         WorkspaceCommand::Select {
-            source: changing_source,
+            source: changing_source.as_tab_source(),
         },
     )
     .expect("selection changes the source root snapshot");
@@ -488,7 +489,9 @@ fn close_selection_uses_the_visual_successor_and_updates_durable_mru() {
     apply(
         &mut workspace,
         &DockPolicySnapshot::default(),
-        WorkspaceCommand::Select { source: select_two },
+        WorkspaceCommand::Select {
+            source: select_two.as_tab_source(),
+        },
     )
     .expect("selection succeeds");
 
@@ -501,7 +504,10 @@ fn close_selection_uses_the_visual_successor_and_updates_durable_mru() {
     );
     assert_eq!(tabs_items(&workspace, tabs), [item(1), item(3)]);
     assert_eq!(selected_item(&workspace, tabs), Some(item(3)));
-    assert_eq!(workspace.tab_mru(tabs), Some([item(3), item(1)].as_slice()));
+    assert_eq!(
+        workspace.tab_mru(tabs),
+        Some([item(3), item(1)].map(TabKey::for_item).as_slice())
+    );
 
     let open_target = workspace
         .capture_tab_target(ROOT_A, tabs)
@@ -522,7 +528,7 @@ fn close_selection_uses_the_visual_successor_and_updates_durable_mru() {
         &mut workspace,
         &DockPolicySnapshot::default(),
         WorkspaceCommand::Select {
-            source: select_three,
+            source: select_three.as_tab_source(),
         },
     )
     .expect("selection succeeds");
@@ -543,7 +549,7 @@ fn close_selection_uses_the_visual_successor_and_updates_durable_mru() {
         &mut workspace,
         &DockPolicySnapshot::default(),
         WorkspaceCommand::Select {
-            source: select_last,
+            source: select_last.as_tab_source(),
         },
     )
     .expect("last item selection succeeds");
@@ -769,7 +775,7 @@ fn root_close_recaptures_current_graph_from_stable_identity() {
         &mut workspace,
         &DockPolicySnapshot::default(),
         WorkspaceCommand::Reorder {
-            source: reorder,
+            source: reorder.as_tab_source(),
             insertion_index: 2,
         },
     )
@@ -854,7 +860,9 @@ fn ordinary_workspace_transactions_roll_back_without_a_close_command() {
         .expect("second root source exists");
     let before_batch = workspace.clone();
     let batch_error = WorkspaceTransaction::from_commands([
-        WorkspaceCommand::Select { source: selection },
+        WorkspaceCommand::Select {
+            source: selection.as_tab_source(),
+        },
         WorkspaceCommand::RemoveEmptyRoot { source: nonempty_b },
     ])
     .apply(&mut workspace, &DockPolicySnapshot::default())

@@ -158,12 +158,12 @@ impl DockEngine {
         if !self.presented_layering_is_current(plan) {
             return false;
         }
-        let item_is_current = |tab: crate::presentation::scene::TabSceneId| {
-            !self.workspace.item_is_hidden(tab.item)
+        let tab_is_current = |tab: crate::presentation::scene::TabSceneId| {
+            self.workspace.visible_tab_keys(tab.tabs).contains(&tab.tab)
                 && self
                     .workspace
-                    .locate_item_by_id(tab.item)
-                    .is_some_and(|(root, tabs, _)| root == tab.root && tabs == tab.tabs)
+                    .capture_tab_source(tab.root, tab.tabs, tab.tab)
+                    .is_ok()
                 && self.presented_root_owner_is_current(plan, tab.root)
         };
         let bar_is_current = |bar: crate::presentation::scene::TabBarSceneId| {
@@ -177,16 +177,16 @@ impl DockEngine {
             matches!(self.workspace.node(bar.tabs), Some(Node::Tabs { .. }))
                 && self
                     .workspace
-                    .visible_tab_items(bar.tabs)
+                    .visible_tab_keys(bar.tabs)
                     .iter()
                     .copied()
-                    .eq(record.members().iter().map(|member| member.tab().item))
+                    .eq(record.members().iter().map(|member| member.tab().tab))
                 && self.presented_root_owner_is_current(plan, bar.root)
         };
         match region.kind() {
             PresentationHitRegionKind::TabBody(tab)
             | PresentationHitRegionKind::TabClose(tab)
-            | PresentationHitRegionKind::TabListMenuRow { tab, .. } => item_is_current(tab),
+            | PresentationHitRegionKind::TabListMenuRow { tab, .. } => tab_is_current(tab),
             PresentationHitRegionKind::TabGroupDrag { bar, .. }
             | PresentationHitRegionKind::TabStripScroll(bar) => bar_is_current(bar),
             PresentationHitRegionKind::PaneBody(pane) => {
@@ -197,7 +197,7 @@ impl DockEngine {
                         .find(|record| record.id() == pane)
                         .is_some_and(|record| {
                             matches!(self.workspace.node(pane.tabs),
-                            Some(Node::Tabs { selected, .. }) if *selected == plan.pane_selected(record))
+                            Some(Node::Tabs { selected, .. }) if selected.and_then(TabKey::item) == plan.pane_selected(record))
                         })
             }
             PresentationHitRegionKind::SplitterHandle(splitter) => {
@@ -242,7 +242,7 @@ impl DockEngine {
             },
             PresentationHitRegionKind::TabStripControl(TabStripControlId::RevealTabBar(bar)) => {
                 self.presented_root_owner_is_current(plan, bar.root)
-                    && self.workspace.visible_tab_items(bar.tabs).len() == 1
+                    && self.workspace.visible_tab_keys(bar.tabs).len() == 1
                     && self.workspace.visible_tab_selection(bar.tabs) == plan.selected_in_tabs(bar.tabs)
             }
             PresentationHitRegionKind::TabStripControl(control) => bar_is_current(control.bar()),

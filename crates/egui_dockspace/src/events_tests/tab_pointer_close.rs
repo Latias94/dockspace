@@ -59,11 +59,25 @@ fn mixed_button_batches_never_close_the_last_widgets_tab() {
             );
             let primary = if middle_first { SECOND } else { FIRST };
             assert_eq!(
-                harness.dock.view().item(FIRST).unwrap().tabs().selected(),
+                harness
+                    .dock
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .selected()
+                    .and_then(|tab| tab.item()),
                 Some(primary)
             );
             assert_eq!(
-                harness.dock.view().item(FIRST).unwrap().tabs().items(),
+                harness
+                    .dock
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 [FIRST, SECOND]
             );
         }
@@ -104,7 +118,14 @@ fn a_primary_click_elsewhere_cannot_activate_a_middle_clicked_close_icon() {
             "callback={callback_mode}"
         );
         assert_eq!(
-            harness.dock.view().item(FIRST).unwrap().tabs().items(),
+            harness
+                .dock
+                .view()
+                .item(FIRST)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             [FIRST, SECOND]
         );
     }
@@ -200,7 +221,14 @@ fn overlapping_button_presses_across_frames_cannot_close_another_buttons_capture
                 "callback={callback_mode}, middle_first={middle_first}"
             );
             assert_eq!(
-                harness.dock.view().item(FIRST).unwrap().tabs().items(),
+                harness
+                    .dock
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 [FIRST, SECOND]
             );
         }
@@ -229,7 +257,14 @@ fn multiple_auxiliary_releases_and_later_motion_do_not_infer_a_tab_target() {
                 "callback={callback_mode}, second_click={second_click}"
             );
             assert_eq!(
-                harness.dock.view().item(FIRST).unwrap().tabs().items(),
+                harness
+                    .dock
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 [FIRST, SECOND]
             );
         }

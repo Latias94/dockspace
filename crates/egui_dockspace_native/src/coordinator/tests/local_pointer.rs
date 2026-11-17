@@ -145,7 +145,11 @@ fn render(frame: &mut NativeHostFrame<'_>) -> Scene {
         } = step
             && let Some(receiver) = plan.receiver_for_tab_body(tab)
         {
-            tabs.push((tab.item(), receiver, tab.visible_bounds()));
+            tabs.push((
+                tab.item().expect("fixture tabs contain application items"),
+                receiver,
+                tab.visible_bounds(),
+            ));
         }
         Ok::<(), ()>(())
     })
@@ -352,7 +356,7 @@ fn order(native: &NativeCoordinator) -> Vec<ItemId> {
         .unwrap()
         .tabs()
         .items()
-        .to_vec()
+        .collect::<Vec<_>>()
 }
 
 fn raw_event(point: LogicalPoint, state: Option<ElementState>, event_scale: f64) -> WindowEvent {

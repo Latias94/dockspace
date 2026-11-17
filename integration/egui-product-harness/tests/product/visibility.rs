@@ -391,7 +391,8 @@ fn shared_local_visibility_scenario_preserves_content_and_restores_layout_throug
             .item(FIRST)
             .unwrap()
             .tabs()
-            .items(),
+            .items()
+            .collect::<Vec<_>>(),
         [FIRST, SECOND],
     );
     assert!(
@@ -531,7 +532,7 @@ fn hidden_tab_rejects_its_previous_close_control_until_the_application_shows_it(
     let hidden = harness.state().dockspace.view().item(SECOND).unwrap();
     assert!(hidden.is_hidden());
     assert_eq!(hidden.tab_index(), 1);
-    assert_eq!(hidden.tabs().items(), [FIRST, SECOND]);
+    assert_eq!(hidden.tabs().items().collect::<Vec<_>>(), [FIRST, SECOND]);
 
     harness
         .get_by_role_and_label(Role::Button, "Show Second")

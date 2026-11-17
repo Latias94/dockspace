@@ -402,7 +402,7 @@ fn paint_pending_children(
         assert_eq!(panes, [(SOURCE_ROOTS[index], Some(selected))]);
         assert_eq!(tabs.len(), 2);
         for item in SOURCE_ITEMS[index] {
-            assert!(tabs.contains(&(SOURCE_ROOTS[index], item, item == selected)));
+            assert!(tabs.contains(&(SOURCE_ROOTS[index], Some(item), item == selected)));
         }
         semantics.push((
             child,

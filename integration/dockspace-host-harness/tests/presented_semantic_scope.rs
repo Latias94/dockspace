@@ -109,7 +109,7 @@ fn emit(session: &mut DockspaceSession) -> (Receivers, PaintedSurfaceOutput) {
             Step::Operation {
                 operation: Operation::Tab(tab),
                 ..
-            } if tab.item() == FIRST => tab_close = plan.receiver_for_tab_close(tab),
+            } if tab.item() == Some(FIRST) => tab_close = plan.receiver_for_tab_close(tab),
             _ => {}
         }
         Ok::<(), ()>(())
@@ -219,7 +219,13 @@ fn prebound_contained_close_cannot_capture_a_member_absent_from_the_presented_ro
         if add_unseen_member {
             assert_no_close(&report);
             assert_eq!(
-                session.view().item(UNSEEN).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(UNSEEN)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[FIRST, SECOND, UNSEEN]
             );
         } else {
@@ -263,7 +269,13 @@ fn prebound_tab_close_cannot_follow_its_item_into_another_root() {
         if move_item {
             assert_no_close(&report);
             assert_eq!(
-                session.view().item(FIRST).unwrap().tabs().items(),
+                session
+                    .view()
+                    .item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .items()
+                    .collect::<Vec<_>>(),
                 &[BASE, FIRST]
             );
         } else {

@@ -316,10 +316,17 @@ impl PhysicalSmoke {
                     && !self.primary_down
                     && self.releases > self.baseline
                     && !dock.has_active_gesture()
-                    && merged.items() == expected
-                    && merged.selected() == expected.last().copied()
+                    && merged.items().collect::<Vec<_>>() == expected
+                    && merged.selected().and_then(|tab| tab.item()) == expected.last().copied()
                 {
-                    assert_eq!(view.item(EDITOR).unwrap().tabs().items(), [EDITOR]);
+                    assert_eq!(
+                        view.item(EDITOR)
+                            .unwrap()
+                            .tabs()
+                            .items()
+                            .collect::<Vec<_>>(),
+                        [EDITOR]
+                    );
                     if self.phase == Phase::Inspector {
                         assert_eq!(view.surface(SURFACE).unwrap().contained_count(), 0);
                         assert!(view.root(RootId::new(2)).is_none());
@@ -440,5 +447,5 @@ fn top_weights(dock: &Dockspace) -> [u64; 2] {
 
 fn outline_bounds(panes: &DemoPanes, dock: &Dockspace) -> Option<Rect> {
     let tabs = dock.view().item(OUTLINE)?.tabs();
-    panes.panes[&tabs.selected()?].content
+    panes.panes[&tabs.selected().and_then(|tab| tab.item())?].content
 }

@@ -426,7 +426,8 @@ impl TransactionalMultiSurfaceFixture {
         let version = self.host.version();
         let selected = tabs_containing(self.host.view(), B)
             .expect("the primary tabs exist before abort")
-            .selected();
+            .selected()
+            .and_then(|tab| tab.item());
         {
             let mut frame = self
                 .host
@@ -445,13 +446,15 @@ impl TransactionalMultiSurfaceFixture {
             assert_eq!(
                 tabs_containing(frame.view(), item)
                     .expect("the staged selection remains visible inside the candidate")
-                    .selected(),
+                    .selected()
+                    .and_then(|tab| tab.item()),
                 Some(item),
             );
             assert_eq!(
                 tabs_containing(frame.view(), C)
                     .expect("the second surface remains inside the abort candidate")
-                    .selected(),
+                    .selected()
+                    .and_then(|tab| tab.item()),
                 Some(C),
             );
         }
@@ -459,7 +462,8 @@ impl TransactionalMultiSurfaceFixture {
         assert_eq!(
             tabs_containing(self.host.view(), B)
                 .expect("the primary tabs survive abort")
-                .selected(),
+                .selected()
+                .and_then(|tab| tab.item()),
             selected,
         );
     }
@@ -520,7 +524,7 @@ fn tabs_containing(view: DockspaceView<'_>, item: ItemId) -> Option<DockspaceTab
 
 fn node_contains_item(node: DockspaceNodeView<'_>, item: ItemId) -> bool {
     if let Some(tabs) = node.tabs() {
-        return tabs.items().contains(&item);
+        return tabs.items().collect::<Vec<_>>().contains(&item);
     }
     node.split().is_some_and(|split| {
         split
@@ -578,8 +582,8 @@ fn item_snapshot(
         item_view.surface(),
         item_view.root(),
         item_view.contained(),
-        tabs.items().to_vec(),
-        tabs.selected(),
+        tabs.items().collect::<Vec<_>>(),
+        tabs.selected().and_then(|tab| tab.item()),
     )
 }
 
@@ -931,17 +935,29 @@ impl MagneticJourneyFixture {
         assert_eq!(split_relation, expected_magnetic_split(basin));
         match basin {
             MagneticDockBasin::Center => {
-                assert_eq!(moved.tabs().items(), &[A, B]);
+                assert_eq!(moved.tabs().items().collect::<Vec<_>>(), &[A, B]);
             }
             MagneticDockBasin::North
             | MagneticDockBasin::South
             | MagneticDockBasin::East
             | MagneticDockBasin::West => {
-                assert_eq!(moved.tabs().items(), &[B]);
-                assert_eq!(tabs_containing(self.host.view(), A).unwrap().items(), &[A]);
+                assert_eq!(moved.tabs().items().collect::<Vec<_>>(), &[B]);
+                assert_eq!(
+                    tabs_containing(self.host.view(), A)
+                        .unwrap()
+                        .items()
+                        .collect::<Vec<_>>(),
+                    &[A]
+                );
             }
         }
-        assert_eq!(tabs_containing(self.host.view(), C).unwrap().items(), &[C]);
+        assert_eq!(
+            tabs_containing(self.host.view(), C)
+                .unwrap()
+                .items()
+                .collect::<Vec<_>>(),
+            &[C]
+        );
 
         let settled_version = self.host.version();
         let metrics = self.metrics;
@@ -1088,10 +1104,10 @@ fn shared_local_interaction_scenario_maps_to_core_host_semantics() {
                     report.inputs(),
                     [HostInputOutcome::ProductActionApplied(
                         DockspaceActionOutcome::Selected {
-                            item: selected,
+                            tab: selected,
                             changed: true,
                         }
-                    )] if *selected == item
+                    )] if selected.item() == Some(item)
                 ));
                 assert_eq!(alias, ItemAlias::Secondary);
                 observations.push(step.expected());
@@ -1239,11 +1255,10 @@ fn private_multi_surface_fixture_commits_and_aborts_complete_rosters_atomically(
         committed.inputs(),
         [HostInputOutcome::ProductActionApplied(
             DockspaceActionOutcome::Selected {
-                item: B,
+                tab: selected_tab,
                 changed: true,
             }
-        )]
-    ));
+        )] if selected_tab.item() == Some(B)));
     assert_eq!(
         committed
             .surface_commits()
@@ -1260,13 +1275,15 @@ fn private_multi_surface_fixture_commits_and_aborts_complete_rosters_atomically(
     assert_eq!(
         tabs_containing(fixture.host.view(), B)
             .expect("the committed primary tabs remain")
-            .selected(),
+            .selected()
+            .and_then(|tab| tab.item()),
         Some(B),
     );
     assert_eq!(
         tabs_containing(fixture.host.view(), C)
             .expect("the untouched target surface remains in the same transaction")
-            .selected(),
+            .selected()
+            .and_then(|tab| tab.item()),
         Some(C),
     );
 
@@ -2075,7 +2092,8 @@ fn private_multi_surface_fixture_unknown_owner_cannot_start_a_drag() {
     assert_eq!(
         tabs_containing(fixture.host.view(), A)
             .expect("the source tabs remain")
-            .items(),
+            .items()
+            .collect::<Vec<_>>(),
         &[A, B],
     );
     assert_eq!(
@@ -2428,7 +2446,8 @@ fn private_multi_surface_fixture_target_destruction_preserves_the_source_drag() 
     assert_eq!(
         tabs_containing(host.view(), B)
             .expect("the release immediately publishes the source item in the fresh target")
-            .items(),
+            .items()
+            .collect::<Vec<_>>(),
         &[B, A],
     );
     let committed_version = host.version();
@@ -2487,7 +2506,8 @@ fn private_multi_surface_fixture_target_destruction_preserves_the_source_drag() 
     assert_eq!(
         tabs_containing(host.view(), B)
             .expect("the fresh target retains the released source item")
-            .items(),
+            .items()
+            .collect::<Vec<_>>(),
         &[B, A],
     );
 }
@@ -2510,13 +2530,13 @@ fn pointer_close_host() -> (DeterministicHost, DockspaceReceiverDescriptor) {
         let close_bounds = program_records(plan)
             .tabs
             .into_iter()
-            .find(|tab| tab.item() == A)
+            .find(|tab| tab.item() == Some(A))
             .and_then(|tab| tab.close_bounds())
             .expect("item A exposes a close control");
         let tab = program_records(plan)
             .tabs
             .into_iter()
-            .find(|tab| tab.item() == A)
+            .find(|tab| tab.item() == Some(A))
             .expect("item A remains in the ordered tab program");
         close = plan.receiver_for_tab_close(tab).filter(|receiver| {
             receiver.role() == DockspaceReceiverRole::TabClose && receiver.bounds() == close_bounds
@@ -2749,7 +2769,7 @@ fn host_report_preserves_application_and_pointer_close_order() {
     let first_plan = match application_first.inputs() {
         [
             HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                item: A,
+                tab,
                 changed: false,
             }),
             HostInputOutcome::CloseRequested {
@@ -2757,7 +2777,7 @@ fn host_report_preserves_application_and_pointer_close_order() {
                 reused: false,
                 origin: HostCloseRequestOrigin::Interaction,
             },
-        ] => plan.clone(),
+        ] if tab.item() == Some(A) => plan.clone(),
         outcomes => panic!("application then pointer order changed: {outcomes:?}"),
     };
     let first_item = first_plan
@@ -2790,10 +2810,10 @@ fn host_report_preserves_application_and_pointer_close_order() {
                 origin: HostCloseRequestOrigin::Interaction,
             },
             HostInputOutcome::ProductActionApplied(DockspaceActionOutcome::Selected {
-                item: A,
+                tab,
                 changed: false,
             }),
-        ] => plan.clone(),
+        ] if tab.item() == Some(A) => plan.clone(),
         outcomes => panic!("pointer then application order changed: {outcomes:?}"),
     };
     let second_item = second_plan
@@ -2879,7 +2899,7 @@ fn runtime_paint_plan_exposes_complete_stable_renderer_geometry() {
 
         let tabs = records.tabs;
         assert_eq!(
-            tabs.iter().map(|tab| tab.item()).collect::<Vec<_>>(),
+            tabs.iter().filter_map(|tab| tab.item()).collect::<Vec<_>>(),
             [A, B]
         );
         assert!(tabs.iter().all(|tab| tab.selected()));
@@ -3295,13 +3315,14 @@ fn ogc_02_merge_and_close_select_the_visual_successor_atomically() {
         select.inputs(),
         [HostInputOutcome::ProductActionApplied(
             DockspaceActionOutcome::Selected {
-                item: B,
+                tab: selected_tab,
                 changed: true,
             }
-        )]
-    ));
+        )] if selected_tab.item() == Some(B)));
     assert_eq!(
-        tabs_containing(host.view(), B).and_then(DockspaceTabsView::selected),
+        tabs_containing(host.view(), B)
+            .and_then(DockspaceTabsView::selected)
+            .and_then(|tab| tab.item()),
         Some(B)
     );
 
@@ -3322,7 +3343,9 @@ fn ogc_02_merge_and_close_select_the_visual_successor_atomically() {
         )] if items == &[X]
     ));
     assert_eq!(
-        tabs_containing(host.view(), X).and_then(DockspaceTabsView::selected),
+        tabs_containing(host.view(), X)
+            .and_then(DockspaceTabsView::selected)
+            .and_then(|tab| tab.item()),
         Some(X),
         "merging a selected source makes the moved item current"
     );
@@ -3364,8 +3387,8 @@ fn ogc_02_merge_and_close_select_the_visual_successor_atomically() {
     ));
 
     let tabs = tabs_containing(host.view(), B).expect("the target tabs remain");
-    assert_eq!(tabs.items(), &[A, B, C]);
-    assert_eq!(tabs.selected(), Some(C));
+    assert_eq!(tabs.items().collect::<Vec<_>>(), &[A, B, C]);
+    assert_eq!(tabs.selected().and_then(|tab| tab.item()), Some(C));
     assert!(tabs_containing(host.view(), X).is_none());
 }
 
@@ -3851,13 +3874,15 @@ fn ogc_03_release_on_first_target_hit_commits_without_a_painted_preview() {
     assert_eq!(
         tabs_containing(fixture.host.view(), C)
             .expect("the first-hit release publishes the source item in the target tabs")
-            .items(),
+            .items()
+            .collect::<Vec<_>>(),
         &[C, A],
     );
     assert_eq!(
         tabs_containing(fixture.host.view(), B)
             .expect("the first-hit release preserves the remaining source item")
-            .items(),
+            .items()
+            .collect::<Vec<_>>(),
         &[B],
     );
     let committed = fixture.host.version();
@@ -3955,7 +3980,7 @@ fn ogc_03_current_painted_preview_commits_exactly_once() {
     assert!(!fixture.host.session.has_pending_presentation());
     let target_tabs = tabs_containing(fixture.host.view(), C)
         .expect("the delivered target tabs remain product-visible");
-    assert_eq!(target_tabs.items(), &[C, A]);
+    assert_eq!(target_tabs.items().collect::<Vec<_>>(), &[C, A]);
 
     let committed = fixture.host.version();
     let metrics = fixture.metrics;
@@ -3992,7 +4017,8 @@ fn ogc_03_current_painted_preview_commits_exactly_once() {
     assert_eq!(
         tabs_containing(fixture.host.view(), C)
             .expect("dropping the output preserves the committed dock")
-            .items(),
+            .items()
+            .collect::<Vec<_>>(),
         &[C, A],
     );
 }
@@ -4177,7 +4203,8 @@ fn managed_native_pointer_uses_synchronous_product_receiver_resolution() {
     assert_eq!(
         tabs_containing(host.view(), B)
             .expect("item B remains in one tabs group")
-            .selected(),
+            .selected()
+            .and_then(|tab| tab.item()),
         Some(B),
         "the resolved native click selects the inactive tab"
     );

@@ -293,17 +293,33 @@ fn targeting(pointer: SurfacePointerId, enabled: bool) -> HostPointerInput<'stat
 fn assert_undocked(session: &DockspaceSession) {
     let view = session.view();
     assert_eq!(view.item(FIRST).unwrap().surface(), A);
-    assert_eq!(view.item(FIRST).unwrap().tabs().items(), &[FIRST, SECOND]);
+    assert_eq!(
+        view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>(),
+        &[FIRST, SECOND]
+    );
     assert_eq!(view.item(THIRD).unwrap().surface(), B);
-    assert_eq!(view.item(THIRD).unwrap().tabs().items(), &[THIRD, FOURTH]);
+    assert_eq!(
+        view.item(THIRD).unwrap().tabs().items().collect::<Vec<_>>(),
+        &[THIRD, FOURTH]
+    );
 }
 
 fn assert_docked(session: &DockspaceSession, items: &[ItemId]) {
     let view = session.view();
     assert_eq!(view.item(FIRST).unwrap().surface(), B);
-    assert_eq!(view.item(FIRST).unwrap().tabs().items(), items);
+    assert_eq!(
+        view.item(FIRST).unwrap().tabs().items().collect::<Vec<_>>(),
+        items
+    );
     assert_eq!(view.item(SECOND).unwrap().surface(), A);
-    assert_eq!(view.item(SECOND).unwrap().tabs().items(), &[SECOND]);
+    assert_eq!(
+        view.item(SECOND)
+            .unwrap()
+            .tabs()
+            .items()
+            .collect::<Vec<_>>(),
+        &[SECOND]
+    );
     assert!(!session.has_active_gesture());
 }
 

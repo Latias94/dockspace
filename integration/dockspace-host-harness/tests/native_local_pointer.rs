@@ -310,10 +310,12 @@ fn render(
                 operation: Operation::Tab(tab),
                 ..
             } => {
-                if let Some(receiver) = plan.receiver_for_tab_body(tab) {
+                if let Some(item) = tab.item()
+                    && let Some(receiver) = plan.receiver_for_tab_body(tab)
+                {
                     assert_eq!(receiver.role(), DockspaceReceiverRole::TabBody);
                     tabs.push(RecordedTab {
-                        item: tab.item(),
+                        item,
                         receiver,
                         visible: tab.visible_bounds(),
                     });
@@ -419,7 +421,13 @@ fn fixture() -> (DockspaceSession, [NativeSurfaceBinding; 2], Scene) {
 }
 
 fn order(session: &DockspaceSession) -> Vec<ItemId> {
-    session.view().item(FIRST).unwrap().tabs().items().to_vec()
+    session
+        .view()
+        .item(FIRST)
+        .unwrap()
+        .tabs()
+        .items()
+        .collect::<Vec<_>>()
 }
 
 fn sample(
@@ -592,7 +600,13 @@ fn size_only_reorder_retries_the_release_frame_and_settles_its_output_without_re
             .unwrap();
         render(&mut abandoned, A, geometry()).assert_preview(false);
         assert_eq!(
-            abandoned.view().item(FIRST).unwrap().tabs().items(),
+            abandoned
+                .view()
+                .item(FIRST)
+                .unwrap()
+                .tabs()
+                .items()
+                .collect::<Vec<_>>(),
             [SECOND, THIRD, FIRST]
         );
     }

@@ -99,7 +99,8 @@ fn tab_list_menu_rows_route_native_click_and_drag_after_ui_zoom() {
                                 frame_point = Some(
                                     LogicalPoint::new(bounds.x() + 1.0, bounds.y() + 1.0).unwrap(),
                                 );
-                                let row = menu.rows().find(|row| row.item() == SECOND).unwrap();
+                                let row =
+                                    menu.rows().find(|row| row.item() == Some(SECOND)).unwrap();
                                 assert!(!row.selected());
                                 let bounds = row.interaction_bounds().unwrap();
                                 row_point = Some(

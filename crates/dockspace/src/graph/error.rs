@@ -9,7 +9,7 @@ use crate::graph::Axis;
 use crate::graph::canonical::CanonicalizationError;
 use crate::graph::command::{EdgeTargetScope, RootReference};
 use crate::graph::validation::WorkspaceValidationErrors;
-use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId};
+use crate::ids::{FloatingPresentationId, ItemId, NodeId, RootId, SurfaceId, TabKey};
 use crate::policy::{CloseCapability, PolicyRejection};
 
 /// Whether a frozen node reference is used as a source or target.
@@ -64,6 +64,12 @@ pub enum CommandError {
     /// A tabs node does not contain the requested item.
     #[error("tabs node {tabs:?} does not contain item {item}")]
     ItemNotInTabs { tabs: NodeId, item: ItemId },
+    /// A tabs container does not contain the requested direct child.
+    #[error("tabs node {tabs:?} does not contain tab {tab:?}")]
+    TabNotInTabs { tabs: NodeId, tab: TabKey },
+    /// This graph slice cannot yet own a layout child inside Tabs.
+    #[error("tabs node {tabs:?} contains unsupported layout tab {tab:?}")]
+    UnsupportedLayoutTab { tabs: NodeId, tab: TabKey },
     /// Opening an item would duplicate application ownership.
     #[error("item {item} is already open")]
     ItemAlreadyOpen { item: ItemId },
@@ -262,6 +268,8 @@ impl CommandError {
             | Self::EdgeTargetScopeMismatch { .. }
             | Self::NodeIsNotSplit { .. }
             | Self::ItemNotInTabs { .. }
+            | Self::TabNotInTabs { .. }
+            | Self::UnsupportedLayoutTab { .. }
             | Self::ItemAlreadyOpen { .. }
             | Self::ItemHidden { .. }
             | Self::TabIndexOutOfBounds { .. }

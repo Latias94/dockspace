@@ -57,7 +57,7 @@ fn a_surface_binding_only_stores_its_own_pane_selections() {
         plan.selection.capacity() < 128,
         "global slot indices must not size a surface binding"
     );
-    assert_eq!(plan.selected_in_tabs(tabs), Some(item));
+    assert_eq!(plan.selected_in_tabs(tabs), Some(item.into()));
 
     let mut rebound_fixture = plan.clone();
     rebound_fixture.bind_workspace_selection(engine.workspace());
