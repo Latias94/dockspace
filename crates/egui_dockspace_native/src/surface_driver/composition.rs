@@ -300,7 +300,10 @@ mod tests {
         use dockspace::runtime::{DockspaceSession, SurfacePresentationResult};
         use egui_dockspace::{DockStyle, PaneView, native_support};
 
-        struct Panes(bool);
+        struct Panes {
+            custom: bool,
+            menu_button: Option<(egui::Id, egui::Rect, egui::Rect, bool)>,
+        }
         impl PaneView for Panes {
             fn title(&self, _: ItemId) -> Option<egui::WidgetText> {
                 Some("Placed product pane".into())
@@ -310,7 +313,7 @@ mod tests {
             }
 
             fn customize_menu(&self, menu: &mut egui_dockspace::DockMenu) {
-                if self.0 {
+                if self.custom {
                     menu.items.insert(
                         0,
                         egui_dockspace::DockMenuItem::custom(
@@ -320,8 +323,32 @@ mod tests {
                     );
                 }
             }
+
+            fn menu_button_ui(
+                &mut self,
+                ui: &egui::Ui,
+                button: &egui_dockspace::DockMenuButton<'_>,
+            ) {
+                if button.kind == egui_dockspace::DockMenuButtonKind::Layout {
+                    assert_eq!(button.context.surface, SurfaceId::new(1));
+                    assert_eq!(button.context.root, RootId::new(1));
+                    assert_eq!(button.context.target, egui_dockspace::DockMenuTarget::Root);
+                    assert!(button.rect.contains_rect(ui.clip_rect()));
+                    self.menu_button =
+                        Some((button.response.id, button.rect, ui.clip_rect(), button.open));
+                }
+                let mut appearance = *button;
+                if self.custom {
+                    appearance.fill = egui::Color32::from_rgb(30, 120, 100);
+                    appearance.corner_radius = egui::CornerRadius::same(5);
+                }
+                appearance.paint(ui);
+            }
         }
-        let mut panes = Box::new(Panes(custom));
+        let mut panes = Box::new(Panes {
+            custom,
+            menu_button: None,
+        });
         let command_label = if custom {
             "Application tool"
         } else {
@@ -365,6 +392,7 @@ mod tests {
         let mut final_geometry = None;
         let mut click = None;
         for phase in 0..7 {
+            panes.menu_button = None;
             let mut frame = session.begin_host_frame().unwrap();
             let mut paint = None;
             let mut output = context.run_ui(
@@ -444,6 +472,18 @@ mod tests {
                 })
                 .unwrap();
             anchor = Some(*anchor_id);
+            let (button_id, button_rect, clip, expanded) = panes.menu_button.unwrap();
+            assert_eq!(button_id.value(), anchor_id.0);
+            assert_eq!(expanded, anchor_node.is_expanded().unwrap());
+            assert_eq!(expanded, (1..5).contains(&phase));
+            if custom {
+                let mapping = NativePaintMapping::new(placement, 1.0, viewport).unwrap();
+                assert!(output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::Shape::Rect(rect)
+                        if rect.rect == mapping.transform * button_rect && rect.fill == egui::Color32::from_rgb(30, 120, 100))
+                        && shape.clip_rect == mapping.transform * clip
+                }), "native output must transform the boxed provider's button paint and clip together: phase={phase}");
+            }
             if (2..=4).contains(&phase) {
                 let (item_id, item) = nodes
                     .iter()

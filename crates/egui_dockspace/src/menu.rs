@@ -1,10 +1,79 @@
 //! Optional customization of the adapter's presentation menus.
 
-use egui::Id;
+use egui::{Color32, CornerRadius, Id, Rect, Response, Ui};
 
 use crate::{ItemId, RootId, SurfaceId, TabBarId, TabGroupDockMode, TabKey};
 
 pub use dockspace::runtime::DockspacePresentationCommandKind;
+
+mod icons;
+
+/// The menu opened by an adapter-owned button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DockMenuButtonKind {
+    /// Actions for the complete layout, including a contained floating layout.
+    Layout,
+    /// Actions for one tab group.
+    TabGroup,
+    /// The overflow list of one group's open tabs.
+    TabList,
+}
+
+/// Paint-only customization of an adapter-owned menu button.
+///
+/// The adapter retains hit testing, popup placement, focus and accessibility.
+/// Paint within the supplied Ui's clip without registering another control.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct DockMenuButton<'a> {
+    /// Which menu this control opens.
+    pub kind: DockMenuButtonKind,
+    /// Logical surface, root and subject of the menu.
+    pub context: DockMenuContext,
+    /// Core-owned drawing allocation; hit bounds are in [`Self::response`].
+    pub rect: Rect,
+    /// Adapter-owned interaction, including hover, press and keyboard focus.
+    pub response: &'a Response,
+    /// Whether the adapter currently allows this control to accept input.
+    pub enabled: bool,
+    /// Whether this button's menu is open in the current pass.
+    pub open: bool,
+    /// Resolved background color; idle action buttons are transparent.
+    pub fill: Color32,
+    /// Resolved icon color, before the supplied Ui's opacity.
+    pub icon_color: Color32,
+    /// Default background rounding, independent of the hit bounds.
+    pub corner_radius: CornerRadius,
+}
+
+impl DockMenuButton<'_> {
+    /// Paints the default background and scope-specific icon.
+    pub fn paint(&self, ui: &Ui) {
+        self.paint_background(ui);
+        self.paint_icon(ui);
+    }
+
+    /// Paints the resolved background, for use with an application icon.
+    pub fn paint_background(&self, ui: &Ui) {
+        ui.painter_at(self.rect)
+            .rect_filled(self.rect, self.corner_radius, self.fill);
+    }
+
+    /// Paints the default icon, for use with an application background.
+    pub fn paint_icon(&self, ui: &Ui) {
+        let painter = ui.painter_at(self.rect);
+        match self.kind {
+            DockMenuButtonKind::Layout => {
+                icons::layout_actions(&painter, self.rect, self.icon_color)
+            }
+            DockMenuButtonKind::TabGroup => {
+                icons::group_actions(&painter, self.rect, self.icon_color)
+            }
+            DockMenuButtonKind::TabList => icons::tab_list(&painter, self.rect, self.icon_color),
+        }
+    }
+}
 
 /// The exact subject of the open menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

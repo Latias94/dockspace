@@ -1072,6 +1072,19 @@ and adds an icon and display title to its nested layout tab.
 
 ### Presentation menus
 
+`PaneView::menu_button_ui` customizes layout-action buttons, tab-group action
+buttons and overflow tab-list buttons. `DockMenuButton` supplies their kind,
+logical context, allocation, response, enablement and current expanded state.
+Call `button.paint(ui)` for defaults, use `paint_background` or `paint_icon`
+to replace one part, or draw your own appearance inside the supplied clip.
+The workbench's **Custom tabs** mode uses horizontal group dots, rounded
+backgrounds and an expanded-state accent.
+
+The adapter retains the hit target, popup placement, keyboard focus outline
+and accessibility. Paint without registering another widget or changing focus
+or popup state. The callback changes appearance within the existing allocation;
+it does not relocate the button or alter layout measurements.
+
 `PaneView::customize_menu` receives an open tab, tab group, root or active-pane
 menu. `menu.context()` identifies its exact subject and logical surface.
 Reorder, relabel or remove supplied rows, set `item.enabled` to disable a row,

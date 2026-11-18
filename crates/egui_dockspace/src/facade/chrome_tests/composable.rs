@@ -191,9 +191,11 @@ fn layout_tab_title_and_width_feed_the_tab_overflow_and_drag_ghost() {
     for _ in 0..2 {
         output = narrow(&mut dockspace, &mut panes, Vec::new());
     }
+    // Both nested strips overflow; AccessKit node order does not identify the outer strip.
     let list = nodes(&output)
         .iter()
-        .find(|(_, node)| node.label() == Some("List tabs"))
+        .filter(|(_, node)| node.role() == Role::Button && node.label() == Some("List tabs"))
+        .min_by(|(_, a), (_, b)| a.bounds().unwrap().y0.total_cmp(&b.bounds().unwrap().y0))
         .unwrap()
         .0;
     narrow(

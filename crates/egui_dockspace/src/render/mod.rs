@@ -8,7 +8,6 @@ use std::collections::BTreeSet;
 use std::marker::PhantomData;
 
 mod actions;
-mod chrome_icons;
 mod contained;
 mod drag_feedback;
 mod drag_grip;
@@ -38,13 +37,13 @@ use dockspace::runtime::{
 };
 #[cfg(test)]
 use dockspace::runtime::{DockspaceDropDirection, DockspaceVisualId};
-use egui::{Color32, Id, Response, Sense, Shape, Stroke, StrokeKind, Ui};
+use egui::{Color32, Id, Response, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder};
 
 use crate::pane::{PaneFocusState, PaneView};
 use crate::pass_settlement::PendingPaneFocusObservation;
 use crate::response::{DockspaceCapability, DockspaceUnavailableReason};
 use crate::style::{DockStyle, ResolvedDockVisuals};
-use crate::{DockInputConfig, DockMenuAction};
+use crate::{DockInputConfig, DockMenuAction, DockMenuButton};
 
 #[cfg(feature = "native-render-support")]
 pub(crate) use measurement::measure_surface;
@@ -151,6 +150,27 @@ struct RenderContext<'ui, 'plan, 'scroll> {
 }
 
 impl RenderContext<'_, '_, '_> {
+    fn paint_menu_button(&mut self, button: &DockMenuButton<'_>) {
+        let mut child = self.ui.new_child(
+            UiBuilder::new()
+                .id_salt((button.response.id, "paint"))
+                .max_rect(button.rect),
+        );
+        child.set_clip_rect(self.ui.clip_rect().intersect(button.rect));
+        if !button.enabled && child.is_enabled() {
+            child.disable();
+        }
+        self.panes.menu_button_ui(&child, button);
+        if button.enabled && button.response.has_focus() {
+            self.ui.painter_at(button.rect).rect_stroke(
+                button.rect,
+                button.corner_radius,
+                self.visuals.tab_focus_stroke,
+                StrokeKind::Inside,
+            );
+        }
+    }
+
     fn response_emphasized(response: &Response) -> bool {
         response.sense.interactive()
             && (response.is_pointer_button_down_on()

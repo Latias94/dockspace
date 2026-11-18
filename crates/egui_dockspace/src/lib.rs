@@ -153,8 +153,8 @@ pub use error::{DockspaceError, DockspaceErrorKind};
 pub use facade::Dockspace;
 pub use input::{DockInputConfig, DockingActivation, SplitterDoubleClick};
 pub use menu::{
-    DockMenu, DockMenuAction, DockMenuContext, DockMenuItem, DockMenuItemKind, DockMenuTarget,
-    DockspacePresentationCommandKind,
+    DockMenu, DockMenuAction, DockMenuButton, DockMenuButtonKind, DockMenuContext, DockMenuItem,
+    DockMenuItemKind, DockMenuTarget, DockspacePresentationCommandKind,
 };
 pub use pane::{PaneFocusState, PaneResponse, PaneView};
 pub use pass_settlement::{DockspaceOutput, DockspaceOutputReceipt, run_ui};

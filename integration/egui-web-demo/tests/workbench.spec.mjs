@@ -475,6 +475,12 @@ test('tab presets switch live, follow themes and retain custom tabs and docking'
   await clickControl(page, 'Cycle tab accent');
   await expect.poll(async () => (await state(page)).tabAccent).toBe(beforeMenu.tabAccent + 1);
   expect((await state(page)).version).toBe(beforeMenu.version);
+  await clickControl(page, 'Tab group actions');
+  await expect.poll(async () => (await state(page)).controls.some(node =>
+    node.role === 'MenuItem' && node.label === 'Cycle tab accent')).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => (await state(page)).controls.some(node =>
+    node.role === 'MenuItem' && node.label === 'Cycle tab accent')).toBe(false);
   await mergeLeft(page, 'Preview', [3, 2]);
   expect((await state(page)).editorText).toBe(original.editorText);
   expect(errors).toEqual([]);

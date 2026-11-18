@@ -8,10 +8,12 @@ use dockspace::runtime::{
     TabBarPaintRecord, TabPaintRecord,
 };
 use egui::accesskit::{Action, HasPopup, Role};
-use egui::{Id, Key, PointerButton, Popup, Response, Sense, StrokeKind};
+use egui::{Color32, CornerRadius, Id, Key, PointerButton, Popup, Response, Sense};
 
 use crate::touch_menu::take_touch_context_menu;
-use crate::{DockMenuAction, DockMenuTarget, TabBarId};
+use crate::{
+    DockMenuAction, DockMenuButton, DockMenuButtonKind, DockMenuContext, DockMenuTarget, TabBarId,
+};
 
 use super::RenderContext;
 use super::actions::{effective_enabled, unambiguous_pointer_click};
@@ -272,32 +274,44 @@ fn paint_scoped(
             data.remove::<MenuPage>(popup_id.with("page"));
         });
     }
+    if menu_open || (ui_enabled && response.clicked()) {
+        paint_menu(context, scope, &response, !touch_requested)?;
+    }
+    let menu_open = Popup::is_id_open(context.ui.ctx(), popup_id);
     if !disposition.is_source_gap() {
-        match scope {
-            Scope::Root(anchor) => paint_anchor_icon(context, anchor, contained, bounds, &response),
-            Scope::Tabs(_) => {
-                if RenderContext::response_emphasized(&response) {
-                    context.ui.painter().rect_filled(
-                        bounds,
-                        2.0,
-                        context.interaction_fill(&response),
-                    );
-                }
-                let color = context
-                    .interaction_stroke(&response, context.style.visuals.tab_text_color)
-                    .color;
-                super::chrome_icons::group_actions(context.ui, bounds, color);
+        let (kind, emphasized_fill, icon_color) = match scope {
+            Scope::Root(anchor) => {
+                let (fill, color) = anchor_colors(context, anchor, contained, &response);
+                (DockMenuButtonKind::Layout, fill, color)
             }
-            Scope::Tab(_) | Scope::Pane(_) => {}
-        }
-        if ui_enabled && response.has_focus() {
-            context.ui.painter_at(bounds).rect_stroke(
-                bounds,
-                2.0,
-                context.visuals.tab_focus_stroke,
-                StrokeKind::Inside,
-            );
-        }
+            Scope::Tabs(_) => (
+                DockMenuButtonKind::TabGroup,
+                context.interaction_fill(&response),
+                context
+                    .interaction_stroke(&response, context.style.visuals.tab_text_color)
+                    .color,
+            ),
+            Scope::Tab(_) | Scope::Pane(_) => return Ok(()),
+        };
+        context.paint_menu_button(&DockMenuButton {
+            kind,
+            context: DockMenuContext {
+                surface: context.plan.surface(),
+                root: scope.root(),
+                target: scope.target(),
+            },
+            rect: bounds,
+            response: &response,
+            enabled: ui_enabled,
+            open: menu_open,
+            fill: if RenderContext::response_emphasized(&response) {
+                emphasized_fill
+            } else {
+                Color32::TRANSPARENT
+            },
+            icon_color,
+            corner_radius: CornerRadius::same(2),
+        });
     }
     context.ui.ctx().accesskit_node_builder(id, |node| {
         node.set_role(Role::Button);
@@ -313,10 +327,7 @@ fn paint_scoped(
             node.clear_actions();
         }
     });
-    if !menu_open && (!ui_enabled || !response.clicked()) {
-        return Ok(());
-    }
-    paint_menu(context, scope, &response, !touch_requested)
+    Ok(())
 }
 
 fn paint_menu(
@@ -503,13 +514,12 @@ fn paint_menu(
     Ok(())
 }
 
-fn paint_anchor_icon(
+fn anchor_colors(
     context: &RenderContext<'_, '_, '_>,
     anchor: PresentationMenuAnchorPaintRecord<'_>,
     contained: Option<ContainedPaintRecord<'_>>,
-    bounds: egui::Rect,
     response: &egui::Response,
-) {
+) -> (Color32, Color32) {
     let (emphasized_fill, idle_color) = match anchor.kind() {
         DockspacePresentationMenuAnchorKind::TabBar
         | DockspacePresentationMenuAnchorKind::RootControls => (
@@ -532,12 +542,6 @@ fn paint_anchor_icon(
             )
         }
     };
-    if RenderContext::response_emphasized(response) {
-        context
-            .ui
-            .painter()
-            .rect_filled(bounds, 2.0, emphasized_fill);
-    }
     let color = context.interaction_stroke(response, idle_color).color;
-    super::chrome_icons::layout_actions(context.ui, bounds, color);
+    (emphasized_fill, color)
 }

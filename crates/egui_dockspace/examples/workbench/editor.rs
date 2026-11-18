@@ -4,11 +4,11 @@ use std::collections::BTreeMap;
 
 use egui::{Color32, Context, FontId, Frame, Margin, TextStyle, Theme};
 use egui_dockspace::{
-    CloseDecision, CloseItemDecisionState, DockMenu, DockMenuAction, DockStyle, Dockspace,
-    DockspaceAxis, DockspaceContainedLayout, DockspaceError, DockspaceLayout, DockspaceNode,
-    DockspaceOutput, DockspaceResponse, DockspaceRootLayout, DockspaceSurfaceLayout, DragPreview,
-    DropGuide, FloatingPresentationId, ItemId, LogicalRect, PaneResponse, PaneSizing, PaneView,
-    RootId, SurfaceId, Tab, TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose, TabKey,
+    CloseDecision, CloseItemDecisionState, DockMenu, DockMenuAction, DockMenuButton, DockStyle,
+    Dockspace, DockspaceAxis, DockspaceContainedLayout, DockspaceError, DockspaceLayout,
+    DockspaceNode, DockspaceOutput, DockspaceResponse, DockspaceRootLayout, DockspaceSurfaceLayout,
+    DragPreview, DropGuide, FloatingPresentationId, ItemId, LogicalRect, PaneResponse, PaneSizing,
+    PaneView, RootId, SurfaceId, Tab, TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose, TabKey,
     TabStylePreset, TabVisuals,
 };
 
@@ -359,6 +359,10 @@ impl PaneView for DemoPanes {
 
     fn tab_close_ui(&mut self, ui: &egui::Ui, close: &TabClose<'_>) {
         tabs::tab_close_ui(self, ui, close);
+    }
+
+    fn menu_button_ui(&mut self, ui: &egui::Ui, button: &DockMenuButton<'_>) {
+        tabs::menu_button_ui(self, ui, button);
     }
 
     fn customize_menu(&self, menu: &mut DockMenu) {

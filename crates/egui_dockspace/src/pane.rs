@@ -6,7 +6,8 @@ use egui::{Context, Id, Response, Ui, WidgetText};
 
 use crate::tab::{Tab, TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose, TabVisuals};
 use crate::{
-    DockMenu, DockMenuAction, DragPreview, DropGuide, DropPreview, PaneSizing, Splitter, TabKey,
+    DockMenu, DockMenuAction, DockMenuButton, DragPreview, DropGuide, DropPreview, PaneSizing,
+    Splitter, TabKey,
 };
 
 /// Ordinary application-content registrations produced by one pane callback.
@@ -204,6 +205,17 @@ pub trait PaneView {
         splitter.paint(painter);
     }
 
+    /// Paints a layout, tab-group or tab-list menu button.
+    ///
+    /// Call [`DockMenuButton::paint`] for defaults, or replace the background
+    /// and icon within the supplied clipped Ui. The descriptor includes the
+    /// existing response and current expanded state. The adapter retains input,
+    /// popup placement, the keyboard focus outline and accessibility. Do not
+    /// register another widget or change focus or popup state here.
+    fn menu_button_ui(&mut self, ui: &Ui, button: &DockMenuButton<'_>) {
+        button.paint(ui);
+    }
+
     /// Edits the title and ordered rows of an open presentation menu page.
     ///
     /// Retain, reorder or relabel the supplied rows, or insert a
@@ -390,6 +402,10 @@ impl<T: PaneView + ?Sized> PaneView for Box<T> {
 
     fn splitter_ui(&mut self, painter: &egui::Painter, splitter: &Splitter) {
         (**self).splitter_ui(painter, splitter);
+    }
+
+    fn menu_button_ui(&mut self, ui: &Ui, button: &DockMenuButton<'_>) {
+        (**self).menu_button_ui(ui, button);
     }
 
     fn customize_menu(&self, menu: &mut DockMenu) {

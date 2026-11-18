@@ -79,6 +79,8 @@ adapter input behavior. Guide callbacks expose a stable ID for color/opacity
 animation while core retains hit geometry. Paint the supplied candidate preview,
 including its future tab order.
 
+Use `menu_button_ui` to paint layout, group and overflow menu buttons inside
+their supplied clip; input, popup placement and focus remain adapter-owned.
 Customize the existing menus with `customize_menu` and handle application
 rows in `on_menu_action`. Use the menu context and stable item kinds to edit
 rows, and queue workspace commands for outside the callback. Use `splitter_ui`

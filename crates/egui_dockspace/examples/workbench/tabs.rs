@@ -2,8 +2,9 @@
 
 use egui::{Color32, CornerRadius, Id, Rect, Stroke, Ui, pos2, vec2};
 use egui_dockspace::{
-    DockMenu, DockMenuAction, DockMenuItem, DockMenuTarget, DockspaceDropEligibility, DragPreview,
-    DropGuide, Tab, TabBar, TabBarSlot, TabClose, TabVisuals,
+    DockMenu, DockMenuAction, DockMenuButton, DockMenuButtonKind, DockMenuItem, DockMenuTarget,
+    DockspaceDropEligibility, DragPreview, DropGuide, Tab, TabBar, TabBarSlot, TabClose,
+    TabVisuals,
 };
 
 use super::DemoPanes;
@@ -39,6 +40,35 @@ pub(super) fn on_menu_action(panes: &mut DemoPanes, action: DockMenuAction) {
 
 fn cycle_accent(panes: &mut DemoPanes) {
     panes.tab_accent = (panes.tab_accent + 1) % ACCENTS.len();
+}
+
+pub(super) fn menu_button_ui(panes: &DemoPanes, ui: &Ui, button: &DockMenuButton<'_>) {
+    if !panes.custom_tabs {
+        button.paint(ui);
+        return;
+    }
+    let accent = ACCENTS[panes.tab_accent];
+    let mut appearance = *button;
+    appearance.corner_radius = CornerRadius::same(5);
+    if button.enabled {
+        appearance.icon_color = accent;
+        if button.open {
+            appearance.fill = ui.visuals().window_fill().lerp_to_gamma(accent, 0.18);
+        }
+    }
+    appearance.paint_background(ui);
+    if button.kind == DockMenuButtonKind::TabGroup {
+        let spacing = button.rect.width().min(button.rect.height()) * 0.18;
+        for column in [-1.0, 0.0, 1.0] {
+            ui.painter().circle_filled(
+                button.rect.center() + vec2(column * spacing, 0.0),
+                1.2,
+                appearance.icon_color,
+            );
+        }
+    } else {
+        appearance.paint_icon(ui);
+    }
 }
 
 pub(super) fn tab_ui(panes: &DemoPanes, ui: &Ui, tab: &Tab<'_>) -> TabVisuals {

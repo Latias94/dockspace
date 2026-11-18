@@ -8,6 +8,8 @@ use dockspace::runtime::{
 use egui::accesskit::{Action, HasPopup, Role};
 use egui::{Id, PointerButton, Rect, Sense, Stroke, pos2, vec2};
 
+use crate::{DockMenuButton, DockMenuButtonKind, DockMenuContext, DockMenuTarget, TabBarId};
+
 mod keyboard;
 
 use super::RenderContext;
@@ -96,7 +98,7 @@ fn tab_list_menu_trigger_id(context: &RenderContext<'_, '_, '_>, tab_bar: Docksp
 }
 
 fn paint_control(
-    context: &RenderContext<'_, '_, '_>,
+    context: &mut RenderContext<'_, '_, '_>,
     control: TabStripControlPaintRecord,
     bounds: Rect,
     response: &egui::Response,
@@ -113,14 +115,17 @@ fn paint_control(
             .interaction_stroke(response, context.style.visuals.tab_text_color)
             .color
     } else {
-        let alpha = if context.ui.is_enabled() {
+        let alpha = if context.ui.is_enabled() && control.kind() != TabStripControlKind::TabListMenu
+        {
             context.ui.visuals().disabled_alpha
         } else {
             1.0
         };
         context.visuals.tab_text_color.gamma_multiply(alpha)
     };
-    context.ui.painter().rect_filled(bounds, 0.0, fill);
+    if control.kind() != TabStripControlKind::TabListMenu {
+        context.ui.painter().rect_filled(bounds, 0.0, fill);
+    }
     match control.kind() {
         TabStripControlKind::ScrollBackward | TabStripControlKind::ScrollForward => {
             let direction = if control.kind() == TabStripControlKind::ScrollBackward {
@@ -146,7 +151,21 @@ fn paint_control(
             );
         }
         TabStripControlKind::TabListMenu => {
-            super::chrome_icons::tab_list(context.ui, bounds, color);
+            context.paint_menu_button(&DockMenuButton {
+                kind: DockMenuButtonKind::TabList,
+                context: DockMenuContext {
+                    surface: context.plan.surface(),
+                    root: control.root(),
+                    target: DockMenuTarget::TabGroup(TabBarId(control.tab_bar_visual_id())),
+                },
+                rect: bounds,
+                response,
+                enabled,
+                open: control.menu_open(),
+                fill,
+                icon_color: color,
+                corner_radius: egui::CornerRadius::ZERO,
+            });
         }
         TabStripControlKind::RevealTabBar => {
             let inset = bounds.width().min(bounds.height()) * 0.15;
