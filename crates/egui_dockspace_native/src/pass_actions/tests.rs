@@ -455,6 +455,9 @@ fn touch_menu_survives_aborted_outputs_and_retires_only_its_exact_publication(
         .render(Vec::new(), Vec::new())
         .1
         .drop_without_applying_deltas();
+    // Commit the actual output receipt before binding a receiver to it. A
+    // descriptor-only candidate cannot publish presentation on the session.
+    fixture.submit(Vec::new());
     let descriptor = fixture
         .session
         .begin_host_frame()
@@ -506,6 +509,12 @@ fn touch_menu_survives_aborted_outputs_and_retires_only_its_exact_publication(
     }
     let request = request.expect("a real armed contact produces the exact typed-tab request");
     assert_eq!(request.tab(), Some(SECOND.into()));
+    let retirement = fixture
+        .session
+        .disable_host_pointer()
+        .unwrap()
+        .expect("the completed host-local contact retires before native enrollment");
+    assert!(retirement.manipulation_feedback().is_empty());
     fixture
         .session
         .enable_managed_native_host(NativePointerRoster::Unknown)
