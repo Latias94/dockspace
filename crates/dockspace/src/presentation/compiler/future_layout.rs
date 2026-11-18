@@ -9,7 +9,7 @@ use super::surface::{
     clip_rect, compose_root_sizing, operable_tab_chrome, tab_strip_optional_chrome_layout,
 };
 use super::tab_strip_layout::{TabStripFlow, desired_tab_width, select_menu_host};
-use crate::geometry::{GeometryError, LogicalRect, PaneSizing};
+use crate::geometry::{GeometryError, LogicalPoint, LogicalRect, PaneSizing};
 use crate::graph::command::{MovePayload, TabTarget};
 use crate::graph::error::CommandError;
 use crate::graph::workspace::RootPresentationOwner;
@@ -269,12 +269,12 @@ pub(crate) fn project_future_tab_strip(
         }
     };
 
-    let tab_height = config.tab_bar_height().min(node_bounds.height());
-    let bar = LogicalRect::new(
-        node_bounds.x(),
-        node_bounds.y(),
-        node_bounds.width(),
-        tab_height,
+    let bar = LogicalRect::from_min_max(
+        node_bounds.min(),
+        LogicalPoint::new(
+            node_bounds.max().x(),
+            node_bounds.inset_top(config.tab_bar_height())?.y(),
+        )?,
     )?;
     if bar.width() <= 0.0 || bar.height() <= 0.0 {
         return Ok(FutureTabStripProjection {
@@ -464,11 +464,12 @@ fn future_presentation_menu_tab_bar(
             .ok_or(FutureLayoutProjectionError::TargetRootNotPresented { root })?
             .bounds();
         let node_bounds = clip_rect(projected_bounds, root_bounds)?;
-        let bar = LogicalRect::new(
-            node_bounds.x(),
-            node_bounds.y(),
-            node_bounds.width(),
-            config.tab_bar_height().min(node_bounds.height()),
+        let bar = LogicalRect::from_min_max(
+            node_bounds.min(),
+            LogicalPoint::new(
+                node_bounds.max().x(),
+                node_bounds.inset_top(config.tab_bar_height())?.y(),
+            )?,
         )?;
         if bar.width() <= 0.0 || bar.height() <= 0.0 {
             return Ok(None);

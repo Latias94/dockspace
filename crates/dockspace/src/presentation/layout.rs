@@ -1388,13 +1388,7 @@ fn project_subtree(
                     let (selected, inset) =
                         tab_projections.get(&row).copied().unwrap_or((None, 0.0));
                     let rect = projection.nodes.at_row(row).rect;
-                    let inset = inset.min(rect.height());
-                    let content = LogicalRect::new(
-                        rect.x(),
-                        rect.y() + inset,
-                        rect.width(),
-                        (rect.height() - inset).max(0.0),
-                    )?;
+                    let content = rect.inset_top(inset)?;
                     for &child in topology.children[children.clone()].iter().rev() {
                         let child_bounds =
                             if selected == Some(child) && projection.nodes.at_row(child).visible {

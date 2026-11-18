@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-use crate::geometry::{GeometryError, LogicalRect};
+use crate::geometry::{GeometryError, LogicalPoint, LogicalRect};
 use crate::graph::command::{DockTarget, MovePayload, NodeSource, WorkspaceCommand};
 use crate::graph::error::CommandError;
 use crate::graph::{Node, Workspace};
@@ -195,7 +195,10 @@ fn clip_rect(rect: LogicalRect, clip: LogicalRect) -> Result<LogicalRect, Geomet
     let min_y = rect.y().max(clip.y()).min(clip.max().y());
     let max_x = rect.max().x().min(clip.max().x()).max(min_x);
     let max_y = rect.max().y().min(clip.max().y()).max(min_y);
-    LogicalRect::new(min_x, min_y, max_x - min_x, max_y - min_y)
+    LogicalRect::from_min_max(
+        LogicalPoint::new(min_x, min_y)?,
+        LogicalPoint::new(max_x, max_y)?,
+    )
 }
 
 fn projected_center_rect(
@@ -244,16 +247,11 @@ fn projected_center_rect(
         target.tabs(),
     )?;
     let tab_height = if tab_bar.visibility() == crate::policy::TabBarVisibility::Visible {
-        facts.config().tab_bar_height().min(bounds.height())
+        facts.config().tab_bar_height()
     } else {
         0.0
     };
-    Ok(LogicalRect::new(
-        bounds.x(),
-        bounds.y() + tab_height,
-        bounds.width(),
-        (bounds.height() - tab_height).max(0.0),
-    )?)
+    Ok(bounds.inset_top(tab_height)?)
 }
 
 fn projected_tabs_rect(

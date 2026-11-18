@@ -47,6 +47,26 @@ fn fractional_contained_chrome_preserves_the_exact_inner_edges() {
 }
 
 #[test]
+fn a_title_that_fills_fractional_inner_bounds_leaves_exactly_zero_content() {
+    let bounds = LogicalRect::new(
+        0.0,
+        1.750_926_195_972_654,
+        31.902_886_560_697_773,
+        11.238_274_954_240_115,
+    )
+    .unwrap();
+    let plan = contained_plan(bounds);
+    let contained = plan.contained_record(FLOATING).unwrap();
+    assert_eq!(contained.title_bounds(), contained.inner_bounds());
+    assert_eq!(contained.content_bounds().height(), 0.0);
+    assert_eq!(
+        contained.content_bounds().max(),
+        contained.inner_bounds().max()
+    );
+    assert!(plan.tab_bar_records().is_empty());
+}
+
+#[test]
 fn zero_width_title_drag_keeps_the_exact_title_bottom() {
     let bounds = LogicalRect::new(
         0.0,
@@ -101,5 +121,9 @@ proptest! {
         prop_assert_eq!(contained.title_bounds().min(), contained.inner_bounds().min());
         prop_assert_eq!(contained.content_bounds().max(), contained.inner_bounds().max());
         prop_assert_eq!(contained.title_bounds().max().y(), contained.content_bounds().y());
+        if contained.inner_bounds().height() <= DockPresentationConfig::default().floating_title_height() {
+            prop_assert_eq!(contained.title_bounds(), contained.inner_bounds());
+            prop_assert_eq!(contained.content_bounds().height(), 0.0);
+        }
     }
 }

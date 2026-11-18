@@ -72,11 +72,12 @@ pub(super) fn select_presentation_menu_tab_bar(
             .map(|result| result.rect)
             .ok_or(SceneCompilationError::MissingNodeProjection { root, node: tabs })?;
         let bounds = clip_rect(projected, root_bounds)?;
-        let bar = LogicalRect::new(
-            bounds.x(),
-            bounds.y(),
-            bounds.width(),
-            config.tab_bar_height().min(bounds.height()),
+        let bar = LogicalRect::from_min_max(
+            bounds.min(),
+            LogicalPoint::new(
+                bounds.max().x(),
+                bounds.inset_top(config.tab_bar_height())?.y(),
+            )?,
         )?;
         if !rect_has_area(bar) {
             return Ok(None);
@@ -144,7 +145,7 @@ pub(super) fn compile_tabs_leaf(
         .ok_or(SceneCompilationError::MissingTabBarRequirement { id: bar_id })?;
     let resolved_policy = tab_bar_requirement.resolved_policy(surface, tab_strip_states);
     let tab_height = if resolved_policy.visibility() == TabBarVisibility::Visible {
-        config.tab_bar_height().min(bounds.height())
+        config.tab_bar_height()
     } else {
         0.0
     };
@@ -152,9 +153,9 @@ pub(super) fn compile_tabs_leaf(
     let content_top = content_top
         .filter(|_| resolved_policy.visibility() == TabBarVisibility::Visible)
         .map_or_else(
-            || (bounds.y() + tab_height).min(bounds.max().y()),
-            |top| top.clamp(bounds.y(), bounds.max().y()),
-        );
+            || bounds.inset_top(tab_height).map(LogicalRect::y),
+            |top| Ok(top.clamp(bounds.y(), bounds.max().y())),
+        )?;
     // Share the original edges: rebuilding a sampled maximum from a span can
     // round the content outside its pane by one ULP.
     let tab_bar = LogicalRect::from_min_max(

@@ -66,6 +66,38 @@ fn geometry_constructors_reject_invalid_components() {
 }
 
 #[test]
+fn top_insets_preserve_original_edges_and_collapse_saturated_content() {
+    for bounds in [
+        LogicalRect::new(
+            1.0,
+            2.750_926_195_972_654,
+            29.902_886_560_697_773,
+            9.238_274_954_240_115,
+        )
+        .unwrap(),
+        LogicalRect::new(-20.5, -10.5, 30.0, 32.25).unwrap(),
+        LogicalRect::new(1.0e16, 1.0e16, 12.0, 20.0).unwrap(),
+        LogicalRect::new(1.25, 2.5, 0.0, 0.0).unwrap(),
+    ] {
+        assert_eq!(bounds.inset_top(0.0).unwrap(), bounds);
+        for inset in [bounds.height(), bounds.height() + 1.0, f64::MAX] {
+            let content = bounds.inset_top(inset).unwrap();
+            assert_eq!(content.max(), bounds.max());
+            assert_eq!(content.x(), bounds.x());
+            assert_eq!(content.y(), bounds.max().y());
+            assert_eq!(content.height(), 0.0);
+        }
+        let partial = bounds.inset_top(bounds.height() * 0.5).unwrap();
+        assert_eq!(partial.max(), bounds.max());
+        assert_eq!(partial.width(), bounds.width());
+        assert!(partial.y() >= bounds.y() && partial.y() <= bounds.max().y());
+        for invalid in [-1.0, f64::NAN, f64::INFINITY] {
+            assert!(bounds.inset_top(invalid).is_err());
+        }
+    }
+}
+
+#[test]
 fn negative_desktop_origins_are_valid_but_sizes_are_not() {
     let point = PhysicalPoint::new(-1_920.0, -200.0).expect("desktop origins may be negative");
     assert_close(point.x(), -1_920.0);

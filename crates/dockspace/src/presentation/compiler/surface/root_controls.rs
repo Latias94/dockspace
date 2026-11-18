@@ -32,14 +32,13 @@ pub(crate) fn root_controls_layout(
     }) {
         return Ok(None);
     }
-    let height = config.tab_bar_height().min(bounds.height());
-    if height <= 0.0 || bounds.width() <= 0.0 {
+    if bounds.height() <= 0.0 || bounds.width() <= 0.0 {
         return Ok(None);
     }
-    let bottom = (bounds.y() + height).min(bounds.max().y());
+    let content = bounds.inset_top(config.tab_bar_height())?;
+    let bottom = content.y();
     let reserved =
         LogicalRect::from_min_max(bounds.min(), LogicalPoint::new(bounds.max().x(), bottom)?)?;
-    let content = LogicalRect::from_min_max(LogicalPoint::new(bounds.x(), bottom)?, bounds.max())?;
     let extent = (reserved.height() - 2.0).max(0.0).min(reserved.width());
     let menu = if extent > 0.0 && extent >= config.tab_close_extent() {
         Some(LogicalRect::new(

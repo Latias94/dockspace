@@ -621,10 +621,14 @@ fn check_partitions(
     for record in plan.tabs_records() {
         let bounds = record.bounds();
         let content = record.content_bounds();
-        let height = config.tab_bar_height().min(bounds.height());
+        let content_top = if config.tab_bar_height() >= bounds.height() {
+            bounds.max().y()
+        } else {
+            bounds.y() + config.tab_bar_height()
+        };
         assert_eq!(content.x(), bounds.x());
         assert_eq!(content.max(), bounds.max());
-        assert_eq!(content.y(), bounds.y() + height);
+        assert_eq!(content.y(), content_top);
         let bar = target_bar(plan, record.id().tabs);
         assert_eq!(bar.bounds().min(), bounds.min());
         assert_eq!(bar.bounds().max().x(), bounds.max().x());

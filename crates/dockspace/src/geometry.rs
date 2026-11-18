@@ -238,6 +238,19 @@ impl LogicalRect {
         }
     }
 
+    /// Removes a top band while preserving the original maximum corner exactly.
+    ///
+    /// Saturated insets leave zero height rather than a rounded positive sliver.
+    pub(crate) fn inset_top(self, height: f64) -> Result<Self, GeometryError> {
+        non_negative("height", height)?;
+        let top = if height >= self.height() {
+            self.max.y
+        } else {
+            (self.min.y + height).min(self.max.y)
+        };
+        Self::from_min_max(LogicalPoint::new(self.min.x, top)?, self.max)
+    }
+
     /// Tests membership using half-open maximum edges.
     #[must_use]
     pub fn contains(self, point: LogicalPoint) -> bool {

@@ -43,15 +43,11 @@ pub(super) fn compile_contained_record(
             (durable_outer.max().y() - border).max(inner_top),
         )?,
     )?;
-    let title_height = config.floating_title_height().min(durable_inner.height());
-    let content_top = (durable_inner.y() + title_height).min(durable_inner.max().y());
+    let durable_content = durable_inner.inset_top(config.floating_title_height())?;
+    let content_top = durable_content.y();
     let durable_title = LogicalRect::from_min_max(
         durable_inner.min(),
         LogicalPoint::new(durable_inner.max().x(), content_top)?,
-    )?;
-    let durable_content = LogicalRect::from_min_max(
-        LogicalPoint::new(durable_inner.x(), content_top)?,
-        durable_inner.max(),
     )?;
     let title_inset_x = config
         .floating_resize_extent()
