@@ -23,7 +23,7 @@ use egui_dockspace::{DockStyle, PaneView};
 use winit::platform::x11::EventLoopBuilderExtX11 as _;
 
 use super::super::{NativeRuntimeState, NativeSurfaceUpdate};
-use super::SURFACE;
+use super::{SURFACE, service_until_wait};
 use crate::NativeWindowClosePolicy;
 
 const FIRST: ItemId = ItemId::new(1);
@@ -661,7 +661,7 @@ fn run_owned_update(style_change: bool, service_before_output: bool) {
                 visible: false,
             })
             .unwrap();
-        state.service_native_events(&context).unwrap();
+        service_until_wait(&mut state, &context);
         assert!(receipt.try_recv().unwrap().is_ok());
         let receipt = state
             .request_layout_reset(
@@ -675,7 +675,7 @@ fn run_owned_update(style_change: bool, service_before_output: bool) {
                 .unwrap(),
             )
             .unwrap();
-        state.service_native_events(&context).unwrap();
+        service_until_wait(&mut state, &context);
         assert!(receipt.try_recv().unwrap().is_ok());
         assert!(
             state

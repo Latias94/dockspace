@@ -19,6 +19,20 @@ use super::*;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 
+pub(super) fn service_until_wait<P: PaneView>(
+    state: &mut NativeRuntimeState<P>,
+    context: &egui::Context,
+) {
+    for _ in 0..32 {
+        match state.service_native_events(context).unwrap() {
+            eframe::NativeHostWake::Wait => return,
+            eframe::NativeHostWake::ServiceAfterCurrent => {}
+            other => panic!("native service requested an unexpected wake: {other:?}"),
+        }
+    }
+    panic!("native service did not reach Wait within 32 turns");
+}
+
 struct TestPanes;
 
 impl PaneView for TestPanes {

@@ -23,6 +23,7 @@ use crate::{
     NativeWindowClosePolicy,
 };
 
+use super::super::tests::service_until_wait;
 use super::NativeRuntimeState;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -1560,7 +1561,7 @@ fn initial_service_keeps_bootstrap_for_first_root_output() {
             visible: false,
         })
         .unwrap();
-    state.service_native_events(&context).unwrap();
+    service_until_wait(&mut state, &context);
     let terminal = receipt.try_recv().unwrap().unwrap();
     assert!(
         state.view().item(SECOND).unwrap().is_hidden(),
@@ -1580,7 +1581,7 @@ fn initial_service_keeps_bootstrap_for_first_root_output() {
     let receipt = state
         .request_layout_reset(layout(PRESET_ROOT, &[FIRST, SECOND], FIRST))
         .unwrap();
-    state.service_native_events(&context).unwrap();
+    service_until_wait(&mut state, &context);
     assert!(receipt.try_recv().unwrap().is_ok());
     let successor = state.current_root_binding().unwrap();
     assert_ne!(successor, registered);

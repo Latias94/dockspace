@@ -24,6 +24,7 @@ use egui_dockspace::{DockStyle, DockspaceActionStatus, PaneView};
 
 use crate::{NativeActionRequestError, NativeActionStatus, NativeWindowClosePolicy};
 
+use super::super::tests::service_until_wait;
 use super::NativeRuntimeState;
 
 mod deferred_move;
@@ -882,7 +883,7 @@ fn service_commits_commands_without_a_root_paint_or_consuming_prior_results() {
             visible: false,
         })
         .unwrap();
-    state.service_native_events(&context).unwrap();
+    service_until_wait(&mut state, &context);
     assert!(state.view().item(SECOND).unwrap().is_hidden());
     assert!(!state.application_actions.is_occupied());
     let second_receipt = state
@@ -891,7 +892,7 @@ fn service_commits_commands_without_a_root_paint_or_consuming_prior_results() {
             visible: false,
         })
         .unwrap();
-    state.service_native_events(&context).unwrap();
+    service_until_wait(&mut state, &context);
     assert!(state.view().item(THIRD).unwrap().is_hidden());
     assert!(matches!(
         take(&second_receipt),

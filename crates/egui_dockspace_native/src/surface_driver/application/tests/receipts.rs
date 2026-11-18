@@ -395,7 +395,7 @@ fn service_updates_an_existing_child_without_a_root_paint() {
             visible: false,
         })
         .unwrap();
-    state.service_native_events(&context).unwrap();
+    service_until_wait(&mut state, &context);
     assert_eq!(
         hidden.try_recv().unwrap().unwrap(),
         visibility_status(SECOND)
