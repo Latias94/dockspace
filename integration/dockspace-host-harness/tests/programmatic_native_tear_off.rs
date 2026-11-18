@@ -23,6 +23,9 @@ use dockspace::runtime::{
 };
 use dockspace_host_harness::{OwnedRecord, RecordingRenderer};
 
+#[path = "programmatic_native_tear_off/visibility.rs"]
+mod visibility;
+
 const HOST: SurfaceId = SurfaceId::new(1);
 const ROOT: RootId = RootId::new(1);
 const CONTAINED_ROOT: RootId = RootId::new(2);
