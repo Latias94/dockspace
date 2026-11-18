@@ -456,3 +456,41 @@ fn shared_retirement_releases_bounded_lifetimes_only_after_each_exact_lane_quies
         assert!(session.view().item(ItemId::new(INCOMING.get())).is_some());
     }
 }
+
+#[test]
+fn shared_close_tail_does_not_block_fresh_registration() {
+    use dockspace::runtime::NativeCloseState;
+    let (mut session, window, _placements) =
+        shared_session_with_capacity(layout(&[A, B, INCOMING]), 6);
+    session
+        .report_managed_native_snapshot(
+            [(window, NativeWindowFacts::destroyed())],
+            NativeWorkAreaRoster::Unknown,
+        )
+        .unwrap();
+    session
+        .publish_native_close(window, NativeCloseState::Clear, None)
+        .unwrap();
+    session
+        .register_native_root(INCOMING, HostWindowToken::new(43))
+        .unwrap();
+    let mut errors = Vec::new();
+    for _ in 0..3 {
+        match session.begin_native_host_frame(|_| NativeReceiverAnswer::Unknown) {
+            Ok(frame) => {
+                finish(frame);
+            }
+            Err(error) => errors.push(format!("{error:?}")),
+        }
+    }
+    assert!(
+        errors.is_empty(),
+        "accepted close tail blocked ingress: {errors:?}"
+    );
+    assert!(
+        session.native_window_bindings().any(|w| session
+            .native_surface_bindings_for_window(w)
+            .any(|b| b.surface() == INCOMING)),
+        "fresh registration never ran: {errors:?}"
+    );
+}

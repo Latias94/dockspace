@@ -228,7 +228,7 @@ impl ViewportCoordinator {
         // placement or obstruct unrelated records behind it in the FIFO.
         if observation.known_state() != Some(WindowCloseState::Destroyed)
             && candidate.registry.window(binding.window()).is_none()
-            && candidate.recognizes_retired_native_binding(binding)
+            && candidate.recognizes_retired_native_window(binding.window())
         {
             return Ok(ViewportFrameTransition {
                 capability_generation: candidate.capability_generation,
