@@ -613,11 +613,13 @@ fn a_late_output_cannot_authorize_a_close_in_a_recreated_egui_viewport() {
 
 #[test]
 fn a_retired_viewport_cannot_acknowledge_pane_focus_in_its_replacement() {
-    for (mode, originally_available) in [
-        (RunMode::Callback, false),
-        (RunMode::Callback, true),
-        (RunMode::Owned, false),
-        (RunMode::Owned, true),
+    for (mode, originally_available, interrupted_parent_output) in [
+        (RunMode::Callback, false, false),
+        (RunMode::Callback, true, false),
+        (RunMode::Owned, false, false),
+        (RunMode::Owned, true, false),
+        (RunMode::Callback, false, true),
+        (RunMode::Owned, false, true),
     ] {
         let child = ViewportId::from_hash_of("product-recreated-viewport-pane-focus");
         let mut harness = DragHarness::new(child, mode);
@@ -625,6 +627,7 @@ fn a_retired_viewport_cannot_acknowledge_pane_focus_in_its_replacement() {
         harness.context.options_mut(|options| {
             options.max_passes = 1.try_into().unwrap();
         });
+        let parent_output = harness.context.plugin_or_default::<LateDiscardPlugin>();
         harness.show_child_from_parent(true);
         let _ = harness.frame(Vec::new());
         let _ = harness.frame(Vec::new());
@@ -680,8 +683,19 @@ fn a_retired_viewport_cannot_acknowledge_pane_focus_in_its_replacement() {
         } else {
             Some(receipt)
         };
-        harness.show_child_from_parent(false);
-        harness.show_child_from_parent(true);
+        if interrupted_parent_output {
+            // The root has already retired the child when its first output hook panics.
+            parent_output.lock().panic_once = true;
+            assert!(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    harness.show_child_from_parent(false);
+                }))
+                .is_err()
+            );
+        } else {
+            harness.show_child_from_parent(false);
+            harness.show_child_from_parent(true);
+        }
         assert_eq!(harness.context.cumulative_pass_nr_for(child), 0);
         if let Some(receipt) = late_receipt {
             receipt.report(SurfacePresentationResult::Presented);
@@ -702,7 +716,7 @@ fn a_retired_viewport_cannot_acknowledge_pane_focus_in_its_replacement() {
             harness
                 .context
                 .memory(|memory| memory.has_focus(panes.target)),
-            "the replacement must receive the pending focus request (old binding available: {originally_available})"
+            "the replacement must receive the pending focus request (old binding available: {originally_available}, interrupted parent output: {interrupted_parent_output})"
         );
     }
 }

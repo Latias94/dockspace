@@ -45,18 +45,18 @@ impl egui::plugin::Plugin for RunInputSnapshot {
         let viewport = input.viewport_id;
         let Some(portal) = active_run_portal(context) else {
             // Direct egui passes can consume input without opening a docking run.
-            self.break_continuity(viewport);
+            self.break_continuity(context, viewport);
             return;
         };
         let mut portal = portal.lock().unwrap_or_else(PoisonError::into_inner);
         // egui can reject recursive root borrowing before on_begin_pass runs.
         if in_run_callback(context) {
             portal.poisoned = true;
-            self.break_continuity(viewport);
+            self.break_continuity(context, viewport);
             return;
         }
         if portal.viewport != viewport || portal.poisoned {
-            self.break_continuity(viewport);
+            self.break_continuity(context, viewport);
             return;
         }
         self.last_id = self
@@ -77,10 +77,7 @@ impl egui::plugin::Plugin for RunInputSnapshot {
                     Modifiers::NONE
                 }
             });
-            // egui can reuse a viewport ID after destroying the old viewport.
-            portal.preceding_input_pass = previous.filter(|_| {
-                viewport == ViewportId::ROOT || context.cumulative_pass_nr_for(viewport) != 0
-            });
+            portal.preceding_input_pass = previous;
         }
     }
 
@@ -128,7 +125,15 @@ impl egui::plugin::Plugin for RunInputSnapshot {
 }
 
 impl RunInputSnapshot {
-    fn break_continuity(&mut self, viewport: ViewportId) {
+    pub(super) fn retire_if_pass_reset(&mut self, context: &Context, viewport: ViewportId) {
+        // A preceding output hook may have unwound after egui removed this viewport.
+        if viewport != ViewportId::ROOT && context.cumulative_pass_nr_for(viewport) == 0 {
+            self.viewports.remove(&viewport);
+        }
+    }
+
+    fn break_continuity(&mut self, context: &Context, viewport: ViewportId) {
+        self.retire_if_pass_reset(context, viewport);
         if let Some(history) = self.viewports.get_mut(&viewport) {
             history.last_owned_pass = None;
         }

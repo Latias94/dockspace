@@ -471,7 +471,10 @@ impl ProductPassSettlementRun {
                 .poisoned = true;
             panic!("nested egui_dockspace::run_ui calls on one Context are unsupported");
         }
-        context.add_plugin(RunInputSnapshot::default());
+        context
+            .plugin_or_default::<RunInputSnapshot>()
+            .lock()
+            .retire_if_pass_reset(context, input.viewport_id);
         let portal = Arc::new(Mutex::new(ActiveRunPortal {
             run: Arc::new(RunIdentity),
             input: None,
