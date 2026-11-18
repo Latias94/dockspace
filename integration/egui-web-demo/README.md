@@ -52,9 +52,9 @@ npx playwright install chromium
 npm test
 ```
 
-Tests run one Chromium worker with real mouse and keyboard input, against the
-generated site under a project-path prefix. They cover merges, floating-group
-retirement, splitters, focus cancellation and recovery, retained edits,
+Tests run one Chromium worker with mouse, keyboard and emulated touch input
+against the generated site under a project-path prefix. They cover merges,
+floating-group retirement, splitters, focus and touch cancellation, retained edits,
 tab-style and theme changes, intermediate and disabled motion, live
 reduced-motion changes, streamed download progress, startup stages, retry after
 initialization failure and native device scale two.

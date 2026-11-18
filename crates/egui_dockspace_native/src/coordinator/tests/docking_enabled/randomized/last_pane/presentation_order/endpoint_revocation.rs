@@ -6,6 +6,7 @@
 use super::*;
 use dockspace::runtime::PaintedSurfaceOutput;
 
+mod capture_loss;
 mod schedules;
 mod window_change;
 

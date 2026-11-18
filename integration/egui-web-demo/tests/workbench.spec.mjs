@@ -212,6 +212,66 @@ test('blur cancels a held drag, and fresh input can float and dock again', async
   await mergeLeft(page, 'Preview', [3, 2]);
 });
 
+test('browser touch cancellation discards a two-contact drag and allows a fresh dock', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const session = await page.context().newCDPSession(page);
+  await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
+  const dispatch = (type, ...touchPoints) => session.send('Input.dispatchTouchEvent', { type, touchPoints });
+  await open(page);
+  const initial = await state(page);
+
+  const dragToOutline = async id => {
+    const snapshot = await state(page);
+    const source = await point(page, snapshot.tabs.find(tab => tab.label === 'Preview').rect);
+    const destination = await point(page, pane(snapshot, 3).contentRect);
+    await dispatch('touchStart', { ...source, id });
+    await presentedPointer(page, source, true);
+    await expect.poll(async () => (await state(page)).touchArms).toBe(snapshot.touchArms + 1);
+    await dispatch('touchMove', { ...destination, id });
+    await presentedPointer(page, destination, true);
+    await expect.poll(async () => (await state(page)).activeGesture).toBe(true);
+    await expect.poll(async () => (await state(page)).centerGuides.length).toBeGreaterThan(0);
+    const guide = (await state(page)).centerGuides.sort((a, b) => a.rect[0] - b.rect[0])[0];
+    const target = await point(page, guide.rect);
+    await dispatch('touchMove', { ...target, id });
+    await presentedPointer(page, target, true);
+    await expect.poll(async () => (await state(page)).dropTargetItem).toBe(3);
+    return { ...target, id };
+  };
+
+  const primary = await dragToOutline(1);
+  const secondary = await point(page, pane(initial, 5).contentRect);
+  await dispatch('touchStart', primary, { ...secondary, id: 2 });
+  await expect.poll(async () => (await state(page)).touchStarts).toBe(initial.touchStarts + 2);
+  await presentedPointer(page, primary, true);
+  expect((await state(page)).activeGesture).toBe(true);
+  expect((await state(page)).dropTargetItem).toBe(3);
+  await dispatch('touchCancel');
+  await expect.poll(async () => {
+    const snapshot = await state(page);
+    return [snapshot.input.touching, snapshot.activeGesture, snapshot.centerGuides.length, snapshot.dropTargetItem];
+  }).toEqual([false, false, 0, null]);
+  const cancelled = await state(page);
+  expect(cancelled.version).toBe(initial.version);
+  expect(topology(cancelled)).toEqual(topology(initial));
+
+  await dragToOutline(3);
+  await dispatch('touchEnd');
+  await expect.poll(async () => pane(await state(page), 3).group).toEqual([3, 2]);
+  await expect.poll(async () => {
+    const snapshot = await state(page);
+    return snapshot.input.touching || snapshot.activeGesture;
+  }).toBe(false);
+  const docked = await state(page);
+  expect(docked.touchStarts).toBe(initial.touchStarts + 3);
+  expect(docked.version).not.toBe(cancelled.version);
+  expect(pane(docked, 2).group).toEqual([3, 2]);
+  expect(docked.panes.map(pane => pane.item)).toEqual(initial.panes.map(pane => pane.item));
+  await expect(page.locator('#demo-status')).toHaveAttribute('data-state', 'ready');
+  expect(errors).toEqual([]);
+});
+
 test('a menu-floated layout moves over blank canvas and docks through an explicit guide', async ({ page }) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));

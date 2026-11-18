@@ -57,6 +57,59 @@ fn hiding_a_drag_source_or_destination_revokes_the_old_drop_without_losing_conte
 }
 
 #[test]
+fn a_hidden_grid_target_cannot_deliver_to_the_pane_that_reflows_under_its_old_guide() {
+    for present_edit_before_resize in [false, true] {
+        let mut harness = GridHarness::new();
+        harness.begin_drag(C.into());
+        let stale = harness.hover_guide(D, DockspaceDropDirection::Center);
+        harness.assert_preview(stale, DockspaceDropAction::Merge, &[], None, &[]);
+        assert_eq!(
+            harness
+                .panes
+                .preview
+                .as_ref()
+                .unwrap()
+                .target
+                .selected_item(),
+            Some(D)
+        );
+        assert!(!harness.panes.bodies[&E].contains(stale));
+
+        let edit = harness
+            .dockspace
+            .set_item_visibility_current(D, false)
+            .unwrap();
+        assert!(matches!(edit.status(), DockspaceActionStatus::Applied(_)));
+        harness.expected_hidden.insert(D);
+        let version = harness.dockspace.version();
+        let layout = harness.layout_signature();
+        if present_edit_before_resize {
+            harness.run(Vec::new());
+        }
+        harness.screen_rect.set_width(480.0);
+        harness.settle();
+        assert!(harness.panes.bodies[&E].contains(stale));
+        assert!(harness.panes.preview.is_none());
+        harness.release(stale);
+        assert_eq!(harness.dockspace.version(), version);
+        assert_eq!(harness.layout_signature(), layout);
+        harness.assert_random_invariants();
+
+        harness.begin_drag(C.into());
+        let current = harness.hover_guide(E, DockspaceDropDirection::Center);
+        harness.release(current);
+        assert_ne!(harness.dockspace.version(), version);
+        harness.assert_tabs(harness.cells[1], &[B.into()], B.into());
+        harness.assert_tabs(
+            harness.cells[3],
+            &[E.into(), harness.tools, C.into()],
+            C.into(),
+        );
+        harness.assert_random_invariants();
+    }
+}
+
+#[test]
 fn an_application_move_revokes_the_old_drag_source_before_a_late_release() {
     let mut harness = GridHarness::new();
     harness.begin_drag(C.into());

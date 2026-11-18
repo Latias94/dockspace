@@ -31,7 +31,10 @@ fn frame(
     time: f64,
     events: Vec<Event>,
 ) -> egui::FullOutput {
-    let output = run(context, dockspace, time, events);
+    present(run(context, dockspace, time, events, None))
+}
+
+fn present(output: crate::DockspaceOutput) -> egui::FullOutput {
     let (mut output, receipt) = output.into_parts();
     receipt.report(crate::SurfacePresentationResult::Presented);
     output.textures_delta.clear();
@@ -43,6 +46,7 @@ fn run(
     dockspace: &mut Dockspace,
     time: f64,
     events: Vec<Event>,
+    blocker: Option<Pos2>,
 ) -> crate::DockspaceOutput {
     let mut raw = input(events);
     raw.time = Some(time);
@@ -51,6 +55,15 @@ fn run(
             .show_single_surface(SURFACE, ui, &mut OverflowPanes)
             .unwrap();
         assert!(response.close_requests().next().is_none());
+        if let Some(point) = blocker {
+            let bounds = Rect::from_center_size(point, vec2(25.0, 20.0));
+            let blocker = ui.interact(
+                bounds,
+                egui::Id::unique("tab-strip-blocker"),
+                egui::Sense::click_and_drag(),
+            );
+            assert!(blocker.interact_rect.contains(point));
+        }
     })
 }
 
@@ -244,7 +257,7 @@ fn renderer_result_wakes_the_idle_host_to_accept_the_next_edge_scroll_output() {
         dockspace.session.pointer_continuation().is_some(),
         "the initial edge challenge must survive equivalent idle repaints"
     );
-    let (output, receipt) = run(&context, &mut dockspace, 1.06, Vec::new()).into_parts();
+    let (output, receipt) = run(&context, &mut dockspace, 1.06, Vec::new(), None).into_parts();
     output.drop_without_applying_deltas();
     assert_eq!(overflow(&mut dockspace).1, 40.0);
     assert!(dockspace.session.pointer_continuation().is_none());
@@ -256,6 +269,7 @@ fn renderer_result_wakes_the_idle_host_to_accept_the_next_edge_scroll_output() {
             &mut dockspace,
             1.1 + f64::from(index) * 0.05,
             Vec::new(),
+            None,
         )
         .into_parts();
         idle = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay
@@ -286,6 +300,115 @@ fn renderer_result_wakes_the_idle_host_to_accept_the_next_edge_scroll_output() {
     }
     frame(&context, &mut dockspace, 2.0, Vec::new());
     assert_eq!(overflow(&mut dockspace).1, 80.0);
+}
+
+#[test]
+fn a_presented_tab_strip_blocker_revokes_both_kinds_of_stationary_deadline() {
+    use std::time::Duration;
+
+    let inactive = ItemId::new(11);
+    for edge_scroll in [false, true] {
+        let (context, mut dockspace, source) = setup();
+        let (viewport, initial_offset, maximum) = overflow(&mut dockspace);
+        assert!(maximum > 40.0);
+        let output = frame(&context, &mut dockspace, 0.5, Vec::new());
+        let point = if edge_scroll {
+            Pos2::new(viewport.max.x - 2.0, viewport.max.y - 2.0)
+        } else {
+            try_tab_rect(&output, "Target 11").unwrap().center()
+        };
+        let before = dockspace.version();
+        frame(
+            &context,
+            &mut dockspace,
+            1.0,
+            vec![Event::PointerMoved(source), pointer_button(source, true)],
+        );
+        frame(
+            &context,
+            &mut dockspace,
+            1.01,
+            vec![Event::PointerMoved(point)],
+        );
+        let old = dockspace.session.pointer_continuation().unwrap();
+        let delay = if edge_scroll { 50 } else { 150 };
+        assert_eq!(old.deadline(), Duration::from_millis(1010 + delay));
+
+        for time in [1.02, 1.03, 1.04] {
+            present(run(&context, &mut dockspace, time, Vec::new(), Some(point)));
+        }
+        assert!(dockspace.session.pointer_continuation().is_none());
+        present(run(&context, &mut dockspace, 1.2, Vec::new(), Some(point)));
+        assert!(dockspace.session.pointer_continuation().is_none());
+        assert!(dockspace.has_active_gesture());
+        assert!(context.input(|input| input.pointer.primary_down()));
+        assert!(dockspace.view().item(TARGET).unwrap().is_active());
+        assert_eq!(overflow(&mut dockspace).1, initial_offset);
+        assert_eq!(dockspace.version(), before);
+
+        for time in [1.21, 1.22, 1.23] {
+            frame(&context, &mut dockspace, time, Vec::new());
+        }
+        assert!(dockspace.session.pointer_continuation().is_none());
+        assert_eq!(overflow(&mut dockspace).1, initial_offset);
+        assert_eq!(dockspace.version(), before);
+
+        frame(
+            &context,
+            &mut dockspace,
+            1.3,
+            vec![Event::PointerMoved(point - vec2(1.0, 0.0))],
+        );
+        let fresh = dockspace.session.pointer_continuation().unwrap();
+        assert_ne!(fresh.token(), old.token());
+        assert_eq!(fresh.deadline(), Duration::from_millis(1300 + delay));
+        let output = frame(
+            &context,
+            &mut dockspace,
+            fresh.deadline().as_secs_f64(),
+            Vec::new(),
+        );
+        if edge_scroll {
+            assert_eq!(overflow(&mut dockspace).1, initial_offset + 40.0);
+            assert_eq!(dockspace.version(), before);
+        } else {
+            assert!(dockspace.view().item(inactive).unwrap().is_active());
+            assert_eq!(overflow(&mut dockspace).1, initial_offset);
+        }
+        assert!(dockspace.has_active_gesture());
+        let target = try_tab_rect(&output, "Target 11").unwrap().center();
+        let version_before_drop = dockspace.version();
+        frame(
+            &context,
+            &mut dockspace,
+            1.5,
+            vec![Event::PointerMoved(target)],
+        );
+        frame(
+            &context,
+            &mut dockspace,
+            1.51,
+            vec![pointer_button(target, false)],
+        );
+        for time in [1.6, 1.7, 1.8] {
+            frame(&context, &mut dockspace, time, Vec::new());
+        }
+        let view = dockspace.view();
+        let tabs = view.item(inactive).unwrap().tabs().unwrap();
+        assert_eq!(tabs.items().filter(|&item| item == FIRST).count(), 1);
+        assert_eq!(tabs.items().count(), 13);
+        assert_ne!(dockspace.version(), version_before_drop);
+        assert!(!dockspace.has_active_gesture());
+        let delivered = dockspace.version();
+        frame(
+            &context,
+            &mut dockspace,
+            1.9,
+            vec![pointer_button(target, false)],
+        );
+        frame(&context, &mut dockspace, 2.0, Vec::new());
+        assert_eq!(dockspace.version(), delivered);
+    }
 }
 
 fn semantic_action(output: &egui::FullOutput, role: Role, label: &str) -> Event {

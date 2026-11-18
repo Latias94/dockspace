@@ -9,7 +9,8 @@ use egui::{Context, RawInput};
 #[cfg(feature = "motion")]
 use egui_dockspace::motion::MotionPreference;
 use egui_dockspace::{
-    Dockspace, DockspaceOutput, DockspaceResponse, PaneView, SurfacePresentationResult,
+    Dockspace, DockspaceOutput, DockspaceResponse, DockspaceTouchEvent, PaneView,
+    SurfacePresentationResult,
     winit::{
         AppResult, FrameControl, NativeApp, NativeFrameReport, WebOptions, WebRenderer, run_web,
     },
@@ -64,17 +65,25 @@ fn launch() -> Result<(), JsValue> {
     }
     #[cfg(feature = "motion")]
     let system_motion = SystemMotion::observe(&context)?;
+    let mut panes = editor::DemoPanes::new();
+    if test_mode {
+        panes.drop_observations = Some(editor::DemoDropObservations::default());
+    }
     let app = Workbench {
         dockspace: Dockspace::builder("web-workbench", editor::demo_layout())
             .style(editor::dock_style())
             .build()
             .map_err(|error| JsValue::from_str(&error.to_string()))?,
-        panes: editor::DemoPanes::new(),
+        panes,
         response: None,
         restore_layout: false,
         ready: false,
-        test_canvas: test_mode.then(|| canvas.clone()),
-        presented_frames: 0,
+        test_state: test_mode.then_some(TestState {
+            canvas,
+            presented_frames: 0,
+            touch_starts: 0,
+            touch_arms: 0,
+        }),
         #[cfg(feature = "motion")]
         system_motion,
     };
@@ -101,10 +110,16 @@ struct Workbench {
     response: Option<DockspaceResponse>,
     restore_layout: bool,
     ready: bool,
-    test_canvas: Option<web_sys::HtmlCanvasElement>,
-    presented_frames: u64,
+    test_state: Option<TestState>,
     #[cfg(feature = "motion")]
     system_motion: Option<SystemMotion>,
+}
+
+struct TestState {
+    canvas: web_sys::HtmlCanvasElement,
+    presented_frames: u64,
+    touch_starts: usize,
+    touch_arms: usize,
 }
 
 #[cfg(feature = "motion")]
@@ -163,13 +178,13 @@ impl Drop for SystemMotion {
 
 impl Workbench {
     fn publish_test_state(&mut self, frame: &NativeFrameReport<'_>) {
-        let Some(canvas) = &self.test_canvas else {
+        let Some(test) = &mut self.test_state else {
             return;
         };
         if frame.presentation != SurfacePresentationResult::Presented {
             return;
         }
-        self.presented_frames += 1;
+        test.presented_frames += 1;
         let Some(update) = frame.accesskit_update else {
             return;
         };
@@ -225,15 +240,26 @@ impl Workbench {
         });
         #[cfg(not(feature = "motion"))]
         let motion = serde_json::json!({ "enabled": false });
+        let drop_target_item = self
+            .panes
+            .drop_observations
+            .as_ref()
+            .filter(|observation| observation.pass + 1 == frame.context.cumulative_pass_nr())
+            .and_then(|observation| observation.target?.selected_item())
+            .map(|item| item.get());
         let state = serde_json::json!({
             "version": format!("{:?}", self.dockspace.version()),
-            "frames": self.presented_frames,
+            "frames": test.presented_frames,
             "activeGesture": self.dockspace.has_active_gesture(),
+            "dropTargetItem": drop_target_item,
+            "touchStarts": test.touch_starts,
+            "touchArms": test.touch_arms,
             "pixelsPerPoint": frame.context.pixels_per_point(),
             "zoomFactor": frame.context.zoom_factor(),
             "input": frame.context.input(|input| serde_json::json!({
                 "pointer": input.pointer.latest_pos().map(|point| [point.x, point.y]),
                 "primaryDown": input.pointer.primary_down(),
+                "touching": input.any_touches(),
                 "shift": input.modifiers.shift,
             })),
             "tabs": tabs,
@@ -251,7 +277,9 @@ impl Workbench {
             "tabPreset": format!("{:?}", self.dockspace.style().tab_preset),
             "darkMode": frame.context.global_style().visuals.dark_mode,
         });
-        let _ = canvas.set_attribute("data-dockspace-state", &state.to_string());
+        let _ = test
+            .canvas
+            .set_attribute("data-dockspace-state", &state.to_string());
     }
 }
 
@@ -266,6 +294,21 @@ impl NativeApp for Workbench {
             self.dockspace.set_motion_preference(preference);
         }
         self.restore_layout = false;
+        if let Some(test) = &mut self.test_state {
+            test.touch_starts += input
+                .events
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Touch {
+                            phase: egui::TouchPhase::Start,
+                            ..
+                        }
+                    )
+                })
+                .count();
+        }
         let (output, response) = editor::run_editor(
             &mut self.dockspace,
             context,
@@ -273,6 +316,13 @@ impl NativeApp for Workbench {
             &mut self.panes,
             &mut self.restore_layout,
         )?;
+        if let (Some(test), Some(response)) = (&mut self.test_state, &response) {
+            test.touch_arms += response
+                .touch_events()
+                .iter()
+                .filter(|event| matches!(event, DockspaceTouchEvent::Armed { .. }))
+                .count();
+        }
         self.response = response;
         Ok(output)
     }

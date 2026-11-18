@@ -264,15 +264,17 @@ pub(super) struct DemoPanes {
     pub(super) panes: BTreeMap<ItemId, DemoPane>,
     selection: usize,
     objects: [SceneObject; 3],
-    #[cfg(test)]
+    #[cfg(any(test, target_arch = "wasm32"))]
     pub(super) drop_observations: Option<DemoDropObservations>,
     #[cfg(test)]
     pub(super) tab_widgets: BTreeMap<egui_dockspace::TabKey, (u64, egui::Id)>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Default)]
 pub(super) struct DemoDropObservations {
     pub(super) pass: u64,
+    #[cfg(test)]
     pub(super) guides: Vec<DropGuide>,
     pub(super) target: Option<egui_dockspace::DockspaceDropTargetFeedback>,
 }
@@ -318,28 +320,24 @@ impl DemoPanes {
                 position: [[-140.0, 60.0, 0.0], [140.0, 60.0, 0.0], [0.0, -60.0, 0.0]][index],
                 visible: true,
             }),
-            #[cfg(test)]
-            drop_observations: None,
+            #[cfg(any(test, target_arch = "wasm32"))]
+            drop_observations: cfg!(test).then(DemoDropObservations::default),
             #[cfg(test)]
             tab_widgets: BTreeMap::new(),
         }
     }
 
-    #[cfg(test)]
-    fn observe_drop_pass(&mut self, ui: &egui::Ui) -> &mut DemoDropObservations {
+    #[cfg(any(test, target_arch = "wasm32"))]
+    fn observe_drop_pass(&mut self, ui: &egui::Ui) -> Option<&mut DemoDropObservations> {
+        let observation = self.drop_observations.as_mut()?;
         let pass = ui.ctx().cumulative_pass_nr();
-        if self
-            .drop_observations
-            .as_ref()
-            .is_none_or(|old| old.pass != pass)
-        {
-            self.drop_observations = Some(DemoDropObservations {
+        if observation.pass != pass {
+            *observation = DemoDropObservations {
                 pass,
-                guides: Vec::new(),
-                target: None,
-            });
+                ..Default::default()
+            };
         }
-        self.drop_observations.as_mut().unwrap()
+        Some(observation)
     }
 }
 
@@ -369,13 +367,15 @@ impl PaneView for DemoPanes {
 
     fn drop_guide_ui(&mut self, ui: &egui::Ui, guide: &DropGuide) {
         #[cfg(test)]
-        self.observe_drop_pass(ui).guides.push(*guide);
+        self.observe_drop_pass(ui).unwrap().guides.push(*guide);
         tabs::drop_guide_ui(self, ui, guide);
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, target_arch = "wasm32"))]
     fn drop_preview_ui(&mut self, ui: &egui::Ui, preview: &egui_dockspace::DropPreview) {
-        self.observe_drop_pass(ui).target = Some(preview.target);
+        if let Some(observation) = self.observe_drop_pass(ui) {
+            observation.target = Some(preview.target);
+        }
         preview.paint(ui);
     }
 
