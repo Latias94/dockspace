@@ -53,6 +53,7 @@ fn app_with_session(
         #[cfg(feature = "serde")]
         preset_name: "Working".to_owned(),
         action: ExampleActionState::Idle,
+        action_receipt: None,
         font_size: 13.0,
         density: DockDensity::Comfortable,
         status: None,
@@ -472,7 +473,7 @@ fn the_inventory_can_float_one_pane_out_of_a_contained_group() {
         app.action.is_pending(),
         "the actual button must submit the command"
     );
-    assert!(app.dockspace.take_action_status().is_none());
+    assert!(poll_receipt(&mut app.action_receipt).is_none());
 }
 
 #[test]

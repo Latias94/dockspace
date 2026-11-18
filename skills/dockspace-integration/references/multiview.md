@@ -123,7 +123,7 @@ physical, callback, renderer and asynchronous owner terminates may the complete
 generation be disposed of as failed and reconstructed with fresh authority.
 See the [failed-generation contract](../../../crates/dockspace/docs/guide.md#permanently-rejected-native-ingress).
 
-## Use the egui native command slot
+## Submit egui native requests
 
 Construct `NativeDockspaceApp` with a session, host surface, pane provider and a
 style that maps to the session's presentation configuration. Keep registry/view
@@ -131,8 +131,18 @@ callbacks short: they hold the runtime lock. Call `request_command` after those
 callbacks return. Committed notification callbacks run outside that lock and
 expose scoped access through `NativeNotificationContext`.
 
-Admission queues one command. Consume `take_action_status()` before sending the
-next command or waiting for quiescence. On rejected admission,
+Admission returns one caller-owned `NativeActionReceipt`. Poll `try_recv()`:
+`Empty` means pending; `Disconnected` means no further result can arrive because
+the result was already consumed or the runtime ended. Disconnection does not
+prove physical cleanup. Native service advances ready requests without a Root
+paint. Only executing work or a real presentation wait keeps admission Busy;
+completed unread receipts do not block later requests, saving or quiescence.
+Dropping a receipt ignores its result without cancelling accepted work.
+Use `NativeActionFailure::interruption()` when handling terminal failure: core
+commit and complete adapter settlement are separate boundaries. Preserve an
+already committed action when reconstructing the application instead of
+automatically replaying it as uncommitted.
+On rejected admission,
 `NativeCommandRequestError::reason()` identifies the failure and `into_command()`
 returns the unchanged command. Retain a Busy command until progress frees the
 slot; Stopped requires runtime recovery, and HostSurfaceRequired requires a
@@ -142,7 +152,7 @@ captured session/version through retries. Semantic action completion and
 
 The default `motion` feature uses the shared core geometry and egui decoration
 tracks. Configure `with_motion` before attachment, or queue `request_motion`
-through the same application slot and consume `MotionChanged`. Supply an
+through the same execution slot and retain its own completion receipt. Supply an
 observed reduced-motion preference explicitly. Do not add a second interpolation
 layer or bypass output-terminal backpressure to drive animation frames.
 
@@ -150,10 +160,16 @@ Use `pending_work()` to diagnose blocked progress and `output_backlog()` to
 inspect outstanding output owners. Drain obligations according to the native
 lifecycle rather than closing every window immediately during shutdown.
 
-Match command scope to the control: `FloatItem` transfers one pane, `FloatTabs`
-transfers a captured group's contents, and `FloatRoot` preserves the complete
-split tree. The main layout's central slot can retain its identity after its
-tabs leave; transferring a subtree has different structural constraints.
+Use `NativeCommand::Move { source, target }`, matching `DockspaceSession::prepare_move`.
+`DockMoveSource` distinguishes Item, captured Tab, captured Tabs and complete Root.
+`DockMoveTarget` chooses Dock with explicit `TabGroupDockMode`, Contained on an
+existing surface, or Native with optional physical placement. Match that scope
+to the control. A Root source preserves the complete Pane/Tabs/Split/Grid layout;
+Tabs and Tabs-shaped roots honor MergeTabs versus PreserveLayout on center or
+before/after insertion. Captures retain their original authority through storage
+and retries. `DockRootBack` separately derives its destination from core recovery.
+The main layout's central slot can retain its identity after its tabs leave;
+transferring a subtree has different structural constraints.
 
 ## Verify the implemented capabilities
 

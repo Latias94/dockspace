@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use dockspace::geometry::{LogicalRect, LogicalSize, PhysicalPoint, PhysicalRect, ScaleFactor};
 use dockspace::model::{
-    DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId,
-    NativeTearOffSource, NativeWindowPlacement, RootId, SurfaceId, WorkspaceVersion,
+    DockMoveSource, DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout,
+    ItemId, NativeWindowPlacement, RootId, SurfaceId, WorkspaceVersion,
 };
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
@@ -1079,7 +1079,7 @@ fn programmatic_creation_does_not_borrow_a_previous_pointer_drag_identity() {
     assert!(fixture.present_source().take_native_effects().is_empty());
     let placement = PhysicalRect::new(900.0, 120.0, 420.0, 320.0).unwrap();
     let action = fixture.session.prepare_move_to_new_window(
-        NativeTearOffSource::Item(MOVED),
+        DockMoveSource::Item(MOVED),
         NativeWindowPlacement::new(placement),
     );
     let mut command = frame(&mut fixture.session, Some(fixture.scene));

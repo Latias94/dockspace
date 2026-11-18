@@ -1,8 +1,9 @@
 use dockspace::geometry::PhysicalRect;
+
 use dockspace::model::{
-    DockAnchor, DockPlacement, DockspaceGridShape, DockspaceLayout, DockspaceNode,
-    DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, NativeTearOffSource,
-    NativeWindowPlacement, RootId, SurfaceId,
+    DockAnchor, DockMoveSource, DockMoveTarget, DockPlacement, DockspaceGridShape, DockspaceLayout,
+    DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, NativeWindowPlacement,
+    RootId, SurfaceId, TabGroupDockMode,
 };
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::DockspaceSession;
@@ -62,10 +63,16 @@ fn boxed_dynamic_provider_works_with_the_public_native_owner() {
         app.with_panes(|panes| panes.title(FIRST).unwrap().text().to_owned()),
         "Command consumer"
     );
-    app.request_command(NativeCommand::SelectItem { item: SECOND })
+    let receipt = app
+        .request_command(NativeCommand::SelectItem { item: SECOND })
         .unwrap();
     assert_eq!(
+        receipt.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    );
+    assert_eq!(
         app.request_command(NativeCommand::SelectItem { item: FIRST })
+            .map(|_| ())
             .map_err(|error| error.reason()),
         Err(NativeActionRequestError::Busy)
     );
@@ -76,12 +83,12 @@ fn a_stored_command_shares_bounded_admission_without_mutating_application_data()
     use std::error::Error;
 
     let app = app();
-    let command = NativeCommand::FloatItem {
-        item: FIRST,
-        surface: SURFACE,
+    let command = NativeCommand::Move {
+        source: DockMoveSource::Item(FIRST),
+        target: DockMoveTarget::Contained { surface: SURFACE },
     };
 
-    app.request_command(command.clone()).unwrap();
+    let receipt = app.request_command(command.clone()).unwrap();
     let error = app.request_command(command.clone()).unwrap_err();
     assert_eq!(error.reason(), NativeActionRequestError::Busy);
     assert_eq!(
@@ -93,14 +100,21 @@ fn a_stored_command_shares_bounded_admission_without_mutating_application_data()
     );
     assert_eq!(error.into_command(), command);
     assert_eq!(
-        app.request_command(NativeCommand::DockItem {
-            item: FIRST,
-            placement: DockPlacement::Center(DockAnchor::Item(SECOND)),
+        app.request_command(NativeCommand::Move {
+            source: DockMoveSource::Item(FIRST),
+            target: DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(SECOND)),
+                mode: TabGroupDockMode::MergeTabs
+            }
         })
+        .map(|_| ())
         .map_err(|error| error.reason()),
         Err(NativeActionRequestError::Busy)
     );
-    assert!(app.take_action_status().is_none());
+    assert_eq!(
+        receipt.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    );
     assert_eq!(
         app.with_panes(|panes| panes.0.clone()),
         "unsaved application text"
@@ -119,25 +133,26 @@ fn stored_native_payload_commands_and_group_capture_share_the_public_slot() {
         let app = app();
         let group = app.capture_tabs_group(DockAnchor::Item(FIRST)).unwrap();
         let source = match kind {
-            0 | 3 => NativeTearOffSource::Item(SECOND),
-            1 | 4 => NativeTearOffSource::Tabs(group.clone()),
-            _ => NativeTearOffSource::Root(RootId::new(1)),
+            0 | 3 => DockMoveSource::Item(SECOND),
+            1 | 4 => DockMoveSource::Tabs(group.clone()),
+            _ => DockMoveSource::Root(RootId::new(1)),
         };
-        let command = match kind {
-            0..=2 => NativeCommand::MoveToNewWindow { source, placement },
-            3 | 4 => NativeCommand::MoveToNewWindowDefault { source },
-            _ => NativeCommand::MoveRootToNewWindow {
-                root: RootId::new(1),
-                placement,
+        let command = NativeCommand::Move {
+            source,
+            target: DockMoveTarget::Native {
+                placement: (kind < 3).then_some(placement),
             },
         };
-        app.request_command(command.clone()).unwrap();
+        let receipt = app.request_command(command.clone()).unwrap();
         assert_eq!(
-            app.request_command(command).map_err(|error| error.reason()),
+            app.request_command(command)
+                .map(|_| ())
+                .map_err(|error| error.reason()),
             Err(NativeActionRequestError::Busy)
         );
         assert_eq!(
             app.request_command(NativeCommand::SelectItem { item: FIRST })
+                .map(|_| ())
                 .map_err(|error| error.reason()),
             Err(NativeActionRequestError::Busy)
         );
@@ -149,7 +164,10 @@ fn stored_native_payload_commands_and_group_capture_share_the_public_slot() {
             app.capture_tabs_group(DockAnchor::Item(ItemId::new(99)))
                 .is_err()
         );
-        assert!(app.take_action_status().is_none());
+        assert_eq!(
+            receipt.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        );
         assert_eq!(
             app.with_view(|view| view
                 .item(FIRST)
@@ -177,14 +195,16 @@ fn another_apps_captured_group_uses_the_same_public_command_slot() {
     let destination = app();
     let group = source.capture_tabs_group(DockAnchor::Item(FIRST)).unwrap();
     let original = group.clone();
-    destination
-        .request_command(NativeCommand::MoveToNewWindowDefault {
-            source: NativeTearOffSource::Tabs(group),
+    let receipt = destination
+        .request_command(NativeCommand::Move {
+            source: DockMoveSource::Tabs(group),
+            target: DockMoveTarget::Native { placement: None },
         })
         .unwrap();
     assert_eq!(
         destination
             .request_command(NativeCommand::SelectItem { item: SECOND })
+            .map(|_| ())
             .map_err(|error| error.reason()),
         Err(NativeActionRequestError::Busy)
     );
@@ -196,7 +216,10 @@ fn another_apps_captured_group_uses_the_same_public_command_slot() {
         destination.with_view(|view| view.item(FIRST).unwrap().surface()),
         SURFACE
     );
-    assert!(destination.take_action_status().is_none());
+    assert_eq!(
+        receipt.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    );
     assert!(destination.error_kind().is_none());
 }
 
@@ -251,12 +274,20 @@ fn public_layout_tab_capture_is_read_only_and_busy_admission_returns_the_exact_c
     assert_eq!(tab.key(), key);
     assert!(app.capture_tab(bare.into()).is_none());
     assert!(app.capture_tab(FIRST.into()).is_some());
-    assert!(app.take_action_status().is_none());
-    app.request_command(NativeCommand::FloatTab {
-        tab: tab.clone(),
-        surface: SURFACE,
-    })
-    .unwrap();
+    assert!(
+        !app.pending_work()
+            .contains(egui_dockspace_native::NativeWaitReason::ApplicationAction)
+    );
+    let receipt = app
+        .request_command(NativeCommand::Move {
+            source: DockMoveSource::Tab(tab.clone()),
+            target: DockMoveTarget::Contained { surface: SURFACE },
+        })
+        .unwrap();
+    assert_eq!(
+        receipt.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    );
     let command = NativeCommand::CloseTab { tab: tab.clone() };
     let error = app.request_command(command.clone()).unwrap_err();
     assert_eq!(error.reason(), NativeActionRequestError::Busy);
@@ -274,5 +305,98 @@ fn public_layout_tab_capture_is_read_only_and_busy_admission_returns_the_exact_c
     assert_eq!(
         app.with_panes(|panes| panes.0.clone()),
         "unsaved application text"
+    );
+}
+
+#[test]
+fn dropping_the_runtime_disconnects_an_uncommitted_receipt() {
+    let app = app();
+    let receipt = app
+        .request_command(NativeCommand::SelectItem { item: SECOND })
+        .unwrap();
+    assert_eq!(
+        receipt.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    );
+    drop(app);
+    assert_eq!(
+        receipt.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Disconnected)
+    );
+}
+
+fn service_until_idle(host: &dyn eframe::NativeHostHandler, context: &egui::Context) {
+    for _ in 0..16 {
+        match host.on_service(context) {
+            eframe::NativeHostWake::Wait => return,
+            eframe::NativeHostWake::ServiceAfterCurrent => {}
+            wake => panic!("unexpected service wake: {wake:?}"),
+        }
+    }
+    panic!("native service did not drain the accepted application request");
+}
+
+#[test]
+fn public_service_completes_independent_receipts_without_root_paint_or_result_reads() {
+    use egui_dockspace_native::NativeActionStatus;
+
+    let app = app();
+    let host = app.native_host_handler();
+    let context = egui::Context::default();
+    let pass = context.cumulative_pass_nr_for(egui::ViewportId::ROOT);
+    let first = app
+        .request_command(NativeCommand::SetArrangementLocked { locked: true })
+        .unwrap();
+    service_until_idle(host.as_ref(), &context);
+    assert!(app.arrangement_locked());
+    let second = app
+        .request_command(NativeCommand::SetArrangementLocked { locked: false })
+        .unwrap();
+    service_until_idle(host.as_ref(), &context);
+    assert!(!app.arrangement_locked());
+    assert!(matches!(
+        second.try_recv(),
+        Ok(Ok(NativeActionStatus::ArrangementLockChanged {
+            locked: false,
+            changed: true,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        first.try_recv(),
+        Ok(Ok(NativeActionStatus::ArrangementLockChanged {
+            locked: true,
+            changed: true,
+            ..
+        }))
+    ));
+    assert_eq!(
+        first.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Disconnected)
+    );
+    assert_eq!(
+        second.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Disconnected)
+    );
+    assert_eq!(context.cumulative_pass_nr_for(egui::ViewportId::ROOT), pass);
+}
+
+#[test]
+fn dropping_a_receipt_does_not_cancel_the_accepted_request() {
+    let app = app();
+    let host = app.native_host_handler();
+    drop(
+        app.request_command(NativeCommand::SetArrangementLocked { locked: true })
+            .unwrap(),
+    );
+    let error = app
+        .request_command(NativeCommand::SelectItem { item: FIRST })
+        .unwrap_err();
+    assert_eq!(error.reason(), NativeActionRequestError::Busy);
+    service_until_idle(host.as_ref(), &egui::Context::default());
+    assert!(app.arrangement_locked());
+    drop(
+        app.request_command(NativeCommand::SelectItem { item: FIRST })
+            .unwrap(),
     );
 }

@@ -1,4 +1,4 @@
-//! Layout commands use the native application's bounded command and result slot.
+//! Layout commands retain bounded execution and caller-owned completion receipts.
 
 mod shared_window;
 
@@ -129,9 +129,12 @@ fn commit_queued(
     report
 }
 
-fn take(state: &mut NativeRuntimeState<Panes>) -> NativeActionStatus {
-    let status = state.take_action_status().unwrap().unwrap();
-    assert!(state.take_action_status().is_none());
+fn take(receipt: &crate::NativeActionReceipt) -> NativeActionStatus {
+    let status = receipt.try_recv().unwrap().unwrap();
+    assert_eq!(
+        receipt.try_recv().unwrap_err(),
+        std::sync::mpsc::TryRecvError::Disconnected
+    );
     status
 }
 
@@ -153,7 +156,7 @@ fn queued_reset_is_stale_after_publication_and_repeated_resets_preserve_semantic
     let defaults = layout(PRESET_ROOT, &[FIRST, THIRD], THIRD);
     for round in 0..2 {
         let before = state.coordinator.session().version();
-        state.request_layout_reset(defaults.clone()).unwrap();
+        let state_receipt = state.request_layout_reset(defaults.clone()).unwrap();
         assert_eq!(state.coordinator.session().version(), before);
         assert_queue_error(
             state
@@ -164,6 +167,7 @@ fn queued_reset_is_stale_after_publication_and_repeated_resets_preserve_semantic
         assert_eq!(
             state
                 .request_command(NativeCommand::SelectItem { item: FIRST })
+                .map(|_| ())
                 .map_err(|error| error.reason()),
             Err(NativeActionRequestError::Busy)
         );
@@ -194,14 +198,9 @@ fn queued_reset_is_stale_after_publication_and_repeated_resets_preserve_semantic
                 .iter()
                 .any(|input| matches!(input, HostInputOutcome::ProductActionApplied(_)))
         );
+        assert!(!state.application_actions.is_occupied());
         assert_eq!(
-            state
-                .request_command(NativeCommand::SelectItem { item: FIRST })
-                .map_err(|error| error.reason()),
-            Err(NativeActionRequestError::Busy)
-        );
-        assert_eq!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::LayoutReset { previous, current }
         );
 
@@ -224,7 +223,7 @@ fn queued_reset_is_stale_after_publication_and_repeated_resets_preserve_semantic
     }
 
     let before = state.coordinator.session().version();
-    state.request_layout_reset(defaults.clone()).unwrap();
+    let state_receipt = state.request_layout_reset(defaults.clone()).unwrap();
     let mut frame = state
         .coordinator
         .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
@@ -246,12 +245,9 @@ fn queued_reset_is_stale_after_publication_and_repeated_resets_preserve_semantic
             .iter()
             .any(|input| matches!(input, HostInputOutcome::LayoutReset { .. }))
     );
-    assert_queue_error(
-        state.request_layout_reset(defaults).unwrap_err(),
-        NativeActionRequestError::Busy,
-    );
+    assert!(!state.application_actions.is_occupied());
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Stale {
             expected: before,
             accepted
@@ -262,12 +258,12 @@ fn queued_reset_is_stale_after_publication_and_repeated_resets_preserve_semantic
     assert_eq!(retained.root(), PRESET_ROOT);
     assert_eq!(state.panes.0, panes);
     assert!(state.shutdown.is_none());
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SelectItem { item: THIRD })
         .unwrap();
     commit_queued(&mut state, None);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(egui_dockspace::DockspaceActionStatus::Applied(
             dockspace::model::DockspaceActionOutcome::ItemActivated { item: tab, .. }
         )) if tab == THIRD
@@ -278,12 +274,12 @@ fn queued_reset_is_stale_after_publication_and_repeated_resets_preserve_semantic
 fn lock_and_host_validation_leave_the_slot_free_and_stopped_takes_precedence() {
     let mut state = test_state();
     let panes = state.panes.0.clone();
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SetArrangementLocked { locked: true })
         .unwrap();
     commit_queued(&mut state, None);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::ArrangementLockChanged { locked: true, .. }
     ));
     let before = state.coordinator.session().version();
@@ -303,11 +299,11 @@ fn lock_and_host_validation_leave_the_slot_free_and_stopped_takes_precedence() {
     assert!(!state.application_actions.is_occupied());
     assert_eq!(state.coordinator.session().version(), before);
 
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SetArrangementLocked { locked: false })
         .unwrap();
     commit_queued(&mut state, None);
-    take(&mut state);
+    take(&state_receipt);
     let before = state.coordinator.session().version();
     let missing_host =
         DockspaceLayout::new([surface(OTHER_SURFACE, ROOT, &[FIRST], FIRST)]).unwrap();
@@ -335,17 +331,17 @@ fn lock_and_host_validation_leave_the_slot_free_and_stopped_takes_precedence() {
             kind
         );
         assert!(!state.application_actions.is_occupied());
-        assert!(state.take_action_status().is_none());
+        assert!(state_receipt.try_recv().ok().is_none());
         assert_eq!(state.coordinator.session().version(), before);
         assert_eq!(state.panes.0, panes);
         assert!(state.shutdown.is_none());
     }
 
-    state
+    let state_receipt = state
         .request_layout_reset(layout(PRESET_ROOT, &[FIRST], FIRST))
         .unwrap();
     state.stop_current_output(NativeHostProtocolError::RootSurfaceUnavailable(SURFACE).into());
-    assert!(state.application_actions.is_occupied());
+    assert!(!state.application_actions.is_occupied());
     assert_queue_error(
         state
             .request_layout_reset(missing_host.clone())
@@ -367,8 +363,8 @@ fn lock_and_host_validation_leave_the_slot_free_and_stopped_takes_precedence() {
             NativeActionRequestError::Stopped,
         );
     }
-    assert!(state.take_action_status().unwrap().is_err());
-    assert!(state.take_action_status().is_none());
+    assert!(state_receipt.try_recv().ok().unwrap().is_err());
+    assert!(state_receipt.try_recv().ok().is_none());
     assert_queue_error(
         state.request_layout_reset(missing_host).unwrap_err(),
         NativeActionRequestError::Stopped,
@@ -518,12 +514,12 @@ mod persistence {
             .coordinator
             .bind_viewport(egui::ViewportId::ROOT, WindowId::from(11), root)
             .unwrap();
-        state
+        let state_receipt = state
             .request_document_restore_json(&saved_child_document(), recognize)
             .unwrap();
         let mut report = commit_queued(&mut state, None);
         assert!(matches!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::DocumentRestored { .. }
         ));
         assert!(report.take_native_effects().is_empty());
@@ -570,7 +566,7 @@ mod persistence {
             let candidate =
                 DockspaceLayout::new([surface(incoming, PRESET_ROOT, &[FIRST, SECOND], SECOND)])
                     .unwrap();
-            state
+            let state_receipt = state
                 .request_layout_reset_rebinding_root(candidate, incoming)
                 .unwrap();
             let action = state.application_actions.take().unwrap();
@@ -656,7 +652,7 @@ mod persistence {
                     .unwrap()
             );
             assert!(matches!(
-                take(&mut state),
+                take(&state_receipt),
                 NativeActionStatus::LayoutReset { .. }
             ));
             state.coordinator.settle_host_frame_report(&report).unwrap();
@@ -719,11 +715,11 @@ mod persistence {
 
         // Removing the peer from the graph leaves its physical route occupied.
         // Semantic identity preservation cannot bypass native window ownership.
-        state
+        let state_receipt = state
             .request_layout_reset(layout(PRESET_ROOT, &[FIRST, SECOND], SECOND))
             .unwrap();
         commit_queued(&mut state, None);
-        take(&mut state);
+        take(&state_receipt);
         assert!(
             state
                 .coordinator
@@ -780,7 +776,7 @@ mod persistence {
         let fresh = SurfaceId::new(9);
         let candidate =
             DockspaceLayout::new([surface(fresh, PRESET_ROOT, &[FIRST, SECOND], SECOND)]).unwrap();
-        state
+        let state_receipt = state
             .request_layout_reset_rebinding_root(candidate, fresh)
             .unwrap();
         state
@@ -799,7 +795,7 @@ mod persistence {
         let report = commit_queued(&mut state, None);
         assert!(report.native_root_continuations().is_empty());
         assert_eq!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::RootContinuationRejected {
                 predecessor: root,
                 incoming_root: fresh,
@@ -812,11 +808,11 @@ mod persistence {
             Some(root)
         );
         assert!(state.shutdown.is_none());
-        state
+        let state_receipt = state
             .request_command(NativeCommand::SelectItem { item: SECOND })
             .unwrap();
         commit_queued(&mut state, None);
-        assert!(matches!(take(&mut state), NativeActionStatus::Dock(_)));
+        assert!(matches!(take(&state_receipt), NativeActionStatus::Dock(_)));
         assert!(state.shutdown.is_none());
     }
 
@@ -841,7 +837,6 @@ mod persistence {
             NativeRuntimeErrorKind::Unsupported
         );
         assert!(!state.application_actions.is_occupied());
-        assert!(state.take_action_status().is_none());
         assert!(!state.coordinator.session().has_pending_native_create());
         assert_eq!(state.coordinator.session().version(), before);
         assert_eq!(
@@ -1000,12 +995,12 @@ mod persistence {
             .coordinator
             .bind_viewport(egui::ViewportId::ROOT, window, predecessor)
             .unwrap();
-        state
+        let state_receipt = state
             .request_document_restore_json(&saved_child_document(), recognize)
             .unwrap();
         let mut restored = commit_queued(&mut state, None);
         assert!(matches!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::DocumentRestored { .. }
         ));
         assert!(restored.take_native_effects().is_empty());
@@ -1275,21 +1270,21 @@ mod persistence {
         let mut state = persistent_state();
         let panes = state.panes.0.clone();
         let saved = state.save_document_json().unwrap();
-        state
+        let state_receipt = state
             .request_command(NativeCommand::SetArrangementLocked { locked: true })
             .unwrap();
         commit_queued(&mut state, None);
         assert!(state.arrangement_locked());
-        assert_queue_error(
-            state
-                .request_document_restore_json(&saved, |_, _| {
-                    panic!("the unconsumed result must take precedence over arrangement lock")
-                })
-                .unwrap_err(),
-            NativeActionRequestError::Busy,
-        );
+        let rejected = state
+            .request_document_restore_json(&saved, |_, _| {
+                panic!("arrangement lock must reject before identity recognition")
+            })
+            .unwrap_err();
+        assert_eq!(rejected.kind(), NativeRuntimeErrorKind::OperationConflict);
+        assert!(rejected.source().is_none());
+        assert!(!state.application_actions.is_occupied());
         assert!(matches!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::ArrangementLockChanged { locked: true, .. }
         ));
 
@@ -1301,7 +1296,7 @@ mod persistence {
         assert_eq!(error.kind(), NativeRuntimeErrorKind::OperationConflict);
         assert!(error.source().is_none());
         assert!(!state.application_actions.is_occupied());
-        assert!(state.take_action_status().is_none());
+        assert!(state_receipt.try_recv().ok().is_none());
         assert!(state.shutdown.is_none());
         assert_eq!(state.coordinator.session().version(), before);
         assert_eq!(
@@ -1310,7 +1305,7 @@ mod persistence {
         );
         assert_eq!(state.panes.0, panes);
 
-        state
+        let state_receipt = state
             .request_command(NativeCommand::SetArrangementLocked { locked: false })
             .unwrap();
         assert_queue_error(
@@ -1323,17 +1318,17 @@ mod persistence {
         );
         commit_queued(&mut state, None);
         assert!(matches!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::ArrangementLockChanged { locked: false, .. }
         ));
         assert!(!state.arrangement_locked());
 
-        state
+        let state_receipt = state
             .request_document_restore_json(&saved, recognize)
             .unwrap();
         let report = commit_queued(&mut state, None);
         assert_eq!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::DocumentRestored {
                 previous: report.before(),
                 current: report.after(),
@@ -1351,16 +1346,20 @@ mod persistence {
         assert!(state.shutdown.is_none());
         assert_eq!(state.panes.0, panes);
 
-        state
+        let state_receipt = state
             .request_command(NativeCommand::SetArrangementLocked { locked: true })
             .unwrap();
         commit_queued(&mut state, None);
         assert!(state.arrangement_locked());
+        assert!(matches!(
+            take(&state_receipt),
+            NativeActionStatus::ArrangementLockChanged { locked: true, .. }
+        ));
         state.stop_current_output(NativeHostProtocolError::RootSurfaceUnavailable(SURFACE).into());
         assert_queue_error(
             state
                 .request_document_restore_json(&saved_again, |_, _| {
-                    panic!("shutdown must take precedence over arrangement lock and the unconsumed result")
+                    panic!("shutdown must take precedence over arrangement lock and decoding")
                 })
                 .unwrap_err(),
             NativeActionRequestError::Stopped,
@@ -1388,7 +1387,7 @@ mod persistence {
         let saved = external.save_document_json().unwrap();
 
         let recognized = RefCell::new(Vec::new());
-        state
+        let state_receipt = state
             .request_document_restore_json(&saved, |document, key| {
                 recognized.borrow_mut().push(key.to_owned());
                 recognize(document, key)
@@ -1417,11 +1416,18 @@ mod persistence {
         );
 
         let report = commit_queued(&mut state, Some(SECOND));
-        assert_queue_error(
-            state.save_document_json().unwrap_err(),
-            NativeActionRequestError::Busy,
+        assert!(!state.application_actions.is_occupied());
+        let unread_result_checkpoint = state.save_document_json().unwrap();
+        assert!(
+            DockspaceSession::from_document_json(
+                &unread_result_checkpoint,
+                DockPolicy::default(),
+                recognize
+            )
+            .is_ok()
         );
-        let NativeActionStatus::DocumentRestored { previous, current } = take(&mut state) else {
+        let NativeActionStatus::DocumentRestored { previous, current } = take(&state_receipt)
+        else {
             panic!(
                 "the exact document terminal must settle despite native registration and local selection"
             );
@@ -1506,7 +1512,6 @@ mod persistence {
             DockspacePersistenceErrorKind::InvalidDocument
         );
         assert!(!state.application_actions.is_occupied());
-        assert!(state.take_action_status().is_none());
         assert!(state.shutdown.is_none());
         assert_eq!(state.coordinator.session().version(), before);
         assert_eq!(
@@ -1514,7 +1519,7 @@ mod persistence {
             generation
         );
 
-        state
+        let state_receipt = state
             .request_command(NativeCommand::SelectItem { item: SECOND })
             .unwrap();
         assert_queue_error(
@@ -1530,16 +1535,16 @@ mod persistence {
             NativeActionRequestError::Busy,
         );
         commit_queued(&mut state, None);
-        assert_queue_error(
-            state
-                .request_document_restore_json(b"{", |_, _| {
-                    panic!("the unconsumed result owns the slot")
-                })
-                .unwrap_err(),
-            NativeActionRequestError::Busy,
-        );
+        let rejected = state
+            .request_document_restore_json(b"{", |_, _| {
+                panic!("malformed JSON must fail before identity recognition")
+            })
+            .unwrap_err();
+        assert_eq!(rejected.kind(), NativeRuntimeErrorKind::Persistence);
+        assert!(!state.application_actions.is_occupied());
+        state.save_document_json().unwrap();
         assert!(matches!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::Dock(egui_dockspace::DockspaceActionStatus::Applied(
                 dockspace::model::DockspaceActionOutcome::ItemActivated { item: tab, .. }
             )) if tab == SECOND

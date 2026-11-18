@@ -11,7 +11,7 @@ use crate::application_action::{
     NativeApplicationAction, NativeApplicationCommand, NativeApplicationSubmission,
     NativeSubmittedApplicationAction,
 };
-use crate::{NativeActionRequestError, NativeActionStatus};
+use crate::{NativeActionReceipt, NativeActionRequestError, NativeActionStatus};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NativeMotionConfiguration {
@@ -70,7 +70,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
     pub(crate) fn request_motion(
         &mut self,
         configuration: NativeMotionConfiguration,
-    ) -> Result<(), NativeActionRequestError> {
+    ) -> Result<NativeActionReceipt, NativeActionRequestError> {
         self.ensure_application_slot_available()?;
         self.enqueue_application_action(NativeApplicationAction::new(
             self.coordinator.session().version(),

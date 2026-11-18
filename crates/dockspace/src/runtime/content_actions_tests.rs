@@ -14,7 +14,9 @@ use crate::policy::{CloseCapability, DockPolicy};
 
 mod composable;
 mod deferred_move;
+mod move_contract;
 mod multiview;
+mod retained_surface;
 mod tab_body_close;
 mod tabs_close;
 mod tabs_group_menu;

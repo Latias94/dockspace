@@ -135,6 +135,7 @@ enum Phase {
 
 pub(super) struct ContentSmoke {
     started: Instant,
+    receipt: Option<NativeActionReceipt>,
     interruption: Interruption,
     index: usize,
     selected: bool,
@@ -157,6 +158,7 @@ impl ContentSmoke {
         });
         Self {
             started: Instant::now(),
+            receipt: None,
             interruption,
             index: 0,
             selected: false,
@@ -180,13 +182,15 @@ impl ContentSmoke {
             self.phase,
             observations.lock().unwrap().root().controls
         );
-        while let Some(result) = app.dockspace.take_action_status() {
+        while let Some(result) = poll_receipt(&mut self.receipt) {
             assert!(result.is_ok(), "content setup failed: {result:?}");
         }
         if !self.selected {
-            app.dockspace
-                .request_command(NativeCommand::SelectItem { item: PREVIEW })
-                .unwrap();
+            self.receipt = Some(
+                app.dockspace
+                    .request_command(NativeCommand::SelectItem { item: PREVIEW })
+                    .unwrap(),
+            );
             self.selected = true;
             return false;
         }

@@ -11,8 +11,8 @@ use dockspace::model::ItemId;
 use eframe::egui;
 
 use super::{
-    ASSETS, CONSOLE, EDITOR, HISTORY, INSPECTOR, NativeExampleApp, OUTLINE, PREVIEW, PROFILER,
-    SURFACE,
+    ASSETS, CONSOLE, EDITOR, HISTORY, INSPECTOR, NativeActionReceipt, NativeExampleApp, OUTLINE,
+    PREVIEW, PROFILER, SURFACE, poll_receipt,
 };
 
 mod content;

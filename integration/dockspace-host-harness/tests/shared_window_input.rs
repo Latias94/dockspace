@@ -6,8 +6,8 @@ use dockspace::geometry::{
     LogicalPoint, LogicalRect, LogicalSize, PhysicalPoint, PhysicalRect, PhysicalSize, ScaleFactor,
 };
 use dockspace::model::{
-    DockAnchor, DockspaceContainedLayout, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
-    DockspaceSurfaceLayout, FloatingPresentationId, ItemId, NativeTearOffSource,
+    DockAnchor, DockMoveSource, DockspaceContainedLayout, DockspaceLayout, DockspaceNode,
+    DockspaceRootLayout, DockspaceSurfaceLayout, FloatingPresentationId, ItemId,
     NativeWindowPlacement, RootId, SurfaceId,
 };
 use dockspace::policy::DockPolicy;
@@ -734,7 +734,7 @@ fn native_tear_off_capabilities() -> NativeHostCapabilities {
 fn native_group_availability_rejects_removing_its_only_recovery_surface() {
     let (mut session, _, _) = fixture_with_capabilities(false, native_tear_off_capabilities());
     let group = session.capture_tabs_group(DockAnchor::Item(FIRST)).unwrap();
-    let source = NativeTearOffSource::Tabs(group);
+    let source = DockMoveSource::Tabs(group);
     let placement =
         NativeWindowPlacement::new(PhysicalRect::new(2200.0, 150.0, 600.0, 400.0).unwrap());
     let availability = session
@@ -801,7 +801,7 @@ fn first_live_child_returns_to_a_scaled_shared_placement_through_one_handoff_eve
     let child_bounds = PhysicalRect::new(2200.0, 150.0, 600.0, 400.0).unwrap();
     let availability = session
         .native_window_command(
-            NativeTearOffSource::Tabs(group),
+            DockMoveSource::Tabs(group),
             NativeWindowPlacement::new(child_bounds),
         )
         .unwrap();

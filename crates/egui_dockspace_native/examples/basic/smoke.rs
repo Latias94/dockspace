@@ -10,7 +10,9 @@ use egui_dockspace_native::NativeCommand;
 use std::time::{Duration, Instant};
 
 use dockspace::close::{CloseDecision, CloseItemDecisionState, ClosePlanTarget, CloseRequestId};
-use dockspace::model::{DockAnchor, DockPlacement, DockspaceActionRejection};
+use dockspace::model::{
+    DockAnchor, DockMoveSource, DockMoveTarget, DockPlacement, DockspaceActionRejection,
+};
 use dockspace::runtime::{DockspaceCloseOutcome, DockspaceCloseResolution};
 
 use super::*;
@@ -552,12 +554,12 @@ impl EditorSmoke {
                     PhysicalRect::new(760.0, 120.0, 440.0, 340.0)
                         .expect("the static child placement is valid"),
                 );
-                let request = app
-                    .dockspace
-                    .request_command(NativeCommand::MoveRootToNewWindow {
-                        root: location.root,
-                        placement,
-                    });
+                let request = app.dockspace.request_command(NativeCommand::Move {
+                    source: DockMoveSource::Root(location.root),
+                    target: DockMoveTarget::Native {
+                        placement: Some(placement),
+                    },
+                });
                 self.submit(
                     app,
                     request,
@@ -1239,13 +1241,12 @@ impl EditorSmoke {
     fn submit<E: std::fmt::Display>(
         &mut self,
         app: &mut NativeExampleApp,
-        request: Result<(), E>,
+        request: Result<NativeActionReceipt, E>,
         operation: &'static str,
         stage: Stage,
     ) -> Result<(), String> {
-        request.map_err(|error| format!("{operation}: {error}"))?;
-        // The smoke owns this result through the same example action state and
-        // native single slot; the UI must not consume it or enqueue another action.
+        app.action_receipt = Some(request.map_err(|error| format!("{operation}: {error}"))?);
+        // The smoke owns this operation's receipt; the UI must not consume it.
         app.action = ExampleActionState::AwaitingSmokeOutcome(operation);
         app.status = Some(format!("{operation}: programmatic request accepted."));
         self.set_stage(stage);
@@ -1256,7 +1257,7 @@ impl EditorSmoke {
         &self,
         app: &mut NativeExampleApp,
     ) -> Result<Option<NativeActionStatus>, String> {
-        let Some(status) = app.dockspace.take_action_status() else {
+        let Some(status) = poll_receipt(&mut app.action_receipt) else {
             return Ok(None);
         };
         let status =

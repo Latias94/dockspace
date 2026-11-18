@@ -17,7 +17,7 @@ fn policy_requests_share_the_slot_and_publish_only_after_commit() {
     let policy = Box::new(updated.clone());
     let allocation = std::ptr::from_ref(policy.as_ref());
     let command = NativeCommand::SetPolicy { policy };
-    state.request_command(command.clone()).unwrap();
+    let state_receipt = state.request_command(command.clone()).unwrap();
     assert_eq!(state.coordinator.session().policy(), &original);
     assert_eq!(state.coordinator.session().version(), before);
     let error = state.request_command(command).unwrap_err();
@@ -32,25 +32,27 @@ fn policy_requests_share_the_slot_and_publish_only_after_commit() {
             NativeActionRequestError::Busy
         ))
     ));
-    assert!(state.take_action_status().is_none());
+    assert_eq!(
+        state_receipt.try_recv().unwrap_err(),
+        std::sync::mpsc::TryRecvError::Empty
+    );
 
     let report = commit_queued_report(&mut state);
     assert_eq!(state.coordinator.session().policy(), &updated);
     assert_ne!(report.after(), before);
-    let error = state.request_command(error.into_command()).unwrap_err();
-    assert_eq!(error.reason(), NativeActionRequestError::Busy);
+    assert!(!state.application_actions.is_occupied());
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::PolicyChanged {
             changed: true,
             version: report.after(),
         }
     );
-    state.request_command(error.into_command()).unwrap();
+    let state_receipt = state.request_command(error.into_command()).unwrap();
     let unchanged = commit_queued_report(&mut state);
     assert_eq!(unchanged.after(), report.after());
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::PolicyChanged {
             changed: false,
             version: report.after(),
@@ -66,23 +68,23 @@ fn per_pane_policy_replacement_preserves_other_panes_and_lock_updates() {
     pinned.set_source_enabled(false);
     pinned.set_close_capability(Some(CloseCapability::Disabled));
     updated.set_item_rule(FIRST, pinned);
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SetPolicy {
             policy: Box::new(updated.clone()),
         })
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::PolicyChanged { changed: true, .. }
     ));
     for locked in [true, false] {
-        state
+        let state_receipt = state
             .request_command(NativeCommand::SetArrangementLocked { locked })
             .unwrap();
         commit_queued(&mut state);
         assert!(matches!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::ArrangementLockChanged {
                 locked: actual,
                 changed: true,
@@ -94,14 +96,17 @@ fn per_pane_policy_replacement_preserves_other_panes_and_lock_updates() {
     }
 
     for item in [FIRST, SECOND] {
-        state
-            .request_command(NativeCommand::DockItem {
-                item,
-                placement: DockPlacement::After(THIRD),
+        let state_receipt = state
+            .request_command(NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Item(item),
+                target: dockspace::model::DockMoveTarget::Dock {
+                    placement: DockPlacement::After(THIRD),
+                    mode: dockspace::model::TabGroupDockMode::MergeTabs,
+                },
             })
             .unwrap();
         commit_queued(&mut state);
-        let status = take(&mut state);
+        let status = take(&state_receipt);
         if item == FIRST {
             assert_eq!(
                 status,
@@ -118,12 +123,12 @@ fn per_pane_policy_replacement_preserves_other_panes_and_lock_updates() {
             ));
         }
     }
-    state
+    let state_receipt = state
         .request_command(NativeCommand::CloseItem { item: FIRST })
         .unwrap();
     commit_queued(&mut state);
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::CloseRejected(DockspaceCloseRequestRejection::ItemCloseDisabled {
             target: ClosePlanTarget::Item { item: FIRST },
             item: FIRST,
@@ -151,7 +156,7 @@ fn dropped_policy_frames_publish_nothing_and_retained_commands_retry_after_resta
         let command = NativeCommand::SetPolicy {
             policy: Box::new(updated.clone()),
         };
-        state.request_command(command.clone()).unwrap();
+        let state_receipt = state.request_command(command.clone()).unwrap();
         let action = state.application_actions.take().unwrap();
         {
             let mut frame = state
@@ -166,13 +171,16 @@ fn dropped_policy_frames_publish_nothing_and_retained_commands_retry_after_resta
         }
         assert_eq!(state.coordinator.session().policy(), &original);
         assert_eq!(state.coordinator.session().version(), before);
-        assert!(state.take_action_status().is_none());
+        assert_eq!(
+            state_receipt.try_recv().unwrap_err(),
+            std::sync::mpsc::TryRecvError::Empty
+        );
         let error = state.request_command(command).unwrap_err();
         assert_eq!(error.reason(), NativeActionRequestError::Busy);
         state.stop_current_output(
             crate::error::NativeHostProtocolError::OutputRouteAttachmentFailed.into(),
         );
-        let failure = state.take_action_status().unwrap().unwrap_err();
+        let failure = state_receipt.try_recv().ok().unwrap().unwrap_err();
         assert_eq!(failure.kind(), crate::NativeRuntimeErrorKind::HostProtocol);
         assert_eq!(
             failure.interruption(),
@@ -182,11 +190,11 @@ fn dropped_policy_frames_publish_nothing_and_retained_commands_retry_after_resta
         assert_eq!(error.reason(), NativeActionRequestError::Stopped);
 
         let mut restarted = super::state();
-        restarted.request_command(error.into_command()).unwrap();
+        let restarted_receipt = restarted.request_command(error.into_command()).unwrap();
         let report = commit_queued_report(&mut restarted);
         assert_eq!(restarted.coordinator.session().policy(), &updated);
         assert_eq!(
-            take(&mut restarted),
+            take(&restarted_receipt),
             NativeActionStatus::PolicyChanged {
                 changed: true,
                 version: report.after(),

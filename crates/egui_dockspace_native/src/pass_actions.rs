@@ -71,6 +71,10 @@ impl NativePassActions {
         !self.local_actions.is_empty() || self.touch_menu.is_some()
     }
 
+    pub(crate) fn has_deferred_surface_actions(&self) -> bool {
+        !self.local_actions.is_empty()
+    }
+
     pub(crate) fn capture_touch_menu(
         &mut self,
         request: DockspaceContextMenuRequest,

@@ -1,11 +1,11 @@
-//! Application-facing motion configuration over the existing native command slot.
+//! Application-facing motion configuration at the native service boundary.
 
 use dockspace::motion::{MotionPreference, MotionSettings};
 use egui_dockspace::PaneView;
 
 use super::NativeDockspaceApp;
-use crate::NativeActionRequestError;
 use crate::surface_driver::NativeMotionConfiguration;
+use crate::{NativeActionReceipt, NativeActionRequestError};
 
 impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
     /// Configures shared pane motion before the native host receives input.
@@ -45,13 +45,13 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
         crate::notification::lock_state(&self.state).motion_preference()
     }
 
-    /// Queues settings and an observed preference in the existing command slot.
+    /// Queues settings and an observed preference at the next eligible native boundary.
     ///
     /// The next eligible outer update freezes them with the native monotonic
     /// clock. Repeated egui passes reuse that sample. This changes no layout
     /// measurements, docking semantics or OS-window animation. Off and Reduced
-    /// settle immediately. Consume MotionChanged through take_action_status
-    /// before submitting another application request.
+    /// settle immediately. The returned receipt reports MotionChanged independently
+    /// of later requests. An unread completed receipt does not retain capacity.
     ///
     /// # Errors
     ///
@@ -60,7 +60,7 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
         &self,
         settings: MotionSettings,
         preference: MotionPreference,
-    ) -> Result<(), NativeActionRequestError> {
+    ) -> Result<NativeActionReceipt, NativeActionRequestError> {
         crate::notification::lock_state(&self.state).request_motion(NativeMotionConfiguration {
             settings,
             preference,

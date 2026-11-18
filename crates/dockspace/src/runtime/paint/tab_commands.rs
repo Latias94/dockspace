@@ -2,8 +2,8 @@
 
 use crate::ids::NodeKey;
 use crate::model::{
-    DockAnchor, DockEdge, DockFraction, DockPlacement, DockspaceActionRejection,
-    NativeTearOffSource, PreparedTab, ProductAction,
+    DockAnchor, DockEdge, DockFraction, DockMoveSource, DockPlacement, DockspaceActionRejection,
+    PreparedTab, ProductAction,
 };
 
 use super::{
@@ -77,7 +77,7 @@ impl SurfacePaintPlan<'_> {
                 surface,
             },
             Kind::MoveToNewWindow => ProductAction::TearOffNative {
-                source: NativeTearOffSource::Tab(captured),
+                source: DockMoveSource::Tab(captured),
                 placement: None,
             },
             _ => {

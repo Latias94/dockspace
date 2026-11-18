@@ -116,6 +116,10 @@ fn snapshot_root_placements(
 }
 
 impl RootPlacements {
+    pub(super) fn has_pending_input_or_declaration(&self) -> bool {
+        self.input.is_some() || self.request.is_some()
+    }
+
     pub(super) fn retained_bytes(&self) -> usize {
         let rosters = [
             self.request.as_ref(),

@@ -6,7 +6,9 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use dockspace::model::{DockAnchor, DockPlacement};
+use dockspace::model::{
+    DockAnchor, DockMoveSource, DockMoveTarget, DockPlacement, TabGroupDockMode,
+};
 
 use super::*;
 
@@ -42,6 +44,7 @@ pub(super) struct CommandSmoke {
     started: Instant,
     step: usize,
     waiting: bool,
+    receipt: Option<NativeActionReceipt>,
     done: bool,
     expected: Option<BTreeMap<ItemId, String>>,
     child: Option<SurfaceId>,
@@ -57,6 +60,7 @@ impl CommandSmoke {
             started: Instant::now(),
             step: 0,
             waiting: false,
+            receipt: None,
             done: false,
             expected: None,
             child: None,
@@ -146,8 +150,8 @@ impl CommandSmoke {
         }
 
         if self.style_waiting {
-            if let Some(result) = app.take_action_status() {
-                let status = result.map_err(|error| error.to_string())?;
+            if let Some(result) = poll_receipt(&mut self.receipt) {
+                let status = result?;
                 let expected = NativeActionStatus::StyleChanged {
                     changed: self.style_step != 2,
                     geometry_changed: matches!(self.style_step, 0 | 3),
@@ -165,8 +169,8 @@ impl CommandSmoke {
         }
 
         if self.waiting {
-            if let Some(result) = app.take_action_status() {
-                let status = result.map_err(|error| error.to_string())?;
+            if let Some(result) = poll_receipt(&mut self.receipt) {
+                let status = result?;
                 self.check_status(&status)?;
                 if self.step == 0 {
                     let extracted = app.with_view(|view| {
@@ -268,8 +272,10 @@ impl CommandSmoke {
                 if matches!(self.style_step, 1 | 2) {
                     style.visuals.tab_active_fill = Some(egui::Color32::DARK_RED);
                 }
-                app.request_style(style)
-                    .map_err(|error| error.to_string())?;
+                self.receipt = Some(
+                    app.request_style(style)
+                        .map_err(|error| error.to_string())?,
+                );
                 self.style_waiting = true;
                 return Ok(false);
             }
@@ -293,35 +299,45 @@ impl CommandSmoke {
             return Ok(true);
         }
         let command = match self.step {
-            0 | 4 | 6 => NativeCommand::FloatItem {
-                item: EDITOR,
-                surface: host,
+            0 | 4 | 6 => NativeCommand::Move {
+                source: DockMoveSource::Item(EDITOR),
+                target: DockMoveTarget::Contained { surface: host },
             },
             1 => NativeCommand::RaiseContained { item: INSPECTOR },
             2 => NativeCommand::BringContainedIntoView { item: INSPECTOR },
-            3 | 8 => NativeCommand::DockItem {
-                item: EDITOR,
-                placement: DockPlacement::Center(DockAnchor::Item(OUTLINE)),
+            3 | 8 => NativeCommand::Move {
+                source: DockMoveSource::Item(EDITOR),
+                target: DockMoveTarget::Dock {
+                    placement: DockPlacement::Center(DockAnchor::Item(OUTLINE)),
+                    mode: TabGroupDockMode::MergeTabs,
+                },
             },
-            9 | 10 => NativeCommand::DockItem {
-                item: if self.step == 9 { INSPECTOR } else { ASSETS },
-                placement: DockPlacement::Center(DockAnchor::Item(OUTLINE)),
+            9 | 10 => NativeCommand::Move {
+                source: DockMoveSource::Item(if self.step == 9 { INSPECTOR } else { ASSETS }),
+                target: DockMoveTarget::Dock {
+                    placement: DockPlacement::Center(DockAnchor::Item(OUTLINE)),
+                    mode: TabGroupDockMode::MergeTabs,
+                },
             },
             5 | 7 => {
                 let root = app
                     .with_view(|view| view.item(EDITOR).map(|pane| pane.root()))
                     .ok_or("Editor disappeared")?;
-                NativeCommand::MoveRootToNewWindow {
-                    root,
-                    placement: NativeWindowPlacement::new(
-                        PhysicalRect::new(760.0, 120.0, 440.0, 340.0).unwrap(),
-                    ),
+                NativeCommand::Move {
+                    source: DockMoveSource::Root(root),
+                    target: DockMoveTarget::Native {
+                        placement: Some(NativeWindowPlacement::new(
+                            PhysicalRect::new(760.0, 120.0, 440.0, 340.0).unwrap(),
+                        )),
+                    },
                 }
             }
             _ => return Err("unexpected command step".to_owned()),
         };
-        app.request_command(command)
-            .map_err(|error| error.to_string())?;
+        self.receipt = Some(
+            app.request_command(command)
+                .map_err(|error| error.to_string())?,
+        );
         self.waiting = true;
         Ok(false)
     }

@@ -10,7 +10,7 @@ fn hiding_the_last_host_pane_uses_normal_command_results_and_keeps_its_window() 
         .collect::<Vec<_>>();
     let content = state.panes.0.clone();
     for visible in [false, true] {
-        state
+        let state_receipt = state
             .request_command(NativeCommand::SetItemVisibility {
                 item: FIRST,
                 visible,
@@ -18,7 +18,7 @@ fn hiding_the_last_host_pane_uses_normal_command_results_and_keeps_its_window() 
             .unwrap();
         commit_queued(&mut state);
         assert_eq!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                 DockspaceActionOutcome::ItemVisibilityChanged {
                     item: FIRST,
@@ -41,12 +41,12 @@ fn hiding_the_last_host_pane_uses_normal_command_results_and_keeps_its_window() 
         assert!(state.error().is_none());
 
         if !visible {
-            state
+            let state_receipt = state
                 .request_command(NativeCommand::SelectItem { item: FIRST })
                 .unwrap();
             commit_queued(&mut state);
             assert_eq!(
-                take(&mut state),
+                take(&state_receipt),
                 NativeActionStatus::Dock(DockspaceActionStatus::Rejected(
                     DockspaceActionRejection::ItemHidden { item: FIRST },
                 )),

@@ -8,8 +8,8 @@ use dockspace::{
     },
     policy::DockPolicy,
     runtime::{
-        DockspaceSession, HostFrameReport, NativeHostCapabilities, NativeHostCapability,
-        NativePointerRoster, NativeReceiverAnswer, NativeTearOffSource,
+        DockMoveSource, DockspaceSession, HostFrameReport, NativeHostCapabilities,
+        NativeHostCapability, NativePointerRoster, NativeReceiverAnswer,
     },
 };
 
@@ -59,7 +59,7 @@ pub(super) fn detach(
     placement: PhysicalRect,
 ) -> AppResult<HostFrameReport> {
     let command = session.native_window_command(
-        NativeTearOffSource::Item(INSPECTOR),
+        DockMoveSource::Item(INSPECTOR),
         NativeWindowPlacement::new(placement),
     )?;
     let Ok(prepared) = command.into_prepared() else {

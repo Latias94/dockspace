@@ -1141,12 +1141,14 @@ content uses stable item/surface fallback names. The application retains its
 own Root title and may still issue explicit viewport title commands.
 
 Native menus submit `egui_dockspace_native::NativeCommand` values through
-`NativeDockspaceApp::request_command`. Item docking/floating and contained
-raise/bring-into-view use the same bounded command slot as selection, reopening,
-close decisions and native-window promotion. Read `take_action_status` on a
-later update and consume its terminal result before submitting another command
-or waiting for quiescence. Acceptance into the queue is separate from core
-success and actual surface presentation. Layout/document replacement keeps its
+`NativeDockspaceApp::request_command`. `NativeCommand::Move` uses the core's
+`DockMoveSource` and `DockMoveTarget` for docking, contained floating and native
+promotion. Selection, reopening and close decisions use the same bounded
+execution slot. Keep each returned `NativeActionReceipt` and poll `try_recv()`
+for its exact result: `Empty` is pending; `Disconnected` means no further result
+can arrive. Completed receipts do not block later requests or quiescence. Native
+service can execute ready commands without a Root paint. Acceptance remains
+separate from core success and actual surface presentation. Layout/document replacement keeps its
 dedicated preparation methods; see the
 [native overview](../../egui_dockspace_native/README.md).
 

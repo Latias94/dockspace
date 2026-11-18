@@ -189,17 +189,22 @@ actions, pending close decisions, pure rendering and unpublished frames do not
 dirty the layout. Hosts own notification delivery and storage; core retains no
 notification history.
 
+Use `session.prepare_move(source, target)` for menu and application moves.
+`DockMoveSource` selects an Item, captured Tab, captured Tabs group, or complete
+Root. `DockMoveTarget` selects docking, contained floating, or a new native window.
+A native target may request explicit physical bounds or derive placement from
+current platform facts; source ownership still waits for exact first-live admission.
+The source never widens to a representative pane or refreshes its captured revision.
+
 To move a complete tabs container, capture it once with
-`session.capture_tabs_group(DockAnchor::Item(item))`, then use
-`prepare_dock_tabs` or `prepare_float_tabs`. The resulting action uses one atomic
-payload and retains tab order and selection. `DockAnchor::Node(tabs.key())`
-addresses a group containing only layout children. Center docking defaults to
-merging a group's direct children; use `prepare_dock_tabs_with_mode` with
-`TabGroupDockMode::PreserveLayout` to insert the complete container as one layout
-tab. An individual layout tab also retains its subtree when moved. Capture
-freezes session and workspace authority; preparing or submitting later does not refresh a stale
-group or look its old anchor up again. `DockspaceHostFrame` supplies the
-corresponding `dock_tabs_current` and `float_tabs_current` conveniences.
+`session.capture_tabs_group(DockAnchor::Item(item))`, then pass it as
+`DockMoveSource::Tabs`. `DockAnchor::Node(tabs.key())` also addresses a group
+containing only layout children. On a Dock target, `TabGroupDockMode::MergeTabs`
+inserts the direct children in order; `PreserveLayout` inserts the complete
+container as one layout tab. The same choice applies to a complete Tabs root.
+Pane/Split/Grid roots and individual layout tabs keep their structural scope.
+The existing `prepare_dock_*` and `prepare_float_*` conveniences use the same
+preparation path; their default center insertion merges direct tabs.
 
 A renderer's group menu uses `SurfacePaintPlan::tabs_group_command` and
 `prepare_tabs_close` with the exact `TabBarPaintRecord` supplied by its surface

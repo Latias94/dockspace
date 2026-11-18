@@ -1,7 +1,7 @@
 //! Native availability must account for the recovery host after canonical detachment.
 
 use super::*;
-use crate::model::NativeTearOffSource;
+use crate::model::DockMoveSource;
 
 const HIDDEN_OUTER: ItemId = ItemId::new(33);
 
@@ -19,9 +19,9 @@ enum NestedSource {
 }
 
 impl NestedSource {
-    fn capture(self, session: &DockspaceSession) -> NativeTearOffSource {
+    fn capture(self, session: &DockspaceSession) -> DockMoveSource {
         match self {
-            Self::Tabs => NativeTearOffSource::Tabs(
+            Self::Tabs => DockMoveSource::Tabs(
                 session
                     .capture_tabs_group(DockAnchor::Item(NATIVE_FIRST))
                     .expect("the inner tabs group is capturable"),
@@ -35,7 +35,7 @@ impl NestedSource {
                     .expect("the external native root contains the outer tabs")
                     .tabs()[0];
                 assert!(tab.layout().is_some());
-                NativeTearOffSource::Tab(
+                DockMoveSource::Tab(
                     session
                         .capture_tab(tab)
                         .expect("the outer layout tab is capturable"),

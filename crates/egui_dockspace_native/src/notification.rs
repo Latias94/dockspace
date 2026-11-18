@@ -26,7 +26,7 @@ impl<P: PaneView> NativeNotificationContext<'_, P> {
         inspect(lock_state(self.state).view())
     }
 
-    /// Queues a command for a later eligible final root pass.
+    /// Queues a command for the next eligible native service or paint boundary.
     ///
     /// # Errors
     ///
@@ -35,7 +35,7 @@ impl<P: PaneView> NativeNotificationContext<'_, P> {
     pub fn request_command(
         &self,
         command: crate::NativeCommand,
-    ) -> Result<(), crate::NativeCommandRequestError> {
+    ) -> Result<crate::NativeActionReceipt, crate::NativeCommandRequestError> {
         lock_state(self.state).request_command(command)
     }
 

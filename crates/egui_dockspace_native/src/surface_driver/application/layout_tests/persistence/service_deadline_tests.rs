@@ -509,7 +509,7 @@ fn elapsed_service_refill_preserves_release_close_and_ready_bootstrap_owners() {
             registered.native_bindings()[0],
         )
         .unwrap();
-    state
+    let state_receipt = state
         .request_document_restore_json(&saved_three_domain_document(), |document, key| {
             document == DOCUMENT
                 && matches!(
@@ -520,7 +520,7 @@ fn elapsed_service_refill_preserves_release_close_and_ready_bootstrap_owners() {
         .unwrap();
     let mut restored = commit_queued(&mut state, None);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::DocumentRestored { .. }
     ));
     assert!(restored.take_native_effects().is_empty());

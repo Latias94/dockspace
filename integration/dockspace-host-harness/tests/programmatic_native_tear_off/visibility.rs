@@ -11,7 +11,7 @@ fn hiding_and_showing_all_child_tabs_keeps_the_original_native_window() {
         .unwrap();
     let action = fixture
         .session
-        .native_window_command(NativeTearOffSource::Tabs(group), placement())
+        .native_window_command(DockMoveSource::Tabs(group), placement())
         .unwrap()
         .into_prepared()
         .unwrap();

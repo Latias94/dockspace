@@ -647,16 +647,24 @@ fn wm_delete(window: WindowId) -> Result<(), String> {
     Ok(())
 }
 
-fn move_root(state: &State, context: &egui::Context, root: RootId, y: f64) {
-    lock_state(state)
-        .request_command(NativeCommand::MoveRootToNewWindow {
-            root,
-            placement: NativeWindowPlacement::new(
-                PhysicalRect::new(880.0, y, 320.0, 240.0).unwrap(),
-            ),
+fn move_root(
+    state: &State,
+    context: &egui::Context,
+    root: RootId,
+    y: f64,
+) -> crate::NativeActionReceipt {
+    let receipt = lock_state(state)
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Root(root),
+            target: dockspace::model::DockMoveTarget::Native {
+                placement: Some(NativeWindowPlacement::new(
+                    PhysicalRect::new(880.0, y, 320.0, 240.0).unwrap(),
+                )),
+            },
         })
         .unwrap();
     context.request_repaint_of(ViewportId::ROOT);
+    receipt
 }
 
 fn assert_capacity(state: &State) {
@@ -951,12 +959,12 @@ fn drive(state: &State, context: &egui::Context, host: &BoundaryHost) -> Result<
     let initial_source = source(state);
     drive_pointer_lineage(state, context, host, deadline)?;
     assert_eq!(source(state), initial_source);
-    move_root(state, context, A, 100.0);
+    let a_receipt = move_root(state, context, A, 100.0);
     let mut a_status = None;
     wait_until(deadline, "A's exact first-live admission", || {
         let mut state = lock_state(state);
         if a_status.is_none() {
-            a_status = state.take_action_status();
+            a_status = a_receipt.try_recv().ok();
         }
         let native = state.boundary_coordinator();
         a_status.is_some()
@@ -991,7 +999,7 @@ fn drive(state: &State, context: &egui::Context, host: &BoundaryHost) -> Result<
     };
     eprintln!("native-boundary: A first-live; starting the admitted, delayed B create");
     lock_state(&host.facts).arm_b = true;
-    move_root(state, context, B, 380.0);
+    let b_receipt = move_root(state, context, B, 380.0);
     wait_until(
         deadline,
         "B's real create attempt and deferred first output",
@@ -1169,10 +1177,10 @@ fn drive(state: &State, context: &egui::Context, host: &BoundaryHost) -> Result<
         deadline,
         "q2 Allow/Destroyed, B Created/cleanup, and quiescence",
         || {
-            // Consume the cancelled application's exact terminal result, rather
-            // than leaving its single action-result owner occupied forever.
+            // Inspect B's own terminal; an unread result no longer owns any
+            // runtime execution or cleanup capacity.
             let mut state = lock_state(state);
-            if let Some(status) = state.take_action_status() {
+            if let Ok(status) = b_receipt.try_recv() {
                 assert!(status.is_ok(), "B action terminal: {status:?}");
             }
             state.is_quiescent()
@@ -1320,7 +1328,6 @@ fn real_native_close_create_age_boundary() {
                             "cleanup before Root exit",
                             || {
                                 let mut state = lock_state(&driver_state);
-                                let _ = state.take_action_status();
                                 state.is_quiescent() || state.is_shutdown_drained()
                             },
                         );

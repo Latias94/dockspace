@@ -215,6 +215,15 @@ impl PresentedSurfaceAuthority {
             && self.endpoint == other.endpoint
     }
 
+    /// A semantic transfer may outlive source repainting or a motion sample.
+    /// Its source still needs the same measurement requirements, coordinates
+    /// and endpoint; pointer interaction continues to require the exact ticket.
+    pub(crate) fn same_presentation_requirements(self, other: Self) -> bool {
+        self.ticket.scene.requirement() == other.ticket.scene.requirement()
+            && self.coordinate_generation == other.coordinate_generation
+            && self.endpoint == other.endpoint
+    }
+
     pub(crate) const fn ticket(self) -> SurfacePresentationOutputTicket {
         self.ticket
     }

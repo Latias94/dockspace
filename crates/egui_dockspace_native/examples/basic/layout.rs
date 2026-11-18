@@ -3,7 +3,10 @@
 use dockspace::close::{
     CloseDecision, CloseItemDecisionState, CloseRequestId, DeferredCloseDecision,
 };
-use dockspace::model::{DockAnchor, DockPlacement, DockspaceNodeView, DockspaceView};
+use dockspace::model::{
+    DockAnchor, DockMoveSource, DockMoveTarget, DockPlacement, DockspaceNodeView, DockspaceView,
+    TabGroupDockMode,
+};
 use dockspace::runtime::{DockspaceCloseItem, DockspaceCloseResolution};
 use egui_dockspace_native::NativeCommand;
 
@@ -94,7 +97,7 @@ impl NativeExampleApp {
                 .all(|surface| self.dockspace.is_surface_presented(surface))
     }
 
-    pub(super) fn request_default_layout(&self) -> Result<(), String> {
+    pub(super) fn request_default_layout(&self) -> Result<NativeActionReceipt, String> {
         let layout = self.default_layout.clone();
         let request = if self.dockspace.root_surface() == SURFACE {
             self.dockspace.request_layout_reset(layout)
@@ -204,7 +207,7 @@ impl NativeExampleApp {
     }
 
     #[cfg(feature = "serde")]
-    pub(super) fn request_named_preset(&self) -> Result<(), String> {
+    pub(super) fn request_named_preset(&self) -> Result<NativeActionReceipt, String> {
         let preset = self
             .presets
             .get(self.preset_name.trim())
@@ -379,13 +382,19 @@ impl NativeExampleApp {
         for (label, command) in [
             (
                 "Dock in main area",
-                placement.map(|placement| NativeCommand::DockItem { item, placement }),
+                placement.map(|placement| NativeCommand::Move {
+                    source: DockMoveSource::Item(item),
+                    target: DockMoveTarget::Dock {
+                        placement,
+                        mode: TabGroupDockMode::MergeTabs,
+                    },
+                }),
             ),
             (
                 "Float in main window",
-                can_float.then_some(NativeCommand::FloatItem {
-                    item,
-                    surface: host,
+                can_float.then_some(NativeCommand::Move {
+                    source: DockMoveSource::Item(item),
+                    target: DockMoveTarget::Contained { surface: host },
                 }),
             ),
             (
@@ -550,16 +559,17 @@ impl NativeExampleApp {
     pub(super) fn begin_layout_action<E: std::fmt::Display>(
         &mut self,
         operation: &'static str,
-        request: Result<(), E>,
+        request: Result<NativeActionReceipt, E>,
     ) {
         if let Some(log) = &self.operation_log {
             match &request {
-                Ok(()) => log.record("action-request", format!("{operation}: accepted")),
+                Ok(_) => log.record("action-request", format!("{operation}: accepted")),
                 Err(error) => log.record("action-request", format!("{operation}: {error}")),
             }
         }
         match request {
-            Ok(()) => {
+            Ok(receipt) => {
+                self.action_receipt = Some(receipt);
                 self.action = ExampleActionState::AwaitingLayoutOutcome(operation);
                 self.status = Some(format!("{operation}: request accepted."));
             }

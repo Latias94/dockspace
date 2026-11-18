@@ -6,12 +6,13 @@ use crate::graph::command::{
 use crate::graph::workspace::WorkspaceIndex;
 use crate::ids::NodeId;
 use crate::model::{
-    DockAnchor, DockEdge, DockPlacement, DockspaceActionOutcome, DockspaceActionRejection,
-    NativeTearOffSource, NativeWindowPlacement, PreparedDockAction,
+    DockAnchor, DockEdge, DockMoveSource, DockMoveTarget, DockPlacement, DockspaceActionOutcome,
+    DockspaceActionRejection, NativeWindowPlacement, PreparedDockAction,
     PreparedDockActionAuthorityMismatch, PreparedTab, PreparedTabsGroup, ProductAction,
 };
 
 mod contained;
+mod preflight;
 
 pub(super) enum ProductActionPlan {
     Noop(DockspaceActionOutcome),
@@ -264,62 +265,6 @@ impl DockEngine {
         }
     }
 
-    pub(crate) fn prepare_product_action_if_available(
-        &self,
-        action: ProductAction,
-    ) -> Result<Result<PreparedDockAction, DockspaceActionRejection>, EngineError> {
-        if self
-            .product_presentation_source_root(&action)
-            .is_some_and(|root| self.root_has_pending_presentation_transition(root))
-        {
-            return Ok(Err(DockspaceActionRejection::Conflict));
-        }
-        if let ProductAction::TearOffNative { source, placement } = &action {
-            return self
-                .validate_product_native_payload_tear_off_availability(
-                    source,
-                    *placement,
-                    &self.policy,
-                )
-                .map(|availability| availability.map(|()| self.prepare_product_action(action)));
-        }
-        if let ProductAction::FloatRoot { root, surface, .. } = action
-            && let Err(reason) = self.validate_product_root_float_availability(root, surface)
-        {
-            return Ok(Err(reason));
-        }
-        let plan = if let ProductAction::DockBackRoot { root } = action {
-            match self.native_main_dock_back_target(root) {
-                Ok(Some(surface)) => self.compile_product_native_main_dock_back(root, surface),
-                Ok(None) => self.compile_product_action(action.clone()),
-                Err(reason) => Err(reason),
-            }
-        } else {
-            self.compile_product_action(action.clone())
-        };
-        let plan = match plan {
-            Ok(plan) => plan,
-            Err(reason) => return Ok(Err(reason)),
-        };
-        if let ProductActionPlan::Command { command, .. } = &plan
-            && self
-                .product_command_complete_root(&command)
-                .is_some_and(|root| self.root_has_pending_presentation_transition(root))
-        {
-            return Ok(Err(DockspaceActionRejection::Conflict));
-        }
-        if let ProductActionPlan::Command { command, .. } = &plan
-            && let Err(error) = crate::graph::operation::authorize_workspace_command(
-                &self.workspace,
-                &self.policy,
-                &command,
-            )
-        {
-            return Ok(Err(product_command_rejection(action, &error)?));
-        }
-        Ok(Ok(self.prepare_product_action(action)))
-    }
-
     /// Prepares one selection action against the exact published workspace version.
     ///
     /// Selection requests pane focus, including explicit activation of an eligible
@@ -347,14 +292,60 @@ impl DockEngine {
         self.prepare_product_action(ProductAction::OpenItem { item, placement })
     }
 
+    pub fn prepare_move(
+        &self,
+        source: DockMoveSource,
+        target: DockMoveTarget,
+    ) -> PreparedDockAction {
+        let (authority_domain, expected) = match &source {
+            DockMoveSource::Tabs(group) => (group.authority_domain, group.expected),
+            DockMoveSource::Tab(tab) => (tab.authority_domain, tab.expected),
+            DockMoveSource::Item(_) | DockMoveSource::Root(_) => {
+                (self.authority_domain, self.version)
+            }
+        };
+        let action = match target {
+            DockMoveTarget::Dock { placement, mode } => match source {
+                DockMoveSource::Item(item) => ProductAction::DockItem { item, placement },
+                DockMoveSource::Tab(tab) => ProductAction::DockTab { tab, placement },
+                DockMoveSource::Tabs(group) => ProductAction::DockTabs {
+                    group,
+                    placement,
+                    mode,
+                },
+                DockMoveSource::Root(root) => ProductAction::DockRoot {
+                    root,
+                    placement,
+                    mode,
+                },
+            },
+            DockMoveTarget::Contained { surface } => match source {
+                DockMoveSource::Item(item) => ProductAction::FloatItem { item, surface },
+                DockMoveSource::Tab(tab) => ProductAction::FloatTab { tab, surface },
+                DockMoveSource::Tabs(group) => ProductAction::FloatTabs { group, surface },
+                DockMoveSource::Root(root) => ProductAction::FloatRoot {
+                    root,
+                    surface,
+                    rect: None,
+                },
+            },
+            DockMoveTarget::Native { placement } => {
+                ProductAction::TearOffNative { source, placement }
+            }
+        };
+        PreparedDockAction::new(authority_domain, expected, action)
+    }
+
     /// Prepares one docking action against the exact published workspace version.
     #[must_use]
-    pub const fn prepare_dock_item(
-        &self,
-        item: ItemId,
-        placement: DockPlacement,
-    ) -> PreparedDockAction {
-        self.prepare_product_action(ProductAction::DockItem { item, placement })
+    pub fn prepare_dock_item(&self, item: ItemId, placement: DockPlacement) -> PreparedDockAction {
+        self.prepare_move(
+            DockMoveSource::Item(item),
+            DockMoveTarget::Dock {
+                placement,
+                mode: crate::model::TabGroupDockMode::MergeTabs,
+            },
+        )
     }
 
     pub(crate) fn capture_tab(&self, key: TabKey) -> Option<PreparedTab> {
@@ -378,10 +369,12 @@ impl DockEngine {
         tab: PreparedTab,
         placement: DockPlacement,
     ) -> PreparedDockAction {
-        PreparedDockAction::new(
-            tab.authority_domain,
-            tab.expected,
-            ProductAction::DockTab { tab, placement },
+        self.prepare_move(
+            DockMoveSource::Tab(tab),
+            DockMoveTarget::Dock {
+                placement,
+                mode: crate::model::TabGroupDockMode::MergeTabs,
+            },
         )
     }
 
@@ -390,10 +383,9 @@ impl DockEngine {
         tab: PreparedTab,
         surface: SurfaceId,
     ) -> PreparedDockAction {
-        PreparedDockAction::new(
-            tab.authority_domain,
-            tab.expected,
-            ProductAction::FloatTab { tab, surface },
+        self.prepare_move(
+            DockMoveSource::Tab(tab),
+            DockMoveTarget::Contained { surface },
         )
     }
 
@@ -415,25 +407,22 @@ impl DockEngine {
         placement: DockPlacement,
         mode: crate::model::TabGroupDockMode,
     ) -> PreparedDockAction {
-        PreparedDockAction::new(
-            group.authority_domain,
-            group.expected,
-            ProductAction::DockTabs {
-                group,
-                placement,
-                mode,
-            },
+        self.prepare_move(
+            DockMoveSource::Tabs(group),
+            DockMoveTarget::Dock { placement, mode },
         )
     }
 
     /// Prepares one complete-root docking action against the exact published workspace version.
     #[must_use]
-    pub const fn prepare_dock_root(
-        &self,
-        root: RootId,
-        placement: DockPlacement,
-    ) -> PreparedDockAction {
-        self.prepare_product_action(ProductAction::DockRoot { root, placement })
+    pub fn prepare_dock_root(&self, root: RootId, placement: DockPlacement) -> PreparedDockAction {
+        self.prepare_move(
+            DockMoveSource::Root(root),
+            DockMoveTarget::Dock {
+                placement,
+                mode: crate::model::TabGroupDockMode::MergeTabs,
+            },
+        )
     }
 
     /// Prepares one complete-root dock-back action against the exact published version.
@@ -444,15 +433,17 @@ impl DockEngine {
 
     /// Prepares one complete-root move to a native window against the published version.
     #[must_use]
-    pub const fn prepare_move_root_to_new_window(
+    pub fn prepare_move_root_to_new_window(
         &self,
         root: RootId,
         placement: NativeWindowPlacement,
     ) -> PreparedDockAction {
-        self.prepare_product_action(ProductAction::TearOffNative {
-            source: NativeTearOffSource::Root(root),
-            placement: Some(placement),
-        })
+        self.prepare_move(
+            DockMoveSource::Root(root),
+            DockMoveTarget::Native {
+                placement: Some(placement),
+            },
+        )
     }
 
     pub(crate) fn capture_tabs_group(
@@ -479,37 +470,28 @@ impl DockEngine {
 
     pub(crate) fn prepare_move_to_new_window(
         &self,
-        source: NativeTearOffSource,
+        source: DockMoveSource,
         placement: Option<NativeWindowPlacement>,
     ) -> PreparedDockAction {
-        let (authority_domain, expected) = match &source {
-            NativeTearOffSource::Tabs(group) => (group.authority_domain, group.expected),
-            NativeTearOffSource::Tab(tab) => (tab.authority_domain, tab.expected),
-            NativeTearOffSource::Item(_) | NativeTearOffSource::Root(_) => {
-                (self.authority_domain, self.version)
-            }
-        };
-        PreparedDockAction::new(
-            authority_domain,
-            expected,
-            ProductAction::TearOffNative { source, placement },
-        )
+        self.prepare_move(source, DockMoveTarget::Native { placement })
     }
 
     /// Prepares one complete-root contained-floating action against the published version.
     #[must_use]
-    pub const fn prepare_float_root(&self, root: RootId, surface: SurfaceId) -> PreparedDockAction {
-        self.prepare_product_action(ProductAction::FloatRoot {
-            root,
-            surface,
-            rect: None,
-        })
+    pub fn prepare_float_root(&self, root: RootId, surface: SurfaceId) -> PreparedDockAction {
+        self.prepare_move(
+            DockMoveSource::Root(root),
+            DockMoveTarget::Contained { surface },
+        )
     }
 
     /// Prepares one contained-floating action against the exact published workspace version.
     #[must_use]
-    pub const fn prepare_float_item(&self, item: ItemId, surface: SurfaceId) -> PreparedDockAction {
-        self.prepare_product_action(ProductAction::FloatItem { item, surface })
+    pub fn prepare_float_item(&self, item: ItemId, surface: SurfaceId) -> PreparedDockAction {
+        self.prepare_move(
+            DockMoveSource::Item(item),
+            DockMoveTarget::Contained { surface },
+        )
     }
 
     pub(crate) fn prepare_float_tabs(
@@ -517,10 +499,9 @@ impl DockEngine {
         group: PreparedTabsGroup,
         surface: SurfaceId,
     ) -> PreparedDockAction {
-        PreparedDockAction::new(
-            group.authority_domain,
-            group.expected,
-            ProductAction::FloatTabs { group, surface },
+        self.prepare_move(
+            DockMoveSource::Tabs(group),
+            DockMoveTarget::Contained { surface },
         )
     }
 
@@ -585,10 +566,15 @@ impl DockEngine {
                 placement,
                 mode,
             },
-            ProductAction::DockRoot { root, placement } => EngineInput::DockRoot {
+            ProductAction::DockRoot {
+                root,
+                placement,
+                mode,
+            } => EngineInput::DockRoot {
                 expected,
                 root,
                 placement,
+                mode,
             },
             ProductAction::DockBackRoot { root } => EngineInput::DockBackRoot { expected, root },
             ProductAction::TearOffNative { source, placement } => EngineInput::TearOffNative {
@@ -936,9 +922,11 @@ impl DockEngine {
                 placement,
                 mode,
             } => self.compile_product_tabs_move(&group, placement, mode),
-            ProductAction::DockRoot { root, placement } => {
-                self.compile_product_root_move(root, placement)
-            }
+            ProductAction::DockRoot {
+                root,
+                placement,
+                mode,
+            } => self.compile_product_root_move(root, placement, mode),
             ProductAction::DockBackRoot { root } => self.compile_product_dock_back(root),
             ProductAction::TearOffNative { .. } => Err(DockspaceActionRejection::Conflict),
             ProductAction::FloatRoot {
@@ -1196,8 +1184,23 @@ impl DockEngine {
         &self,
         root: RootId,
         placement: DockPlacement,
+        mode: crate::model::TabGroupDockMode,
     ) -> Result<ProductActionPlan, DockspaceActionRejection> {
         let (_, payload, items) = self.capture_product_root_payload(root)?;
+        let payload = match payload {
+            MovePayload::Tabs(source)
+                if mode == crate::model::TabGroupDockMode::PreserveLayout
+                    && matches!(
+                        placement,
+                        DockPlacement::Center(_)
+                            | DockPlacement::Before(_)
+                            | DockPlacement::After(_)
+                    ) =>
+            {
+                MovePayload::Subtree(source)
+            }
+            payload => payload,
+        };
 
         let DockPlacement::Main(surface) = placement else {
             let (target, target_root) = self.capture_product_target(placement)?;
@@ -1459,7 +1462,7 @@ impl DockEngine {
             ProductAction::DockItem { item, .. }
             | ProductAction::FloatItem { item, .. }
             | ProductAction::TearOffNative {
-                source: NativeTearOffSource::Item(item),
+                source: DockMoveSource::Item(item),
                 ..
             } => self
                 .workspace
@@ -1478,18 +1481,18 @@ pub(super) const fn product_presentation_transition_root(action: &ProductAction)
         ProductAction::DockTab { tab, .. }
         | ProductAction::FloatTab { tab, .. }
         | ProductAction::TearOffNative {
-            source: NativeTearOffSource::Tab(tab),
+            source: DockMoveSource::Tab(tab),
             ..
         } => Some(tab.source.root()),
         ProductAction::DockTabs { group, .. } | ProductAction::FloatTabs { group, .. } => {
             Some(group.source.root())
         }
         ProductAction::TearOffNative {
-            source: NativeTearOffSource::Root(root),
+            source: DockMoveSource::Root(root),
             ..
         } => Some(*root),
         ProductAction::TearOffNative {
-            source: NativeTearOffSource::Tabs(group),
+            source: DockMoveSource::Tabs(group),
             ..
         } => Some(group.source.root()),
         ProductAction::SelectItem { .. }
@@ -1500,7 +1503,7 @@ pub(super) const fn product_presentation_transition_root(action: &ProductAction)
         | ProductAction::RaiseContained { .. }
         | ProductAction::BringContainedIntoView { .. }
         | ProductAction::TearOffNative {
-            source: NativeTearOffSource::Item(_),
+            source: DockMoveSource::Item(_),
             ..
         } => None,
     }

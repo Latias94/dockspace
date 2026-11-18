@@ -184,13 +184,13 @@ impl Harness {
             .surface_motion_is_active(SURFACE)
     }
 
-    pub(super) fn visibility(&mut self, visible: bool) {
+    pub(super) fn visibility(&mut self, visible: bool) -> crate::NativeActionReceipt {
         self.state
             .request_command(NativeCommand::SetItemVisibility {
                 item: MIDDLE,
                 visible,
             })
-            .unwrap();
+            .unwrap()
     }
 
     pub(super) fn present(&mut self, painted: Painted) {

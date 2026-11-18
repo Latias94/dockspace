@@ -5,9 +5,10 @@ use std::collections::BTreeMap;
 
 use dockspace::geometry::{LogicalRect, PhysicalRect};
 use dockspace::model::{
-    DockspaceActionOutcome, DockspaceAxis, DockspaceContainedLayout, DockspaceLayout,
-    DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, FloatingPresentationId, ItemId,
-    NativeWindowPlacement, RootId, SurfaceId, TabKey,
+    DockMoveSource, DockMoveTarget, DockspaceActionOutcome, DockspaceAxis,
+    DockspaceContainedLayout, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
+    DockspaceSurfaceLayout, FloatingPresentationId, ItemId, NativeWindowPlacement, RootId,
+    SurfaceId, TabKey,
 };
 use dockspace::policy::{CloseCapability, DockPolicy};
 use dockspace::runtime::DockspaceSession;
@@ -17,7 +18,7 @@ use eframe::egui;
 use egui_dockspace::{
     DockDensity, DockStyle, DockspaceActionStatus, PaneResponse, PaneSizing, PaneView,
 };
-use egui_dockspace_native::{NativeActionStatus, NativeDockspaceApp};
+use egui_dockspace_native::{NativeActionReceipt, NativeActionStatus, NativeDockspaceApp};
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const MAIN_ROOT: RootId = RootId::new(1);
@@ -139,6 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(feature = "serde")]
         preset_name: "Working".to_owned(),
         action: initial_action,
+        action_receipt: None,
         font_size: 13.0,
         density: DockDensity::default(),
         status: None,
@@ -199,6 +201,7 @@ struct NativeExampleApp {
     #[cfg(feature = "serde")]
     preset_name: String,
     action: ExampleActionState,
+    action_receipt: Option<NativeActionReceipt>,
     font_size: f32,
     density: DockDensity,
     status: Option<String>,
@@ -484,11 +487,14 @@ impl NativeExampleApp {
 
     fn request_native_window(&mut self, root: RootId, bounds: PhysicalRect) {
         let placement = NativeWindowPlacement::new(bounds);
-        match self
-            .dockspace
-            .request_command(NativeCommand::MoveRootToNewWindow { root, placement })
-        {
-            Ok(()) => {
+        match self.dockspace.request_command(NativeCommand::Move {
+            source: DockMoveSource::Root(root),
+            target: DockMoveTarget::Native {
+                placement: Some(placement),
+            },
+        }) {
+            Ok(receipt) => {
+                self.action_receipt = Some(receipt);
                 self.action = ExampleActionState::AwaitingTearOffOutcome;
                 self.status = None;
             }
@@ -501,7 +507,8 @@ impl NativeExampleApp {
             .dockspace
             .request_command(NativeCommand::DockRootBack { root })
         {
-            Ok(()) => {
+            Ok(receipt) => {
+                self.action_receipt = Some(receipt);
                 self.action = ExampleActionState::AwaitingDockBackOutcome(root);
                 self.status = None;
             }
@@ -512,7 +519,7 @@ impl NativeExampleApp {
     }
 
     fn collect_action_status(&mut self) {
-        let Some(status) = self.dockspace.take_action_status() else {
+        let Some(status) = poll_receipt(&mut self.action_receipt) else {
             return;
         };
         if let Some(log) = &self.operation_log {
@@ -991,4 +998,19 @@ impl PaneView for ExamplePanes {
             .build()
             .expect("the native editor content minimums are valid")
     }
+}
+
+/// Polls only the receipt owned by this example operation.
+fn poll_receipt(
+    receipt: &mut Option<NativeActionReceipt>,
+) -> Option<Result<NativeActionStatus, String>> {
+    let result = match receipt.as_ref()?.try_recv() {
+        Ok(result) => result.map_err(|error| error.to_string()),
+        Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            Err("the native runtime ended before this action's terminal result".to_owned())
+        }
+    };
+    *receipt = None;
+    Some(result)
 }

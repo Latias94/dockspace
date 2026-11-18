@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use dockspace::{
     model::NativeWindowPlacement,
-    runtime::{DockspaceSession, NativeTearOffSource},
+    runtime::{DockMoveSource, DockspaceSession},
 };
 
 use super::{AppResult, host::Host, workspace};
@@ -60,7 +60,7 @@ impl Smoke {
         let detach_ready = if matches!(self.stage, 0 | 1 | 3 | 5) && host.child().is_none() {
             session
                 .native_window_command(
-                    NativeTearOffSource::Item(workspace::INSPECTOR),
+                    DockMoveSource::Item(workspace::INSPECTOR),
                     NativeWindowPlacement::new(host.child_placement()?),
                 )?
                 .is_ready()

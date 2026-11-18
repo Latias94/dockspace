@@ -2222,10 +2222,14 @@ impl<'frame> SurfacePaintPlan<'frame> {
                         )));
                     }
                 };
-                ProductAction::DockRoot { root, placement }
+                ProductAction::DockRoot {
+                    root,
+                    placement,
+                    mode: crate::model::TabGroupDockMode::MergeTabs,
+                }
             }
             DockspacePresentationCommandKind::MoveToNewWindow => ProductAction::TearOffNative {
-                source: crate::model::NativeTearOffSource::Root(root),
+                source: crate::model::DockMoveSource::Root(root),
                 placement: None,
             },
         };

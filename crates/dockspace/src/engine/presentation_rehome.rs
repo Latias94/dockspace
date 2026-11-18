@@ -61,16 +61,27 @@ impl DockEngine {
         &self,
         root: RootId,
         target_surface: SurfaceId,
-    ) -> Result<ProductActionPlan, DockspaceActionRejection> {
+    ) -> Result<(ProductActionPlan, WorkspacePublicationAuthority), DockspaceActionRejection> {
         self.validate_product_root_float_availability(root, target_surface)?;
         let source = self
             .native_presentation_rehome_source(root, target_surface)?
             .ok_or(DockspaceActionRejection::DockBackUnavailable { root })?;
         let prepared = self.prepare_bound_native_main_dock_back(root, source)?;
-        Ok(ProductActionPlan::Command {
-            command: prepared.command,
-            context: prepared.context,
-        })
+        let floating = prepared
+            .floating
+            .ok_or(DockspaceActionRejection::DockBackUnavailable { root })?;
+        Ok((
+            ProductActionPlan::Command {
+                command: prepared.command,
+                context: prepared.context,
+            },
+            WorkspacePublicationAuthority::PresentationRehome {
+                source_surface: source.surface,
+                obligation: source.recovery,
+                root,
+                floating,
+            },
+        ))
     }
 
     pub(super) fn native_main_dock_back_target(
@@ -998,7 +1009,7 @@ impl DockEngine {
             && self
                 .interaction_authority(pending.source_surface)
                 .is_some_and(|authority| {
-                    authority.same_interaction_semantics(pending.source_presentation)
+                    authority.same_presentation_requirements(pending.source_presentation)
                 });
         // The logical surface can outlive its physical window or placement.
         // Revoke the transfer without requiring an output to have been emitted.

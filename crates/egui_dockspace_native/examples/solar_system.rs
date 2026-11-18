@@ -1,21 +1,25 @@
 //! Three real managed child windows orbit an application-owned central Sun.
 //! Run with `--smoke` for a finite create, move, programmatic recovery and recreate journey.
 
+use dockspace::model::DockMoveTarget;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dockspace::geometry::{LogicalRect, PhysicalRect};
 use dockspace::model::{
-    DockspaceActionOutcome, DockspaceContainedLayout, DockspaceLayout, DockspaceNode,
-    DockspaceRootLayout, DockspaceSurfaceLayout, FloatingPresentationId, ItemId,
-    NativeTearOffSource, NativeWindowPlacement, RootId, SurfaceId,
+    DockMoveSource, DockspaceActionOutcome, DockspaceContainedLayout, DockspaceLayout,
+    DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, FloatingPresentationId, ItemId,
+    NativeWindowPlacement, RootId, SurfaceId,
 };
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::DockspaceSession;
 use eframe::egui;
 use egui_dockspace::{DockStyle, DockspaceActionStatus};
-use egui_dockspace_native::{NativeActionStatus, NativeCommand, NativeDockspaceApp};
+use egui_dockspace_native::{
+    NativeActionReceipt, NativeActionStatus, NativeCommand, NativeDockspaceApp,
+};
 use winit::raw_window_handle::HasDisplayHandle;
 
 #[path = "solar_system/orbit.rs"]
@@ -89,6 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         dockspace,
         queue: (0..PLANETS.len()).collect(),
         launch: None,
+        receipt: None,
         last_frame: Instant::now(),
         animation: AnimationClock::default(),
         status: "Launching three planet windows…".to_owned(),
@@ -141,6 +146,7 @@ struct SolarApp {
     dockspace: NativeDockspaceApp<Panes>,
     queue: VecDeque<usize>,
     launch: Option<Launch>,
+    receipt: Option<NativeActionReceipt>,
     last_frame: Instant,
     animation: AnimationClock,
     status: String,
@@ -210,10 +216,10 @@ impl SolarApp {
             }));
         }
         if let Some(Launch::AwaitingOutcome { planet }) = self.launch {
-            let Some(status) = self.dockspace.take_action_status() else {
+            let Some(status) = poll_receipt(&mut self.receipt) else {
                 return Ok(());
             };
-            match status.map_err(|error| error.to_string())? {
+            match status? {
                 NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                     DockspaceActionOutcome::NativeRootTearOffRequested {
                         target_surface,
@@ -291,12 +297,16 @@ impl SolarApp {
         let Some(placement) = placement else {
             return Ok(());
         };
-        self.dockspace
-            .request_command(NativeCommand::MoveToNewWindow {
-                source: NativeTearOffSource::Item(PLANETS[planet].item),
-                placement,
-            })
-            .map_err(|error| error.to_string())?;
+        self.receipt = Some(
+            self.dockspace
+                .request_command(NativeCommand::Move {
+                    source: DockMoveSource::Item(PLANETS[planet].item),
+                    target: DockMoveTarget::Native {
+                        placement: Some(placement),
+                    },
+                })
+                .map_err(|error| error.to_string())?,
+        );
         self.dockspace
             .with_panes_mut(|panes| panes.observations[planet] = None);
         self.queue.pop_front();
@@ -433,6 +443,7 @@ mod tests {
             .unwrap(),
             queue: (0..PLANETS.len()).collect(),
             launch: None,
+            receipt: None,
             last_frame: Instant::now(),
             animation: AnimationClock::default(),
             status: String::new(),
@@ -450,14 +461,14 @@ mod tests {
                 .starts_with("Waiting for the desktop window position")
         );
         assert!(app.launch.is_none());
-        assert!(app.dockspace.take_action_status().is_none());
+        assert!(poll_receipt(&mut app.receipt).is_none());
         app.cancel_queued_launches();
         assert!(app.queue.is_empty());
         app.launch_returned();
         assert_eq!(app.queue.len(), PLANETS.len());
         app.advance_launch(GeometryAvailability::Waiting).unwrap();
         assert!(app.launch.is_none());
-        assert!(app.dockspace.take_action_status().is_none());
+        assert!(poll_receipt(&mut app.receipt).is_none());
     }
 
     #[test]
@@ -468,7 +479,7 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("Wayland does not provide"));
         assert!(app.launch.is_none());
-        assert!(app.dockspace.take_action_status().is_none());
+        assert!(poll_receipt(&mut app.receipt).is_none());
         let result: SmokeResult = Arc::default();
         let mut smoke = smoke::Smoke::new(Arc::clone(&result));
         smoke.fail(&egui::Context::default(), error);
@@ -483,4 +494,18 @@ mod tests {
                 .contains("Wayland does not provide")
         );
     }
+}
+
+fn poll_receipt(
+    receipt: &mut Option<NativeActionReceipt>,
+) -> Option<Result<NativeActionStatus, String>> {
+    let result = match receipt.as_ref()?.try_recv() {
+        Ok(result) => result.map_err(|error| error.to_string()),
+        Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            Err("the native runtime ended before this operation completed".to_owned())
+        }
+    };
+    *receipt = None;
+    Some(result)
 }

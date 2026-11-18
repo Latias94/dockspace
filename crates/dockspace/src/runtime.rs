@@ -60,8 +60,8 @@ use native::NativePlatformError;
 
 pub use crate::input::journal::{PointerDeviceKind, PointerEventMetadata};
 pub use crate::model::{
-    LogicalSurfaceRejection, NativeTearOffSource, NativeWindowPlacement, PreparedDockAction,
-    PreparedTab, PreparedTabsGroup, WorkspaceVersion,
+    DockMoveSource, DockMoveTarget, LogicalSurfaceRejection, NativeWindowPlacement,
+    PreparedDockAction, PreparedTab, PreparedTabsGroup, WorkspaceVersion,
 };
 pub use crate::presentation::config::{
     DockPresentationConfig, DockPresentationConfigBuilder, DockPresentationConfigError,

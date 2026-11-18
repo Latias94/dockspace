@@ -2,7 +2,7 @@
 
 use super::{DockspaceRuntimeError, DockspaceSession, NativeWindowPlacement, PreparedDockAction};
 use crate::ids::{RootId, SurfaceId};
-use crate::model::{DockspaceActionRejection, NativeTearOffSource, ProductAction};
+use crate::model::{DockMoveSource, DockspaceActionRejection, ProductAction};
 
 /// One presentation command evaluated against the current published session state.
 #[derive(Debug)]
@@ -101,7 +101,7 @@ impl<'session> DockspacePresentationCommands<'session> {
         placement: NativeWindowPlacement,
     ) -> Result<DockspacePresentationCommand, DockspaceRuntimeError> {
         self.session
-            .native_window_command(NativeTearOffSource::Root(self.root), placement)
+            .native_window_command(DockMoveSource::Root(self.root), placement)
     }
 
     /// Preflights promotion using core-derived source geometry and default placement.
@@ -113,7 +113,7 @@ impl<'session> DockspacePresentationCommands<'session> {
         &self,
     ) -> Result<DockspacePresentationCommand, DockspaceRuntimeError> {
         self.session
-            .native_window_command_default(NativeTearOffSource::Root(self.root))
+            .native_window_command_default(DockMoveSource::Root(self.root))
     }
 
     fn prepare(
@@ -146,7 +146,7 @@ impl DockspaceSession {
     /// Returns an internal runtime error only when native preflight violates a core invariant.
     pub fn native_window_command(
         &self,
-        source: NativeTearOffSource,
+        source: DockMoveSource,
         placement: NativeWindowPlacement,
     ) -> Result<DockspacePresentationCommand, DockspaceRuntimeError> {
         self.prepare_native_window_command(source, Some(placement))
@@ -162,14 +162,14 @@ impl DockspaceSession {
     /// Returns an internal runtime error only when native preflight violates a core invariant.
     pub fn native_window_command_default(
         &self,
-        source: NativeTearOffSource,
+        source: DockMoveSource,
     ) -> Result<DockspacePresentationCommand, DockspaceRuntimeError> {
         self.prepare_native_window_command(source, None)
     }
 
     fn prepare_native_window_command(
         &self,
-        source: NativeTearOffSource,
+        source: DockMoveSource,
         placement: Option<NativeWindowPlacement>,
     ) -> Result<DockspacePresentationCommand, DockspaceRuntimeError> {
         if self

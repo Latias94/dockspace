@@ -2,8 +2,8 @@
 
 use crate::ids::NodeKey;
 use crate::model::{
-    DockAnchor, DockEdge, DockFraction, DockPlacement, DockspaceActionRejection,
-    NativeTearOffSource, ProductAction,
+    DockAnchor, DockEdge, DockFraction, DockMoveSource, DockPlacement, DockspaceActionRejection,
+    ProductAction,
 };
 
 use super::{
@@ -60,7 +60,7 @@ impl SurfacePaintPlan<'_> {
         let action = match kind {
             Kind::Float => ProductAction::FloatItem { item, surface },
             Kind::MoveToNewWindow => ProductAction::TearOffNative {
-                source: NativeTearOffSource::Item(item),
+                source: DockMoveSource::Item(item),
                 placement: None,
             },
             _ => {

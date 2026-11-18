@@ -2516,6 +2516,20 @@ fn product_native_main_dock_back_uses_bound_recovery_after_target_presentation()
     );
     let _ = fixture.engine.viewport.take_new_effects();
     let source_version = fixture.engine.version();
+    let action = fixture.engine.prepare_dock_root_back(root);
+    assert!(
+        fixture
+            .engine
+            .action_removes_surface(&action, NATIVE_SURFACE)
+            .expect("the rehome candidate uses its bound recovery authority")
+    );
+    assert!(
+        !fixture
+            .engine
+            .action_removes_surface(&action, target_surface)
+            .expect("the recovery host survives the candidate")
+    );
+    assert_eq!(fixture.engine.version(), source_version);
 
     let staged = submit_test_input(
         &mut fixture.engine,
@@ -2797,7 +2811,7 @@ fn root_presentation_transitions_share_one_pending_reservation() {
         rehoming.presentation_host,
         EngineInput::TearOffNative {
             expected: version,
-            source: crate::model::NativeTearOffSource::Root(root),
+            source: crate::model::DockMoveSource::Root(root),
             placement: Some(crate::model::NativeWindowPlacement::new(
                 PhysicalRect::new(800.0, 120.0, 360.0, 260.0)
                     .expect("native placement must validate"),
@@ -2819,6 +2833,7 @@ fn root_presentation_transitions_share_one_pending_reservation() {
             expected: version,
             root,
             placement: crate::model::DockPlacement::Main(SOURCE_SURFACE),
+            mode: crate::model::TabGroupDockMode::MergeTabs,
         },
     )
     .expect("a competing dock transition must reduce as a typed conflict");
@@ -3024,7 +3039,7 @@ fn active_surface_local_drag_rejects_programmatic_native_tear_off_atomically() {
             &mut frame,
             EngineInput::TearOffNative {
                 expected: version,
-                source: crate::model::NativeTearOffSource::Root(SOURCE_ROOT),
+                source: crate::model::DockMoveSource::Root(SOURCE_ROOT),
                 placement: Some(crate::model::NativeWindowPlacement::new(
                     PhysicalRect::new(700.0, 100.0, 420.0, 320.0)
                         .expect("native placement must validate"),
@@ -4629,6 +4644,7 @@ fn product_native_root_docks_into_empty_main_after_target_presentation() {
         .prepare_product_action_if_available(crate::model::ProductAction::DockRoot {
             root,
             placement: DockPlacement::Main(TARGET_SURFACE),
+            mode: crate::model::TabGroupDockMode::MergeTabs,
         })
         .expect("the root action availability query succeeds")
         .expect("the native root can dock into the presented empty main surface");
@@ -4641,6 +4657,7 @@ fn product_native_root_docks_into_empty_main_after_target_presentation() {
             expected: source_version,
             root,
             placement: DockPlacement::Main(TARGET_SURFACE),
+            mode: crate::model::TabGroupDockMode::MergeTabs,
         },
     )
     .expect("native-to-main docking reduces");

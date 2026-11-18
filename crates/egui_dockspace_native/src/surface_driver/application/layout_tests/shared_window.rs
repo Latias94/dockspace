@@ -133,7 +133,7 @@ fn reset_replaces_the_whole_shared_root_roster_only_after_commit() {
     let before = state.coordinator.session().version();
     let predecessors = current_roster(&state);
 
-    state.request_layout_reset(candidate.clone()).unwrap();
+    let state_receipt = state.request_layout_reset(candidate.clone()).unwrap();
     let reset = state
         .coordinator
         .session()
@@ -162,7 +162,7 @@ fn reset_replaces_the_whole_shared_root_roster_only_after_commit() {
     let report = commit_queued(&mut state, None);
     assert_eq!(report.native_root_continuations().len(), 2);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::LayoutReset { .. }
     ));
     let successors = current_roster(&state);
@@ -223,14 +223,14 @@ fn representative_root_rebinding_continues_its_shared_sibling_in_the_same_batch(
         surface(OTHER_SURFACE, RootId::new(12), &[SECOND], SECOND),
     ])
     .unwrap();
-    state
+    let state_receipt = state
         .request_layout_reset_rebinding_root(candidate, incoming)
         .unwrap();
     let report = commit_queued(&mut state, None);
     assert_eq!(state.root_surface, incoming);
     assert_eq!(report.native_root_continuations().len(), 2);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::LayoutReset { .. }
     ));
     let successors = current_roster(&state);
@@ -314,12 +314,12 @@ fn ordinary_root_entry_uses_the_committed_roster_after_shared_reset_shrinks_it()
     let old_bytes = state.root_placements.retained_bytes();
     drop(old);
 
-    state
+    let state_receipt = state
         .request_layout_reset(layout(PRESET_ROOT, &[FIRST], FIRST))
         .unwrap();
     commit_queued(&mut state, None);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::LayoutReset { .. }
     ));
     assert!(state.root_placements.request.is_none());
@@ -340,7 +340,7 @@ fn ordinary_root_entry_uses_the_committed_surface_after_representative_rebinding
     request_placements(&mut state, &old);
     drop(old);
     let incoming = SurfaceId::new(3);
-    state
+    let state_receipt = state
         .request_layout_reset_rebinding_root(
             DockspaceLayout::new([
                 surface(incoming, PRESET_ROOT, &[FIRST], FIRST),
@@ -352,7 +352,7 @@ fn ordinary_root_entry_uses_the_committed_surface_after_representative_rebinding
         .unwrap();
     commit_queued(&mut state, None);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::LayoutReset { .. }
     ));
     assert_eq!(state.root_surface, incoming);
@@ -384,17 +384,20 @@ fn ordinary_root_entry_drops_a_pending_declaration_after_docking_vacates_its_sib
     let old = assert_ordinary_root_roster(&mut state, &[SURFACE, OTHER_SURFACE]);
     request_placements(&mut state, &old);
     drop(old);
-    state
-        .request_command(NativeCommand::DockItem {
-            item: SECOND,
-            placement: dockspace::model::DockPlacement::Center(
-                dockspace::model::DockAnchor::Central(ROOT),
-            ),
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Item(SECOND),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement: dockspace::model::DockPlacement::Center(
+                    dockspace::model::DockAnchor::Central(ROOT),
+                ),
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         })
         .unwrap();
     let report = commit_queued(&mut state, None);
     assert_eq!(report.native_placement_detachments().len(), 1);
-    assert!(matches!(take(&mut state), NativeActionStatus::Dock(_)));
+    assert!(matches!(take(&state_receipt), NativeActionStatus::Dock(_)));
     assert!(state.view().surface(OTHER_SURFACE).is_none());
     assert!(state.root_placements.request.is_none());
     assert_eq!(state.root_placements.retained_bytes(), 0);
@@ -579,7 +582,7 @@ fn queued_replacement_uses_committed_placements_and_keeps_the_declaration_out_of
         PhysicalRect::new(5.0, 20.0, 300.0, 440.0).unwrap(),
     );
     request_placements(&mut state, &resized);
-    state.request_layout_reset(shared_layout()).unwrap();
+    let state_receipt = state.request_layout_reset(shared_layout()).unwrap();
     let selected = state
         .root_placements
         .next(
@@ -626,7 +629,7 @@ fn queued_replacement_uses_committed_placements_and_keeps_the_declaration_out_of
         .root_placements
         .commit(&state.coordinator, state.root_surface, &report);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::LayoutReset { .. }
     ));
     assert!(state.root_placements.request.is_none());
@@ -664,7 +667,7 @@ fn replacement_queued_after_frozen_geometry_waits_and_keeps_explicit_predecessor
             .find(|binding| binding.surface() == SURFACE)
             .unwrap();
         let incoming = SurfaceId::new(3);
-        if explicit {
+        let state_receipt = if explicit {
             state
                 .request_layout_reset_rebinding_root(
                     DockspaceLayout::new([
@@ -674,10 +677,10 @@ fn replacement_queued_after_frozen_geometry_waits_and_keeps_explicit_predecessor
                     .unwrap(),
                     incoming,
                 )
-                .unwrap();
+                .unwrap()
         } else {
-            state.request_layout_reset(shared_layout()).unwrap();
-        }
+            state.request_layout_reset(shared_layout()).unwrap()
+        };
         let bridge = state.coordinator.dispatch_bridge();
         let mut frame = state
             .coordinator
@@ -723,7 +726,7 @@ fn replacement_queued_after_frozen_geometry_waits_and_keeps_explicit_predecessor
         ));
 
         commit_queued(&mut state, None);
-        let status = take(&mut state);
+        let status = take(&state_receipt);
         if explicit {
             assert!(matches!(
                 status,
@@ -781,7 +784,7 @@ mod document {
         let before = state.coordinator.session().version();
         let predecessors = current_roster(&state);
 
-        state
+        let state_receipt = state
             .request_document_restore_json(&saved, recognize)
             .unwrap();
         let restore = state
@@ -811,7 +814,7 @@ mod document {
         assert_eq!(report.native_root_continuations().len(), 2);
         assert!(report.take_native_effects().is_empty());
         assert!(matches!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::DocumentRestored { .. }
         ));
         let successors = current_roster(&state);
@@ -853,7 +856,7 @@ mod document {
             .copied()
             .find(|binding| binding.surface() == SURFACE)
             .unwrap();
-        state
+        let state_receipt = state
             .request_document_restore_json_rebinding_root(&saved, incoming, recognize)
             .unwrap();
         let mut report = commit_queued(&mut state, None);
@@ -891,7 +894,7 @@ mod document {
         );
         assert!(report.take_native_effects().is_empty());
         assert!(matches!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::DocumentRestored { .. }
         ));
         assert!(state.root_placements.request.is_none());
@@ -917,12 +920,12 @@ mod document {
         let saved = persistent_session(layout(PRESET_ROOT, &[FIRST], FIRST))
             .save_document_json()
             .unwrap();
-        state
+        let state_receipt = state
             .request_document_restore_json(&saved, recognize)
             .unwrap();
         commit_queued(&mut state, None);
         assert!(matches!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::DocumentRestored { .. }
         ));
         assert!(state.root_placements.request.is_none());
@@ -937,7 +940,7 @@ mod document {
         let saved = persistent_session(layout(PRESET_ROOT, &[FIRST, SECOND], SECOND))
             .save_document_json()
             .unwrap();
-        state
+        let state_receipt = state
             .request_document_restore_json(&saved, recognize)
             .unwrap();
         assert!(
@@ -950,7 +953,7 @@ mod document {
         );
         commit_queued(&mut state, None);
         assert!(matches!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::DocumentRestored { .. }
         ));
         assert!(

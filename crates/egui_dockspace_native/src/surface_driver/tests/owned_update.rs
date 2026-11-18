@@ -62,6 +62,7 @@ impl PaneView for CountingPanes {
 
 #[derive(Default)]
 struct Probe {
+    action_receipt: Option<crate::NativeActionReceipt>,
     style_change: bool,
     token: Option<NativeOutputToken>,
     version: Option<WorkspaceVersion>,
@@ -218,7 +219,13 @@ impl NativeOutputPassFinalizer for Finalizer {
                         .dispatch_bridge()
                         .has_pending_output(token)
                 );
-                let status = state.take_action_status().unwrap().unwrap();
+                let status = probe
+                    .action_receipt
+                    .take()
+                    .unwrap()
+                    .try_recv()
+                    .unwrap()
+                    .unwrap();
                 if probe.style_change {
                     assert_eq!(state.style.tab_bar_height, 44.0);
                     assert_eq!(
@@ -437,18 +444,18 @@ impl eframe::App for DriverApp {
         if probe.token.is_none() && state.is_surface_presented(SURFACE) {
             #[cfg(feature = "motion")]
             self.clock.store(100, Ordering::SeqCst);
-            if probe.style_change {
+            probe.action_receipt = Some(if probe.style_change {
                 state
                     .request_style(DockStyle {
                         tab_bar_height: 44.0,
                         ..DockStyle::default()
                     })
-                    .unwrap();
+                    .unwrap()
             } else {
                 state
                     .request_command(NativeCommand::SelectItem { item: SECOND })
-                    .unwrap();
-            }
+                    .unwrap()
+            });
             probe.token = Some(token);
             probe.version = Some(state.coordinator.session().version());
             probe.reports_before = self.reports.load(Ordering::SeqCst);

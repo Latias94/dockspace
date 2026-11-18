@@ -1560,6 +1560,7 @@ impl DockEngine {
                 expected,
                 root,
                 placement,
+                mode,
             } => self.reduce_product_action(
                 input.sequence,
                 cause,
@@ -1568,6 +1569,7 @@ impl DockEngine {
                 ProductAction::DockRoot {
                     root: *root,
                     placement: *placement,
+                    mode: *mode,
                 },
                 tick_start.policy,
                 events,

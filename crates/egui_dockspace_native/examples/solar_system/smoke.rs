@@ -6,7 +6,7 @@ use eframe::egui;
 
 use super::{
     DockspaceActionOutcome, DockspaceActionStatus, LivePlanet, NativeActionStatus, NativeCommand,
-    PLANETS, ROOT_SURFACE, RootId, SUN, SmokeResult, SolarApp,
+    PLANETS, ROOT_SURFACE, RootId, SUN, SmokeResult, SolarApp, poll_receipt,
 };
 
 const MOVEMENTS: usize = 4;
@@ -154,17 +154,19 @@ impl Smoke {
                         .dockspace
                         .with_view(|view| view.item(PLANETS[0].item).map(|item| item.root()))
                         .ok_or("Mercury disappeared before programmatic recovery")?;
-                    app.dockspace
-                        .request_command(NativeCommand::DockRootBack { root })
-                        .map_err(|error| error.to_string())?;
+                    app.receipt = Some(
+                        app.dockspace
+                            .request_command(NativeCommand::DockRootBack { root })
+                            .map_err(|error| error.to_string())?,
+                    );
                     self.phase = Phase::AwaitRecoveryOutcome { old, root };
                 }
             }
             Phase::AwaitRecoveryOutcome { old, root } => {
-                let Some(result) = app.dockspace.take_action_status() else {
+                let Some(result) = poll_receipt(&mut app.receipt) else {
                     return Ok(false);
                 };
-                match result.map_err(|error| error.to_string())? {
+                match result? {
                     NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                         DockspaceActionOutcome::RootFloated {
                             root: recovered,

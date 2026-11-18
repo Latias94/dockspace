@@ -348,7 +348,7 @@ impl DockEngine {
                         ProductAction::DockItem { item, .. }
                         | ProductAction::FloatItem { item, .. }
                         | ProductAction::TearOffNative {
-                            source: crate::model::NativeTearOffSource::Item(item),
+                            source: crate::model::DockMoveSource::Item(item),
                             ..
                         } => plan
                             .pane_records()
@@ -362,7 +362,7 @@ impl DockEngine {
                         ProductAction::DockTab { tab, .. }
                         | ProductAction::FloatTab { tab, .. }
                         | ProductAction::TearOffNative {
-                            source: crate::model::NativeTearOffSource::Tab(tab),
+                            source: crate::model::DockMoveSource::Tab(tab),
                             ..
                         } => {
                             self.capture_product_tab(tab).is_ok()
@@ -377,7 +377,7 @@ impl DockEngine {
                         ProductAction::FloatTabs { group, .. }
                         | ProductAction::DockTabs { group, .. }
                         | ProductAction::TearOffNative {
-                            source: crate::model::NativeTearOffSource::Tabs(group),
+                            source: crate::model::DockMoveSource::Tabs(group),
                             ..
                         } => tabs_group_menu_is_current(group),
                         _ => true,

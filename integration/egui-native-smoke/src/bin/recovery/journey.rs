@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 use dockspace::geometry::PhysicalRect;
 use dockspace::model::{
-    DockspaceActionOutcome, DockspaceActionRejection, NativeTearOffSource, NativeWindowPlacement,
+    DockMoveSource, DockMoveTarget, DockspaceActionOutcome, DockspaceActionRejection,
+    NativeWindowPlacement, TabGroupDockMode,
 };
 use eframe::egui::{self, ViewportCommand, ViewportId};
 use egui_dockspace::DockspaceActionStatus;
@@ -45,6 +46,7 @@ pub(super) struct Journey {
     app: SharedApp,
     outcome: Arc<Mutex<Option<Result<(), String>>>>,
     phase: Phase,
+    receipt: Option<egui_dockspace_native::NativeActionReceipt>,
     fail: bool,
     stale: Option<PreparedTabsGroup>,
     deadline: Instant,
@@ -61,6 +63,7 @@ impl Journey {
             app,
             outcome,
             phase: Phase::Root,
+            receipt: None,
             fail,
             stale,
             deadline: Instant::now() + Duration::from_secs(25),
@@ -90,19 +93,23 @@ impl Journey {
         match &mut self.phase {
             Phase::Root if app.is_surface_presented(ROOT) => {
                 if let Some(group) = self.stale.take() {
-                    app.request_command(NativeCommand::DockTabs {
-                        group,
-                        placement: super::DockPlacement::After(ITEMS[0]),
-                        mode: dockspace::model::TabGroupDockMode::MergeTabs,
-                    })
-                    .map_err(|error| error.to_string())?;
+                    self.receipt = Some(
+                        app.request_command(NativeCommand::Move {
+                            source: DockMoveSource::Tabs(group),
+                            target: DockMoveTarget::Dock {
+                                placement: super::DockPlacement::After(ITEMS[0]),
+                                mode: TabGroupDockMode::MergeTabs,
+                            },
+                        })
+                        .map_err(|error| error.to_string())?,
+                    );
                     self.phase = Phase::RejectStale;
                 } else {
                     self.create(app, 1)?;
                 }
             }
             Phase::RejectStale => {
-                if let Some(status) = app.take_action_status() {
+                if let Some(status) = egui_native_smoke::poll_action_receipt(&mut self.receipt) {
                     if status
                         != Ok(NativeActionStatus::Dock(DockspaceActionStatus::Rejected(
                             DockspaceActionRejection::Conflict,
@@ -115,7 +122,8 @@ impl Journey {
             }
             Phase::Creating { index, target } => {
                 if target.is_none() {
-                    if let Some(status) = app.take_action_status() {
+                    if let Some(status) = egui_native_smoke::poll_action_receipt(&mut self.receipt)
+                    {
                         match status {
                             Ok(NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                                 DockspaceActionOutcome::NativeRootTearOffRequested {
@@ -223,15 +231,22 @@ impl Journey {
                 let item = ITEMS[*index];
                 match progress {
                     DockBackProgress::Ready => {
-                        app.request_command(NativeCommand::DockItem {
-                            item,
-                            placement: super::DockPlacement::After(ITEMS[0]),
-                        })
-                        .map_err(|error| error.to_string())?;
+                        self.receipt = Some(
+                            app.request_command(NativeCommand::Move {
+                                source: DockMoveSource::Item(item),
+                                target: DockMoveTarget::Dock {
+                                    placement: super::DockPlacement::After(ITEMS[0]),
+                                    mode: TabGroupDockMode::MergeTabs,
+                                },
+                            })
+                            .map_err(|error| error.to_string())?,
+                        );
                         *progress = DockBackProgress::AwaitingResult;
                     }
                     DockBackProgress::AwaitingResult => {
-                        if let Some(status) = app.take_action_status() {
+                        if let Some(status) =
+                            egui_native_smoke::poll_action_receipt(&mut self.receipt)
+                        {
                             if !matches!(status, Ok(NativeActionStatus::Dock(DockspaceActionStatus::Applied(DockspaceActionOutcome::Docked { item: delivered, .. }))) if delivered == item)
                             {
                                 return Err(format!("fresh docking returned {status:?}"));
@@ -264,11 +279,15 @@ impl Journey {
         let placement = NativeWindowPlacement::new(
             PhysicalRect::new(120.0 + index as f64 * 80.0, 120.0, 360.0, 260.0).unwrap(),
         );
-        app.request_command(NativeCommand::MoveToNewWindow {
-            source: NativeTearOffSource::Item(ITEMS[index]),
-            placement,
-        })
-        .map_err(|error| error.to_string())?;
+        self.receipt = Some(
+            app.request_command(NativeCommand::Move {
+                source: DockMoveSource::Item(ITEMS[index]),
+                target: DockMoveTarget::Native {
+                    placement: Some(placement),
+                },
+            })
+            .map_err(|error| error.to_string())?,
+        );
         self.phase = Phase::Creating {
             index,
             target: None,

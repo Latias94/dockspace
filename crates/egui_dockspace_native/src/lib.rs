@@ -43,7 +43,8 @@ mod work_area;
 
 pub use app::NativeDockspaceApp;
 pub use application_action::{
-    NativeActionFailure, NativeActionInterruption, NativeActionRequestError, NativeActionStatus,
+    NativeActionFailure, NativeActionInterruption, NativeActionReceipt, NativeActionRequestError,
+    NativeActionResult, NativeActionStatus,
 };
 pub use close_control::NativeWindowClosePolicy;
 pub use command::{NativeCommand, NativeCommandRequestError};

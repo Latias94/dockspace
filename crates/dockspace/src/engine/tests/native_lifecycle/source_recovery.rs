@@ -239,7 +239,7 @@ fn source_recovery_cancels_first_live_projection_without_workspace_or_version_ch
         fixture.presentation_host,
         EngineInput::TearOffNative {
             expected: version,
-            source: crate::model::NativeTearOffSource::Root(SOURCE_ROOT),
+            source: crate::model::DockMoveSource::Root(SOURCE_ROOT),
             placement: Some(crate::model::NativeWindowPlacement::new(
                 PhysicalRect::new(1000.0, 0.0, 400.0, 300.0)
                     .expect("the prospective window placement must be valid"),
@@ -537,7 +537,7 @@ fn source_recovery_revokes_later_direct_prepared_action_in_the_same_snapshot() {
             fixture.presentation_host,
             EngineInput::TearOffNative {
                 expected,
-                source: crate::model::NativeTearOffSource::Root(root),
+                source: crate::model::DockMoveSource::Root(root),
                 placement: Some(crate::model::NativeWindowPlacement::new(
                     PhysicalRect::new(x, 0.0, 400.0, 300.0).unwrap(),
                 )),

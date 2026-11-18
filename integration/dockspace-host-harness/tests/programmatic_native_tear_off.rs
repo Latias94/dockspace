@@ -4,9 +4,9 @@ use std::num::NonZeroUsize;
 
 use dockspace::geometry::{LogicalRect, LogicalSize, PaneSizing, PhysicalRect, ScaleFactor};
 use dockspace::model::{
-    DockAnchor, DockPlacement, DockspaceActionOutcome, DockspaceActionRejection, DockspaceAxis,
-    DockspaceContainedLayout, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
-    DockspaceSurfaceLayout, FloatingPresentationId, ItemId, NativeTearOffSource,
+    DockAnchor, DockMoveSource, DockMoveTarget, DockPlacement, DockspaceActionOutcome,
+    DockspaceActionRejection, DockspaceAxis, DockspaceContainedLayout, DockspaceLayout,
+    DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, FloatingPresentationId, ItemId,
     NativeWindowPlacement, PreparedDockAction, RootId, SurfaceId, WorkspaceVersion,
 };
 use dockspace::policy::DockPolicy;
@@ -384,25 +384,32 @@ fn execute_paint_frame(
 }
 
 #[test]
-fn item_group_and_root_transfer_only_after_exact_first_live() {
-    for kind in 0..3 {
+fn item_tab_group_and_root_transfer_only_after_exact_first_live() {
+    for kind in 0..4 {
         let mut fixture = Fixture::new();
         let source = match kind {
-            0 => NativeTearOffSource::Item(B),
-            1 => NativeTearOffSource::Tabs(
+            0 => DockMoveSource::Item(B),
+            1 => DockMoveSource::Tabs(
                 fixture
                     .session
                     .capture_tabs_group(DockAnchor::Item(A))
                     .unwrap(),
             ),
-            _ => NativeTearOffSource::Root(ROOT),
+            2 => DockMoveSource::Root(ROOT),
+            _ => DockMoveSource::Tab(fixture.session.capture_tab(B.into()).unwrap()),
         };
         let command = fixture
             .session
-            .native_window_command(source, placement())
+            .native_window_command(source.clone(), placement())
             .unwrap();
         assert!(command.is_ready(), "{:?}", command.unavailable_reason());
-        let mut request = fixture.request(command.into_prepared().unwrap());
+        let prepared = fixture.session.prepare_move(
+            source,
+            DockMoveTarget::Native {
+                placement: Some(placement()),
+            },
+        );
+        let mut request = fixture.request(prepared);
         if kind == 2 {
             assert_eq!(request.root, ROOT);
         } else {
@@ -438,7 +445,7 @@ fn item_group_and_root_transfer_only_after_exact_first_live() {
         assert!(!fixture.session.has_pending_native_create());
         let view = fixture.session.view();
         let moved: &[ItemId] = match kind {
-            0 => &[B],
+            0 | 3 => &[B],
             1 => &[A, B],
             _ => &[A, B, SIBLING],
         };
@@ -457,13 +464,17 @@ fn item_group_and_root_transfer_only_after_exact_first_live() {
             assert!(central.is_central());
             assert_eq!(
                 central.items().collect::<Vec<_>>(),
-                if kind == 0 { &[A][..] } else { &[][..] }
+                if matches!(kind, 0 | 3) {
+                    &[A][..]
+                } else {
+                    &[][..]
+                }
             );
             let split = source_root.content().unwrap().split().unwrap();
             assert_eq!(split.child_count(), 2);
             assert_eq!(split.weights().collect::<Vec<_>>(), vec![0.75, 0.25]);
         }
-        if kind == 0 {
+        if matches!(kind, 0 | 3) {
             assert_eq!(
                 view.item(A)
                     .unwrap()
@@ -513,7 +524,7 @@ fn captured_group_never_retargets_its_anchor_or_refreshes_its_version() {
             .collect::<Vec<_>>(),
         &[SIBLING, A]
     );
-    let source = NativeTearOffSource::Tabs(group);
+    let source = DockMoveSource::Tabs(group);
     let command = fixture
         .session
         .native_window_command(source.clone(), placement())
@@ -585,7 +596,7 @@ fn foreign_group_preserves_its_issuing_session_authority() {
     let before = destination.session.version();
     let action = destination
         .session
-        .prepare_move_to_new_window(NativeTearOffSource::Tabs(group), placement());
+        .prepare_move_to_new_window(DockMoveSource::Tabs(group), placement());
     let mut frame = native_frame(&mut destination.session);
     assert!(frame.submit_prepared_action(action).is_err());
     let mut report = finish(frame);
@@ -598,7 +609,7 @@ fn cancellation_and_late_output_preserve_the_partial_source() {
     let mut fixture = Fixture::new();
     let action = fixture
         .session
-        .prepare_move_to_new_window(NativeTearOffSource::Item(B), placement());
+        .prepare_move_to_new_window(DockMoveSource::Item(B), placement());
     let mut request = fixture.request(action);
     let ack = request.accept();
     fixture.observe(&request, NativeCreateReadiness::Prepared, Some(ack));
@@ -630,7 +641,7 @@ fn failed_partial_creation_and_discarded_attempt_keep_original_content() {
     let before = fixture.session.version();
     let mut frame = native_frame(&mut fixture.session);
     frame
-        .move_to_new_window_default_current(NativeTearOffSource::Item(B))
+        .move_to_new_window_default_current(DockMoveSource::Item(B))
         .unwrap();
     drop(frame);
     fixture.assert_source(before);
@@ -641,7 +652,7 @@ fn failed_partial_creation_and_discarded_attempt_keep_original_content() {
         .unwrap();
     let action = fixture
         .session
-        .prepare_move_to_new_window(NativeTearOffSource::Tabs(group), placement());
+        .prepare_move_to_new_window(DockMoveSource::Tabs(group), placement());
     let request = fixture.request(action);
     fixture
         .session
@@ -676,14 +687,14 @@ fn default_session_prepared_and_paint_commands_share_placement() {
             let action = if path == 0 {
                 fixture
                     .session
-                    .native_window_command_default(NativeTearOffSource::Root(ROOT))
+                    .native_window_command_default(DockMoveSource::Root(ROOT))
                     .unwrap()
                     .into_prepared()
                     .unwrap()
             } else {
                 fixture
                     .session
-                    .prepare_move_to_new_window_default(NativeTearOffSource::Root(ROOT))
+                    .prepare_move_to_new_window_default(DockMoveSource::Root(ROOT))
             };
             let mut request = fixture.request(action);
             assert_eq!(request.placement, expected);
@@ -726,7 +737,7 @@ fn missing_default_facts_and_finite_capacity_never_move_the_source() {
         )
         .unwrap();
     idle(&mut fixture.session);
-    let source = NativeTearOffSource::Item(B);
+    let source = DockMoveSource::Item(B);
     assert_eq!(
         fixture
             .session
@@ -760,14 +771,14 @@ fn missing_default_facts_and_finite_capacity_never_move_the_source() {
     assert_eq!(
         bounded
             .session
-            .native_window_command(NativeTearOffSource::Item(B), placement())
+            .native_window_command(DockMoveSource::Item(B), placement())
             .unwrap()
             .unavailable_reason(),
         Some(DockspaceActionRejection::NativeUnavailable)
     );
     let mut frame = native_frame(&mut bounded.session);
     frame
-        .move_to_new_window_current(NativeTearOffSource::Item(B), placement())
+        .move_to_new_window_current(DockMoveSource::Item(B), placement())
         .unwrap();
     let mut report = finish(frame);
     assert!(report.take_native_effects().is_empty());
@@ -788,9 +799,9 @@ fn every_programmatic_payload_obeys_the_native_tear_off_policy() {
         .capture_tabs_group(DockAnchor::Item(A))
         .unwrap();
     for source in [
-        NativeTearOffSource::Item(B),
-        NativeTearOffSource::Tabs(group),
-        NativeTearOffSource::Root(ROOT),
+        DockMoveSource::Item(B),
+        DockMoveSource::Tabs(group),
+        DockMoveSource::Root(ROOT),
     ] {
         assert_eq!(
             fixture
@@ -820,7 +831,7 @@ fn every_programmatic_payload_obeys_the_native_tear_off_policy() {
 #[test]
 fn explicit_placement_can_recover_a_contained_root_without_visible_chrome() {
     let mut fixture = Fixture::configured(2, true);
-    let source = NativeTearOffSource::Root(CONTAINED_ROOT);
+    let source = DockMoveSource::Root(CONTAINED_ROOT);
     assert!(
         !fixture
             .session
@@ -843,7 +854,7 @@ fn native_dock_back_availability_waits_for_the_current_recovery_scene() {
     let mut fixture = Fixture::new();
     let action = fixture
         .session
-        .prepare_move_to_new_window(NativeTearOffSource::Item(B), placement());
+        .prepare_move_to_new_window(DockMoveSource::Item(B), placement());
     let mut request = fixture.request(action);
     let ack = request.accept();
     fixture.observe(&request, NativeCreateReadiness::Prepared, Some(ack));
@@ -1047,14 +1058,14 @@ fn assert_partial_default_geometry(source_contained: bool) {
         )
         .unwrap();
         let source = if group {
-            NativeTearOffSource::Tabs(
+            DockMoveSource::Tabs(
                 fixture
                     .session
                     .capture_tabs_group(DockAnchor::Item(A))
                     .unwrap(),
             )
         } else {
-            NativeTearOffSource::Item(A)
+            DockMoveSource::Item(A)
         };
         let command = fixture
             .session
@@ -1138,7 +1149,7 @@ fn capped_content_does_not_replace_native_placement_or_first_live_authority() {
     let requested = placement();
     let command = fixture
         .session
-        .native_window_command(NativeTearOffSource::Item(B), requested)
+        .native_window_command(DockMoveSource::Item(B), requested)
         .unwrap();
     let mut request = fixture.request(command.into_prepared().unwrap());
     assert_eq!(request.placement, requested.outer_rect());

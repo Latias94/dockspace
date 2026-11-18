@@ -1,7 +1,7 @@
 //! Physical Root/Child round trips, followed by retirement of the drained Child.
 
 use dockspace::geometry::PhysicalRect;
-use dockspace::model::{DockspaceActionOutcome, SurfaceId};
+use dockspace::model::{DockMoveSource, DockMoveTarget, DockspaceActionOutcome, SurfaceId};
 use dockspace::runtime::NativeWindowPlacement;
 use egui_dockspace_native::{NativeActionStatus, NativeCommand};
 use std::io::{self, BufRead as _};
@@ -19,6 +19,7 @@ pub(super) use interrupt::Interruption;
 
 pub(super) struct NativeSmoke {
     started: Instant,
+    receipt: Option<NativeActionReceipt>,
     order: [ItemId; 2],
     created: bool,
     child: Option<(egui::ViewportId, u64, SurfaceId)>,
@@ -52,6 +53,7 @@ impl NativeSmoke {
         });
         Self {
             started: Instant::now(),
+            receipt: None,
             order,
             created: false,
             child: None,
@@ -107,7 +109,7 @@ impl NativeSmoke {
                 ))
                 .collect::<Vec<_>>()
         );
-        if let Some(result) = app.dockspace.take_action_status() {
+        if let Some(result) = poll_receipt(&mut self.receipt) {
             assert!(!self.setup_completed);
             assert!(
                 matches!(
@@ -135,14 +137,18 @@ impl NativeSmoke {
         if !self.created {
             // Setup uses the same public command as the toolbar. Every move
             // under test below is submitted exclusively by real pointer input.
-            app.dockspace
-                .request_command(NativeCommand::MoveRootToNewWindow {
-                    root: INSPECTOR_ROOT,
-                    placement: NativeWindowPlacement::new(
-                        PhysicalRect::new(1400.0, 180.0, 440.0, 340.0).unwrap(),
-                    ),
-                })
-                .unwrap();
+            self.receipt = Some(
+                app.dockspace
+                    .request_command(NativeCommand::Move {
+                        source: DockMoveSource::Root(INSPECTOR_ROOT),
+                        target: DockMoveTarget::Native {
+                            placement: Some(NativeWindowPlacement::new(
+                                PhysicalRect::new(1400.0, 180.0, 440.0, 340.0).unwrap(),
+                            )),
+                        },
+                    })
+                    .unwrap(),
+            );
             self.created = true;
             return false;
         }

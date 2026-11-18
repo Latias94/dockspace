@@ -27,7 +27,7 @@ use crate::notification::{lock_state, with_state};
 use crate::surface_driver::{NativeErrorPresentation, NativeRuntimeState, NativeSurfaceUpdate};
 use crate::window_options::DeclaredWindowIcons;
 use crate::{
-    NativeActionFailure, NativeActionRequestError, NativeActionStatus, NativeChildWindowOptions,
+    NativeActionReceipt, NativeActionRequestError, NativeChildWindowOptions,
     NativeLayoutRequestError,
 };
 
@@ -51,9 +51,9 @@ mod native_boundary_x11;
 /// Deferred saves use [`crate::NativeCommand::DecideClose`] with
 /// [`dockspace::close::CloseDecision::Deferred`], followed by
 /// [`crate::NativeCommand::ContinueClose`] with the returned core-issued token.
-/// Retain completion while the command slot is Busy and consume
-/// [`Self::take_action_status`] before submitting the next command. Admission
-/// queues a command; its later committed result determines whether it applied.
+/// Keep each returned [`NativeActionReceipt`] to inspect its exact completion.
+/// Admission queues a command; its later committed result determines whether it
+/// applied. Only an executing request owns the bounded application slot.
 pub struct NativeDockspaceApp<P> {
     state: Arc<Mutex<NativeRuntimeState<P>>>,
     native_host: Arc<dyn NativeHostHandler>,
@@ -354,18 +354,21 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
         lock_state(&self.state).input()
     }
 
-    /// Queues input bindings in the existing application command slot.
+    /// Queues input bindings at the next eligible native boundary.
     ///
     /// Earlier captured input keeps its original bindings. A changed configuration
     /// cancels the previous docking gesture through the existing semantic action;
-    /// new bindings apply to subsequent runs after the frame commits. Consume
-    /// [`NativeActionStatus::InputChanged`] before submitting another command.
+    /// new bindings apply to subsequent runs after the frame commits. The returned
+    /// receipt reports [`crate::NativeActionStatus::InputChanged`] independently.
     ///
     /// # Errors
     ///
     /// Returns [`NativeActionRequestError::Busy`] while the command slot is occupied,
     /// or [`NativeActionRequestError::Stopped`] after terminal shutdown.
-    pub fn request_input(&self, input: DockInputConfig) -> Result<(), NativeActionRequestError> {
+    pub fn request_input(
+        &self,
+        input: DockInputConfig,
+    ) -> Result<NativeActionReceipt, NativeActionRequestError> {
         lock_state(&self.state).request_input(input)
     }
 
@@ -395,9 +398,9 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
     /// Captures one direct tab from the published session under the runtime lock.
     ///
     /// A layout tab includes its complete subtree, including hidden and inactive
-    /// descendants. Store this opaque capability in [`crate::NativeCommand::DockTab`],
-    /// [`crate::NativeCommand::FloatTab`], [`crate::NativeCommand::CloseTab`] or
-    /// [`dockspace::model::NativeTearOffSource::Tab`]. Its session, membership and
+    /// descendants. Store this opaque capability in [`dockspace::model::DockMoveSource::Tab`]
+    /// for [`crate::NativeCommand::Move`], or in [`crate::NativeCommand::CloseTab`].
+    /// Its session, membership and
     /// version remain bound to the capture; admission never refreshes them.
     /// This read-only query does not occupy the application command slot.
     ///
@@ -409,8 +412,8 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
 
     /// Captures one complete tabs group from the published session under the runtime lock.
     ///
-    /// Store the opaque result in [`crate::NativeCommand::MoveToNewWindow`] or
-    /// [`crate::NativeCommand::MoveToNewWindowDefault`]. Membership, order,
+    /// Store the opaque result in [`dockspace::model::DockMoveSource::Tabs`] for
+    /// [`crate::NativeCommand::Move`]. Membership, order,
     /// selection, session and version remain bound to this capture. Later
     /// admission never looks up `anchor` again or refreshes a stale group.
     /// This read-only query does not occupy the application command slot.
@@ -490,8 +493,8 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
     ///
     /// The allocation-free snapshot explains [`Self::is_quiescent`] without
     /// consuming input or retaining history. Its debug output lists active
-    /// reasons. A queued application command remains pending until its result
-    /// is consumed. This is diagnostic state, not authority to skip a barrier.
+    /// reasons. Completed receipts are caller-owned and do not count as pending
+    /// work. This is diagnostic state, not authority to skip a barrier.
     #[must_use]
     pub fn pending_work(&self) -> crate::NativePendingWork {
         lock_state(&self.state).pending_work()
@@ -570,25 +573,28 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
         lock_state(&self.state).input_storage_reserved_bytes()
     }
 
-    /// Queues one application command for the next eligible final root pass.
+    /// Queues one application command for the next eligible service or paint boundary.
     ///
     /// Preparation freezes the current published revision under the runtime lock.
     /// Earlier ordered input may make that preparation stale before execution.
-    /// Acceptance means queued, not applied: inspect [`Self::take_action_status`]
-    /// for the exact committed result. The single slot remains Busy through any
-    /// required presentation transition and until its terminal result is consumed.
+    /// Acceptance means queued, not applied: poll the returned [`NativeActionReceipt`]
+    /// for the exact committed result. Native service advances ready commands even
+    /// when Root is not painting. The single execution slot remains Busy through
+    /// any required presentation transition, then releases immediately. Keeping an
+    /// unread receipt does not block another command; dropping it does not cancel
+    /// accepted work.
     ///
     /// Ordinary semantic completion does not prove a fresh framebuffer. Use
     /// [`Self::is_surface_presented`] when the next operation requires presented
-    /// geometry, and consume the result before waiting for [`Self::is_quiescent`].
+    /// geometry, and [`Self::is_quiescent`] for outstanding lifecycle work.
     /// Do not re-enter this method from a `with_view` or pane-registry callback:
     /// those callbacks already hold the same runtime lock.
     ///
     /// # Errors
     ///
     /// Returns [`crate::NativeCommandRequestError`] with
-    /// [`NativeActionRequestError::Busy`] while the previous command or its
-    /// result owns the slot, `Stopped` after fatal shutdown, or
+    /// [`NativeActionRequestError::Busy`] while the previous command is executing
+    /// or awaiting presentation, `Stopped` after fatal shutdown, or
     /// `HostSurfaceRequired` when the operation would remove the fixed host.
     /// The error retains the unchanged command for storage or retry; inspect
     /// [`crate::NativeCommandRequestError::reason`] to distinguish failures.
@@ -597,28 +603,30 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
     pub fn request_command(
         &self,
         command: crate::NativeCommand,
-    ) -> Result<(), crate::NativeCommandRequestError> {
+    ) -> Result<NativeActionReceipt, crate::NativeCommandRequestError> {
         lock_state(&self.state).request_command(command)
     }
 
-    /// Queues renderer styling for the next eligible final root pass.
+    /// Queues renderer styling for the next eligible service or paint boundary.
     ///
     /// Use [`DockStyle::from_egui`] after changing egui fonts or density, then
     /// reapply application overrides. Core-only geometry and interaction settings
     /// remain unchanged. Font resources themselves belong to egui's context.
     ///
-    /// The existing application command slot retains this request until its
-    /// [`NativeActionStatus::StyleChanged`] result is consumed. Acceptance does
-    /// not change the style immediately: core geometry and adapter style publish
-    /// together after the final pass commits. Geometry changes cancel gestures
-    /// through core; visual-only changes preserve them. All live windows repaint.
-    /// Consume the result before waiting for fresh presentation or quiescence.
+    /// Acceptance does not change the style immediately: core geometry and adapter
+    /// style publish together when the frame commits. Geometry changes cancel
+    /// gestures through core; visual-only changes preserve them. All live windows
+    /// repaint. The returned receipt reports [`crate::NativeActionStatus::StyleChanged`]
+    /// without retaining runtime execution capacity after completion.
     ///
     /// # Errors
     ///
     /// Returns a queue error while busy or stopped, or the original configuration
     /// error for invalid style. Rejected requests leave both authorities unchanged.
-    pub fn request_style(&self, style: DockStyle) -> Result<(), crate::NativeStyleRequestError> {
+    pub fn request_style(
+        &self,
+        style: DockStyle,
+    ) -> Result<NativeActionReceipt, crate::NativeStyleRequestError> {
         lock_state(&self.state).request_style(style)
     }
 
@@ -657,7 +665,7 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
     pub fn request_layout_reset(
         &self,
         layout: DockspaceLayout,
-    ) -> Result<(), NativeLayoutRequestError> {
+    ) -> Result<NativeActionReceipt, NativeLayoutRequestError> {
         lock_state(&self.state).request_layout_reset(layout)
     }
 
@@ -677,7 +685,7 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
         &self,
         layout: DockspaceLayout,
         incoming_root: SurfaceId,
-    ) -> Result<(), NativeLayoutRequestError> {
+    ) -> Result<NativeActionReceipt, NativeLayoutRequestError> {
         lock_state(&self.state).request_layout_reset_rebinding_root(layout, incoming_root)
     }
 
@@ -721,7 +729,7 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
     ///
     /// The application owns storage and preset names. Accepted but unpublished
     /// native input is not part of this snapshot. Capture is refused while an
-    /// application command or unconsumed result owns the single slot, so saving
+    /// application command is executing, so saving
     /// cannot invalidate a queued document restore's sidecar preparation.
     ///
     /// # Errors
@@ -756,7 +764,7 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
         &self,
         bytes: &[u8],
         recognize: impl Fn(dockspace::runtime::DockspaceDocumentId, &str) -> bool,
-    ) -> Result<(), NativeLayoutRequestError> {
+    ) -> Result<NativeActionReceipt, NativeLayoutRequestError> {
         lock_state(&self.state).request_document_restore_json(bytes, recognize)
     }
 
@@ -778,20 +786,12 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
         bytes: &[u8],
         incoming_root: SurfaceId,
         recognize: impl Fn(dockspace::runtime::DockspaceDocumentId, &str) -> bool,
-    ) -> Result<(), NativeLayoutRequestError> {
+    ) -> Result<NativeActionReceipt, NativeLayoutRequestError> {
         lock_state(&self.state).request_document_restore_json_rebinding_root(
             bytes,
             incoming_root,
             recognize,
         )
-    }
-
-    /// Takes the exact terminal status of the last queued application action.
-    ///
-    /// A new action remains busy until this result is consumed, so the native
-    /// facade never overwrites or grows an unbounded action-result history.
-    pub fn take_action_status(&self) -> Option<Result<NativeActionStatus, NativeActionFailure>> {
-        lock_state(&self.state).take_action_status()
     }
 
     fn update_root(&mut self, ui: &mut egui::Ui) {
@@ -1151,7 +1151,10 @@ mod tests {
         };
         let app = app().with_input(config).unwrap();
         assert_eq!(app.input(), config);
-        assert!(app.take_action_status().is_none());
+        assert!(
+            !app.pending_work()
+                .contains(crate::NativeWaitReason::ApplicationAction)
+        );
     }
 
     #[test]
@@ -1162,10 +1165,11 @@ mod tests {
         let before = app.pending_work();
         assert!(before.contains(NativeWaitReason::RootPresentation));
         assert!(!before.contains(NativeWaitReason::ApplicationAction));
-        app.request_command(NativeCommand::SelectItem {
-            item: ItemId::new(1),
-        })
-        .unwrap();
+        let receipt = app
+            .request_command(NativeCommand::SelectItem {
+                item: ItemId::new(1),
+            })
+            .unwrap();
         let pending = app.pending_work();
         assert!(
             pending
@@ -1176,7 +1180,10 @@ mod tests {
         assert!(!before.contains(NativeWaitReason::ApplicationAction));
         assert!(format!("{pending:?}").contains("ApplicationAction"));
         assert!(
-            app.take_action_status().is_none(),
+            matches!(
+                receipt.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Empty)
+            ),
             "reading diagnostics never executes a command"
         );
     }

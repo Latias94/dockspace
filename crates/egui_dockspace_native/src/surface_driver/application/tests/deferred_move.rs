@@ -16,12 +16,18 @@ fn assert_busy(state: &mut NativeRuntimeState<Panes>) {
     assert_eq!(state.coordinator.session().version(), version);
 }
 
-fn commit_exclusive(state: &mut NativeRuntimeState<Panes>) -> NativeActionStatus {
+fn commit_exclusive(
+    state: &mut NativeRuntimeState<Panes>,
+    receipt: &crate::NativeActionReceipt,
+) -> NativeActionStatus {
     assert_busy(state);
     commit_queued(state);
-    assert_busy(state);
-    let status = take(state);
-    assert!(state.take_action_status().is_none());
+    assert!(!state.application_actions.is_occupied());
+    let status = take(receipt);
+    assert_eq!(
+        receipt.try_recv().unwrap_err(),
+        std::sync::mpsc::TryRecvError::Disconnected
+    );
     assert!(!state.application_actions.is_occupied());
     assert!(state.error().is_none());
     status
@@ -80,13 +86,13 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
     .unwrap();
     let mut state = state_with_layout(layout);
     assert_tabs(&state, &[SECOND, FIRST], &[THIRD]);
-    state
+    let state_receipt = state
         .request_command(NativeCommand::CloseItem { item: FIRST })
         .unwrap();
     let NativeActionStatus::CloseRequested {
         plan,
         reused: false,
-    } = commit_exclusive(&mut state)
+    } = commit_exclusive(&mut state, &state_receipt)
     else {
         panic!("the first close request must return a new FIRST plan");
     };
@@ -94,13 +100,13 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
     assert_eq!(plan.items().len(), 1);
     assert_eq!(plan.items()[0].item(), FIRST);
     assert_eq!(state.pending_content_close_plans(), [plan.clone()]);
-    assert!(state.take_action_status().is_none());
+    assert!(state_receipt.try_recv().ok().is_none());
 
-    state
+    let state_receipt = state
         .request_command(NativeCommand::CloseItem { item: FIRST })
         .unwrap();
     assert_eq!(
-        commit_exclusive(&mut state),
+        commit_exclusive(&mut state, &state_receipt),
         NativeActionStatus::CloseRequested {
             plan: plan.clone(),
             reused: true,
@@ -108,7 +114,7 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
     );
     assert_eq!(state.pending_content_close_plans(), [plan.clone()]);
 
-    state
+    let state_receipt = state
         .request_command(NativeCommand::DecideClose {
             request: plan.request(),
             token: plan.items()[0].token(),
@@ -125,7 +131,7 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
         plan: Some(deferred_plan),
         application: None,
         changed: false,
-    } = commit_exclusive(&mut state)
+    } = commit_exclusive(&mut state, &state_receipt)
     else {
         panic!("the exact FIRST decision must yield its deferred continuation");
     };
@@ -146,14 +152,17 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
         (SECOND, &[SECOND, FIRST][..], &[THIRD][..]),
     ] {
         let before_move = state.coordinator.session().version();
-        state
-            .request_command(NativeCommand::DockItem {
-                item: FIRST,
-                placement: DockPlacement::Center(DockAnchor::Item(target)),
+        let state_receipt = state
+            .request_command(NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Item(FIRST),
+                target: dockspace::model::DockMoveTarget::Dock {
+                    placement: DockPlacement::Center(DockAnchor::Item(target)),
+                    mode: dockspace::model::TabGroupDockMode::MergeTabs,
+                },
             })
             .unwrap();
         assert!(matches!(
-            commit_exclusive(&mut state),
+            commit_exclusive(&mut state, &state_receipt),
             NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                 DockspaceActionOutcome::Docked { item: FIRST, .. }
             ))
@@ -163,7 +172,7 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
         assert!(state.pending_content_close_plans().is_empty());
 
         let before_continue = state.coordinator.session().version();
-        state
+        let state_receipt = state
             .request_command(NativeCommand::ContinueClose {
                 request: plan.request(),
                 token: continuation,
@@ -171,7 +180,7 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
             })
             .unwrap();
         assert!(matches!(
-            commit_exclusive(&mut state),
+            commit_exclusive(&mut state, &state_receipt),
             NativeActionStatus::CloseDecisionProcessed {
                 resolution: DockspaceCloseResolution::Inert(_),
                 application: None,
@@ -201,8 +210,8 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
     assert_eq!(fresh.items()[0].item(), FIRST);
     assert_ne!(fresh.items()[0].token(), plan.items()[0].token());
     assert_eq!(state.pending_content_close_plans(), [fresh.clone()]);
-    assert!(state.take_action_status().is_none());
-    state
+    assert!(state_receipt.try_recv().ok().is_none());
+    let state_receipt = state
         .request_command(NativeCommand::ContinueClose {
             request: plan.request(),
             token: continuation,
@@ -210,7 +219,7 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
         })
         .unwrap();
     assert!(matches!(
-        commit_exclusive(&mut state),
+        commit_exclusive(&mut state, &state_receipt),
         NativeActionStatus::CloseDecisionProcessed {
             resolution: DockspaceCloseResolution::Inert(_),
             application: None,
@@ -220,7 +229,7 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
     ));
     assert_eq!(state.pending_content_close_plans(), [fresh.clone()]);
     assert_tabs(&state, &[SECOND, FIRST], &[THIRD]);
-    state
+    let state_receipt = state
         .request_command(NativeCommand::DecideClose {
             request: fresh.request(),
             token: fresh.items()[0].token(),
@@ -228,7 +237,7 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
         })
         .unwrap();
     assert!(matches!(
-        commit_exclusive(&mut state),
+        commit_exclusive(&mut state, &state_receipt),
         NativeActionStatus::CloseDecisionProcessed {
             resolution: DockspaceCloseResolution::Approved { request },
             application: Some(Ok(dockspace::runtime::DockspaceCloseOutcome::ItemClosed {
@@ -243,14 +252,14 @@ fn a_deferred_close_stays_inert_after_native_migration_and_return_until_a_fresh_
     assert!(state.pending_content_close_plans().is_empty());
     assert_tabs(&state, &[SECOND], &[THIRD]);
 
-    state
+    let state_receipt = state
         .request_command(NativeCommand::OpenItem {
             item: FIRST,
             placement: DockPlacement::Center(DockAnchor::Item(SECOND)),
         })
         .unwrap();
     assert_eq!(
-        commit_exclusive(&mut state),
+        commit_exclusive(&mut state, &state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
             DockspaceActionOutcome::Opened {
                 item: FIRST,

@@ -42,16 +42,15 @@ fn native_group_insertion_mode_controls_center_and_ordered_tab_destinations() {
             let mut state = group_move_state();
             let source = state.view().item(THIRD).unwrap().tabs().unwrap().key();
             let group = state.capture_tabs_group(DockAnchor::Item(THIRD)).unwrap();
-            state
-                .request_command(NativeCommand::DockTabs {
-                    group,
-                    placement,
-                    mode,
+            let state_receipt = state
+                .request_command(NativeCommand::Move {
+                    source: dockspace::model::DockMoveSource::Tabs(group),
+                    target: dockspace::model::DockMoveTarget::Dock { placement, mode },
                 })
                 .unwrap();
             commit_queued(&mut state);
             assert!(matches!(
-                take(&mut state),
+                take(&state_receipt),
                 NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                     DockspaceActionOutcome::TabsDocked { items, changed: true, .. }
                 )) if items == [SECOND, THIRD]
@@ -112,20 +111,22 @@ fn native_group_insertion_modes_share_the_same_edge_split_behavior() {
         ] {
             let mut state = group_move_state();
             let group = state.capture_tabs_group(DockAnchor::Item(THIRD)).unwrap();
-            state
-                .request_command(NativeCommand::DockTabs {
-                    group,
-                    placement: DockPlacement::InnerEdge {
-                        anchor: DockAnchor::Item(FIRST),
-                        edge,
-                        fraction: DockFraction::new(0.35).unwrap(),
+            let state_receipt = state
+                .request_command(NativeCommand::Move {
+                    source: dockspace::model::DockMoveSource::Tabs(group),
+                    target: dockspace::model::DockMoveTarget::Dock {
+                        placement: DockPlacement::InnerEdge {
+                            anchor: DockAnchor::Item(FIRST),
+                            edge,
+                            fraction: DockFraction::new(0.35).unwrap(),
+                        },
+                        mode,
                     },
-                    mode,
                 })
                 .unwrap();
             commit_queued(&mut state);
             assert!(matches!(
-                take(&mut state),
+                take(&state_receipt),
                 NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                     DockspaceActionOutcome::TabsDocked { changed: true, .. }
                 ))
@@ -314,7 +315,7 @@ fn closing_one_group_keeps_sibling_content_and_the_physical_host_alive() {
     };
     state.coordinator.settle_host_frame_report(&report).unwrap();
     for item in plan.items() {
-        state
+        let state_receipt = state
             .request_command(NativeCommand::DecideClose {
                 request: plan.request(),
                 token: item.token(),
@@ -322,7 +323,7 @@ fn closing_one_group_keeps_sibling_content_and_the_physical_host_alive() {
             })
             .unwrap();
         commit_queued(&mut state);
-        take(&mut state);
+        take(&state_receipt);
     }
     assert!(state.view().item(FIRST).is_none());
     assert!(state.view().item(SECOND).is_none());

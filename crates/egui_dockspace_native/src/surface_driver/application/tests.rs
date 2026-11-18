@@ -4,10 +4,10 @@ use crate::NativeCommand;
 use dockspace::close::{CloseDecision, DeferredCloseDecision};
 use dockspace::geometry::{LogicalRect, LogicalSize, PhysicalRect, ScaleFactor};
 use dockspace::model::{
-    DockAnchor, DockPlacement, DockspaceActionOutcome, DockspaceActionRejection, DockspaceAxis,
-    DockspaceContainedLayout, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
-    DockspaceSurfaceLayout, FloatingPresentationId, ItemId, NativeTearOffSource,
-    NativeWindowPlacement, RootId, SurfaceId, TabGroupDockMode,
+    DockAnchor, DockMoveSource, DockPlacement, DockspaceActionOutcome, DockspaceActionRejection,
+    DockspaceAxis, DockspaceContainedLayout, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
+    DockspaceSurfaceLayout, FloatingPresentationId, ItemId, NativeWindowPlacement, RootId,
+    SurfaceId, TabGroupDockMode,
 };
 use dockspace::policy::{CloseCapability, DockPolicy};
 use dockspace::runtime::{
@@ -28,6 +28,7 @@ use super::NativeRuntimeState;
 
 mod deferred_move;
 mod policy;
+mod receipts;
 mod root_float;
 mod tab;
 mod tabs_group;
@@ -79,6 +80,14 @@ fn state_with_layout_and_policy(
     layout: DockspaceLayout,
     policy: DockPolicy,
 ) -> NativeRuntimeState<Panes> {
+    state_with_layout_policy_and_storage(layout, policy, None)
+}
+
+fn state_with_layout_policy_and_storage(
+    layout: DockspaceLayout,
+    policy: DockPolicy,
+    storage: Option<crate::NativeStorageLimit>,
+) -> NativeRuntimeState<Panes> {
     let session = DockspaceSession::from_layout_with_presentation_config(
         layout,
         policy,
@@ -87,13 +96,14 @@ fn state_with_layout_and_policy(
             .unwrap(),
     )
     .unwrap();
-    let mut state = NativeRuntimeState::new(
+    let mut state = NativeRuntimeState::new_with_storage_limit(
         egui::Id::unique("native-layout-commands"),
         session,
         SURFACE,
         Panes("application-owned content".to_owned()),
         DockStyle::default(),
         NativeWindowClosePolicy::Cancel,
+        storage,
     )
     .unwrap();
     let mut initial = state
@@ -136,32 +146,50 @@ fn moving_the_last_noncentral_host_item_to_another_surface_is_refused_before_adm
     ])
     .unwrap();
     let mut state = state_with_layout(layout);
+    present_geometry(
+        &mut state,
+        LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
+    );
     let before = state.coordinator.session().version();
     let group = state.capture_tabs_group(DockAnchor::Item(FIRST)).unwrap();
     for command in [
-        NativeCommand::DockItem {
-            item: FIRST,
-            placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+        NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Item(FIRST),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         },
-        NativeCommand::FloatItem {
-            item: FIRST,
-            surface: target_surface,
+        NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Item(FIRST),
+            target: dockspace::model::DockMoveTarget::Contained {
+                surface: target_surface,
+            },
         },
-        NativeCommand::DockRoot {
-            root: ROOT,
-            placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+        NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Root(ROOT),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         },
-        NativeCommand::DockTabs {
-            group: group.clone(),
-            placement: DockPlacement::Center(DockAnchor::Item(target_item)),
-            mode: TabGroupDockMode::MergeTabs,
+        NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Tabs(group.clone()),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+                mode: TabGroupDockMode::MergeTabs,
+            },
         },
-        NativeCommand::FloatTabs {
-            group,
-            surface: target_surface,
+        NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Tabs(group),
+            target: dockspace::model::DockMoveTarget::Contained {
+                surface: target_surface,
+            },
         },
     ] {
-        let error = state.request_command(command.clone()).unwrap_err();
+        let error = state
+            .request_command(command.clone())
+            .expect_err(&format!("{command:?}"));
         assert_eq!(
             error.reason(),
             NativeActionRequestError::HostSurfaceRequired { surface: SURFACE }
@@ -178,20 +206,23 @@ fn moving_the_last_noncentral_host_item_to_another_surface_is_refused_before_adm
                 .is_some()
         );
     }
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SetArrangementLocked { locked: true })
         .unwrap();
     commit_queued(&mut state);
-    take(&mut state);
-    state
-        .request_command(NativeCommand::DockItem {
-            item: FIRST,
-            placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+    take(&state_receipt);
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Item(FIRST),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         })
         .unwrap();
     commit_queued(&mut state);
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Rejected(
             DockspaceActionRejection::PolicyDenied
         ))
@@ -224,29 +255,46 @@ fn host_protection_follows_contained_root_lifecycle_through_empty_central_and_ne
     ])
     .unwrap();
     let mut state = state_with_layout(layout);
+    // Floating needs real destination geometry before it can have an executable
+    // candidate. Invalid/unavailable moves retain the core's ordinary rejection.
+    present_geometry(
+        &mut state,
+        LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
+    );
     let before = state.coordinator.session().version();
     let group = state.capture_tabs_group(DockAnchor::Item(FIRST)).unwrap();
     for command in [
-        NativeCommand::DockItem {
-            item: FIRST,
-            placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+        NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Item(FIRST),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         },
-        NativeCommand::FloatItem {
-            item: FIRST,
-            surface: target_surface,
+        NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Item(FIRST),
+            target: dockspace::model::DockMoveTarget::Contained {
+                surface: target_surface,
+            },
         },
-        NativeCommand::DockTabs {
-            group: group.clone(),
-            placement: DockPlacement::Center(DockAnchor::Item(target_item)),
-            mode: TabGroupDockMode::MergeTabs,
+        NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Tabs(group.clone()),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+                mode: TabGroupDockMode::MergeTabs,
+            },
         },
-        NativeCommand::FloatTabs {
-            group,
-            surface: target_surface,
+        NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Tabs(group),
+            target: dockspace::model::DockMoveTarget::Contained {
+                surface: target_surface,
+            },
         },
         NativeCommand::CloseItem { item: FIRST },
     ] {
-        let error = state.request_command(command.clone()).unwrap_err();
+        let error = state
+            .request_command(command.clone())
+            .expect_err(&format!("{command:?}"));
         assert_eq!(
             error.reason(),
             NativeActionRequestError::HostSurfaceRequired { surface: SURFACE }
@@ -282,15 +330,18 @@ fn host_protection_allows_surviving_presentations_and_keeps_invalid_targets_core
         ])
         .unwrap();
         let mut state = state_with_layout(layout);
-        state
-            .request_command(NativeCommand::DockItem {
-                item: FIRST,
-                placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+        let state_receipt = state
+            .request_command(NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Item(FIRST),
+                target: dockspace::model::DockMoveTarget::Dock {
+                    placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+                    mode: dockspace::model::TabGroupDockMode::MergeTabs,
+                },
             })
             .unwrap();
         commit_queued(&mut state);
         assert!(matches!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                 DockspaceActionOutcome::Docked { item: FIRST, .. }
             ))
@@ -305,15 +356,18 @@ fn host_protection_allows_surviving_presentations_and_keeps_invalid_targets_core
         );
     }
     let mut state = state_with_content(DockspaceNode::tabs([FIRST]), true);
-    state
-        .request_command(NativeCommand::DockItem {
-            item: FIRST,
-            placement: DockPlacement::Center(DockAnchor::Item(ItemId::new(5))),
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Item(FIRST),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(ItemId::new(5))),
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         })
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(_))
     ));
     assert!(
@@ -328,28 +382,33 @@ fn host_protection_allows_surviving_presentations_and_keeps_invalid_targets_core
     let mut state = state_with_content(DockspaceNode::tabs([FIRST]), false);
     for (command, rejection) in [
         (
-            NativeCommand::DockItem {
-                item: FIRST,
-                placement: DockPlacement::Center(DockAnchor::Item(CLOSED)),
+            NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Item(FIRST),
+                target: dockspace::model::DockMoveTarget::Dock {
+                    placement: DockPlacement::Center(DockAnchor::Item(CLOSED)),
+                    mode: dockspace::model::TabGroupDockMode::MergeTabs,
+                },
             },
             DockspaceActionRejection::AnchorUnavailable {
                 anchor: DockAnchor::Item(CLOSED),
             },
         ),
         (
-            NativeCommand::FloatItem {
-                item: FIRST,
-                surface: target_surface,
+            NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Item(FIRST),
+                target: dockspace::model::DockMoveTarget::Contained {
+                    surface: target_surface,
+                },
             },
             DockspaceActionRejection::SurfaceUnavailable {
                 surface: target_surface,
             },
         ),
     ] {
-        state.request_command(command).unwrap();
+        let state_receipt = state.request_command(command).unwrap();
         commit_queued(&mut state);
         assert_eq!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::Dock(DockspaceActionStatus::Rejected(rejection))
         );
     }
@@ -357,15 +416,15 @@ fn host_protection_allows_surviving_presentations_and_keeps_invalid_targets_core
         &mut state,
         LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
     );
-    state
-        .request_command(NativeCommand::FloatItem {
-            item: FIRST,
-            surface: SURFACE,
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Item(FIRST),
+            target: dockspace::model::DockMoveTarget::Contained { surface: SURFACE },
         })
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
             DockspaceActionOutcome::Floated { root: ROOT, .. }
         ))
@@ -384,10 +443,13 @@ fn host_protection_allows_surviving_presentations_and_keeps_invalid_targets_core
 fn a_queued_item_move_keeps_its_admission_revision() {
     let mut state = state();
     let before = state.coordinator.session().version();
-    state
-        .request_command(NativeCommand::DockItem {
-            item: FIRST,
-            placement: DockPlacement::Center(DockAnchor::Item(SECOND)),
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Item(FIRST),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(SECOND)),
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         })
         .unwrap();
     let mut frame = state
@@ -404,7 +466,7 @@ fn a_queued_item_move_keeps_its_admission_revision() {
     assert_ne!(before, accepted);
     commit_queued(&mut state);
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Stale {
             expected: before,
             accepted
@@ -511,30 +573,25 @@ fn present_geometry(state: &mut NativeRuntimeState<Panes>, bounds: LogicalRect) 
 }
 
 #[test]
-fn item_float_and_dock_use_the_existing_result_slot_and_preserve_application_data() {
+fn item_float_and_dock_return_independent_receipts_and_preserve_application_data() {
     let mut state = state();
     let bounds = LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap();
     present_geometry(&mut state, bounds);
-    state
-        .request_command(NativeCommand::FloatItem {
-            item: FIRST,
-            surface: SURFACE,
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Item(FIRST),
+            target: dockspace::model::DockMoveTarget::Contained { surface: SURFACE },
         })
         .unwrap();
     commit_queued(&mut state);
-    assert_eq!(
-        state
-            .request_command(NativeCommand::SelectItem { item: SECOND })
-            .map_err(|error| error.reason()),
-        Err(NativeActionRequestError::Busy)
-    );
+    assert!(!state.application_actions.is_occupied());
     let NativeActionStatus::Dock(DockspaceActionStatus::Applied(DockspaceActionOutcome::Floated {
         item: FIRST,
         root,
         surface: SURFACE,
         changed: true,
         ..
-    })) = take(&mut state)
+    })) = take(&state_receipt)
     else {
         panic!("floating must commit a typed item outcome");
     };
@@ -560,15 +617,18 @@ fn item_float_and_dock_use_the_existing_result_slot_and_preserve_application_dat
         ROOT
     );
 
-    state
-        .request_command(NativeCommand::DockItem {
-            item: FIRST,
-            placement: DockPlacement::Center(DockAnchor::Item(SECOND)),
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Item(FIRST),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(SECOND)),
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         })
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
             DockspaceActionOutcome::Docked {
                 item: FIRST,
@@ -626,12 +686,12 @@ fn contained_recovery_preserves_stacking_and_raising_does_not_select_another_tab
             .rect(),
         clipped
     );
-    state
+    let state_receipt = state
         .request_command(NativeCommand::BringContainedIntoView { item: THIRD })
         .unwrap();
     commit_queued(&mut state);
     assert!(
-        matches!(take(&mut state), NativeActionStatus::Dock(DockspaceActionStatus::Applied(DockspaceActionOutcome::ContainedBoundsUpdated { floating, changed: true, .. })) if floating == rear_id)
+        matches!(take(&state_receipt), NativeActionStatus::Dock(DockspaceActionStatus::Applied(DockspaceActionOutcome::ContainedBoundsUpdated { floating, changed: true, .. })) if floating == rear_id)
     );
     let view = state.coordinator.session().view();
     let recovered = view.contained(rear_id).unwrap().rect();
@@ -649,23 +709,23 @@ fn contained_recovery_preserves_stacking_and_raising_does_not_select_another_tab
     assert!(!view.item(THIRD).unwrap().is_active());
 
     present_geometry(&mut state, bounds);
-    state
+    let state_receipt = state
         .request_command(NativeCommand::BringContainedIntoView { item: rear })
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
             DockspaceActionOutcome::ContainedBoundsUpdated { changed: false, .. }
         ))
     ));
     for changed in [true, false] {
-        state
+        let state_receipt = state
             .request_command(NativeCommand::RaiseContained { item: THIRD })
             .unwrap();
         commit_queued(&mut state);
         assert!(
-            matches!(take(&mut state), NativeActionStatus::Dock(DockspaceActionStatus::Applied(DockspaceActionOutcome::ContainedRaised { changed: actual, .. })) if actual == changed)
+            matches!(take(&state_receipt), NativeActionStatus::Dock(DockspaceActionStatus::Applied(DockspaceActionOutcome::ContainedRaised { changed: actual, .. })) if actual == changed)
         );
     }
     let view = state.coordinator.session().view();
@@ -686,25 +746,30 @@ fn new_commands_preserve_core_rejections_without_stopping_the_runtime() {
     let mut state = state();
     for (command, reason) in [
         (
-            NativeCommand::DockItem {
-                item: CLOSED,
-                placement: DockPlacement::Center(DockAnchor::Item(FIRST)),
+            NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Item(CLOSED),
+                target: dockspace::model::DockMoveTarget::Dock {
+                    placement: DockPlacement::Center(DockAnchor::Item(FIRST)),
+                    mode: dockspace::model::TabGroupDockMode::MergeTabs,
+                },
             },
             DockspaceActionRejection::ItemUnavailable { item: CLOSED },
         ),
         (
-            NativeCommand::FloatItem {
-                item: FIRST,
-                surface: SurfaceId::new(99),
+            NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Item(FIRST),
+                target: dockspace::model::DockMoveTarget::Contained {
+                    surface: SurfaceId::new(99),
+                },
             },
             DockspaceActionRejection::SurfaceUnavailable {
                 surface: SurfaceId::new(99),
             },
         ),
         (
-            NativeCommand::FloatItem {
-                item: FIRST,
-                surface: SURFACE,
+            NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Item(FIRST),
+                target: dockspace::model::DockMoveTarget::Contained { surface: SURFACE },
             },
             DockspaceActionRejection::PresentationUnavailable { surface: SURFACE },
         ),
@@ -717,25 +782,28 @@ fn new_commands_preserve_core_rejections_without_stopping_the_runtime() {
             DockspaceActionRejection::ItemUnavailable { item: CLOSED },
         ),
         (
-            NativeCommand::MoveToNewWindow {
-                source: NativeTearOffSource::Item(FIRST),
-                placement: NativeWindowPlacement::new(
-                    PhysicalRect::new(900.0, 100.0, 480.0, 320.0).unwrap(),
-                ),
+            NativeCommand::Move {
+                source: DockMoveSource::Item(FIRST),
+                target: dockspace::model::DockMoveTarget::Native {
+                    placement: Some(NativeWindowPlacement::new(
+                        PhysicalRect::new(900.0, 100.0, 480.0, 320.0).unwrap(),
+                    )),
+                },
             },
             DockspaceActionRejection::PolicyDenied,
         ),
         (
-            NativeCommand::MoveToNewWindowDefault {
-                source: NativeTearOffSource::Item(FIRST),
+            NativeCommand::Move {
+                source: DockMoveSource::Item(FIRST),
+                target: dockspace::model::DockMoveTarget::Native { placement: None },
             },
             DockspaceActionRejection::NativeUnavailable,
         ),
     ] {
-        state.request_command(command).unwrap();
+        let state_receipt = state.request_command(command).unwrap();
         commit_queued(&mut state);
         assert_eq!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::Dock(DockspaceActionStatus::Rejected(reason))
         );
         assert!(state.error().is_none());
@@ -744,24 +812,24 @@ fn new_commands_preserve_core_rejections_without_stopping_the_runtime() {
         &mut state,
         LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
     );
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SetArrangementLocked { locked: true })
         .unwrap();
     commit_queued(&mut state);
-    take(&mut state);
+    take(&state_receipt);
     present_geometry(
         &mut state,
         LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
     );
-    state
-        .request_command(NativeCommand::FloatItem {
-            item: FIRST,
-            surface: SURFACE,
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Item(FIRST),
+            target: dockspace::model::DockMoveTarget::Contained { surface: SURFACE },
         })
         .unwrap();
     commit_queued(&mut state);
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Rejected(
             DockspaceActionRejection::PolicyDenied
         ))
@@ -799,8 +867,45 @@ fn commit_queued_report(state: &mut NativeRuntimeState<Panes>) -> HostFrameRepor
     report
 }
 
-fn take(state: &mut NativeRuntimeState<Panes>) -> NativeActionStatus {
-    state.take_action_status().unwrap().unwrap()
+fn take(receipt: &crate::NativeActionReceipt) -> NativeActionStatus {
+    receipt.try_recv().unwrap().unwrap()
+}
+
+#[test]
+fn service_commits_commands_without_a_root_paint_or_consuming_prior_results() {
+    let mut state = state();
+    let context = egui::Context::default();
+    let pass = context.cumulative_pass_nr_for(egui::ViewportId::ROOT);
+    let first_receipt = state
+        .request_command(NativeCommand::SetItemVisibility {
+            item: SECOND,
+            visible: false,
+        })
+        .unwrap();
+    state.service_native_events(&context).unwrap();
+    assert!(state.view().item(SECOND).unwrap().is_hidden());
+    assert!(!state.application_actions.is_occupied());
+    let second_receipt = state
+        .request_command(NativeCommand::SetItemVisibility {
+            item: THIRD,
+            visible: false,
+        })
+        .unwrap();
+    state.service_native_events(&context).unwrap();
+    assert!(state.view().item(THIRD).unwrap().is_hidden());
+    assert!(matches!(
+        take(&second_receipt),
+        NativeActionStatus::Dock(DockspaceActionStatus::Applied(
+            DockspaceActionOutcome::ItemVisibilityChanged { item: THIRD, .. }
+        ))
+    ));
+    assert!(matches!(
+        take(&first_receipt),
+        NativeActionStatus::Dock(DockspaceActionStatus::Applied(
+            DockspaceActionOutcome::ItemVisibilityChanged { item: SECOND, .. }
+        ))
+    ));
+    assert_eq!(context.cumulative_pass_nr_for(egui::ViewportId::ROOT), pass);
 }
 
 fn native_command_work_areas() -> NativeWorkAreaRoster {
@@ -881,7 +986,7 @@ fn state_for_native_commands() -> NativeRuntimeState<Panes> {
 }
 
 #[test]
-fn native_payload_commands_share_the_result_slot_and_exact_first_live_transfer() {
+fn native_payload_commands_retain_exact_first_live_transfer_with_independent_receipts() {
     let placement =
         NativeWindowPlacement::new(PhysicalRect::new(900.0, 100.0, 480.0, 320.0).unwrap());
     let mut prior_terminals = [None, None];
@@ -890,33 +995,39 @@ fn native_payload_commands_share_the_result_slot_and_exact_first_live_transfer()
         let before = state.coordinator.session().version();
         let group = state.capture_tabs_group(DockAnchor::Item(SECOND)).unwrap();
         let (source, expected_items) = match kind {
-            0 | 1 => (NativeTearOffSource::Item(SECOND), vec![SECOND]),
-            2 | 3 => (NativeTearOffSource::Tabs(group), vec![SECOND, THIRD]),
-            _ => (NativeTearOffSource::Root(ROOT), vec![FIRST, SECOND, THIRD]),
+            0 | 1 => (DockMoveSource::Item(SECOND), vec![SECOND]),
+            2 | 3 => (DockMoveSource::Tabs(group), vec![SECOND, THIRD]),
+            _ => (DockMoveSource::Root(ROOT), vec![FIRST, SECOND, THIRD]),
         };
         let command = match kind {
-            0 | 2 => NativeCommand::MoveToNewWindow { source, placement },
-            1 | 3 => NativeCommand::MoveToNewWindowDefault { source },
-            _ => NativeCommand::MoveRootToNewWindow {
-                root: ROOT,
-                placement,
+            0 | 2 => NativeCommand::Move {
+                source,
+                target: dockspace::model::DockMoveTarget::Native {
+                    placement: Some(placement),
+                },
+            },
+            1 | 3 => NativeCommand::Move {
+                source,
+                target: dockspace::model::DockMoveTarget::Native { placement: None },
+            },
+            _ => NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Root(ROOT),
+                target: dockspace::model::DockMoveTarget::Native {
+                    placement: Some(placement),
+                },
             },
         };
-        state.request_command(command).unwrap();
+        let state_receipt = state.request_command(command).unwrap();
         assert_eq!(
             state
                 .request_command(NativeCommand::SelectItem { item: FIRST })
+                .map(|_| ())
                 .map_err(|error| error.reason()),
             Err(NativeActionRequestError::Busy)
         );
         let mut report = commit_queued_report(&mut state);
         assert_eq!(state.coordinator.session().version(), before);
-        assert_eq!(
-            state
-                .request_command(NativeCommand::SelectItem { item: FIRST })
-                .map_err(|error| error.reason()),
-            Err(NativeActionRequestError::Busy)
-        );
+        assert!(!state.application_actions.is_occupied());
         let NativeActionStatus::Dock(DockspaceActionStatus::Applied(
             DockspaceActionOutcome::NativeRootTearOffRequested {
                 root,
@@ -924,7 +1035,7 @@ fn native_payload_commands_share_the_result_slot_and_exact_first_live_transfer()
                 target_surface,
                 items,
             },
-        )) = take(&mut state)
+        )) = take(&state_receipt)
         else {
             panic!("native payload admission must retain its typed request outcome");
         };
@@ -935,94 +1046,12 @@ fn native_payload_commands_share_the_result_slot_and_exact_first_live_transfer()
         for item in [FIRST, SECOND, THIRD] {
             assert_eq!(state.view().item(item).unwrap().surface(), SURFACE);
         }
-        let [create] = report.take_native_effects().try_into().unwrap();
-        let (binding, bounds) = match create.operation() {
-            NativeEffectOperation::CreateWindow {
-                binding, placement, ..
-            } => (*binding, *placement),
-            operation => panic!("native command must emit one Create, got {operation:?}"),
-        };
+        let (binding, bounds) =
+            present_created_native_payload(&mut state, &mut report, before, &expected_items);
         assert_eq!(binding.surface(), target_surface);
-        let Some(NativeEffectAcknowledgement::Create(acknowledgement)) = create.accepted() else {
-            panic!("the exact Create must supply its acknowledgement");
-        };
-        let host = state
-            .coordinator
-            .viewport_binding(egui::ViewportId::ROOT)
-            .unwrap();
-        state
-            .coordinator
-            .report_snapshot(
-                [
-                    (
-                        host,
-                        native_command_facts(PhysicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap()),
-                    ),
-                    (
-                        binding,
-                        native_command_facts(bounds).with_create_readiness(
-                            NativeCreateReadiness::Prepared,
-                            Some(acknowledgement),
-                        ),
-                    ),
-                ],
-                native_command_work_areas(),
-                crate::capabilities::capabilities_for_backend(
-                    eframe::NativeWindowingBackend::Windows,
-                ),
-            )
-            .unwrap();
-        assert!(
-            commit_native_command_observations(&mut state)
-                .native_admissions()
-                .is_empty()
-        );
-        assert_eq!(state.coordinator.session().version(), before);
-        let mut frame = state
-            .coordinator
-            .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
-            .unwrap();
-        frame
-            .frame
-            .measure_surface(
-                binding.surface(),
-                UniformSurfaceMetrics::new(
-                    LogicalRect::new(0.0, 0.0, bounds.width(), bounds.height()).unwrap(),
-                    LogicalSize::new(64.0, 48.0).unwrap(),
-                    96.0,
-                )
-                .unwrap(),
-            )
-            .unwrap();
-        let plan = frame.frame.paint_plan(binding.surface()).unwrap().unwrap();
-        let receipt = plan.execute_surface_program(|_| Ok::<(), ()>(())).unwrap();
-        frame.frame.confirm_surface_painted(receipt).unwrap();
-        frame
-            .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
-            .unwrap();
-        let mut report = frame.commit().unwrap();
-        state.coordinator.settle_host_frame_report(&report).unwrap();
-        let [output] = report.take_painted_outputs().try_into().unwrap();
-        assert!(output.matches_native_binding(binding));
-        assert_eq!(state.coordinator.session().version(), before);
-        state
-            .coordinator
-            .report_model_presentation_for_test(output, SurfacePresentationResult::Presented)
-            .unwrap();
-        let report = commit_native_command_observations(&mut state);
-        assert_eq!(report.native_admissions(), &[binding]);
-        for item in expected_items {
-            assert_eq!(
-                state.view().item(item).unwrap().surface(),
-                binding.surface()
-            );
-        }
-        assert!(!state.coordinator.session().has_pending_native_create());
-        assert_eq!(state.panes.0, "application-owned content");
-        assert!(state.error().is_none());
         if kind == 2 || kind == 3 {
             let prior = &mut prior_terminals[kind - 2];
-            *prior = Some(return_complete_group_through_the_result_slot(
+            *prior = Some(return_complete_group_through_its_receipt(
                 &mut state,
                 binding,
                 bounds,
@@ -1033,7 +1062,98 @@ fn native_payload_commands_share_the_result_slot_and_exact_first_live_transfer()
     }
 }
 
-fn return_complete_group_through_the_result_slot(
+fn present_created_native_payload(
+    state: &mut NativeRuntimeState<Panes>,
+    report: &mut HostFrameReport,
+    before: dockspace::model::WorkspaceVersion,
+    expected_items: &[ItemId],
+) -> (NativeSurfaceBinding, PhysicalRect) {
+    let [create] = report.take_native_effects().try_into().unwrap();
+    let (binding, bounds) = match create.operation() {
+        NativeEffectOperation::CreateWindow {
+            binding, placement, ..
+        } => (*binding, *placement),
+        operation => panic!("native command must emit one Create, got {operation:?}"),
+    };
+    let Some(NativeEffectAcknowledgement::Create(acknowledgement)) = create.accepted() else {
+        panic!("the exact Create must supply its acknowledgement");
+    };
+    let host = state
+        .coordinator
+        .viewport_binding(egui::ViewportId::ROOT)
+        .unwrap();
+    state
+        .coordinator
+        .report_snapshot(
+            [
+                (
+                    host,
+                    native_command_facts(PhysicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap()),
+                ),
+                (
+                    binding,
+                    native_command_facts(bounds).with_create_readiness(
+                        NativeCreateReadiness::Prepared,
+                        Some(acknowledgement),
+                    ),
+                ),
+            ],
+            native_command_work_areas(),
+            crate::capabilities::capabilities_for_backend(eframe::NativeWindowingBackend::Windows),
+        )
+        .unwrap();
+    assert!(
+        commit_native_command_observations(state)
+            .native_admissions()
+            .is_empty()
+    );
+    assert_eq!(state.coordinator.session().version(), before);
+    let mut frame = state
+        .coordinator
+        .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame
+        .frame
+        .measure_surface(
+            binding.surface(),
+            UniformSurfaceMetrics::new(
+                LogicalRect::new(0.0, 0.0, bounds.width(), bounds.height()).unwrap(),
+                LogicalSize::new(64.0, 48.0).unwrap(),
+                96.0,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let plan = frame.frame.paint_plan(binding.surface()).unwrap().unwrap();
+    let receipt = plan.execute_surface_program(|_| Ok::<(), ()>(())).unwrap();
+    frame.frame.confirm_surface_painted(receipt).unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let mut report = frame.commit().unwrap();
+    state.coordinator.settle_host_frame_report(&report).unwrap();
+    let [output] = report.take_painted_outputs().try_into().unwrap();
+    assert!(output.matches_native_binding(binding));
+    assert_eq!(state.coordinator.session().version(), before);
+    state
+        .coordinator
+        .report_model_presentation_for_test(output, SurfacePresentationResult::Presented)
+        .unwrap();
+    let report = commit_native_command_observations(state);
+    assert_eq!(report.native_admissions(), &[binding]);
+    for item in expected_items.iter().copied() {
+        assert_eq!(
+            state.view().item(item).unwrap().surface(),
+            binding.surface()
+        );
+    }
+    assert!(!state.coordinator.session().has_pending_native_create());
+    assert_eq!(state.panes.0, "application-owned content");
+    assert!(state.error().is_none());
+    (binding, bounds)
+}
+
+fn return_complete_group_through_its_receipt(
     state: &mut NativeRuntimeState<Panes>,
     source_binding: NativeSurfaceBinding,
     source_bounds: PhysicalRect,
@@ -1048,18 +1168,20 @@ fn return_complete_group_through_the_result_slot(
     let group = state.capture_tabs_group(DockAnchor::Item(SECOND)).unwrap();
     assert_eq!(group.expected_version(), before);
     let command = if float {
-        NativeCommand::FloatTabs {
-            group,
-            surface: SURFACE,
+        NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Tabs(group),
+            target: dockspace::model::DockMoveTarget::Contained { surface: SURFACE },
         }
     } else {
-        NativeCommand::DockTabs {
-            group,
-            placement: DockPlacement::After(FIRST),
-            mode: TabGroupDockMode::MergeTabs,
+        NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Tabs(group),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement: DockPlacement::After(FIRST),
+                mode: TabGroupDockMode::MergeTabs,
+            },
         }
     };
-    state.request_command(command).unwrap();
+    let state_receipt = state.request_command(command).unwrap();
     let staged = commit_queued_report(state);
     assert_eq!(staged.before(), before);
     assert_eq!(staged.after(), before);
@@ -1093,7 +1215,10 @@ fn return_complete_group_through_the_result_slot(
         }
     };
     assert!(state.coordinator.session().has_pending_presentation());
-    assert!(state.take_action_status().is_none());
+    assert_eq!(
+        state_receipt.try_recv().unwrap_err(),
+        std::sync::mpsc::TryRecvError::Empty
+    );
     assert_eq!(state.view().item(SECOND).unwrap().surface(), source_surface);
     if let Some(unrelated) = unrelated {
         assert_ne!(unrelated.id(), transition);
@@ -1107,11 +1232,15 @@ fn return_complete_group_through_the_result_slot(
                 .unwrap(),
             "an identical transfer in another session must not settle this command"
         );
-        assert!(state.take_action_status().is_none());
+        assert_eq!(
+            state_receipt.try_recv().unwrap_err(),
+            std::sync::mpsc::TryRecvError::Empty
+        );
     }
     assert_eq!(
         state
             .request_command(NativeCommand::SelectItem { item: FIRST })
+            .map(|_| ())
             .map_err(|error| error.reason()),
         Err(NativeActionRequestError::Busy)
     );
@@ -1178,7 +1307,7 @@ fn return_complete_group_through_the_result_slot(
             .settle_presentation_transitions(settled.presentation_transitions())
             .unwrap()
     );
-    let status = take(state);
+    let status = take(&state_receipt);
     let NativeActionStatus::Dock(DockspaceActionStatus::Applied(outcome)) = &status else {
         panic!("the exact group return must settle with its typed outcome: {status:?}");
     };
@@ -1312,21 +1441,23 @@ fn native_group_commands_preserve_the_remaining_central_area() {
         let mut state = state_for_native_commands();
         let group = state.capture_tabs_group(DockAnchor::Item(SECOND)).unwrap();
         let command = if float {
-            NativeCommand::FloatTabs {
-                group,
-                surface: SURFACE,
+            NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Tabs(group),
+                target: dockspace::model::DockMoveTarget::Contained { surface: SURFACE },
             }
         } else {
-            NativeCommand::DockTabs {
-                group,
-                placement: DockPlacement::After(FIRST),
-                mode: TabGroupDockMode::MergeTabs,
+            NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Tabs(group),
+                target: dockspace::model::DockMoveTarget::Dock {
+                    placement: DockPlacement::After(FIRST),
+                    mode: TabGroupDockMode::MergeTabs,
+                },
             }
         };
-        state.request_command(command).unwrap();
+        let state_receipt = state.request_command(command).unwrap();
         let report = commit_queued_report(&mut state);
         assert_ne!(report.before(), report.after());
-        match take(&mut state) {
+        match take(&state_receipt) {
             NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                 DockspaceActionOutcome::TabsFloated {
                     source_root: ROOT,
@@ -1405,30 +1536,32 @@ fn native_group_dock_and_float_commands_keep_stale_and_foreign_authority() {
             let group = source.capture_tabs_group(DockAnchor::Item(FIRST)).unwrap();
             let captured = group.expected_version();
             if !foreign {
-                source
+                let source_receipt = source
                     .request_command(NativeCommand::SelectItem { item: SECOND })
                     .unwrap();
                 commit_queued(&mut source);
-                take(&mut source);
+                take(&source_receipt);
             }
             let mut target = if foreign { state() } else { source };
             let accepted = target.coordinator.session().version();
             let command = match mode {
-                None => NativeCommand::FloatTabs {
-                    group,
-                    surface: SURFACE,
+                None => NativeCommand::Move {
+                    source: dockspace::model::DockMoveSource::Tabs(group),
+                    target: dockspace::model::DockMoveTarget::Contained { surface: SURFACE },
                 },
-                Some(mode) => NativeCommand::DockTabs {
-                    group,
-                    placement: DockPlacement::After(FIRST),
-                    mode,
+                Some(mode) => NativeCommand::Move {
+                    source: dockspace::model::DockMoveSource::Tabs(group),
+                    target: dockspace::model::DockMoveTarget::Dock {
+                        placement: DockPlacement::After(FIRST),
+                        mode,
+                    },
                 },
             };
-            target.request_command(command).unwrap();
+            let target_receipt = target.request_command(command).unwrap();
             let report = commit_queued_report(&mut target);
             assert_eq!(report.before(), report.after());
             assert_eq!(
-                take(&mut target),
+                take(&target_receipt),
                 NativeActionStatus::Dock(if foreign {
                     DockspaceActionStatus::Rejected(DockspaceActionRejection::Conflict)
                 } else {
@@ -1449,12 +1582,12 @@ fn native_group_dock_and_float_commands_keep_stale_and_foreign_authority() {
                     .collect::<Vec<_>>(),
                 &[FIRST, SECOND, THIRD]
             );
-            target
+            let target_receipt = target
                 .request_command(NativeCommand::SelectItem { item: THIRD })
                 .unwrap();
             commit_queued(&mut target);
             assert!(matches!(
-                take(&mut target),
+                take(&target_receipt),
                 NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                     DockspaceActionOutcome::ItemActivated { item: tab, .. }
                 )) if tab == THIRD
@@ -1469,20 +1602,21 @@ fn stored_native_group_command_keeps_its_capture_revision_after_admission() {
     let mut state = state();
     let group = state.capture_tabs_group(DockAnchor::Item(FIRST)).unwrap();
     let captured = group.expected_version();
-    let command = NativeCommand::MoveToNewWindowDefault {
-        source: NativeTearOffSource::Tabs(group),
+    let command = NativeCommand::Move {
+        source: DockMoveSource::Tabs(group),
+        target: dockspace::model::DockMoveTarget::Native { placement: None },
     };
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SelectItem { item: SECOND })
         .unwrap();
     commit_queued(&mut state);
-    take(&mut state);
+    take(&state_receipt);
     let accepted = state.coordinator.session().version();
     assert_ne!(captured, accepted);
-    state.request_command(command).unwrap();
+    let state_receipt = state.request_command(command).unwrap();
     let mut report = commit_queued_report(&mut state);
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Stale {
             expected: captured,
             accepted,
@@ -1513,11 +1647,11 @@ fn foreign_native_groups_reject_without_staling_or_stopping_the_command_pipeline
         for default_placement in [false, true] {
             let mut source = state();
             if different_revision {
-                source
+                let source_receipt = source
                     .request_command(NativeCommand::SelectItem { item: SECOND })
                     .unwrap();
                 commit_queued(&mut source);
-                take(&mut source);
+                take(&source_receipt);
             }
             let group = source.capture_tabs_group(DockAnchor::Item(FIRST)).unwrap();
             let original = group.clone();
@@ -1526,29 +1660,27 @@ fn foreign_native_groups_reject_without_staling_or_stopping_the_command_pipeline
             let before = destination.coordinator.session().version();
             assert_eq!(group.expected_version() != before, different_revision);
             let command = if default_placement {
-                NativeCommand::MoveToNewWindowDefault {
-                    source: NativeTearOffSource::Tabs(group),
+                NativeCommand::Move {
+                    source: DockMoveSource::Tabs(group),
+                    target: dockspace::model::DockMoveTarget::Native { placement: None },
                 }
             } else {
-                NativeCommand::MoveToNewWindow {
-                    source: NativeTearOffSource::Tabs(group),
-                    placement,
+                NativeCommand::Move {
+                    source: DockMoveSource::Tabs(group),
+                    target: dockspace::model::DockMoveTarget::Native {
+                        placement: Some(placement),
+                    },
                 }
             };
-            destination.request_command(command).unwrap();
+            let destination_receipt = destination.request_command(command).unwrap();
             let mut report = commit_queued_report(&mut destination);
             assert_eq!(report.before(), before);
             assert_eq!(report.after(), before);
             assert!(report.inputs().is_empty());
             assert!(report.take_native_effects().is_empty());
+            assert!(!destination.application_actions.is_occupied());
             assert_eq!(
-                destination
-                    .request_command(NativeCommand::SelectItem { item: SECOND })
-                    .map_err(|error| error.reason()),
-                Err(NativeActionRequestError::Busy)
-            );
-            assert_eq!(
-                take(&mut destination),
+                take(&destination_receipt),
                 NativeActionStatus::Dock(DockspaceActionStatus::Rejected(
                     DockspaceActionRejection::Conflict,
                 ))
@@ -1566,12 +1698,12 @@ fn foreign_native_groups_reject_without_staling_or_stopping_the_command_pipeline
                 source.capture_tabs_group(DockAnchor::Item(FIRST)).unwrap(),
                 original
             );
-            destination
+            let destination_receipt = destination
                 .request_command(NativeCommand::SelectItem { item: SECOND })
                 .unwrap();
             commit_queued(&mut destination);
             assert!(matches!(
-                take(&mut destination),
+                take(&destination_receipt),
                 NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                     DockspaceActionOutcome::ItemActivated { item: tab, .. }
                 )) if tab == SECOND
@@ -1601,7 +1733,7 @@ fn dock_submission_preserves_phase_errors_outside_foreign_action_authority() {
                 .unwrap(),
             )
             .unwrap();
-        state
+        let state_receipt = state
             .request_command(NativeCommand::SelectItem { item: SECOND })
             .unwrap();
         let action = state.application_actions.take().unwrap();
@@ -1629,6 +1761,15 @@ fn dock_submission_preserves_phase_errors_outside_foreign_action_authority() {
         drop(frame);
         assert_eq!(state.coordinator.session().version(), before);
         assert!(state.view().item(FIRST).unwrap().is_active());
+        assert_eq!(
+            state_receipt.try_recv().unwrap_err(),
+            std::sync::mpsc::TryRecvError::Empty
+        );
+        drop(state);
+        assert_eq!(
+            state_receipt.try_recv().unwrap_err(),
+            std::sync::mpsc::TryRecvError::Disconnected
+        );
     }
 }
 
@@ -1641,32 +1782,30 @@ fn input_requests_share_the_command_slot_and_publish_only_after_commit() {
         cancel_drag: None,
         ..Default::default()
     };
-    state.request_input(configured).unwrap();
+    let state_receipt = state.request_input(configured).unwrap();
     assert_eq!(state.input(), original);
     assert_eq!(
-        state.request_input(original),
+        state.request_input(original).map(|_| ()),
         Err(NativeActionRequestError::Busy)
     );
     assert_eq!(
         state
             .request_command(NativeCommand::SelectItem { item: FIRST })
+            .map(|_| ())
             .map_err(|error| error.reason()),
         Err(NativeActionRequestError::Busy)
     );
     commit_queued(&mut state);
     assert_eq!(state.input(), configured);
+    assert!(!state.application_actions.is_occupied());
     assert_eq!(
-        state.request_input(original),
-        Err(NativeActionRequestError::Busy)
-    );
-    assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::InputChanged { changed: true }
     );
-    state.request_input(configured).unwrap();
+    let state_receipt = state.request_input(configured).unwrap();
     commit_queued(&mut state);
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::InputChanged { changed: false }
     );
 }
@@ -1688,12 +1827,12 @@ fn initial_input_configuration_does_not_consume_the_application_slot_and_stops_a
         Err(NativeActionRequestError::Busy)
     );
     assert_eq!(state.input(), configured);
-    state.request_input(Default::default()).unwrap();
+    let state_receipt = state.request_input(Default::default()).unwrap();
     assert_eq!(state.input(), configured);
     commit_queued(&mut state);
     assert_eq!(state.input(), egui_dockspace::DockInputConfig::default());
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::InputChanged { changed: true }
     );
 }
@@ -1706,7 +1845,7 @@ fn style_requests_share_the_command_slot_and_publish_only_after_commit() {
         tab_bar_height: 42.0,
         ..original.clone()
     };
-    state.request_style(updated.clone()).unwrap();
+    let state_receipt = state.request_style(updated.clone()).unwrap();
     assert_eq!(state.style, original);
     assert_eq!(
         state
@@ -1732,23 +1871,18 @@ fn style_requests_share_the_command_slot_and_publish_only_after_commit() {
             .tab_bar_height(),
         42.0
     );
+    assert!(!state.application_actions.is_occupied());
     assert_eq!(
-        state
-            .request_command(NativeCommand::SelectItem { item: FIRST })
-            .map_err(|error| error.reason()),
-        Err(NativeActionRequestError::Busy)
-    );
-    assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::StyleChanged {
             changed: true,
             geometry_changed: true
         }
     );
-    state.request_style(original).unwrap();
+    let state_receipt = state.request_style(original).unwrap();
     commit_queued(&mut state);
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::StyleChanged {
             changed: true,
             geometry_changed: true
@@ -1770,7 +1904,7 @@ fn candidate_style_and_core_geometry_encode_together_across_repeat_passes() {
         tab_bar_height: 44.0,
         ..original.clone()
     };
-    state.request_style(updated.clone()).unwrap();
+    let state_receipt = state.request_style(updated.clone()).unwrap();
     let action = state.application_actions.take().unwrap();
     let version = state.coordinator.session().version();
     let mut frame = state
@@ -1834,6 +1968,13 @@ fn candidate_style_and_core_geometry_encode_together_across_repeat_passes() {
         .settle_submission(submitted, &report)
         .unwrap();
     assert_eq!(state.style, updated);
+    assert_eq!(
+        take(&state_receipt),
+        NativeActionStatus::StyleChanged {
+            changed: true,
+            geometry_changed: true,
+        }
+    );
 }
 
 #[test]
@@ -1843,7 +1984,7 @@ fn visual_and_unchanged_styles_do_not_submit_geometry_replacements() {
     style.visuals.tab_active_fill = Some(egui::Color32::RED);
     for changed in [true, false] {
         let before = state.coordinator.session().presentation_config().clone();
-        state.request_style(style.clone()).unwrap();
+        let state_receipt = state.request_style(style.clone()).unwrap();
         let action = state.application_actions.take().unwrap();
         let published = state.coordinator.session().version();
         let mut frame = state
@@ -1878,7 +2019,7 @@ fn visual_and_unchanged_styles_do_not_submit_geometry_replacements() {
         assert_eq!(state.style, style);
         assert_eq!(state.coordinator.session().presentation_config(), &before);
         assert_eq!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::StyleChanged {
                 changed,
                 geometry_changed: false
@@ -1901,7 +2042,7 @@ fn rejected_and_rolled_back_styles_leave_both_authorities_unchanged() {
         Err(crate::NativeStyleRequestError::Style(_))
     ));
     assert!(!state.application_actions.is_occupied());
-    state
+    let state_receipt = state
         .request_style(DockStyle {
             tab_bar_height: 42.0,
             ..original.clone()
@@ -1926,8 +2067,20 @@ fn rejected_and_rolled_back_styles_leave_both_authorities_unchanged() {
         state.coordinator.session().presentation_config(),
         &original_config
     );
+    assert_eq!(
+        state_receipt.try_recv().unwrap_err(),
+        std::sync::mpsc::TryRecvError::Empty
+    );
     state.stop_current_output(
         crate::error::NativeHostProtocolError::OutputRouteAttachmentFailed.into(),
+    );
+    assert_eq!(
+        state_receipt
+            .try_recv()
+            .unwrap()
+            .unwrap_err()
+            .interruption(),
+        crate::NativeActionInterruption::NotCommitted
     );
     assert!(matches!(
         state.request_style(original),
@@ -1964,7 +2117,7 @@ fn style_updates_preserve_custom_core_only_settings() {
         .unwrap();
     let report = frame.commit().unwrap();
     state.coordinator.settle_host_frame_report(&report).unwrap();
-    state
+    let state_receipt = state
         .request_style(DockStyle {
             tab_bar_height: 42.0,
             ..state.style.clone()
@@ -1974,7 +2127,7 @@ fn style_updates_preserve_custom_core_only_settings() {
     let expected = config.to_builder().tab_bar_height(42.0).build().unwrap();
     assert_eq!(state.coordinator.session().presentation_config(), &expected);
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::StyleChanged {
             changed: true,
             geometry_changed: true
@@ -1986,14 +2139,14 @@ fn request_plan(
     state: &mut NativeRuntimeState<Panes>,
     item: ItemId,
 ) -> dockspace::runtime::DockspaceClosePlan {
-    state
+    let state_receipt = state
         .request_command(NativeCommand::CloseItem { item })
         .unwrap();
     commit_queued(state);
     let NativeActionStatus::CloseRequested {
         plan,
         reused: false,
-    } = take(state)
+    } = take(&state_receipt)
     else {
         panic!("the exact close request must expose its decision plan");
     };
@@ -2001,11 +2154,11 @@ fn request_plan(
 }
 
 #[test]
-fn deferred_veto_and_close_reopen_keep_pane_data_and_the_single_result_slot() {
+fn deferred_veto_and_close_reopen_keep_pane_data_and_exact_request_receipts() {
     let mut state = state();
     let plan = request_plan(&mut state, FIRST);
     assert_eq!(state.pending_content_close_plans(), [plan.clone()]);
-    state
+    let state_receipt = state
         .request_command(NativeCommand::DecideClose {
             request: plan.request(),
             token: plan.items()[0].token(),
@@ -2018,26 +2171,22 @@ fn deferred_veto_and_close_reopen_keep_pane_data_and_the_single_result_slot() {
                 item: CLOSED,
                 placement: DockPlacement::Center(DockAnchor::Item(SECOND))
             })
+            .map(|_| ())
             .map_err(|error| error.reason()),
         Err(NativeActionRequestError::Busy)
     );
     commit_queued(&mut state);
-    assert_eq!(
-        state
-            .request_command(NativeCommand::SetArrangementLocked { locked: true })
-            .map_err(|error| error.reason()),
-        Err(NativeActionRequestError::Busy)
-    );
+    assert!(!state.application_actions.is_occupied());
     let NativeActionStatus::CloseDecisionProcessed {
         resolution: DockspaceCloseResolution::Deferred { continuation, .. },
         changed: false,
         ..
-    } = take(&mut state)
+    } = take(&state_receipt)
     else {
         panic!("deferral must retain an exact continuation without closing content");
     };
     assert_eq!(state.pending_content_close_plans().len(), 1);
-    state
+    let state_receipt = state
         .request_command(NativeCommand::ContinueClose {
             request: plan.request(),
             token: continuation,
@@ -2046,7 +2195,7 @@ fn deferred_veto_and_close_reopen_keep_pane_data_and_the_single_result_slot() {
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::CloseDecisionProcessed {
             resolution: DockspaceCloseResolution::Vetoed { .. },
             changed: false,
@@ -2057,7 +2206,7 @@ fn deferred_veto_and_close_reopen_keep_pane_data_and_the_single_result_slot() {
     assert!(state.pending_content_close_plans().is_empty());
 
     let plan = request_plan(&mut state, FIRST);
-    state
+    let state_receipt = state
         .request_command(NativeCommand::DecideClose {
             request: plan.request(),
             token: plan.items()[0].token(),
@@ -2066,7 +2215,7 @@ fn deferred_veto_and_close_reopen_keep_pane_data_and_the_single_result_slot() {
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::CloseDecisionProcessed {
             application: Some(Ok(dockspace::runtime::DockspaceCloseOutcome::ItemClosed {
                 item: FIRST,
@@ -2080,7 +2229,7 @@ fn deferred_veto_and_close_reopen_keep_pane_data_and_the_single_result_slot() {
     assert!(state.pending_content_close_plans().is_empty());
     assert_eq!(state.panes.0, "application-owned content");
 
-    state
+    let state_receipt = state
         .request_command(NativeCommand::OpenItem {
             item: FIRST,
             placement: DockPlacement::Center(DockAnchor::Item(SECOND)),
@@ -2088,7 +2237,7 @@ fn deferred_veto_and_close_reopen_keep_pane_data_and_the_single_result_slot() {
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
             DockspaceActionOutcome::Opened { item: FIRST, .. }
         ))
@@ -2100,7 +2249,7 @@ fn deferred_veto_and_close_reopen_keep_pane_data_and_the_single_result_slot() {
         Some(FIRST.into())
     );
     assert_eq!(state.panes.0, "application-owned content");
-    state
+    let state_receipt = state
         .request_command(NativeCommand::OpenItem {
             item: FIRST,
             placement: DockPlacement::Center(DockAnchor::Item(THIRD)),
@@ -2108,7 +2257,7 @@ fn deferred_veto_and_close_reopen_keep_pane_data_and_the_single_result_slot() {
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
             DockspaceActionOutcome::Existing { item: FIRST }
         ))
@@ -2118,17 +2267,17 @@ fn deferred_veto_and_close_reopen_keep_pane_data_and_the_single_result_slot() {
 #[test]
 fn root_close_requires_all_votes_before_one_atomic_removal() {
     let mut state = state_with_content(DockspaceNode::central_tabs([FIRST, SECOND, THIRD]), true);
-    state
+    let state_receipt = state
         .request_command(NativeCommand::CloseRoot { root: ROOT })
         .unwrap();
     commit_queued(&mut state);
-    let NativeActionStatus::CloseRequested { plan, .. } = take(&mut state) else {
+    let NativeActionStatus::CloseRequested { plan, .. } = take(&state_receipt) else {
         panic!("root close must return a plan")
     };
     assert_eq!(plan.items().len(), 3);
     let before = state.coordinator.session().version();
     for (index, item) in plan.items().iter().enumerate() {
-        state
+        let state_receipt = state
             .request_command(NativeCommand::DecideClose {
                 request: plan.request(),
                 token: item.token(),
@@ -2136,7 +2285,7 @@ fn root_close_requires_all_votes_before_one_atomic_removal() {
             })
             .unwrap();
         commit_queued(&mut state);
-        let status = take(&mut state);
+        let status = take(&state_receipt);
         if index < 2 {
             assert!(matches!(
                 status,
@@ -2188,7 +2337,7 @@ fn root_close_requires_all_votes_before_one_atomic_removal() {
             .unwrap()
             .is_rootless()
     );
-    state
+    let state_receipt = state
         .request_command(NativeCommand::OpenItem {
             item: FIRST,
             placement: DockPlacement::Main(SURFACE),
@@ -2196,7 +2345,7 @@ fn root_close_requires_all_votes_before_one_atomic_removal() {
         .unwrap();
     commit_queued(&mut state);
     assert!(
-        matches!(take(&mut state), NativeActionStatus::Dock(DockspaceActionStatus::Applied(DockspaceActionOutcome::Opened { item: FIRST, root })) if root != ROOT)
+        matches!(take(&state_receipt), NativeActionStatus::Dock(DockspaceActionStatus::Applied(DockspaceActionOutcome::Opened { item: FIRST, root })) if root != ROOT)
     );
     assert!(state.coordinator.session().view().item(FIRST).is_some());
 }
@@ -2208,6 +2357,7 @@ fn the_fixed_host_rejects_its_last_group_and_reopens_after_all_central_items_clo
     assert_eq!(
         state
             .request_command(NativeCommand::CloseRoot { root: ROOT })
+            .map(|_| ())
             .map_err(|error| error.reason()),
         Err(NativeActionRequestError::HostSurfaceRequired { surface: SURFACE })
     );
@@ -2216,7 +2366,7 @@ fn the_fixed_host_rejects_its_last_group_and_reopens_after_all_central_items_clo
     assert_eq!(state.coordinator.session().version(), before);
     for item in [FIRST, SECOND, THIRD] {
         let plan = request_plan(&mut state, item);
-        state
+        let state_receipt = state
             .request_command(NativeCommand::DecideClose {
                 request: plan.request(),
                 token: plan.items()[0].token(),
@@ -2225,7 +2375,7 @@ fn the_fixed_host_rejects_its_last_group_and_reopens_after_all_central_items_clo
             .unwrap();
         commit_queued(&mut state);
         assert!(matches!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::CloseDecisionProcessed {
                 changed: true,
                 application: Some(Ok(_)),
@@ -2246,20 +2396,20 @@ fn the_fixed_host_rejects_its_last_group_and_reopens_after_all_central_items_clo
             .tabs()
             .is_empty()
     );
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SetArrangementLocked { locked: true })
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::ArrangementLockChanged { locked: true, .. }
     ));
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SetArrangementLocked { locked: false })
         .unwrap();
     commit_queued(&mut state);
-    take(&mut state);
-    state
+    take(&state_receipt);
+    let state_receipt = state
         .request_command(NativeCommand::OpenItem {
             item: FIRST,
             placement: DockPlacement::Center(DockAnchor::Central(ROOT)),
@@ -2267,7 +2417,7 @@ fn the_fixed_host_rejects_its_last_group_and_reopens_after_all_central_items_clo
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
             DockspaceActionOutcome::Opened {
                 item: FIRST,
@@ -2285,21 +2435,23 @@ fn the_last_noncentral_item_cannot_remove_the_fixed_host_surface() {
     assert_eq!(
         state
             .request_command(NativeCommand::CloseItem { item: FIRST })
+            .map(|_| ())
             .map_err(|error| error.reason()),
         Err(NativeActionRequestError::HostSurfaceRequired { surface: SURFACE })
     );
     assert!(!state.application_actions.is_occupied());
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SelectItem { item: FIRST })
         .unwrap();
     assert_eq!(
         state
             .request_command(NativeCommand::CloseItem { item: FIRST })
+            .map(|_| ())
             .map_err(|error| error.reason()),
         Err(NativeActionRequestError::Busy)
     );
     commit_queued(&mut state);
-    take(&mut state);
+    take(&state_receipt);
     assert!(
         state
             .coordinator
@@ -2332,10 +2484,11 @@ fn chrome_group_decisions_keep_the_host_and_forward_inert_tokens_to_the_core() {
                 token: plan.items()[0].token(),
                 decision: CloseDecision::Allow
             })
+            .map(|_| ())
             .map_err(|error| error.reason()),
         Err(NativeActionRequestError::HostSurfaceRequired { surface: SURFACE })
     );
-    state
+    let state_receipt = state
         .request_command(NativeCommand::DecideClose {
             request: plan.request(),
             token: plan.items()[0].token(),
@@ -2346,7 +2499,7 @@ fn chrome_group_decisions_keep_the_host_and_forward_inert_tokens_to_the_core() {
     let NativeActionStatus::CloseDecisionProcessed {
         resolution: DockspaceCloseResolution::Deferred { continuation, .. },
         ..
-    } = take(&mut state)
+    } = take(&state_receipt)
     else {
         panic!("the core must issue the exact deferred continuation")
     };
@@ -2357,10 +2510,11 @@ fn chrome_group_decisions_keep_the_host_and_forward_inert_tokens_to_the_core() {
                 token: continuation,
                 decision: DeferredCloseDecision::Allow
             })
+            .map(|_| ())
             .map_err(|error| error.reason()),
         Err(NativeActionRequestError::HostSurfaceRequired { surface: SURFACE })
     );
-    state
+    let state_receipt = state
         .request_command(NativeCommand::ContinueClose {
             request: plan.request(),
             token: continuation,
@@ -2369,14 +2523,14 @@ fn chrome_group_decisions_keep_the_host_and_forward_inert_tokens_to_the_core() {
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::CloseDecisionProcessed {
             resolution: DockspaceCloseResolution::Vetoed { .. },
             changed: false,
             ..
         }
     ));
-    state
+    let state_receipt = state
         .request_command(NativeCommand::ContinueClose {
             request: plan.request(),
             token: continuation,
@@ -2385,7 +2539,7 @@ fn chrome_group_decisions_keep_the_host_and_forward_inert_tokens_to_the_core() {
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::CloseDecisionProcessed {
             resolution: DockspaceCloseResolution::Inert(_),
             changed: false,
@@ -2413,7 +2567,7 @@ fn chrome_group_decisions_keep_the_host_and_forward_inert_tokens_to_the_core() {
 #[test]
 fn configuration_follows_local_selection_and_lock_keeps_selection_available() {
     let mut state = state();
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SetArrangementLocked { locked: true })
         .unwrap();
     let action = state.application_actions.take().unwrap();
@@ -2434,7 +2588,7 @@ fn configuration_follows_local_selection_and_lock_keeps_selection_available() {
         .settle_submission(Some(submitted), &report)
         .unwrap();
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::ArrangementLockChanged {
             locked: true,
             changed: true,
@@ -2455,17 +2609,17 @@ fn configuration_follows_local_selection_and_lock_keeps_selection_available() {
         Some(SECOND.into())
     );
 
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SelectItem { item: FIRST })
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
             DockspaceActionOutcome::ItemActivated { item: tab, .. }
         )) if tab == FIRST
     ));
-    state
+    let state_receipt = state
         .request_command(NativeCommand::OpenItem {
             item: CLOSED,
             placement: DockPlacement::Center(DockAnchor::Item(FIRST)),
@@ -2473,7 +2627,7 @@ fn configuration_follows_local_selection_and_lock_keeps_selection_available() {
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Rejected(
             DockspaceActionRejection::PolicyDenied
         ))
@@ -2481,19 +2635,19 @@ fn configuration_follows_local_selection_and_lock_keeps_selection_available() {
     assert!(state.coordinator.session().view().item(CLOSED).is_none());
 
     let before = state.coordinator.session().version();
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SetArrangementLocked { locked: true })
         .unwrap();
     commit_queued(&mut state);
     assert!(
-        matches!(take(&mut state), NativeActionStatus::ArrangementLockChanged { locked: true, changed: false, version } if version == before)
+        matches!(take(&state_receipt), NativeActionStatus::ArrangementLockChanged { locked: true, changed: false, version } if version == before)
     );
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SetArrangementLocked { locked: false })
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::ArrangementLockChanged {
             locked: false,
             changed: true,
@@ -2506,7 +2660,7 @@ fn configuration_follows_local_selection_and_lock_keeps_selection_available() {
 #[test]
 fn exact_close_submission_ignores_other_close_requests_in_the_same_frame() {
     let mut state = state();
-    state
+    let state_receipt = state
         .request_command(NativeCommand::CloseItem { item: FIRST })
         .unwrap();
     let action = state.application_actions.take().unwrap();
@@ -2535,7 +2689,7 @@ fn exact_close_submission_ignores_other_close_requests_in_the_same_frame() {
         .application_actions
         .settle_submission(Some(submitted), &report)
         .unwrap();
-    let NativeActionStatus::CloseRequested { plan, .. } = take(&mut state) else {
+    let NativeActionStatus::CloseRequested { plan, .. } = take(&state_receipt) else {
         panic!("the submitted close result must be correlated")
     };
     assert_eq!(plan.items()[0].item(), FIRST);
@@ -2545,7 +2699,7 @@ fn exact_close_submission_ignores_other_close_requests_in_the_same_frame() {
 #[test]
 fn a_queued_close_keeps_its_revision_after_an_earlier_selection_commits() {
     let mut state = state();
-    state
+    let state_receipt = state
         .request_command(NativeCommand::CloseItem { item: FIRST })
         .unwrap();
     let before = state.coordinator.session().version();
@@ -2562,7 +2716,7 @@ fn a_queued_close_keeps_its_revision_after_an_earlier_selection_commits() {
     assert_ne!(before, accepted);
     commit_queued(&mut state);
     assert!(
-        matches!(take(&mut state), NativeActionStatus::Stale { expected, accepted: current } if expected == before && current == accepted)
+        matches!(take(&state_receipt), NativeActionStatus::Stale { expected, accepted: current } if expected == before && current == accepted)
     );
     assert!(state.coordinator.session().view().item(FIRST).is_some());
     assert!(state.pending_content_close_plans().is_empty());
@@ -2573,7 +2727,7 @@ fn a_foreign_close_token_cannot_be_approved_through_the_native_queue() {
     let mut source = state();
     let plan = request_plan(&mut source, FIRST);
     let mut other = state();
-    other
+    let other_receipt = other
         .request_command(NativeCommand::DecideClose {
             request: plan.request(),
             token: plan.items()[0].token(),
@@ -2582,7 +2736,7 @@ fn a_foreign_close_token_cannot_be_approved_through_the_native_queue() {
         .unwrap();
     commit_queued(&mut other);
     assert!(matches!(
-        take(&mut other),
+        take(&other_receipt),
         NativeActionStatus::CloseDecisionProcessed {
             resolution: DockspaceCloseResolution::Inert(
                 DockspaceCloseInertReason::AuthorityMismatch

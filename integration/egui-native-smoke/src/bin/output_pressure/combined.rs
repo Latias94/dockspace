@@ -1,5 +1,7 @@
 //! Finite W16/O256 fixture identities, outside the runtime storage allowance.
 
+use dockspace::model::{DockMoveSource, DockMoveTarget, TabGroupDockMode};
+
 use super::*;
 use egui_dockspace_native::NativeCommand;
 
@@ -16,6 +18,7 @@ struct Satellite {
 }
 
 pub(super) struct CombinedPressure {
+    pub(super) receipt: Option<egui_dockspace_native::NativeActionReceipt>,
     satellites: [Satellite; SATELLITES],
     next_create: usize,
     create_queued: bool,
@@ -46,6 +49,7 @@ pub(super) fn with_satellites(
 impl CombinedPressure {
     pub(super) fn new() -> Self {
         Self {
+            receipt: None,
             satellites: std::array::from_fn(|index| {
                 let id = u64::try_from(index).unwrap() + 3;
                 Satellite {
@@ -163,20 +167,24 @@ impl CombinedPressure {
         if !self.create_queued && runtime.is_quiescent() {
             let column = u32::try_from(self.next_create % 4).unwrap();
             let row = u32::try_from(self.next_create / 4).unwrap();
-            runtime
-                .request_command(NativeCommand::MoveRootToNewWindow {
-                    root: entry.root,
-                    placement: NativeWindowPlacement::new(
-                        PhysicalRect::new(
-                            710.0 + f64::from(column) * 280.0,
-                            60.0 + f64::from(row) * 220.0,
-                            240.0,
-                            180.0,
-                        )
-                        .unwrap(),
-                    ),
-                })
-                .map_err(|error| format!("satellite tear-off: {error}"))?;
+            self.receipt = Some(
+                runtime
+                    .request_command(NativeCommand::Move {
+                        source: DockMoveSource::Root(entry.root),
+                        target: DockMoveTarget::Native {
+                            placement: Some(NativeWindowPlacement::new(
+                                PhysicalRect::new(
+                                    710.0 + f64::from(column) * 280.0,
+                                    60.0 + f64::from(row) * 220.0,
+                                    240.0,
+                                    180.0,
+                                )
+                                .unwrap(),
+                            )),
+                        },
+                    })
+                    .map_err(|error| format!("satellite tear-off: {error}"))?,
+            );
             self.create_queued = true;
         }
         if let Some(surface) = entry.surface
@@ -259,14 +267,19 @@ impl CombinedPressure {
             return Ok(true);
         };
         if !self.redock_queued && runtime.is_quiescent() {
-            runtime
-                .request_command(NativeCommand::DockRoot {
-                    root: entry.root,
-                    placement: DockPlacement::Center(DockAnchor::Item(ItemId::new(
-                        entry.item.get() - 1,
-                    ))),
-                })
-                .map_err(|error| format!("satellite redock: {error}"))?;
+            self.receipt = Some(
+                runtime
+                    .request_command(NativeCommand::Move {
+                        source: DockMoveSource::Root(entry.root),
+                        target: DockMoveTarget::Dock {
+                            placement: DockPlacement::Center(DockAnchor::Item(ItemId::new(
+                                entry.item.get() - 1,
+                            ))),
+                            mode: TabGroupDockMode::MergeTabs,
+                        },
+                    })
+                    .map_err(|error| format!("satellite redock: {error}"))?,
+            );
             self.redock_queued = true;
         }
         let surface = entry.surface.expect("only a committed child can redock");

@@ -4,7 +4,7 @@ use super::*;
 
 use crate::geometry::{LogicalRect, LogicalSize, PhysicalRect};
 use crate::model::{
-    DockspaceActionOutcome, DockspaceActionRejection, NativeTearOffSource, NativeWindowPlacement,
+    DockMoveSource, DockspaceActionOutcome, DockspaceActionRejection, NativeWindowPlacement,
 };
 use crate::platform::ObservedWorkArea;
 use crate::presentation::compiler::{contained_minimum_size, pane_outer_sizing};
@@ -223,21 +223,21 @@ impl DockEngine {
 
     fn capture_product_native_payload(
         &self,
-        source: &NativeTearOffSource,
+        source: &DockMoveSource,
     ) -> Result<(MovePayload, Vec<ItemId>), DockspaceActionRejection> {
         match source {
-            NativeTearOffSource::Item(item) => self
+            DockMoveSource::Item(item) => self
                 .workspace
                 .capture_item_source_by_id(*item)
                 .map_err(|_| DockspaceActionRejection::Conflict)?
                 .map(|source| (MovePayload::Item(source), vec![*item]))
                 .ok_or(DockspaceActionRejection::ItemUnavailable { item: *item }),
-            NativeTearOffSource::Tab(tab) => self.capture_product_tab(tab),
-            NativeTearOffSource::Tabs(group) => {
+            DockMoveSource::Tab(tab) => self.capture_product_tab(tab),
+            DockMoveSource::Tabs(group) => {
                 let (source, items) = self.capture_product_tabs(group)?;
                 Ok((MovePayload::Tabs(source), items))
             }
-            NativeTearOffSource::Root(root) => self
+            DockMoveSource::Root(root) => self
                 .capture_product_root_payload(*root)
                 .map(|(_, payload, items)| (payload, items)),
         }
@@ -245,7 +245,7 @@ impl DockEngine {
 
     fn prepare_product_native_payload_tear_off(
         &self,
-        source: &NativeTearOffSource,
+        source: &DockMoveSource,
         placement: Option<NativeWindowPlacement>,
         policy: &DockPolicySnapshot,
     ) -> Result<Result<PreparedProductNativeTearOff, DockspaceActionRejection>, EngineError> {
@@ -367,7 +367,7 @@ impl DockEngine {
 
     pub(super) fn validate_product_native_payload_tear_off_availability(
         &self,
-        source: &NativeTearOffSource,
+        source: &DockMoveSource,
         placement: Option<NativeWindowPlacement>,
         policy: &DockPolicySnapshot,
     ) -> Result<Result<(), DockspaceActionRejection>, EngineError> {
@@ -397,7 +397,7 @@ impl DockEngine {
         cause: ReductionCause,
         focus_causal: FocusCausalStamp,
         expected: WorkspaceVersion,
-        source: &NativeTearOffSource,
+        source: &DockMoveSource,
         placement: Option<NativeWindowPlacement>,
         policy: &DockPolicySnapshot,
     ) -> Result<InputOutcome, EngineError> {
@@ -467,7 +467,7 @@ impl DockEngine {
         let checked = self
             .check_native_root_create(source_surface, &command, &proposal, policy)
             .map_err(|error| match error {
-                EngineError::NativeRootCreatePreflight { source } => {
+                EngineError::WorkspaceCommandPreflight { source } => {
                     EngineError::PointerInteractionInvariant {
                         cause,
                         detail: source.to_string(),
@@ -570,7 +570,7 @@ impl DockEngine {
                 return Ok(Err(NativeRootCreateRejection::Command(error)));
             }
             Err(source) => {
-                return Err(EngineError::NativeRootCreatePreflight {
+                return Err(EngineError::WorkspaceCommandPreflight {
                     source: TransactionError::Command { index: 0, source },
                 });
             }
@@ -601,7 +601,7 @@ impl DockEngine {
                 return Ok(Err(source));
             }
             Err(source) => {
-                return Err(EngineError::NativeRootCreatePreflight { source });
+                return Err(EngineError::WorkspaceCommandPreflight { source });
             }
         };
         let (future, report) = prepared.into_snapshot_parts();
@@ -618,7 +618,7 @@ impl DockEngine {
         match self.stage_workspace_publication(future, policy) {
             Ok(publication) => Ok(Ok(publication.workspace)),
             Err(source) if source.is_expected_rejection() => Ok(Err(source)),
-            Err(source) => Err(EngineError::NativeRootCreatePreflight {
+            Err(source) => Err(EngineError::WorkspaceCommandPreflight {
                 source: TransactionError::Command { index: 0, source },
             }),
         }

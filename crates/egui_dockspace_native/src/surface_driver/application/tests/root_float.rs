@@ -57,10 +57,10 @@ fn native_float_root_command_preserves_nested_layout_and_uses_the_result_slot() 
     present_geometry(&mut state, bounds);
     let before = state.view().to_layout();
     let version = state.coordinator.session().version();
-    state
-        .request_command(NativeCommand::FloatRoot {
-            root: ROOT,
-            surface: SURFACE,
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Root(ROOT),
+            target: dockspace::model::DockMoveTarget::Contained { surface: SURFACE },
         })
         .unwrap();
     assert_eq!(state.coordinator.session().version(), version);
@@ -73,13 +73,9 @@ fn native_float_root_command_preserves_nested_layout_and_uses_the_result_slot() 
         NativeActionRequestError::Busy
     );
     commit_queued(&mut state);
-    assert_eq!(
-        state
-            .request_command(NativeCommand::SelectItem { item: FIRST })
-            .unwrap_err()
-            .reason(),
-        NativeActionRequestError::Busy,
-        "the unconsumed root action result retains the command slot"
+    assert!(
+        !state.application_actions.is_occupied(),
+        "an unread result never retains execution capacity"
     );
     let NativeActionStatus::Dock(DockspaceActionStatus::Applied(
         DockspaceActionOutcome::RootFloated {
@@ -89,7 +85,7 @@ fn native_float_root_command_preserves_nested_layout_and_uses_the_result_slot() 
             items,
             changed: true,
         },
-    )) = take(&mut state)
+    )) = take(&state_receipt)
     else {
         panic!("FloatRoot must produce the core's complete-root outcome");
     };
@@ -111,12 +107,12 @@ fn native_float_root_command_preserves_nested_layout_and_uses_the_result_slot() 
     assert!(state.error().is_none());
 
     present_geometry(&mut state, bounds);
-    state
+    let state_receipt = state
         .request_command(NativeCommand::DockRootBack { root: ROOT })
         .unwrap();
     commit_queued(&mut state);
     assert!(matches!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Applied(
             DockspaceActionOutcome::RootDocked {
                 root: ROOT,
@@ -146,15 +142,15 @@ fn native_float_root_command_preserves_nested_layout_and_uses_the_result_slot() 
 #[test]
 fn native_float_root_command_preserves_core_unavailable_statuses() {
     let mut state = state();
-    state
-        .request_command(NativeCommand::FloatRoot {
-            root: ROOT,
-            surface: SURFACE,
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Root(ROOT),
+            target: dockspace::model::DockMoveTarget::Contained { surface: SURFACE },
         })
         .unwrap();
     commit_queued(&mut state);
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Rejected(
             DockspaceActionRejection::PresentationUnavailable { surface: SURFACE }
         ))
@@ -177,32 +173,35 @@ fn native_float_root_command_preserves_core_unavailable_statuses() {
             },
         ),
     ] {
-        state
-            .request_command(NativeCommand::FloatRoot { root, surface })
+        let state_receipt = state
+            .request_command(NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Root(root),
+                target: dockspace::model::DockMoveTarget::Contained { surface },
+            })
             .unwrap();
         commit_queued(&mut state);
         assert_eq!(
-            take(&mut state),
+            take(&state_receipt),
             NativeActionStatus::Dock(DockspaceActionStatus::Rejected(expected))
         );
         assert!(state.view().item(FIRST).unwrap().contained().is_none());
         assert!(state.error().is_none());
     }
-    state
+    let state_receipt = state
         .request_command(NativeCommand::SetArrangementLocked { locked: true })
         .unwrap();
     commit_queued(&mut state);
-    let _ = take(&mut state);
+    let _ = take(&state_receipt);
     present_geometry(&mut state, bounds);
-    state
-        .request_command(NativeCommand::FloatRoot {
-            root: ROOT,
-            surface: SURFACE,
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Root(ROOT),
+            target: dockspace::model::DockMoveTarget::Contained { surface: SURFACE },
         })
         .unwrap();
     commit_queued(&mut state);
     assert_eq!(
-        take(&mut state),
+        take(&state_receipt),
         NativeActionStatus::Dock(DockspaceActionStatus::Rejected(
             DockspaceActionRejection::PolicyDenied
         ))
@@ -226,10 +225,16 @@ fn native_float_root_command_cannot_remove_the_fixed_host_surface() {
     ])
     .unwrap();
     let mut state = state_with_layout(layout);
+    present_geometry(
+        &mut state,
+        LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
+    );
     let version = state.coordinator.session().version();
-    let command = NativeCommand::FloatRoot {
-        root: ROOT,
-        surface: target_surface,
+    let command = NativeCommand::Move {
+        source: dockspace::model::DockMoveSource::Root(ROOT),
+        target: dockspace::model::DockMoveTarget::Contained {
+            surface: target_surface,
+        },
     };
     let error = state.request_command(command.clone()).unwrap_err();
     assert_eq!(

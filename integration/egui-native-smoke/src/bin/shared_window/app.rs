@@ -179,6 +179,7 @@ fn placements(shifted: bool) -> [NativeSurfacePlacement; 2] {
 
 struct App {
     dockspace: NativeDockspaceApp<Panes>,
+    receipt: Option<egui_dockspace_native::NativeActionReceipt>,
     shared: State,
     started: Instant,
     discard: bool,
@@ -451,13 +452,16 @@ impl eframe::App for App {
         };
         if should_reset {
             match self.dockspace.request_layout_reset(layout()) {
-                Ok(()) => lock(&self.shared).reset_submitted = true,
+                Ok(receipt) => {
+                    self.receipt = Some(receipt);
+                    lock(&self.shared).reset_submitted = true;
+                }
                 Err(error) => {
                     lock(&self.shared).error = Some(format!("reset admission: {error:?}"))
                 }
             }
         }
-        if let Some(result) = self.dockspace.take_action_status() {
+        if let Some(result) = egui_native_smoke::poll_action_receipt(&mut self.receipt) {
             match result {
                 Ok(egui_dockspace_native::NativeActionStatus::LayoutReset { .. }) => {
                     lock(&self.shared).reset_done = true
@@ -570,6 +574,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             });
             Ok(Box::new(App {
                 dockspace,
+                receipt: None,
                 shared: Arc::clone(&shared),
                 started: Instant::now(),
                 discard,

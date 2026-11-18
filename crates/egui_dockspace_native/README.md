@@ -108,36 +108,61 @@ callbacks retain them. `Box<dyn PaneView + Send>` is supported. Registry/view
 callbacks hold the runtime lock: keep them short, perform I/O outside them, and
 submit commands after they return.
 
-Submit `NativeCommand` through `request_command`. Acceptance queues one command;
-consume its exact committed result with `take_action_status` before submitting
-another. Use the returned close tokens for deferred saving. Apply completed pane
-data through `with_panes_mut` and request repaint on the affected egui viewport.
+Submit `NativeCommand` through `request_command` and retain the returned
+`NativeActionReceipt`. Service turns advance accepted work even when the Root
+is not painting. Only an executing request or a real presentation wait keeps
+admission Busy; completed, unread receipts do not block another command,
+saving or quiescence. Each receipt receives only its own result. Dropping a
+receipt intentionally ignores completion without cancelling the request.
+If a request reports `NativeActionFailure`, inspect `interruption()` to distinguish
+failure before core commit, incomplete settlement after commit, and an unresolved
+presentation at terminal shutdown. A committed interruption must not be retried
+as though the original action never ran.
 
-`NativeCommand::DockTabs` takes an explicit `TabGroupDockMode`. Use `MergeTabs`
-to insert the captured group's direct children as neighboring tabs, or
-`PreserveLayout` to insert the complete group as one layout tab. Center and
-before/after destinations honor the mode; edge targets retain their structural
-split behavior. Captures keep their original session and workspace version in
-both modes, as they do during pointer docking.
+```rust,ignore
+let receipt = app.request_command(command)?;
+// Keep `receipt` in the application operation that submitted it.
+match receipt.try_recv() {
+    Ok(result) => { /* handle this command's exact terminal result */ }
+    Err(std::sync::mpsc::TryRecvError::Empty) => { /* wait for host progress */ }
+    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+        // Already consumed, or the runtime ended without observing completion.
+        // This does not prove native resource cleanup.
+    }
+}
+```
 
-Use `NativeCommand::FloatRoot { root, surface }` for the layout menu's **Float
-Layout** operation: the complete root becomes one contained floating window,
-preserving Pane/Tabs/Split/Grid structure, layout titles, track shares and tab
-selections. A standalone Pane has no implicit tab bar; Tabs can contain both
-inline items and complete layout subtrees. `FloatItem` moves one item;
-`FloatTabs` moves a captured tabs group. `FloatRoot` keeps the stable root identity
-and uses the core's current geometry and existing presentation barrier. Missing
-geometry, unavailable destinations and policy restrictions are returned through
-`take_action_status`. `DockRootBack` uses the core-derived return destination.
+Use `NativeCommand::Move { source, target }` for all existing-content moves.
+`DockMoveSource` distinguishes one item, a captured direct tab, a captured tabs
+group and a complete root. `DockMoveTarget` chooses an explicit dock placement,
+a contained float on an existing surface, or a managed native window. The
+native target accepts `Some(placement)` for requested desktop bounds or `None`
+for placement derived from current core geometry and work-area facts.
 
-For one direct tab, obtain its `TabKey` through `with_view` and then call
-`capture_tab(key)` after the callback returns. Submit the opaque result through
-`NativeCommand::DockTab`, `FloatTab` or `CloseTab`, or use
-`NativeTearOffSource::Tab` to create an OS window. A layout tab carries all of its
-hidden and inactive descendants. Captures retain their original session and
-version; storage, cloning and admission never refresh them. A standalone Pane
-has no direct tab to capture. Close decisions use the same atomic approval plan
-as item and root closes.
+A `Dock` target includes `TabGroupDockMode`. With a captured `Tabs` source,
+`MergeTabs` inserts its direct children as neighboring tabs; `PreserveLayout`
+inserts the complete group as one layout tab. Center and before/after targets
+honor that mode; edge targets retain their structural split behavior. Captures
+keep their original session and workspace version in both modes.
+
+For the layout menu's **Float Layout**, use a `Root` source and
+`Contained { surface }` target. This keeps the complete Pane/Tabs/Split/Grid
+structure, stable root identity, layout titles, track shares and tab selections.
+The core derives geometry and retains native ownership until exact target
+presentation. Missing geometry, unavailable destinations and policy restrictions
+arrive through the request's receipt. `DockRootBack` remains a separate command
+whose return destination is derived and revalidated by core.
+
+For one direct tab, obtain its `TabKey` through `with_view` and call
+`capture_tab(key)` after the callback returns. Use the captured value as
+`DockMoveSource::Tab` or submit `NativeCommand::CloseTab`. A layout tab carries
+all hidden and inactive descendants. Storage, cloning and admission never
+refresh its captured session or version. A standalone Pane has no direct tab
+to capture. Close requests return application decision tokens through their
+receipt; no close is approved on the application's behalf.
+
+Apply completed pane data through `with_panes_mut` and request repaint on the
+affected egui viewport.
 
 `NativeCommand::SetItemVisibility { item, visible }` retains the pane's tab order,
 split proportions and window ownership. Showing does not activate the window or
@@ -151,8 +176,8 @@ are maintained in that manifest and lockfile.
 Use `NativeDockspaceApp::with_input` with the same `egui_dockspace::DockInputConfig`
 as the official adapter. It controls hold-to-enable/disable docking and the
 gesture-cancel shortcut; default bindings are Shift and Escape. Queue runtime
-changes through `request_input` and consume their result through
-`take_action_status`, like other application commands.
+changes through `request_input` and retain its own receipt, like other
+application requests.
 Native cancellation follows callback order with pointer release, including when
 no UI pass occurs between them. Cancellation reports `ExplicitCancellation`;
 later rendering does not apply the same key to a new gesture. The native journal
@@ -162,14 +187,14 @@ vetoes that exact request so ordinary eframe shutdown cannot bypass its policy.
 
 Use `with_motion(settings, preference)` before host attachment, or
 `request_motion(settings, preference)` at runtime. Both use the core's
-`motion::{MotionSettings, MotionPreference}`. Runtime changes share the application
-command slot; consume `NativeActionStatus::MotionChanged` before submitting more.
+`motion::{MotionSettings, MotionPreference}`. The returned request receipt
+reports `NativeActionStatus::MotionChanged` after the configuration commits.
 For example, disable geometry motion with:
 
 ```rust,ignore
 use egui_dockspace_native::motion::{MotionMode, MotionPreference, MotionSettings};
 
-app.request_motion(
+let receipt = app.request_motion(
     MotionSettings { mode: MotionMode::Off, ..Default::default() },
     MotionPreference::Unknown,
 )?;
@@ -209,12 +234,14 @@ stays outside the docking-layout version. Unknown placement is not guessed;
 first-live admission and geometry becoming authoritative again are also announced.
 The callback's second argument, `NativeNotificationContext`, provides scoped
 `with_view`, `request_command` and, with `serde`, `save_document_json` access.
-Commands and saves follow the application's existing single-slot busy rules.
+Commands follow the same bounded execution admission; each accepted callback
+request returns its own receipt. Saving reads committed state and is not blocked
+by completed, unread receipts.
 
 `pending_work()` explains `is_quiescent()` with an allocation-free snapshot of
 current wait reasons. Inspect `contains(NativeWaitReason::Focus)` or iterate the
-active reasons; debug formatting prints their names. This includes unconsumed
-application results, pending presentations and native window retirement, while
+active reasons; debug formatting prints their names. This includes executing
+application requests, pending presentations and native window retirement, while
 ordinary stable repaint outputs remain idle. The query consumes no work and
 retains no history. Inspect `output_backlog()` separately for output-owner counts.
 

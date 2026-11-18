@@ -9,8 +9,8 @@ use dockspace::close::{
     CloseDecision, CloseDecisionToken, CloseRequestId, DeferredCloseDecision, DeferredCloseToken,
 };
 use dockspace::model::{
-    DockAnchor, DockPlacement, DockspaceActionRejection, ItemId, PreparedDockAction,
-    PreparedTabsGroup, RootId, SurfaceId,
+    DockAnchor, DockMoveSource, DockMoveTarget, DockPlacement, DockspaceActionRejection, ItemId,
+    PreparedDockAction, PreparedTabsGroup, RootId, SurfaceId,
 };
 use dockspace::runtime::{PreparedCloseRequest, SurfaceUnavailableReason};
 
@@ -38,12 +38,19 @@ impl Dockspace {
         self.session.prepare_open_item(item, placement)
     }
 
-    /// Prepares a revision-bound item docking action.
-    pub const fn prepare_dock_item(
+    /// Prepares a revision-bound move using the renderer-neutral source and target model.
+    ///
+    /// Captured tabs and groups retain their original session and revision.
+    pub fn prepare_move(
         &self,
-        item: ItemId,
-        placement: DockPlacement,
+        source: DockMoveSource,
+        target: DockMoveTarget,
     ) -> PreparedDockAction {
+        self.session.prepare_move(source, target)
+    }
+
+    /// Prepares a revision-bound item docking action.
+    pub fn prepare_dock_item(&self, item: ItemId, placement: DockPlacement) -> PreparedDockAction {
         self.session.prepare_dock_item(item, placement)
     }
 
@@ -74,11 +81,7 @@ impl Dockspace {
     }
 
     /// Prepares a revision-bound complete-root docking action.
-    pub const fn prepare_dock_root(
-        &self,
-        root: RootId,
-        placement: DockPlacement,
-    ) -> PreparedDockAction {
+    pub fn prepare_dock_root(&self, root: RootId, placement: DockPlacement) -> PreparedDockAction {
         self.session.prepare_dock_root(root, placement)
     }
 
@@ -88,7 +91,7 @@ impl Dockspace {
     }
 
     /// Prepares a revision-bound action that moves one item into contained floating content.
-    pub const fn prepare_float_item(&self, item: ItemId, surface: SurfaceId) -> PreparedDockAction {
+    pub fn prepare_float_item(&self, item: ItemId, surface: SurfaceId) -> PreparedDockAction {
         self.session.prepare_float_item(item, surface)
     }
 

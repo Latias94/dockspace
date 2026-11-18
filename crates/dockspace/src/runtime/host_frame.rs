@@ -703,6 +703,7 @@ impl<'session> DockspaceHostFrame<'session> {
             expected: self.frame.view().version(),
             root,
             placement,
+            mode: crate::model::TabGroupDockMode::MergeTabs,
         })?;
         Ok(DockspaceSubmittedAction::new(
             frame_attempt,
@@ -727,7 +728,7 @@ impl<'session> DockspaceHostFrame<'session> {
         root: crate::ids::RootId,
         placement: NativeWindowPlacement,
     ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
-        self.move_to_new_window_current(crate::model::NativeTearOffSource::Root(root), placement)
+        self.move_to_new_window_current(crate::model::DockMoveSource::Root(root), placement)
     }
 
     /// Requests a native window for an item, frozen tabs group, or complete root.
@@ -744,7 +745,7 @@ impl<'session> DockspaceHostFrame<'session> {
     /// Product-level availability and policy rejections are reported at commit.
     pub fn move_to_new_window_current(
         &mut self,
-        source: crate::model::NativeTearOffSource,
+        source: crate::model::DockMoveSource,
         placement: NativeWindowPlacement,
     ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
         let frame_attempt = self.frame.presentation_attempt();
@@ -772,7 +773,7 @@ impl<'session> DockspaceHostFrame<'session> {
     /// Returns an error when the frame cannot accept another semantic input.
     pub fn move_to_new_window_default_current(
         &mut self,
-        source: crate::model::NativeTearOffSource,
+        source: crate::model::DockMoveSource,
     ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
         let frame_attempt = self.frame.presentation_attempt();
         let source_sequence = self.append_identified(EngineInput::TearOffNative {

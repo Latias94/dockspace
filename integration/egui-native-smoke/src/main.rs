@@ -11,9 +11,10 @@ use std::time::{Duration, Instant};
 
 use dockspace::geometry::{LogicalRect, PhysicalRect};
 use dockspace::model::{
-    DockAnchor, DockPlacement, DockspaceActionOutcome, DockspaceContainedLayout, DockspaceLayout,
-    DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, FloatingPresentationId, ItemId,
-    NativeWindowPlacement, RootId, SurfaceId,
+    DockAnchor, DockMoveSource, DockMoveTarget, DockPlacement, DockspaceActionOutcome,
+    DockspaceContainedLayout, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
+    DockspaceSurfaceLayout, FloatingPresentationId, ItemId, NativeWindowPlacement, RootId,
+    SurfaceId, TabGroupDockMode,
 };
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
@@ -59,6 +60,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let reported_outcome = Arc::clone(&outcome);
     let smoke = SmokeApp {
         dockspace,
+        receipt: None,
         scenario,
         storage_profile,
         phase: SmokePhase::AwaitRootPresentation,
@@ -281,6 +283,7 @@ enum SmokePhase {
 
 struct SmokeApp {
     dockspace: NativeDockspaceApp<SmokePanes>,
+    receipt: Option<egui_dockspace_native::NativeActionReceipt>,
     scenario: SmokeScenario,
     storage_profile: SmokeStorageProfile,
     phase: SmokePhase,
@@ -410,19 +413,22 @@ impl SmokeApp {
             PhysicalRect::new(760.0, 100.0, 420.0, 320.0)
                 .expect("the smoke child placement is valid"),
         );
-        match self
-            .dockspace
-            .request_command(NativeCommand::MoveRootToNewWindow {
-                root: CHILD_ROOT,
-                placement,
-            }) {
-            Ok(()) => self.transition(SmokePhase::AwaitTearOff),
+        match self.dockspace.request_command(NativeCommand::Move {
+            source: DockMoveSource::Root(CHILD_ROOT),
+            target: DockMoveTarget::Native {
+                placement: Some(placement),
+            },
+        }) {
+            Ok(receipt) => {
+                self.receipt = Some(receipt);
+                self.transition(SmokePhase::AwaitTearOff);
+            }
             Err(error) => self.finish(context, Err(action_request_message(error))),
         }
     }
 
     fn await_tear_off(&mut self, context: &egui::Context) {
-        let Some(status) = self.dockspace.take_action_status() else {
+        let Some(status) = egui_native_smoke::poll_action_receipt(&mut self.receipt) else {
             return;
         };
         match status {
@@ -624,17 +630,23 @@ impl SmokeApp {
     }
 
     fn queue_redock(&mut self, context: &egui::Context, target_surface: SurfaceId) {
-        match self.dockspace.request_command(NativeCommand::DockRoot {
-            root: CHILD_ROOT,
-            placement: DockPlacement::Center(DockAnchor::Item(MAIN_ITEM)),
+        match self.dockspace.request_command(NativeCommand::Move {
+            source: DockMoveSource::Root(CHILD_ROOT),
+            target: DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(MAIN_ITEM)),
+                mode: TabGroupDockMode::MergeTabs,
+            },
         }) {
-            Ok(()) => self.transition(SmokePhase::AwaitRedock { target_surface }),
+            Ok(receipt) => {
+                self.receipt = Some(receipt);
+                self.transition(SmokePhase::AwaitRedock { target_surface });
+            }
             Err(error) => self.finish(context, Err(action_request_message(error))),
         }
     }
 
     fn await_redock(&mut self, context: &egui::Context, target_surface: SurfaceId) {
-        let Some(status) = self.dockspace.take_action_status() else {
+        let Some(status) = egui_native_smoke::poll_action_receipt(&mut self.receipt) else {
             return;
         };
         match status {

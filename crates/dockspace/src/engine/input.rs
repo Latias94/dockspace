@@ -859,6 +859,8 @@ pub enum EngineInput {
         root: RootId,
         /// Item-, root-, or surface-centric destination.
         placement: crate::model::DockPlacement,
+        /// Center insertion of a complete Tabs root.
+        mode: crate::model::TabGroupDockMode,
     },
     /// Dock one complete contained root into the default target selected by core.
     DockBackRoot {
@@ -872,7 +874,7 @@ pub enum EngineInput {
         /// Exact workspace version from which this product action was derived.
         expected: WorkspaceVersion,
         /// Exact item, frozen tabs group, or stable complete root.
-        source: crate::model::NativeTearOffSource,
+        source: crate::model::DockMoveSource,
         /// Explicit outer placement, or `None` for the core-derived default.
         placement: Option<crate::model::NativeWindowPlacement>,
     },

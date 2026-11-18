@@ -71,19 +71,22 @@ fn docking_and_floating_a_layout_tab_preserve_its_grid_and_every_owned_descendan
         let tab = state.capture_tab(key).unwrap();
         assert!(state.capture_tab(CLOSED.into()).is_none());
         let command = if float {
-            NativeCommand::FloatTab {
-                tab,
-                surface: SURFACE,
+            NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Tab(tab),
+                target: dockspace::model::DockMoveTarget::Contained { surface: SURFACE },
             }
         } else {
-            NativeCommand::DockTab {
-                tab,
-                placement: DockPlacement::Center(DockAnchor::Item(TARGET)),
+            NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Tab(tab),
+                target: dockspace::model::DockMoveTarget::Dock {
+                    placement: DockPlacement::Center(DockAnchor::Item(TARGET)),
+                    mode: dockspace::model::TabGroupDockMode::MergeTabs,
+                },
             }
         };
-        state.request_command(command).unwrap();
+        let state_receipt = state.request_command(command).unwrap();
         commit_queued(&mut state);
-        let moved_root = match take(&mut state) {
+        let moved_root = match take(&state_receipt) {
             NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                 DockspaceActionOutcome::TabDocked {
                     tab,
@@ -167,7 +170,7 @@ fn closing_a_layout_tab_approves_hidden_descendants_atomically_and_keeps_hidden_
         .viewport_binding(egui::ViewportId::ROOT)
         .unwrap();
     for veto in [true, false] {
-        state
+        let state_receipt = state
             .request_command(NativeCommand::CloseTab {
                 tab: state.capture_tab(key).unwrap(),
             })
@@ -176,7 +179,7 @@ fn closing_a_layout_tab_approves_hidden_descendants_atomically_and_keeps_hidden_
         let NativeActionStatus::CloseRequested {
             plan,
             reused: false,
-        } = take(&mut state)
+        } = take(&state_receipt)
         else {
             panic!("the layout tab must expose its own atomic close plan");
         };
@@ -200,7 +203,7 @@ fn closing_a_layout_tab_approves_hidden_descendants_atomically_and_keeps_hidden_
             } else {
                 CloseDecision::Allow
             };
-            state
+            let state_receipt = state
                 .request_command(NativeCommand::DecideClose {
                     request: plan.request(),
                     token: item.token(),
@@ -208,7 +211,7 @@ fn closing_a_layout_tab_approves_hidden_descendants_atomically_and_keeps_hidden_
                 })
                 .unwrap();
             commit_queued(&mut state);
-            let outcome = take(&mut state);
+            let outcome = take(&state_receipt);
             if veto || index + 1 < plan.items().len() {
                 assert!(matches!(
                     outcome,
@@ -274,6 +277,10 @@ fn a_complete_layout_tab_cannot_remove_the_fixed_native_host() {
     .with_hidden_items([THIRD])
     .unwrap();
     let mut state = state_with_layout(layout);
+    present_geometry(
+        &mut state,
+        LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
+    );
     let key = state
         .view()
         .root(ROOT)
@@ -286,13 +293,16 @@ fn a_complete_layout_tab_cannot_remove_the_fixed_native_host() {
     let tab = state.capture_tab(key).unwrap();
     let version = state.coordinator.session().version();
     for command in [
-        NativeCommand::DockTab {
-            tab: tab.clone(),
-            placement: DockPlacement::Center(DockAnchor::Item(FIRST)),
+        NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Tab(tab.clone()),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(FIRST)),
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         },
-        NativeCommand::FloatTab {
-            tab: tab.clone(),
-            surface: target,
+        NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Tab(tab.clone()),
+            target: dockspace::model::DockMoveTarget::Contained { surface: target },
         },
         NativeCommand::CloseTab { tab },
     ] {
@@ -320,14 +330,14 @@ fn native_tab_commands_preserve_stale_and_foreign_captures_without_refreshing_th
             let tab = source.capture_tab(key).unwrap();
             let captured = tab.expected_version();
             if !foreign {
-                source
+                let source_receipt = source
                     .request_command(NativeCommand::SetItemVisibility {
                         item: FIRST,
                         visible: true,
                     })
                     .unwrap();
                 commit_queued(&mut source);
-                take(&mut source);
+                take(&source_receipt);
             }
             let mut state = if foreign {
                 composed_state(false)
@@ -336,17 +346,20 @@ fn native_tab_commands_preserve_stale_and_foreign_captures_without_refreshing_th
             };
             let accepted = state.coordinator.session().version();
             let command = match kind {
-                0 => NativeCommand::DockTab {
-                    tab,
-                    placement: DockPlacement::Center(DockAnchor::Item(FIRST)),
+                0 => NativeCommand::Move {
+                    source: dockspace::model::DockMoveSource::Tab(tab),
+                    target: dockspace::model::DockMoveTarget::Dock {
+                        placement: DockPlacement::Center(DockAnchor::Item(FIRST)),
+                        mode: dockspace::model::TabGroupDockMode::MergeTabs,
+                    },
                 },
-                1 => NativeCommand::FloatTab {
-                    tab,
-                    surface: SURFACE,
+                1 => NativeCommand::Move {
+                    source: dockspace::model::DockMoveSource::Tab(tab),
+                    target: dockspace::model::DockMoveTarget::Contained { surface: SURFACE },
                 },
                 _ => NativeCommand::CloseTab { tab },
             };
-            state.request_command(command).unwrap();
+            let state_receipt = state.request_command(command).unwrap();
             let report = commit_queued_report(&mut state);
             assert_eq!(report.before(), report.after());
             let expected = match (foreign, kind) {
@@ -370,7 +383,7 @@ fn native_tab_commands_preserve_stale_and_foreign_captures_without_refreshing_th
                     accepted,
                 }),
             };
-            assert_eq!(take(&mut state), expected);
+            assert_eq!(take(&state_receipt), expected);
             assert_eq!(
                 state.view().root(ROOT).unwrap().items().collect::<Vec<_>>(),
                 [FIRST, SECOND, THIRD, CLOSED]

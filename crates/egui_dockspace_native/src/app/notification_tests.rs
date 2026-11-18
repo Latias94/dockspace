@@ -50,7 +50,7 @@ fn callbacks_release_the_runtime_lock_and_preserve_reentrant_commit_order() {
         }
         context.with_view(|view| assert!(view.item(item).is_some()));
         if item == ItemId::new(2) {
-            context
+            let _context_receipt = context
                 .request_command(crate::NativeCommand::SelectItem {
                     item: ItemId::new(1),
                 })

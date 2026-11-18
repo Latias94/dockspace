@@ -1,6 +1,6 @@
 //! Exact tabs-group commands attached to the existing surface action pipeline.
 
-use crate::model::{NativeTearOffSource, PreparedTabsGroup, ProductAction};
+use crate::model::{DockMoveSource, PreparedTabsGroup, ProductAction};
 use crate::policy::TabBarInteraction;
 
 use super::{
@@ -226,7 +226,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
                     )));
                 }
                 ProductAction::TearOffNative {
-                    source: NativeTearOffSource::Tabs(group),
+                    source: DockMoveSource::Tabs(group),
                     placement: None,
                 }
             }

@@ -42,7 +42,7 @@ struct ContinuityApp {
     started: Instant,
     seen_content: bool,
     selections: usize,
-    pending: Option<ItemId>,
+    pending: Option<(ItemId, egui_dockspace_native::NativeActionReceipt)>,
     moves: usize,
     moving_to: Option<egui::Pos2>,
     layout_changes: usize,
@@ -77,16 +77,23 @@ impl eframe::App for ContinuityApp {
             );
         }
         assert!(self.dockspace.error_kind().is_none());
-        if let Some(target) = self.pending
-            && let Some(status) = self.dockspace.take_action_status()
-        {
-            assert!(status.is_ok(), "selection failed: {status:?}");
-            assert_eq!(
-                self.dockspace
-                    .with_view(|view| view.item(target).unwrap().is_active()),
-                true,
-            );
-            self.pending = None;
+        if let Some((target, receipt)) = &self.pending {
+            let status = match receipt.try_recv() {
+                Ok(status) => Some(status),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    panic!("selection receipt disconnected before completion")
+                }
+            };
+            if let Some(status) = status {
+                assert!(status.is_ok(), "selection failed: {status:?}");
+                assert_eq!(
+                    self.dockspace
+                        .with_view(|view| view.item(*target).unwrap().is_active()),
+                    true,
+                );
+                self.pending = None;
+            }
         }
         if let Some(position) = self.moving_to
             && ui
@@ -106,11 +113,12 @@ impl eframe::App for ContinuityApp {
                 } else {
                     FIRST
                 };
-                self.dockspace
+                let receipt = self
+                    .dockspace
                     .request_command(NativeCommand::SelectItem { item: target })
                     .unwrap();
                 self.selections += 1;
-                self.pending = Some(target);
+                self.pending = Some((target, receipt));
             } else if self.moves < 10 {
                 let position = if self.moves % 2 == 0 {
                     egui::pos2(80.0, 80.0)

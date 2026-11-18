@@ -114,14 +114,15 @@ pub use dockspace::geometry::{
     AxisSizing, LogicalRect, PaneSizing, PaneSizingBuilder, PaneSizingError,
 };
 pub use dockspace::model::{
-    DockAnchor, DockEdge, DockFraction, DockPlacement, DockspaceActionOutcome,
-    DockspaceActionRejection, DockspaceAxis, DockspaceContainedLayout, DockspaceContainedView,
-    DockspaceGridError, DockspaceGridShape, DockspaceGridShares, DockspaceGridView,
-    DockspaceLayout, DockspaceLayoutError, DockspaceNode, DockspaceNodeView, DockspaceRootLayout,
-    DockspaceRootView, DockspaceSplitView, DockspaceSurfaceLayout, DockspaceSurfaceView,
-    DockspaceTabView, DockspaceTabsView, DockspaceView, FloatingPresentationId,
-    InvalidDockFraction, ItemId, NodeKey, PreparedDockAction, PreparedTabsGroup, RootAllocation,
-    RootId, SurfaceId, TabGroupDockMode, TabKey, WorkspaceVersion,
+    DockAnchor, DockEdge, DockFraction, DockMoveSource, DockMoveTarget, DockPlacement,
+    DockspaceActionOutcome, DockspaceActionRejection, DockspaceAxis, DockspaceContainedLayout,
+    DockspaceContainedView, DockspaceGridError, DockspaceGridShape, DockspaceGridShares,
+    DockspaceGridView, DockspaceLayout, DockspaceLayoutError, DockspaceNode, DockspaceNodeView,
+    DockspaceRootLayout, DockspaceRootView, DockspaceSplitView, DockspaceSurfaceLayout,
+    DockspaceSurfaceView, DockspaceTabView, DockspaceTabsView, DockspaceView,
+    FloatingPresentationId, InvalidDockFraction, ItemId, NodeKey, PreparedDockAction,
+    PreparedTabsGroup, RootAllocation, RootId, SurfaceId, TabGroupDockMode, TabKey,
+    WorkspaceVersion,
 };
 #[cfg(feature = "motion")]
 pub use dockspace::motion;

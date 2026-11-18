@@ -713,17 +713,23 @@ fn programmatic_action_queue_is_bounded_and_stops_with_the_runtime() {
     let mut state = test_state();
     let placement = DockPlacement::Center(DockAnchor::Item(ItemId::new(1)));
 
-    state
-        .request_command(NativeCommand::DockRoot {
-            root: RootId::new(1),
-            placement,
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Root(RootId::new(1)),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement,
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         })
         .expect("the empty application-action slot accepts one request");
     assert_eq!(
         state
-            .request_command(NativeCommand::DockRoot {
-                root: RootId::new(1),
-                placement
+            .request_command(NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Root(RootId::new(1)),
+                target: dockspace::model::DockMoveTarget::Dock {
+                    placement,
+                    mode: dockspace::model::TabGroupDockMode::MergeTabs
+                }
             })
             .expect_err("a second action cannot overtake the pending request")
             .reason(),
@@ -733,7 +739,7 @@ fn programmatic_action_queue_is_bounded_and_stops_with_the_runtime() {
     let action = state
         .application_actions
         .take()
-        .expect("the final root pass takes the pending action");
+        .expect("an eligible runtime turn takes the pending action");
     assert_eq!(
         action.expected_version(),
         state.coordinator.session().version()
@@ -748,9 +754,9 @@ fn programmatic_action_queue_is_bounded_and_stops_with_the_runtime() {
         )
         .expect("the exact product result settles the action");
     assert!(!state.application_actions.has_queued());
-    assert!(state.application_actions.is_occupied());
+    assert!(!state.application_actions.is_occupied());
     assert!(matches!(
-        state.take_action_status(),
+        state_receipt.try_recv().ok(),
         Some(Ok(crate::NativeActionStatus::Dock(
             DockspaceActionStatus::Rejected(
                 dockspace::model::DockspaceActionRejection::PolicyDenied
@@ -758,17 +764,20 @@ fn programmatic_action_queue_is_bounded_and_stops_with_the_runtime() {
         )))
     ));
 
-    state
-        .request_command(NativeCommand::DockRoot {
-            root: RootId::new(1),
-            placement,
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Root(RootId::new(1)),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement,
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         })
-        .expect("consuming the result releases the bounded slot");
+        .expect("a completed request releases execution capacity");
 
     state.stop_current_output(NativeHostProtocolError::OutputTokenUnavailable.into());
-    assert!(state.application_actions.is_occupied());
+    assert!(!state.application_actions.is_occupied());
     assert!(matches!(
-        state.take_action_status(),
+        state_receipt.try_recv().ok(),
         Some(Err(error))
             if error.interruption() == crate::NativeActionInterruption::NotCommitted
                 && error.kind() == NativeRuntimeErrorKind::InvalidConfiguration
@@ -776,9 +785,12 @@ fn programmatic_action_queue_is_bounded_and_stops_with_the_runtime() {
     assert!(!state.application_actions.is_occupied());
     assert_eq!(
         state
-            .request_command(NativeCommand::DockRoot {
-                root: RootId::new(1),
-                placement
+            .request_command(NativeCommand::Move {
+                source: dockspace::model::DockMoveSource::Root(RootId::new(1)),
+                target: dockspace::model::DockMoveTarget::Dock {
+                    placement,
+                    mode: dockspace::model::TabGroupDockMode::MergeTabs
+                }
             })
             .expect_err("a stopped runtime rejects new application actions")
             .reason(),
@@ -793,10 +805,13 @@ fn quiescence_tracks_the_committed_boundary_and_real_pending_actions() {
     assert!(before.contains(crate::NativeWaitReason::RootPresentation));
     assert!(!before.contains(crate::NativeWaitReason::ApplicationAction));
 
-    state
-        .request_command(NativeCommand::DockRoot {
-            root: RootId::new(1),
-            placement: DockPlacement::Center(DockAnchor::Item(ItemId::new(1))),
+    let _receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Root(RootId::new(1)),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(ItemId::new(1))),
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         })
         .expect("the committed boundary accepts one application action");
 
@@ -813,21 +828,24 @@ fn quiescence_tracks_the_committed_boundary_and_real_pending_actions() {
 fn committed_action_requires_its_exact_submission_outcome() {
     let mut state = test_state();
     let placement = DockPlacement::Center(DockAnchor::Item(ItemId::new(1)));
-    state
-        .request_command(NativeCommand::DockRoot {
-            root: RootId::new(1),
-            placement,
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Root(RootId::new(1)),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement,
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         })
         .expect("the presentation action is queued");
     let _action = state
         .application_actions
         .take()
-        .expect("the final root pass takes the pending action");
+        .expect("an eligible runtime turn takes the pending action");
 
     assert!(state.application_actions.settle(None, &[]).is_err());
-    assert!(state.application_actions.is_occupied());
+    assert!(!state.application_actions.is_occupied());
     assert!(matches!(
-        state.take_action_status(),
+        state_receipt.try_recv().ok(),
         Some(Err(error))
             if error.interruption()
                 == crate::NativeActionInterruption::CommittedOutcomeUnavailable
@@ -839,27 +857,30 @@ fn committed_action_requires_its_exact_submission_outcome() {
 fn fatal_stop_terminalizes_an_uncommitted_application_frame_once() {
     let mut state = test_state();
     let placement = DockPlacement::Center(DockAnchor::Item(ItemId::new(1)));
-    state
-        .request_command(NativeCommand::DockRoot {
-            root: RootId::new(1),
-            placement,
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Root(RootId::new(1)),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement,
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         })
         .expect("the application action is queued");
     let _action = state
         .application_actions
         .take()
-        .expect("the final root pass takes the pending action");
+        .expect("an eligible runtime turn takes the pending action");
 
     state.stop_current_output(NativeHostProtocolError::OutputTokenUnavailable.into());
     state.stop_current_output(NativeHostProtocolError::RootRegistrationRejected(SURFACE).into());
 
     assert!(matches!(
-        state.take_action_status(),
+        state_receipt.try_recv().ok(),
         Some(Err(error))
             if error.interruption() == crate::NativeActionInterruption::NotCommitted
                 && error.kind() == NativeRuntimeErrorKind::InvalidConfiguration
     ));
-    assert!(state.take_action_status().is_none());
+    assert!(state_receipt.try_recv().ok().is_none());
 }
 
 #[test]
@@ -887,16 +908,19 @@ fn fatal_stop_retains_the_coordinator_and_first_error() {
 fn fatal_stop_preserves_a_committed_application_action_result() {
     let mut state = test_state();
     let placement = DockPlacement::Center(DockAnchor::Item(ItemId::new(1)));
-    state
-        .request_command(NativeCommand::DockRoot {
-            root: RootId::new(1),
-            placement,
+    let state_receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Root(RootId::new(1)),
+            target: dockspace::model::DockMoveTarget::Dock {
+                placement,
+                mode: dockspace::model::TabGroupDockMode::MergeTabs,
+            },
         })
         .expect("the application action is queued");
     let _action = state
         .application_actions
         .take()
-        .expect("the final root pass takes the pending action");
+        .expect("an eligible runtime turn takes the pending action");
     state
         .application_actions
         .settle(
@@ -910,7 +934,7 @@ fn fatal_stop_preserves_a_committed_application_action_result() {
     state.stop_current_output(NativeHostProtocolError::OutputTokenUnavailable.into());
 
     assert!(matches!(
-        state.take_action_status(),
+        state_receipt.try_recv().ok(),
         Some(Ok(crate::NativeActionStatus::Dock(
             DockspaceActionStatus::Rejected(
                 dockspace::model::DockspaceActionRejection::PolicyDenied

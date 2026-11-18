@@ -7,8 +7,8 @@ use crate::engine::{DockEngine, EngineError};
 use crate::graph::Workspace;
 use crate::graph::command::ContentCloseTarget;
 use crate::model::{
-    DockAnchor, DockPlacement, DockspaceActionRejection, DockspaceLayout, DockspaceView,
-    NativeTearOffSource, PreparedTabsGroup, WorkspaceVersion,
+    DockAnchor, DockMoveSource, DockMoveTarget, DockPlacement, DockspaceActionRejection,
+    DockspaceLayout, DockspaceView, PreparedTabsGroup, WorkspaceVersion,
 };
 use crate::presentation::observation::PresentationHostLease;
 
@@ -288,8 +288,46 @@ impl DockspaceSession {
         self.engine.prepare_open_item(item, placement)
     }
 
+    /// Prepares one move with an explicit source, destination and insertion policy.
+    ///
+    /// Item and Root sources capture the current published revision. A captured
+    /// tab or tabs group keeps its original session and revision; preparing it
+    /// again never refreshes it. Root moves preserve every Pane/Tabs/Split/Grid
+    /// descendant, including hidden and inactive content. Native transfer waits
+    /// for the exact child first-live presentation before changing ownership.
+    #[must_use]
+    pub fn prepare_move(
+        &self,
+        source: DockMoveSource,
+        target: DockMoveTarget,
+    ) -> PreparedDockAction {
+        self.engine.prepare_move(source, target)
+    }
+
+    /// Checks whether a currently executable action's candidate removes a surface.
+    ///
+    /// A fixed host can refuse such an application request without duplicating
+    /// graph topology rules. This read-only preflight grants no authority and
+    /// changes no layout, native state or input sequence. Stale, foreign and
+    /// ordinarily rejected actions return `false`, preserving their normal
+    /// submitted result. Native creation uses its own source-retaining protocol.
+    /// The submitted action still revalidates its exact session and revision.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if candidate preparation violates an internal invariant.
+    pub fn action_removes_surface(
+        &self,
+        action: &PreparedDockAction,
+        surface: crate::model::SurfaceId,
+    ) -> Result<bool, DockspaceRuntimeError> {
+        self.engine
+            .action_removes_surface(action, surface)
+            .map_err(Into::into)
+    }
+
     /// Prepares one revision-bound move action from the published workspace.
-    pub const fn prepare_dock_item(
+    pub fn prepare_dock_item(
         &self,
         item: crate::ids::ItemId,
         placement: DockPlacement,
@@ -354,7 +392,7 @@ impl DockspaceSession {
     }
 
     /// Prepares one complete-root move against the exact published workspace version.
-    pub const fn prepare_dock_root(
+    pub fn prepare_dock_root(
         &self,
         root: crate::ids::RootId,
         placement: DockPlacement,
@@ -370,7 +408,7 @@ impl DockspaceSession {
 
     /// Prepares one complete-root move to a native window against the published version.
     #[must_use]
-    pub const fn prepare_move_root_to_new_window(
+    pub fn prepare_move_root_to_new_window(
         &self,
         root: crate::ids::RootId,
         placement: NativeWindowPlacement,
@@ -401,7 +439,7 @@ impl DockspaceSession {
     #[must_use]
     pub fn prepare_move_to_new_window(
         &self,
-        source: NativeTearOffSource,
+        source: DockMoveSource,
         placement: NativeWindowPlacement,
     ) -> PreparedDockAction {
         self.engine
@@ -414,16 +452,13 @@ impl DockspaceSession {
     /// Missing facts produce an ordinary unavailable action rather than invented
     /// desktop coordinates. Source ownership follows the same first-live barrier.
     #[must_use]
-    pub fn prepare_move_to_new_window_default(
-        &self,
-        source: NativeTearOffSource,
-    ) -> PreparedDockAction {
+    pub fn prepare_move_to_new_window_default(&self, source: DockMoveSource) -> PreparedDockAction {
         self.engine.prepare_move_to_new_window(source, None)
     }
 
     /// Prepares one revision-bound complete-root contained-floating action.
     #[must_use]
-    pub const fn prepare_float_root(
+    pub fn prepare_float_root(
         &self,
         root: crate::ids::RootId,
         surface: crate::ids::SurfaceId,
@@ -432,7 +467,7 @@ impl DockspaceSession {
     }
 
     /// Prepares one revision-bound contained-floating action.
-    pub const fn prepare_float_item(
+    pub fn prepare_float_item(
         &self,
         item: crate::ids::ItemId,
         surface: crate::ids::SurfaceId,

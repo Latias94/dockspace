@@ -956,6 +956,7 @@ fn real_eframe_output_capacity_preserves_text_when_shared_root_switches_to_the_o
 }
 
 struct RebindingRootEntryTextApp {
+    receipt: Option<crate::NativeActionReceipt>,
     app: NativeDockspaceApp<EditorPanes>,
     host: Arc<DelayedTerminalHost>,
     calls: Arc<AtomicUsize>,
@@ -1016,7 +1017,10 @@ impl eframe::App for RebindingRootEntryTextApp {
                 "Root rebinding must keep the ordinary entry live: primary={primary:?}; cleanup={cleanup:?}"
             );
         });
-        if let Some(status) = self.app.take_action_status() {
+        if let Some(receipt) = &self.receipt
+            && let Ok(status) = receipt.try_recv()
+        {
+            self.receipt = None;
             assert!(matches!(
                 status.unwrap(),
                 crate::NativeActionStatus::LayoutReset { .. }
@@ -1049,9 +1053,11 @@ impl eframe::App for RebindingRootEntryTextApp {
                 ),
             ])
             .unwrap();
-            self.app
-                .request_layout_reset_rebinding_root(candidate, INCOMING)
-                .unwrap();
+            self.receipt = Some(
+                self.app
+                    .request_layout_reset_rebinding_root(candidate, INCOMING)
+                    .unwrap(),
+            );
             self.reset_queued = true;
         }
         let focused = ui.memory(|memory| memory.focused());
@@ -1172,6 +1178,7 @@ fn real_eframe_rebound_shared_root_keeps_idle_sibling_input_on_the_ordinary_entr
         },
         Box::new(move |_| {
             Ok(Box::new(RebindingRootEntryTextApp {
+                receipt: None,
                 app,
                 host,
                 calls,
@@ -1196,6 +1203,7 @@ fn real_eframe_rebound_shared_root_keeps_idle_sibling_input_on_the_ordinary_entr
 }
 
 struct BackpressureApp {
+    receipt: Option<crate::NativeActionReceipt>,
     app: NativeDockspaceApp<CountingPanes>,
     host: Arc<DelayedTerminalHost>,
     calls: Arc<AtomicUsize>,
@@ -1226,21 +1234,32 @@ impl eframe::App for BackpressureApp {
         let after = self.calls.load(Ordering::SeqCst);
         let retained = self.app.current_output_is_retained();
         let token = eframe::current_native_output_token().unwrap();
+        if let Some(receipt) = &self.receipt
+            && let Ok(result) = receipt.try_recv()
+        {
+            assert_eq!(
+                result.unwrap(),
+                crate::NativeActionStatus::StyleChanged {
+                    changed: true,
+                    geometry_changed: true,
+                }
+            );
+            self.receipt = None;
+            self.style_applied = true;
+        }
         let mut probe = lock(&self.host.probe);
         if probe.holding {
             if !self.style_queued {
-                self.app
-                    .request_style(DockStyle {
-                        tab_bar_height: 44.0,
-                        ..DockStyle::default()
-                    })
-                    .unwrap();
+                self.receipt = Some(
+                    self.app
+                        .request_style(DockStyle {
+                            tab_bar_height: 44.0,
+                            ..DockStyle::default()
+                        })
+                        .unwrap(),
+                );
                 self.style_queued = true;
             }
-            assert!(
-                self.app.take_action_status().is_none(),
-                "retained output cannot publish the queued style"
-            );
             assert!(
                 retained,
                 "a full core output slot must retain the framebuffer"
@@ -1257,16 +1276,6 @@ impl eframe::App for BackpressureApp {
                 self.host.release();
             }
         } else if probe.released {
-            if let Some(result) = self.app.take_action_status() {
-                assert_eq!(
-                    result.unwrap(),
-                    crate::NativeActionStatus::StyleChanged {
-                        changed: true,
-                        geometry_changed: true
-                    }
-                );
-                self.style_applied = true;
-            }
             if after > before && !retained && probe.resumed.is_none() {
                 assert!(after > probe.calls_at_hold);
                 probe.resumed = Some(token);
@@ -1338,6 +1347,7 @@ fn real_eframe_output_capacity_retains_framebuffer_and_resumes_pane_callbacks() 
         options,
         Box::new(move |_| {
             Ok(Box::new(BackpressureApp {
+                receipt: None,
                 app,
                 host,
                 calls,

@@ -200,17 +200,52 @@ impl PreparedTab {
     }
 }
 
-/// Semantic content requested for one managed native child window.
+/// Existing content moved by a programmatic docking command.
+///
+/// Captured tabs and groups retain their original session and revision for every
+/// destination. A root denotes its complete layout rather than a representative pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NativeTearOffSource {
+pub enum DockMoveSource {
     /// Move one open item, leaving the rest of its group in place.
     Item(ItemId),
     /// Move one previously captured complete tabs group.
     Tabs(PreparedTabsGroup),
     /// Move one exact direct tab, preserving an entire layout subtree.
     Tab(PreparedTab),
-    /// Move one complete root, preserving its stable root identity.
+    /// Move one complete root and all its layout descendants.
+    ///
+    /// Rehoming into contained, native or rootless main presentation retains the
+    /// root identity. Docking into an existing layout may absorb it into the
+    /// destination root; the committed outcome identifies both roots.
     Root(RootId),
+}
+
+/// Destination for existing content, shared by menus and programmatic commands.
+///
+/// These values request a semantic move; they do not confer pointer, native-window,
+/// or presentation authority. Native transfers retain their source until first-live.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DockMoveTarget {
+    /// Dock into an existing layout or a rootless logical surface.
+    Dock {
+        /// Stable destination in the source's prepared workspace version.
+        placement: DockPlacement,
+        /// Center insertion of a captured group or a complete Tabs root.
+        ///
+        /// Item and direct-tab sources retain their exact scope. Edge placements
+        /// and Pane/Split/Grid roots always retain their structural behavior.
+        mode: TabGroupDockMode,
+    },
+    /// Float inside an existing logical surface using current core geometry.
+    Contained {
+        /// Logical surface that will contain the floating presentation.
+        surface: SurfaceId,
+    },
+    /// Begin transfer to a newly managed native window.
+    Native {
+        /// Explicit desktop bounds, or core-derived placement from current facts.
+        placement: Option<NativeWindowPlacement>,
+    },
 }
 
 /// Product-visible result of one accepted semantic docking action.
@@ -546,6 +581,12 @@ impl PreparedDockAction {
         self.expected
     }
 
+    pub(crate) const fn parts(
+        &self,
+    ) -> (EngineAuthorityDomainId, WorkspaceVersion, &ProductAction) {
+        (self.authority_domain, self.expected, &self.action)
+    }
+
     pub(crate) fn into_parts(self) -> (EngineAuthorityDomainId, WorkspaceVersion, ProductAction) {
         (self.authority_domain, self.expected, self.action)
     }
@@ -589,12 +630,13 @@ pub(crate) enum ProductAction {
     DockRoot {
         root: RootId,
         placement: DockPlacement,
+        mode: TabGroupDockMode,
     },
     DockBackRoot {
         root: RootId,
     },
     TearOffNative {
-        source: NativeTearOffSource,
+        source: DockMoveSource,
         placement: Option<NativeWindowPlacement>,
     },
     FloatRoot {

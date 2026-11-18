@@ -194,7 +194,7 @@ impl DockEngine {
             return Err(DockspaceActionRejection::DockBackUnavailable { root });
         };
         let placement = self.derive_product_dock_back_placement(root, surface)?;
-        self.compile_product_root_move(root, placement)
+        self.compile_product_root_move(root, placement, crate::model::TabGroupDockMode::MergeTabs)
     }
 
     fn derive_product_dock_back_placement(

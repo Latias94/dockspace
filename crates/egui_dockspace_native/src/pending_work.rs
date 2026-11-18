@@ -13,7 +13,7 @@ pub enum NativeWaitReason {
     Stopped,
     /// The application root lacks an exact currently presented output.
     RootPresentation,
-    /// An application command or its unconsumed result owns the command slot.
+    /// An application command is executing or waiting for presentation.
     ApplicationAction,
     /// A local UI action remains retained across output passes.
     LocalAction,

@@ -13,9 +13,10 @@ use std::time::{Duration, Instant};
 
 use dockspace::geometry::{LogicalRect, PhysicalRect};
 use dockspace::model::{
-    DockAnchor, DockPlacement, DockspaceActionOutcome, DockspaceContainedLayout, DockspaceLayout,
-    DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, FloatingPresentationId, ItemId,
-    NativeWindowPlacement, RootId, SurfaceId,
+    DockAnchor, DockMoveSource, DockMoveTarget, DockPlacement, DockspaceActionOutcome,
+    DockspaceContainedLayout, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
+    DockspaceSurfaceLayout, FloatingPresentationId, ItemId, NativeWindowPlacement, RootId,
+    SurfaceId, TabGroupDockMode,
 };
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
@@ -124,6 +125,7 @@ impl SourceOwnership {
 }
 
 struct PressureState {
+    receipt: Option<egui_dockspace_native::NativeActionReceipt>,
     scenario: Scenario,
     phase: Phase,
     buffered: VecDeque<eframe::NativeOutputResult>,
@@ -159,6 +161,7 @@ struct PressureState {
 impl PressureState {
     fn new(scenario: Scenario) -> Self {
         Self {
+            receipt: None,
             scenario,
             phase: Phase::Bootstrap,
             buffered: VecDeque::with_capacity(BUFFERED_TERMINALS),
@@ -550,7 +553,13 @@ impl PressureApp {
         if !state.scenario.expects_success() && state.phase == Phase::Draining {
             return Ok(());
         }
-        if let Some(status) = runtime.take_action_status() {
+        let result = egui_native_smoke::poll_action_receipt(&mut state.receipt).or_else(|| {
+            state
+                .combined
+                .as_mut()
+                .and_then(|combined| egui_native_smoke::poll_action_receipt(&mut combined.receipt))
+        });
+        if let Some(status) = result {
             match status {
                 Ok(NativeActionStatus::Dock(DockspaceActionStatus::Applied(ref outcome)))
                     if state
@@ -589,14 +598,18 @@ impl PressureApp {
                     return Err("the child source has unexpected surface or root ownership".into());
                 }
                 state.source_ownership = Some(source);
-                runtime
-                    .request_command(NativeCommand::MoveRootToNewWindow {
-                        root: CHILD_ROOT,
-                        placement: NativeWindowPlacement::new(
-                            PhysicalRect::new(720.0, 100.0, 380.0, 280.0).unwrap(),
-                        ),
-                    })
-                    .map_err(|error| format!("tear-off request: {error}"))?;
+                state.receipt = Some(
+                    runtime
+                        .request_command(NativeCommand::Move {
+                            source: DockMoveSource::Root(CHILD_ROOT),
+                            target: DockMoveTarget::Native {
+                                placement: Some(NativeWindowPlacement::new(
+                                    PhysicalRect::new(720.0, 100.0, 380.0, 280.0).unwrap(),
+                                )),
+                            },
+                        })
+                        .map_err(|error| format!("tear-off request: {error}"))?,
+                );
                 state.phase = Phase::AwaitChild;
             }
             Phase::Filling if state.root_control_seen => {
@@ -612,12 +625,17 @@ impl PressureApp {
                     && backlog.ordinary() > 0
                     && backlog.control() == 0
                 {
-                    runtime
-                        .request_command(NativeCommand::DockRoot {
-                            root: CHILD_ROOT,
-                            placement: DockPlacement::Center(DockAnchor::Item(MAIN_ITEM)),
-                        })
-                        .map_err(|error| format!("redock after output pressure: {error}"))?;
+                    state.receipt = Some(
+                        runtime
+                            .request_command(NativeCommand::Move {
+                                source: DockMoveSource::Root(CHILD_ROOT),
+                                target: DockMoveTarget::Dock {
+                                    placement: DockPlacement::Center(DockAnchor::Item(MAIN_ITEM)),
+                                    mode: TabGroupDockMode::MergeTabs,
+                                },
+                            })
+                            .map_err(|error| format!("redock after output pressure: {error}"))?,
+                    );
                     state.phase = Phase::AwaitRedock;
                     eprintln!("output-pressure: ordinary output owners drained; redocking");
                 }

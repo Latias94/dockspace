@@ -8,17 +8,18 @@ use dockspace::model::ItemId;
 fn layout_checkpoints_remain_read_only_while_busy_and_after_fatal_shutdown() {
     let app = app();
     let surface = SurfaceId::new(1);
-    app.request_command(crate::NativeCommand::SelectItem {
-        item: ItemId::new(1),
-    })
-    .unwrap();
+    let app_receipt = app
+        .request_command(crate::NativeCommand::SelectItem {
+            item: ItemId::new(1),
+        })
+        .unwrap();
     let pending = app.pending_work();
     let backlog = app.output_backlog();
     let before = app.with_view(|view| view.to_layout());
     assert_eq!(app.pending_work(), pending);
     assert_eq!(app.output_backlog(), backlog);
     assert_eq!(app.error_kind(), None);
-    assert!(app.take_action_status().is_none());
+    assert!(app_receipt.try_recv().ok().is_none());
     {
         let mut state = lock_state(&app.state);
         state.stop_current_output(
@@ -88,7 +89,6 @@ fn layout_checkpoints_remain_read_only_while_busy_and_after_fatal_shutdown() {
     )
     .unwrap();
     assert_eq!(rebuilt.error_kind(), None);
-    assert!(rebuilt.take_action_status().is_none());
     rebuilt.with_view(|view| assert!(view.item(ItemId::new(1)).unwrap().is_active()));
     assert!(app.error_kind().is_some());
 }

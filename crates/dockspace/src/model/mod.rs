@@ -15,8 +15,8 @@ mod visibility_tests;
 pub use crate::graph::{InvalidSplitWeight, InvalidSplitWeights, TabLabel};
 pub use crate::ids::{FloatingPresentationId, ItemId, NodeKey, RootId, SurfaceId, TabKey};
 pub use action::{
-    DockAnchor, DockEdge, DockFraction, DockPlacement, DockspaceActionOutcome,
-    DockspaceActionRejection, InvalidDockFraction, LogicalSurfaceRejection, NativeTearOffSource,
+    DockAnchor, DockEdge, DockFraction, DockMoveSource, DockMoveTarget, DockPlacement,
+    DockspaceActionOutcome, DockspaceActionRejection, InvalidDockFraction, LogicalSurfaceRejection,
     NativeWindowPlacement, PreparedDockAction, PreparedTab, PreparedTabsGroup, TabGroupDockMode,
 };
 pub(crate) use action::{PreparedDockActionAuthorityMismatch, ProductAction};
