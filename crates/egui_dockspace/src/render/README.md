@@ -86,6 +86,12 @@ match the previous pass exactly; a newer unpresented pass cannot lend its facts
 to an older accepted output. Non-identity emission or input layer coordinates
 cancel the pointer stream rather than supplying raw manipulation coordinates
 to an existing gesture.
+
+The emitted output also retains the UI's clip rectangle. New deliveries and
+drop targets must be inside that presented clip. A newly presented clip that
+excludes the last pointer position also revokes the stationary drop target.
+Captured gestures can still receive position updates outside it.
+
 At each input point, the official adapter checks interactive widgets from front
 to back. A direct owned widget sensing both click and drag shields unknown
 widgets behind it. Unknown widgets in front still block. Single-lane overlaps
@@ -100,6 +106,7 @@ declarations cannot shield unknown interactive widgets.
 Interactive widgets on other layers retain their conservative blocking role,
 including custom foreground Uis that do not register an Area. Their interaction
 radius scales with the layer transform, matching egui's local-coordinate search.
+Layers backed by a click-through `egui::Area` are excluded from this check.
 
 ### Child UI layout precision
 

@@ -7,6 +7,7 @@ use crate::pass_settlement::{
     ProductPassEnrollment, ProductPassSettlementBatch, ProductPassSettlementRun,
     ProductPointerPacket, RUN_SCOPE_TAG, pointer_packet,
 };
+use crate::pointer::ProductPointerPresentation;
 use crate::render;
 use crate::{
     DockspaceCapability, DockspaceError, DockspaceResponse, DockspaceUnavailableReason, PaneView,
@@ -218,10 +219,7 @@ struct EncodedPass {
     receipt: Option<SurfaceProgramExecutionReceipt>,
     proof: Option<crate::output_proof::SurfaceOutputProof>,
     missing: BTreeSet<ItemId>,
-    receivers: Vec<render::ProductReceiverBinding>,
-    focus_bindings: Vec<(ItemId, Id)>,
-    layer: egui::LayerId,
-    coordinates_supported: bool,
+    presentation: ProductPointerPresentation,
     pane_focus: Option<PreparedPaneFocusObservation>,
     pending_focus: Option<PendingPaneFocusObservation>,
     focus_needs_repaint: bool,
@@ -242,6 +240,8 @@ impl Dockspace {
     /// its raw input and producer watermark remain in the discarded candidate.
     /// If egui consumed that gesture's terminal input, the next successful run
     /// cancels the gesture and preserves the layout.
+    /// A consumed pointer exit clears the old hover on recovery, leaving the
+    /// gesture available when a fresh pointer position arrives.
     ///
     /// Chrome actions produced during UI encoding enter a bounded queue for the
     /// next run. The returned response describes this run's single publication.
@@ -503,18 +503,14 @@ impl Dockspace {
                         };
                         let had_plan = paint.is_some();
                         let mut pass = EncodedPass {
+                            presentation: ProductPointerPresentation::new(
+                                ui,
+                                Some(claim.input_pass()),
+                            ),
                             claim,
                             receipt: None,
                             proof: capture.finish(ui.painter()),
                             missing,
-                            receivers: Vec::new(),
-                            focus_bindings: Vec::new(),
-                            layer: ui.layer_id(),
-                            coordinates_supported: context
-                                .layer_transform_to_global(ui.layer_id())
-                                .is_none_or(|transform| {
-                                    transform == egui::emath::TSTransform::IDENTITY
-                                }),
                             pane_focus: None,
                             pending_focus: None,
                             focus_needs_repaint: false,
@@ -527,8 +523,8 @@ impl Dockspace {
                         if let Some(paint) = paint {
                             pass.missing.extend(paint.missing_items);
                             pass.receipt = paint.execution_receipt;
-                            pass.receivers = paint.receivers;
-                            pass.focus_bindings = paint.pane_focus_bindings;
+                            pass.presentation.receivers = paint.receivers;
+                            pass.presentation.focus_bindings = paint.pane_focus_bindings;
                             pass.pane_focus = paint.pane_focus_observation;
                             pass.pending_focus = paint.pane_focus_pending;
                             pass.focus_needs_repaint = paint.pane_focus_needs_repaint;
@@ -595,16 +591,7 @@ impl Dockspace {
         );
         self.ui_actions
             .publish(pending_actions, run_sequence.unwrap(), &report);
-        let painted = pointer.settle_report(
-            &mut report,
-            crate::pointer::ProductPointerPresentation {
-                layer: pass.layer,
-                input_pass: Some(pass.claim.input_pass()),
-                coordinates_supported: pass.coordinates_supported,
-                receivers: pass.receivers,
-                focus_bindings: pass.focus_bindings,
-            },
-        );
+        let painted = pointer.settle_report(&mut report, pass.presentation);
         self.pointer = pointer;
         self.pending_focus.settle(&accepted_focus, &report);
         crate::pointer::schedule_pointer_continuation(

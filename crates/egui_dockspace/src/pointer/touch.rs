@@ -198,6 +198,25 @@ impl TouchContacts {
             )
         })
     }
+
+    pub(super) fn clipped_moves(
+        &self,
+        became_clipped: impl Fn(Pos2) -> bool,
+        docking_enabled: Option<bool>,
+        group_dock_mode: Option<TabGroupDockMode>,
+    ) -> impl Iterator<Item = PointerSample> {
+        self.active
+            .values()
+            .filter(move |contact| became_clipped(contact.position))
+            .map(move |&contact| {
+                sample(
+                    contact,
+                    SurfacePointerEvent::Moved,
+                    docking_enabled,
+                    group_dock_mode,
+                )
+            })
+    }
 }
 
 fn sample(

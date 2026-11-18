@@ -15,7 +15,10 @@ use dockspace::runtime::{
 };
 use egui::{Context, Event, Id, LayerId, Pos2, RawInput, Rect, Sense};
 
-use super::{InputPassId, PointerScene, ProductPointer, ProductPointerInputSnapshot};
+use super::{
+    InputPassId, PointerScene, ProductPointer, ProductPointerInputSnapshot,
+    ProductPointerPresentation,
+};
 use crate::render::ProductReceiverBinding;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -96,19 +99,21 @@ fn emit(
     let layer = LayerId::new(egui::Order::Background, Id::unique("output-layer"));
     pointer.emitted(
         output.presentation_artifact(),
-        layer,
-        None,
-        true,
-        (0..count)
-            .map(|index| ProductReceiverBinding {
-                interact_rect: Rect::from_min_max(Pos2::ZERO, Pos2::new(100.0, 100.0)),
-                interactive: true,
-                widget_id: Id::unique(("owned-table", index)),
-                layer_id: layer,
-                receiver,
-            })
-            .collect(),
-        vec![(ITEM, Id::unique("pane-focus"))],
+        ProductPointerPresentation {
+            layer,
+            input_pass: None,
+            pointer_clip: Some(Rect::EVERYTHING),
+            receivers: (0..count)
+                .map(|index| ProductReceiverBinding {
+                    interact_rect: Rect::from_min_max(Pos2::ZERO, Pos2::new(100.0, 100.0)),
+                    interactive: true,
+                    widget_id: Id::unique(("owned-table", index)),
+                    layer_id: layer,
+                    receiver,
+                })
+                .collect(),
+            focus_bindings: vec![(ITEM, Id::unique("pane-focus"))],
+        },
     );
 }
 
@@ -270,7 +275,7 @@ fn a_pointer_packet_joins_content_ownership_once_for_all_edges() {
                 artifact: output.presentation_artifact(),
                 layer: bindings[0].layer_id,
                 input_pass: Some(pass),
-                coordinates_supported: true,
+                pointer_clip: Some(Rect::EVERYTHING),
                 receivers: bindings.into(),
                 focus_bindings: Arc::from([]),
             };
@@ -311,7 +316,14 @@ fn a_pointer_packet_joins_content_ownership_once_for_all_edges() {
                         .show(ui.ctx(), |ui| {
                             let frame = session.begin_host_frame().unwrap();
                             let prepared = pointer
-                                .prepare_packet(&frame, SURFACE, ui, &packet, &Default::default())
+                                .prepare_packet(
+                                    &frame,
+                                    SURFACE,
+                                    ui,
+                                    &packet,
+                                    None,
+                                    &Default::default(),
+                                )
                                 .unwrap();
                             assert_eq!(prepared.raw.len(), 128);
                             assert!(
@@ -348,7 +360,7 @@ fn packet_join_keeps_equal_rectangles_distinct_without_repeating_per_point() {
                 artifact: output.presentation_artifact(),
                 layer: bindings[0].layer_id,
                 input_pass: None,
-                coordinates_supported: true,
+                pointer_clip: Some(Rect::EVERYTHING),
                 receivers: bindings.into(),
                 focus_bindings: Arc::from([]),
             };
@@ -395,7 +407,7 @@ fn ownership_join_keeps_unproven_or_noninteractive_widget_rectangles_blocked() {
             artifact: output.presentation_artifact(),
             layer: binding.layer_id,
             input_pass: None,
-            coordinates_supported: true,
+            pointer_clip: Some(Rect::EVERYTHING),
             receivers: Arc::from([changed]),
             focus_bindings: Arc::from([]),
         };
@@ -467,7 +479,7 @@ fn ordered_ownership_requires_both_capture_lanes_to_shield_unknown_widgets() {
             artifact: output.presentation_artifact(),
             layer: binding.layer_id,
             input_pass: None,
-            coordinates_supported: true,
+            pointer_clip: Some(Rect::EVERYTHING),
             receivers: Arc::from([binding]),
             focus_bindings: Arc::from([]),
         };
@@ -575,7 +587,7 @@ fn nearby_undeclared_widget_blocks_a_single_lane_owned_drag() {
                     artifact: output.presentation_artifact(),
                     layer: binding.layer_id,
                     input_pass: None,
-                    coordinates_supported: true,
+                    pointer_clip: Some(Rect::EVERYTHING),
                     receivers: Arc::from([binding]),
                     focus_bindings: Arc::from([]),
                 };
@@ -659,7 +671,7 @@ fn scaled_foreign_layer_nearby_widget_blocks_a_single_lane_owned_drag() {
         artifact: output.presentation_artifact(),
         layer: binding.layer_id,
         input_pass: None,
-        coordinates_supported: true,
+        pointer_clip: Some(Rect::EVERYTHING),
         receivers: Arc::from([binding]),
         focus_bindings: Arc::from([]),
     };

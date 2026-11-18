@@ -44,7 +44,13 @@ struct Fixture {
     context: Context,
     dockspace: Dockspace,
     tick: u32,
-    separate_overlay_layer: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum OverlayLayer {
+    Shared,
+    Foreground,
+    ClickThroughArea,
 }
 
 impl Fixture {
@@ -71,11 +77,10 @@ impl Fixture {
             context,
             dockspace,
             tick: 0,
-            separate_overlay_layer: false,
         }
     }
 
-    fn frame(&mut self, events: Vec<Event>, overlay: Option<Rect>) -> FullOutput {
+    fn frame(&mut self, events: Vec<Event>, overlay: Option<(Rect, OverlayLayer)>) -> FullOutput {
         self.tick += 1;
         let (mut output, receipt) = crate::run_ui(
             &self.context,
@@ -89,7 +94,7 @@ impl Fixture {
                 self.dockspace
                     .show_single_surface(SURFACE, ui, &mut UndeclaredBackground)
                     .unwrap();
-                if let Some(rect) = overlay {
+                if let Some((rect, layer)) = overlay {
                     let show = |ui: &mut Ui| {
                         ui.interact(
                             rect,
@@ -97,16 +102,27 @@ impl Fixture {
                             Sense::click_and_drag(),
                         );
                     };
-                    if self.separate_overlay_layer {
-                        ui.scope_builder(
-                            egui::UiBuilder::new().layer_id(egui::LayerId::new(
-                                egui::Order::Foreground,
-                                Id::unique("overlay-without-an-area"),
-                            )),
-                            show,
-                        );
-                    } else {
-                        show(ui);
+                    match layer {
+                        OverlayLayer::Shared => show(ui),
+                        OverlayLayer::Foreground => {
+                            ui.scope_builder(
+                                egui::UiBuilder::new().layer_id(egui::LayerId::new(
+                                    egui::Order::Foreground,
+                                    Id::unique("overlay-without-an-area"),
+                                )),
+                                show,
+                            );
+                        }
+                        OverlayLayer::ClickThroughArea => {
+                            egui::Area::new(Id::unique("click-through-overlay"))
+                                .order(egui::Order::Foreground)
+                                .fixed_pos(rect.min)
+                                .interactable(false)
+                                .show(ui.ctx(), |ui| {
+                                    ui.allocate_rect(rect, Sense::hover());
+                                    show(ui);
+                                });
+                        }
                     }
                 }
             },
@@ -137,9 +153,13 @@ fn covered_undeclared_content_does_not_block_foreground_floating_chrome() {
         (Role::TitleBar, "Tabs"),
         (Role::Splitter, "Resize floating right edge"),
     ] {
-        for (foreground, separate_layer) in [(false, false), (true, false), (true, true)] {
+        for (layer, blocked) in [
+            (None, false),
+            (Some(OverlayLayer::Shared), true),
+            (Some(OverlayLayer::Foreground), true),
+            (Some(OverlayLayer::ClickThroughArea), false),
+        ] {
             let mut fixture = Fixture::new();
-            fixture.separate_overlay_layer = separate_layer;
             let mut output = fixture.frame(Vec::new(), None);
             for _ in 0..3 {
                 output = fixture.frame(Vec::new(), None);
@@ -159,20 +179,30 @@ fn covered_undeclared_content_does_not_block_foreground_floating_chrome() {
                 ((title.x0 + title.x1) * 0.5) as f32,
                 ((title.y0 + title.y1) * 0.5) as f32,
             );
-            let overlay = foreground.then(|| Rect::from_center_size(point, vec2(80.0, 20.0)));
+            let overlay =
+                layer.map(|layer| (Rect::from_center_size(point, vec2(80.0, 20.0)), layer));
             fixture.frame(vec![Event::PointerMoved(point)], overlay);
             fixture.frame(vec![Event::PointerMoved(point)], overlay);
             fixture.context.viewport(|viewport| {
+                if matches!(layer, Some(OverlayLayer::ClickThroughArea)) {
+                    let widget = viewport
+                        .prev_pass
+                        .widgets
+                        .get(Id::unique("undeclared-foreground-control"))
+                        .unwrap();
+                    assert!(widget.enabled && widget.sense.interactive());
+                    assert!(widget.interact_rect.contains(point));
+                }
                 assert_eq!(
                     viewport.hits.drag.unwrap().id.value(),
-                    if foreground {
+                    if blocked {
                         Id::unique("undeclared-foreground-control").value()
                     } else {
                         title_id.0
                     },
-                    "the real egui hit must distinguish the covered canvas from the overlay"
+                    "the real egui hit must follow layer interaction: {layer:?}"
                 );
-                if foreground || role == Role::TitleBar {
+                if blocked || role == Role::TitleBar {
                     assert_eq!(
                         viewport.hits.click.unwrap().id.value(),
                         viewport.hits.drag.unwrap().id.value()
@@ -181,7 +211,11 @@ fn covered_undeclared_content_does_not_block_foreground_floating_chrome() {
             });
             let before = fixture.bounds();
             fixture.frame(vec![button(point, true)], overlay);
-            assert_eq!(fixture.dockspace.has_active_gesture(), !foreground);
+            assert_eq!(
+                fixture.dockspace.has_active_gesture(),
+                !blocked,
+                "{layer:?}"
+            );
             let moved = point + vec2(64.0, 32.0);
             fixture.frame(
                 vec![
@@ -193,7 +227,7 @@ fn covered_undeclared_content_does_not_block_foreground_floating_chrome() {
             fixture.frame(vec![button(moved, false)], overlay);
             fixture.frame(Vec::new(), overlay);
             let after = fixture.bounds();
-            if foreground {
+            if blocked {
                 assert_eq!(
                     after, before,
                     "an actual foreground widget must still block dragging"

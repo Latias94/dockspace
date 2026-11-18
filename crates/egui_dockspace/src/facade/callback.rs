@@ -5,6 +5,7 @@ use crate::error_detail::DockspaceErrorSource;
 use crate::pass_settlement::{
     PresentationSettlementFailure, ProductPassEnrollment, ProductPassSettlementBatch,
 };
+use crate::pointer::ProductPointerPresentation;
 use crate::render;
 use crate::{
     DockspaceCapability, DockspaceError, DockspaceResponse, DockspaceUnavailableReason, PaneView,
@@ -265,21 +266,15 @@ impl Dockspace {
         };
         self.ui_actions
             .publish(pending_actions, run_sequence, &report);
-        let output = pointer.settle_report(
-            &mut report,
-            crate::pointer::ProductPointerPresentation {
-                layer: ui.layer_id(),
-                input_pass: settlement_claim
-                    .as_ref()
-                    .map(crate::pass_settlement::ProductPassClaim::input_pass),
-                coordinates_supported: ui
-                    .ctx()
-                    .layer_transform_to_global(ui.layer_id())
-                    .is_none_or(|transform| transform == egui::emath::TSTransform::IDENTITY),
-                receivers: pointer_receivers,
-                focus_bindings,
-            },
+        let mut presentation = ProductPointerPresentation::new(
+            ui,
+            settlement_claim
+                .as_ref()
+                .map(crate::pass_settlement::ProductPassClaim::input_pass),
         );
+        presentation.receivers = pointer_receivers;
+        presentation.focus_bindings = focus_bindings;
+        let output = pointer.settle_report(&mut report, presentation);
         self.pointer = pointer;
         self.pending_focus.settle(&accepted_focus, &report);
         deferred_focus.apply(ui.ctx());

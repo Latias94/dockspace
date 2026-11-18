@@ -16,7 +16,8 @@ use dockspace::runtime::{
     SurfacePresentationArtifact, SurfacePresentationCommit,
 };
 use egui::{
-    Context, Event, Id, LayerId, Modifiers, PointerButton, Pos2, Rect, Ui, WidgetRect, WidgetRects,
+    AreaState, Context, Event, Id, LayerId, Modifiers, PointerButton, Pos2, Rect, Ui, WidgetRect,
+    WidgetRects,
 };
 
 use crate::focus::DeferredTabFocus;
@@ -53,23 +54,55 @@ pub(crate) struct ProductPointerInputSnapshot {
 /// owned-run facades from drifting apart while their focus and repaint
 /// lifecycles remain intentionally separate.
 pub(crate) struct ProductPointerPresentation {
-    pub(crate) layer: LayerId,
-    pub(crate) input_pass: Option<InputPassId>,
-    pub(crate) coordinates_supported: bool,
+    layer: LayerId,
+    input_pass: Option<InputPassId>,
+    pointer_clip: Option<Rect>,
     pub(crate) receivers: Vec<ProductReceiverBinding>,
     pub(crate) focus_bindings: Vec<(dockspace::model::ItemId, Id)>,
+}
+
+impl ProductPointerPresentation {
+    pub(crate) fn new(ui: &Ui, input_pass: Option<InputPassId>) -> Self {
+        let layer = ui.layer_id();
+        let pointer_clip = ui
+            .ctx()
+            .layer_transform_to_global(layer)
+            .is_none_or(|transform| transform == egui::emath::TSTransform::IDENTITY)
+            .then(|| ui.clip_rect());
+        Self {
+            layer,
+            input_pass,
+            pointer_clip,
+            receivers: Vec::new(),
+            focus_bindings: Vec::new(),
+        }
+    }
+}
+
+fn pointer_clip_contains(clip: Rect, point: Pos2) -> bool {
+    clip.is_positive() && clip.contains(point)
 }
 
 impl ProductPointerInputSnapshot {
     pub(crate) fn capture(context: &Context) -> Self {
         let widgets = context.viewport(|viewport| viewport.prev_pass.widgets.clone());
         let interaction_radius = context.global_style().interaction.interact_radius;
+        // egui excludes click-through areas from its widget hit test even
+        // when their children register interactive senses.
+        let click_through_layers = widgets
+            .layer_ids()
+            .filter(|layer| {
+                AreaState::load(context, layer.id).is_some_and(|area| !area.interactable)
+            })
+            .collect::<HashSet<_>>();
         let (transformed_layers, layer_at, interactive_layers) = context.memory(|memory| {
             let areas = memory.areas().clone();
             let transforms = memory.to_global.clone();
             let interactive_layers = widgets
                 .layers()
-                .filter(|(layer, _)| memory.allows_interaction(**layer))
+                .filter(|(layer, _)| {
+                    !click_through_layers.contains(layer) && memory.allows_interaction(**layer)
+                })
                 .flat_map(|(layer, widgets)| {
                     let transforms = &transforms;
                     widgets.iter().filter_map(move |widget| {
@@ -222,7 +255,7 @@ struct PointerScene {
     artifact: SurfacePresentationArtifact,
     layer: LayerId,
     input_pass: Option<InputPassId>,
-    coordinates_supported: bool,
+    pointer_clip: Option<Rect>,
     receivers: Arc<[ProductReceiverBinding]>,
     focus_bindings: Arc<[(dockspace::model::ItemId, Id)]>,
 }
@@ -250,6 +283,7 @@ pub(crate) struct ProductPointer {
 #[derive(Clone, Default)]
 struct PendingPointerRecovery {
     cancelled_streams: BTreeSet<SurfacePointerId>,
+    generic_position_lost: bool,
     paused_docking: bool,
     changed_group_mode: Option<TabGroupDockMode>,
 }
@@ -418,22 +452,18 @@ impl ProductPointer {
         };
     }
 
-    pub(crate) fn emitted(
+    fn emitted(
         &mut self,
         artifact: SurfacePresentationArtifact,
-        layer: LayerId,
-        input_pass: Option<InputPassId>,
-        coordinates_supported: bool,
-        receivers: Vec<ProductReceiverBinding>,
-        focus_bindings: Vec<(dockspace::model::ItemId, Id)>,
+        presentation: ProductPointerPresentation,
     ) {
         self.pending.push(PointerScene {
             artifact,
-            layer,
-            input_pass,
-            coordinates_supported,
-            receivers: receivers.into(),
-            focus_bindings: focus_bindings.into(),
+            layer: presentation.layer,
+            input_pass: presentation.input_pass,
+            pointer_clip: presentation.pointer_clip,
+            receivers: presentation.receivers.into(),
+            focus_bindings: presentation.focus_bindings.into(),
         });
     }
 
@@ -445,14 +475,7 @@ impl ProductPointer {
         let output = report.take_painted_outputs().pop();
         self.observe(report.surface_presentation_commits());
         if let Some(output) = output.as_ref() {
-            self.emitted(
-                output.presentation_artifact(),
-                presentation.layer,
-                presentation.input_pass,
-                presentation.coordinates_supported,
-                presentation.receivers,
-                presentation.focus_bindings,
-            );
+            self.emitted(output.presentation_artifact(), presentation);
         }
         output
     }
@@ -512,6 +535,7 @@ impl ProductPointer {
         surface: SurfaceId,
         ui: &Ui,
     ) -> Option<PreparedProductPointerInput> {
+        let previous_clip = self.presented.as_ref().and_then(|scene| scene.pointer_clip);
         draft.sync_presented(frame, surface);
         let packet = pointer_packet(ui)?;
         let previous_pass = self.observed_through_pass;
@@ -538,7 +562,8 @@ impl ProductPointer {
             if previous_pass.is_none() || input_gap {
                 draft.observed_modifiers = Some(packet.initial_modifiers());
             }
-            let input = draft.prepare_packet(frame, surface, ui, &packet, &self.recovery);
+            let input =
+                draft.prepare_packet(frame, surface, ui, &packet, previous_clip, &self.recovery);
             if let Ok(input) = &input {
                 // egui has already consumed the input. Keep the observations
                 // needed for recovery until the draft publishes their effects.
@@ -567,6 +592,11 @@ impl ProductPointer {
     fn record_uncommitted_input(&mut self, edges: &[Edge]) {
         for edge in edges {
             match edge.event {
+                SurfacePointerEvent::Moved
+                    if edge.pointer == GENERIC_POINTER && edge.point.is_none() =>
+                {
+                    self.recovery.generic_position_lost = true;
+                }
                 SurfacePointerEvent::DockingEnabledChanged { enabled: false } => {
                     self.recovery.paused_docking = true;
                 }
@@ -623,6 +653,7 @@ impl ProductPointer {
         surface: SurfaceId,
         ui: &Ui,
         packet: &ProductPointerPacket,
+        previous_clip: Option<Rect>,
         recovery: &PendingPointerRecovery,
     ) -> Result<PreparedPointerEdges, DockspaceRuntimeError> {
         let current = frame.presented_surface(surface);
@@ -646,7 +677,7 @@ impl ProductPointer {
         let coordinates_supported = snapshot.identity_layer(ui.layer_id())
             && current_identity_layer(ui.layer_id())
             && scene.is_none_or(|scene| {
-                scene.coordinates_supported
+                scene.pointer_clip.is_some()
                     && snapshot.identity_layer(scene.layer)
                     && current_identity_layer(scene.layer)
             });
@@ -654,7 +685,7 @@ impl ProductPointer {
         // Normalization may also fail. Neither boundary may replay this run
         // with a new contact identity or different receiver facts.
         self.rejected_run = Some(packet.clone());
-        let mut position = self.position;
+        let mut position = self.position.filter(|_| !recovery.generic_position_lost);
         let mut generic_phase = self.generic_phase;
         let host_focused = packet.focused();
         let mut observed_modifiers = if host_focused {
@@ -700,6 +731,16 @@ impl ProductPointer {
             }
             records.extend(touches.capture_changed(docking_enabled, group_dock_mode));
         }
+        if recovery.generic_position_lost && generic_phase.is_live() {
+            // Revoke the consumed position before any new coordinates arrive,
+            // keeping the stream available for reentry.
+            records.push(PointerSample::generic(
+                SurfacePointerEvent::Moved,
+                None,
+                docking_enabled,
+                group_dock_mode,
+            ));
+        }
         // A modifier round trip may have left the final keys unchanged while
         // invalidating the old preview. Apply that discontinuity before using
         // the current policy; neither step generates pointer motion.
@@ -741,6 +782,29 @@ impl ProductPointer {
                 generic_phase.is_live(),
                 mode,
             ));
+        }
+        if let Some((previous, current)) =
+            previous_clip.zip(scene.and_then(|scene| scene.pointer_clip))
+            && coordinates_supported
+            && frame.has_active_gesture()
+            && previous != current
+        {
+            // The newly presented clip can hide the last hovered point even
+            // when the platform has no fresh motion to report. A move at the
+            // retained point now carries blocked hover, with capture intact.
+            let became_clipped = |point| {
+                pointer_clip_contains(previous, point) && !pointer_clip_contains(current, point)
+            };
+            if generic_phase == GenericPointerPhase::Pressed && position.is_some_and(became_clipped)
+            {
+                records.push(PointerSample::generic(
+                    SurfacePointerEvent::Moved,
+                    position,
+                    docking_enabled,
+                    group_dock_mode,
+                ));
+            }
+            records.extend(touches.clipped_moves(became_clipped, docking_enabled, group_dock_mode));
         }
         for (event_index, event) in packet.events().iter().cloned().enumerate() {
             if let Event::WindowFocused(focused) = &event {
@@ -990,6 +1054,9 @@ impl ProductPointer {
                     && ui.is_enabled()
                     && scene.input_pass.is_some()
                     && scene.input_pass == packet.preceding_input_pass()
+                    && scene
+                        .pointer_clip
+                        .is_some_and(|clip| pointer_clip_contains(clip, position))
                     && (snapshot.layer_at)(position) == Some(scene.layer)
                     && coordinates_supported
                     && ownership

@@ -1080,6 +1080,194 @@ fn a_rejected_modifier_change_still_pauses_the_active_drag_on_recovery() {
 }
 
 #[test]
+fn a_rejected_pointer_exit_clears_the_preview_until_real_reentry() {
+    let (context, mut dockspace, mut panes, source, target_rect) = magnetic_modifier_fixture();
+    let target = Pos2::new(
+        egui::lerp(target_rect.x_range(), 0.28),
+        egui::lerp(target_rect.y_range(), 0.28),
+    );
+    let fill = dockspace.style().visuals.drop_fill.unwrap();
+    let before = dockspace.version();
+    let _ = run_pane_frame(
+        &context,
+        &mut dockspace,
+        &mut panes,
+        vec![Event::PointerMoved(source), pointer_button(source, true)],
+    );
+    let preview = run_pane_frame(
+        &context,
+        &mut dockspace,
+        &mut panes,
+        vec![Event::PointerMoved(target)],
+    );
+    assert!(rect_fill_count(&preview.output, fill) > 0);
+
+    // Reject the exit and the first recovery attempt.
+    for events in [vec![Event::PointerGone], Vec::new()] {
+        context
+            .plugin_or_default::<LateDiscardPlugin>()
+            .lock()
+            .strip_callback_compounds_once = true;
+        let error = dockspace
+            .run_single_surface(&context, input(events), SURFACE, &mut panes)
+            .err()
+            .expect("the output hook rejects this candidate");
+        assert_eq!(
+            error.kind(),
+            egui_dockspace::DockspaceErrorKind::OperationConflict
+        );
+        assert_eq!(dockspace.version(), before);
+        assert!(dockspace.has_active_gesture());
+    }
+
+    for _ in 0..2 {
+        let outside = run_pane_frame(&context, &mut dockspace, &mut panes, Vec::new());
+        assert_eq!(
+            rect_fill_count(&outside.output, fill),
+            0,
+            "a consumed pointer exit invalidates the previous stationary preview",
+        );
+        assert_eq!(dockspace.version(), before);
+        assert!(dockspace.has_active_gesture());
+    }
+    let reentered = run_pane_frame(
+        &context,
+        &mut dockspace,
+        &mut panes,
+        vec![Event::PointerMoved(target)],
+    );
+    assert!(rect_fill_count(&reentered.output, fill) > 0);
+    let _ = run_pane_frame(
+        &context,
+        &mut dockspace,
+        &mut panes,
+        vec![pointer_button(target, false)],
+    );
+    let first = dockspace.view().item(FIRST).unwrap();
+    assert!(first.tabs().unwrap().items().eq([FIRST, SECOND]));
+    assert!(!dockspace.has_active_gesture());
+}
+
+#[test]
+fn a_clipped_pane_cannot_receive_a_drop_outside_the_dockspace_clip() {
+    for (owned_run, clip_changes_under_pointer, touch) in [
+        (false, false, false),
+        (true, false, false),
+        (false, true, false),
+        (true, true, false),
+        (false, true, true),
+        (true, true, true),
+    ] {
+        let (context, mut dockspace, mut panes, source, target_rect) = magnetic_modifier_fixture();
+        let x = egui::lerp(target_rect.x_range(), 0.28);
+        let visible = Pos2::new(x, egui::lerp(target_rect.y_range(), 0.28));
+        let hidden = Pos2::new(x, egui::lerp(target_rect.y_range(), 0.58));
+        let clip_bottom = egui::lerp(target_rect.y_range(), 0.42);
+        let clip = Rect::from_min_max(Pos2::ZERO, Pos2::new(800.0, clip_bottom));
+        assert!(clip.contains(source) && clip.contains(visible));
+        assert!(target_rect.contains(hidden) && !clip.contains(hidden));
+
+        let fill = dockspace.style().visuals.drop_fill.unwrap();
+        let contact = |phase, pos| Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase,
+            pos,
+            force: None,
+        };
+        let mut time = context.input(|state| state.time);
+        let mut frame = |dockspace: &mut Dockspace, events, clip| {
+            let clip_ui = |ui: &mut Ui| ui.set_clip_rect(ui.clip_rect().intersect(clip));
+            let mut raw = input(events);
+            if touch {
+                time += 0.4;
+                raw.time = Some(time);
+            }
+            let mut output = if owned_run {
+                let (output, _) = dockspace
+                    .run_single_surface_with_ui(&context, raw, SURFACE, &mut panes, clip_ui)
+                    .unwrap();
+                let (output, receipt) = output.into_parts();
+                receipt.report(SurfacePresentationResult::Presented);
+                output
+            } else {
+                run_headless(&context, raw, |ui| {
+                    clip_ui(ui);
+                    dockspace
+                        .show_single_surface(SURFACE, ui, &mut panes)
+                        .unwrap();
+                })
+            };
+            output.textures_delta.clear();
+            output
+        };
+        let starting_clip = if clip_changes_under_pointer {
+            Rect::EVERYTHING
+        } else {
+            clip
+        };
+        for _ in 0..2 {
+            let _ = frame(&mut dockspace, Vec::new(), starting_clip);
+        }
+        let before = product_magnetic_snapshot(&dockspace);
+        for release_position in [hidden, visible] {
+            let crosses_clip = release_position == hidden && clip_changes_under_pointer;
+            let press_clip = if crosses_clip { starting_clip } else { clip };
+            let press = if touch {
+                vec![contact(egui::TouchPhase::Start, source)]
+            } else {
+                vec![Event::PointerMoved(source), pointer_button(source, true)]
+            };
+            let _ = frame(&mut dockspace, press, press_clip);
+            if touch {
+                // Long press arms a touch drag before its first move.
+                let _ = frame(&mut dockspace, Vec::new(), press_clip);
+            }
+            let initial_target = if crosses_clip { hidden } else { visible };
+            let moved = if touch {
+                contact(egui::TouchPhase::Move, initial_target)
+            } else {
+                Event::PointerMoved(initial_target)
+            };
+            let shown = frame(&mut dockspace, vec![moved], press_clip);
+            assert!(rect_fill_count(&shown, fill) > 0);
+            let outside = (release_position == hidden).then(|| {
+                let outside = if crosses_clip {
+                    let _ = frame(&mut dockspace, Vec::new(), clip);
+                    frame(&mut dockspace, Vec::new(), clip)
+                } else {
+                    frame(&mut dockspace, vec![Event::PointerMoved(hidden)], clip)
+                };
+                assert!(dockspace.has_active_gesture());
+                outside
+            });
+            let released = if touch {
+                contact(egui::TouchPhase::End, release_position)
+            } else {
+                pointer_button(release_position, false)
+            };
+            let _ = frame(&mut dockspace, vec![released], clip);
+            assert!(!dockspace.has_active_gesture());
+            if let Some(outside) = outside {
+                assert_eq!(
+                    product_magnetic_snapshot(&dockspace),
+                    before,
+                    "the clipped portion cannot receive the released tab",
+                );
+                assert_eq!(
+                    rect_fill_count(&outside, fill),
+                    0,
+                    "the presented clip clears the docking preview even at a stationary pointer",
+                );
+            }
+        }
+
+        let first = dockspace.view().item(FIRST).unwrap();
+        assert!(first.tabs().unwrap().items().eq([FIRST, SECOND]));
+    }
+}
+
+#[test]
 fn a_rejected_group_mode_round_trip_invalidates_the_old_preview() {
     let (context, mut dockspace, mut panes, _, target_rect) = magnetic_modifier_fixture();
     let stable = run_pane_frame(&context, &mut dockspace, &mut panes, Vec::new());
