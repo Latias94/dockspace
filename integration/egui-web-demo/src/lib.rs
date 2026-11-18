@@ -275,6 +275,7 @@ impl Workbench {
             "consoleRect": self.panes.panes.get(&editor::CONSOLE).and_then(|pane| pane.scroll_bounds).map(rect),
             "motion": motion,
             "tabPreset": format!("{:?}", self.dockspace.style().tab_preset),
+            "tabAccent": self.panes.tab_accent,
             "darkMode": frame.context.global_style().visuals.dark_mode,
         });
         let _ = test

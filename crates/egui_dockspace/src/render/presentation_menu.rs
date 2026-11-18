@@ -1,38 +1,27 @@
 //! Exact tab, group and root commands rendered with shared egui menu primitives.
 
-use dockspace::model::{DockspaceActionRejection, RootId, TabGroupDockMode, TabLabel};
+use dockspace::model::{RootId, TabGroupDockMode};
 use dockspace::runtime::{
-    ContainedPaintRecord, DockspacePresentationCommandKind,
-    DockspacePresentationCommandUnavailable, DockspacePresentationMenuAnchorKind,
-    DockspaceRuntimeError, DockspaceTabsGroupCommandKind, DockspaceVisualId,
-    DockspaceWorkspaceStamp, PanePaintRecord, PresentationCommandPaintRecord,
-    PresentationMenuAnchorPaintRecord, SurfacePaintDisposition, SurfacePaintProgramOperation,
-    SurfacePaintProgramStep, TabBarPaintRecord, TabPaintRecord,
+    ContainedPaintRecord, DockspacePresentationMenuAnchorKind, DockspaceRuntimeError,
+    DockspaceVisualId, DockspaceWorkspaceStamp, PanePaintRecord, PreparedSurfaceAction,
+    PresentationCommandPaintRecord, PresentationMenuAnchorPaintRecord, SurfacePaintDisposition,
+    TabBarPaintRecord, TabPaintRecord,
 };
 use egui::accesskit::{Action, HasPopup, Role};
-use egui::{Button, Key, PointerButton, Popup, Response, Sense, StrokeKind, UiBuilder};
+use egui::{Id, Key, PointerButton, Popup, Response, Sense, StrokeKind};
 
 use crate::touch_menu::take_touch_context_menu;
+use crate::{DockMenuAction, DockMenuTarget, TabBarId};
 
 use super::RenderContext;
 use super::actions::{effective_enabled, unambiguous_pointer_click};
 use super::geometry::{accesskit_bounds, egui_rect};
 
+mod entries;
 mod keyboard;
 mod popup;
 pub(super) use popup::invalidate_stale;
 pub(crate) use popup::prepare_layer;
-
-const COMMANDS: [DockspacePresentationCommandKind; 8] = [
-    DockspacePresentationCommandKind::Float,
-    DockspacePresentationCommandKind::MoveToNewWindow,
-    DockspacePresentationCommandKind::DockBack,
-    DockspacePresentationCommandKind::DockLeft,
-    DockspacePresentationCommandKind::DockRight,
-    DockspacePresentationCommandKind::DockTop,
-    DockspacePresentationCommandKind::DockBottom,
-    DockspacePresentationCommandKind::DockCenter,
-];
 
 #[derive(Clone, Copy)]
 enum Scope<'plan> {
@@ -49,24 +38,19 @@ struct MenuPage {
     focus_first: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Hash)]
 enum MenuPageKind {
     GroupTargets(TabGroupDockMode),
     ActivePanes,
     Pane(DockspaceVisualId),
 }
 
-struct GroupDestination {
-    visual: DockspaceVisualId,
-    label: String,
-    command: PresentationCommandPaintRecord,
-}
-
 enum MenuAction {
     Command(PresentationCommandPaintRecord),
-    Close,
+    Close(PreparedSurfaceAction),
     OpenPage(MenuPageKind),
     Back,
+    Custom(Id),
 }
 
 impl Scope<'_> {
@@ -92,12 +76,30 @@ impl Scope<'_> {
         }
     }
 
-    fn visual(self) -> dockspace::runtime::DockspaceVisualId {
+    fn visual(self) -> DockspaceVisualId {
         match self {
             Self::Root(anchor) => anchor.visual_id(),
             Self::Tabs(bar) => bar.visual_id(),
             Self::Tab(tab) => tab.visual_id(),
             Self::Pane(pane) => pane.visual_id(),
+        }
+    }
+
+    fn root(self) -> RootId {
+        match self {
+            Self::Root(anchor) => anchor.root(),
+            Self::Tabs(bar) => bar.root(),
+            Self::Tab(tab) => tab.root(),
+            Self::Pane(pane) => pane.root(),
+        }
+    }
+
+    fn target(self) -> DockMenuTarget {
+        match self {
+            Self::Root(_) => DockMenuTarget::Root,
+            Self::Tabs(bar) => DockMenuTarget::TabGroup(TabBarId(bar.visual_id())),
+            Self::Tab(tab) => DockMenuTarget::Tab(tab.key()),
+            Self::Pane(pane) => DockMenuTarget::Pane(pane.item()),
         }
     }
 }
@@ -342,76 +344,17 @@ fn paint_menu(
                         )
                 )
         });
-    let (active_panes, root_is_pane) = if let Scope::Root(anchor) = scope {
-        active_panes(context, anchor.root())?
-    } else {
-        (Vec::new(), false)
+    let Some(mut prepared) = entries::prepare(context, scope, page.map(|page| page.kind))? else {
+        Popup::close_id(context.ui.ctx(), popup_id);
+        context
+            .ui
+            .ctx()
+            .data_mut(|data| data.remove::<MenuPage>(page_id));
+        return Ok(());
     };
-    let menu_scope = if let Some(MenuPage {
-        kind: MenuPageKind::Pane(visual),
-        ..
-    }) = page
-    {
-        let Some(pane) = active_panes.iter().find(|pane| pane.visual_id() == visual) else {
-            Popup::close_id(context.ui.ctx(), popup_id);
-            context
-                .ui
-                .ctx()
-                .data_mut(|data| data.remove::<MenuPage>(page_id));
-            return Ok(());
-        };
-        Scope::Pane(*pane)
-    } else {
-        scope
-    };
-    let heading = match menu_scope {
-        Scope::Root(_) => "Entire layout".to_owned(),
-        Scope::Tabs(bar) => context.plan.tabs_group_label(bar).map_or_else(
-            || "Tab group".to_owned(),
-            |label| format!("Tab group: {}", label_text(context, label)),
-        ),
-        Scope::Tab(tab) => {
-            let Some(resource) = context.resources.tab(tab.key()) else {
-                return Ok(());
-            };
-            format!(
-                "{}: {}",
-                if tab.key().is_layout() {
-                    "Layout tab"
-                } else {
-                    "Pane tab"
-                },
-                resource.title
-            )
-        }
-        Scope::Pane(pane) => format!("Pane: {}", label_text(context, TabLabel::Item(pane.item()))),
-    };
-    let commands = if page.is_none_or(|page| matches!(page.kind, MenuPageKind::Pane(_))) {
-        commands(context, menu_scope)?
-    } else {
-        Vec::new()
-    };
-    let mut group_targets = Vec::new();
-    if let Scope::Tabs(bar) = scope {
-        for mode in [
-            TabGroupDockMode::MergeTabs,
-            TabGroupDockMode::PreserveLayout,
-        ] {
-            if page.is_none_or(
-                |page| matches!(page.kind, MenuPageKind::GroupTargets(current) if current == mode),
-            ) {
-                group_targets.push((mode, group_destinations(context, bar, mode)?));
-            }
-        }
-    }
-    let mut entries = Vec::with_capacity(commands.len() + active_panes.len() + 4);
+    let menu_context = prepared.menu.context();
+    let mut entries = Vec::with_capacity(prepared.menu.items.len());
     let mut focused_entry = false;
-    let mut close = match menu_scope {
-        Scope::Root(anchor) => context.plan.prepare_root_close(anchor.root()),
-        Scope::Tabs(bar) => context.plan.prepare_tabs_close(bar),
-        Scope::Tab(tab) => context.plan.prepare_tab_body_close(tab.key()),
-        Scope::Pane(pane) => context.plan.prepare_pane_close(pane),
-    };
     let popup = popup::show(
         context.ui,
         context.instance_id,
@@ -423,132 +366,13 @@ fn paint_menu(
         toggle_on_click,
         context.style,
         |ui| {
-            ui.ctx().accesskit_node_builder(ui.unique_id(), |node| {
-                node.set_role(Role::Menu);
-                node.set_label(match page.map(|page| page.kind) {
-                    Some(MenuPageKind::GroupTargets(mode)) => group_mode_label(mode),
-                    Some(MenuPageKind::ActivePanes) => "Active panes",
-                    _ => menu_scope.label(),
-                });
-            });
-            ui.weak(heading);
-            ui.separator();
-            for (label, command) in commands {
-                let response = command_entry(
-                    ui,
-                    popup_id.with(("command", menu_scope.visual(), command.kind())),
-                    label,
-                    &command,
-                    ui_enabled,
-                );
-                if ui_enabled && command.is_ready() {
-                    entries.push((response, MenuAction::Command(command)));
-                }
-            }
-            for (mode, destinations) in group_targets {
-                if page.is_some() {
-                    ui.weak(group_mode_label(mode));
-                    for destination in destinations {
-                        let response = command_entry(
-                            ui,
-                            popup_id.with(("group-center", mode, destination.visual)),
-                            &destination.label,
-                            &destination.command,
-                            ui_enabled,
-                        );
-                        if ui_enabled && destination.command.is_ready() {
-                            entries.push((response, MenuAction::Command(destination.command)));
-                        }
-                    }
-                } else {
-                    let enabled =
-                        ui_enabled && destinations.iter().any(|entry| entry.command.is_ready());
-                    let response = page_entry(
-                        ui,
-                        popup_id.with(("group-mode", mode)),
-                        group_mode_label(mode),
-                        group_mode_description(mode),
-                        enabled,
-                    )
-                    .on_disabled_hover_text("No other eligible visible tab group is available.");
-                    if enabled {
-                        entries.push((
-                            response,
-                            MenuAction::OpenPage(MenuPageKind::GroupTargets(mode)),
-                        ));
-                    }
-                }
-            }
-            if matches!(scope, Scope::Root(_)) && !root_is_pane {
-                if page.is_none() {
-                    let enabled = ui_enabled && !active_panes.is_empty();
-                    let response = page_entry(
-                        ui,
-                        popup_id.with("active-panes"),
-                        "Active Panes…",
-                        "Choose a visible pane to move or close only that application's content.",
-                        enabled,
-                    );
-                    if enabled {
-                        entries.push((response, MenuAction::OpenPage(MenuPageKind::ActivePanes)));
-                    }
-                } else if matches!(page.map(|page| page.kind), Some(MenuPageKind::ActivePanes)) {
-                    ui.weak("Choose one active pane");
-                    for pane in &active_panes {
-                        let title = label_text(context, TabLabel::Item(pane.item()));
-                        let response = page_entry(
-                            ui,
-                            popup_id.with(("pane", pane.visual_id())),
-                            &title,
-                            "Open actions for this application pane only.",
-                            ui_enabled,
-                        );
-                        if response.enabled() {
-                            entries.push((
-                                response,
-                                MenuAction::OpenPage(MenuPageKind::Pane(pane.visual_id())),
-                            ));
-                        }
-                    }
-                }
-            }
-            ui.separator();
-            if page.is_none_or(|page| matches!(page.kind, MenuPageKind::Pane(_))) {
-                let label = match menu_scope {
-                    Scope::Root(_) => "Close Layout",
-                    Scope::Tabs(_) => "Close Tab Group",
-                    Scope::Tab(tab) if tab.key().is_layout() => "Close Layout Tab",
-                    Scope::Tab(_) => "Close Tab",
-                    Scope::Pane(_) => "Close Pane",
-                };
-                let response = plain_entry(
-                    ui,
-                    popup_id.with((menu_scope.visual(), label)),
-                    label,
-                    menu_scope.description(),
-                    ui_enabled && close.is_some(),
-                );
-                if response.enabled() {
-                    entries.push((response, MenuAction::Close));
-                }
-            }
-            if let Some(page) = page {
-                let label = match page.kind {
-                    MenuPageKind::GroupTargets(_) => "Back to Tab Group Actions",
-                    MenuPageKind::ActivePanes => "Back to Layout Actions",
-                    MenuPageKind::Pane(_) => "Back to Active Panes",
-                };
-                let response = plain_entry(
-                    ui,
-                    popup_id.with(label),
-                    label,
-                    "Return to the previous menu page.",
-                    ui_enabled,
-                );
-                if response.enabled() {
-                    entries.push((response, MenuAction::Back));
-                }
-            }
+            context.panes.customize_menu(&mut prepared.menu);
+            prepared.paint(
+                ui,
+                popup_id.with(page.map(|page| page.kind)),
+                ui_enabled,
+                &mut entries,
+            );
             if page.is_some_and(|page| page.focus_first)
                 && !ui.is_sizing_pass()
                 && ui.is_enabled()
@@ -622,11 +446,17 @@ fn paint_menu(
                     context.push_local_action(origin, action);
                 }
             }
-            MenuAction::Close => {
-                if let Some(action) = close.take() {
-                    Popup::close_id(context.ui.ctx(), popup_id);
-                    context.push_local_action(origin, action);
-                }
+            MenuAction::Close(action) => {
+                Popup::close_id(context.ui.ctx(), popup_id);
+                context.push_local_action(origin, action);
+            }
+            MenuAction::Custom(id) => {
+                Popup::close_id(context.ui.ctx(), popup_id);
+                response.request_focus();
+                context.menu_action.get_or_insert(DockMenuAction {
+                    context: menu_context,
+                    id,
+                });
             }
             MenuAction::OpenPage(kind) => {
                 context.ui.ctx().data_mut(|data| {
@@ -673,307 +503,6 @@ fn paint_menu(
     Ok(())
 }
 
-fn plain_entry(
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    label: &str,
-    description: &str,
-    enabled: bool,
-) -> Response {
-    let response = ui
-        .scope_builder(UiBuilder::new().scope_id(id), |ui| {
-            ui.add_enabled(enabled, Button::new(label))
-        })
-        .inner;
-    ui.ctx().accesskit_node_builder(response.id, |node| {
-        node.set_role(Role::MenuItem);
-        node.set_label(label);
-        node.set_description(description);
-        node.clear_actions();
-        if response.enabled() {
-            node.add_action(Action::Click);
-            node.add_action(Action::Focus);
-        } else {
-            node.set_disabled();
-        }
-    });
-    response
-}
-
-fn page_entry(
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    label: &str,
-    description: &str,
-    enabled: bool,
-) -> Response {
-    let response = ui
-        .scope_builder(UiBuilder::new().scope_id(id), |ui| {
-            ui.add_enabled(enabled, Button::new(label).right_text("›"))
-        })
-        .inner;
-    ui.ctx().accesskit_node_builder(response.id, |node| {
-        node.set_role(Role::MenuItem);
-        node.set_label(label);
-        node.set_description(description);
-        node.set_has_popup(HasPopup::Menu);
-        node.set_expanded(false);
-        node.clear_actions();
-        if response.enabled() {
-            node.add_action(Action::Click);
-            node.add_action(Action::Focus);
-        } else {
-            node.set_disabled();
-        }
-    });
-    response.on_hover_text(description)
-}
-
-fn command_entry(
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    label: &str,
-    command: &PresentationCommandPaintRecord,
-    ui_enabled: bool,
-) -> Response {
-    let enabled = ui_enabled && command.is_ready();
-    let response = ui
-        .scope_builder(UiBuilder::new().scope_id(id), |ui| {
-            ui.add_enabled(enabled, Button::new(label).wrap())
-        })
-        .inner;
-    ui.ctx().accesskit_node_builder(response.id, |node| {
-        node.set_role(Role::MenuItem);
-        node.set_label(label);
-        node.clear_actions();
-        if response.enabled() {
-            node.add_action(Action::Click);
-            node.add_action(Action::Focus);
-        } else {
-            node.set_disabled();
-            if let Some(reason) = command.unavailable_reason() {
-                node.set_description(unavailable_text(reason));
-            }
-        }
-    });
-    if let Some(reason) = command.unavailable_reason() {
-        response.on_disabled_hover_text(unavailable_text(reason))
-    } else {
-        response
-    }
-}
-
-fn label_text(context: &RenderContext<'_, '_, '_>, label: TabLabel<'_>) -> String {
-    match label {
-        TabLabel::Item(item) => context.resources.tab(item).map_or_else(
-            || {
-                context.panes.title(item).map_or_else(
-                    || format!("Missing pane {}", item.get()),
-                    |title| title.text().to_owned(),
-                )
-            },
-            |resource| resource.title.clone(),
-        ),
-        TabLabel::Layout { title } => title.to_owned(),
-    }
-}
-
-fn active_panes<'plan>(
-    context: &RenderContext<'_, 'plan, '_>,
-    root_id: RootId,
-) -> Result<(Vec<PanePaintRecord<'plan>>, bool), DockspaceRuntimeError> {
-    let mut panes = Vec::new();
-    let mut root_is_pane = false;
-    context
-        .plan
-        .visit_surface_program(|step| {
-            match step {
-                SurfacePaintProgramStep::RootBegin { root, .. } if root.root() == root_id => {
-                    root_is_pane = matches!(root.label(), TabLabel::Item(_));
-                }
-                SurfacePaintProgramStep::Operation {
-                    operation: SurfacePaintProgramOperation::Pane(pane),
-                    paint,
-                    ..
-                } if pane.root() == root_id && !paint.is_source_gap() => {
-                    // The core owns visibility, ancestry and occlusion admission.
-                    if context
-                        .plan
-                        .pane_command(pane, DockspacePresentationCommandKind::Float)?
-                        .is_some()
-                    {
-                        panes.push(pane);
-                    }
-                }
-                _ => {}
-            }
-            Ok::<(), DockspaceRuntimeError>(())
-        })
-        .map_err(|error| error.into_runtime_error())?;
-    Ok((panes, root_is_pane))
-}
-
-fn group_destinations(
-    context: &RenderContext<'_, '_, '_>,
-    source: TabBarPaintRecord<'_>,
-    mode: TabGroupDockMode,
-) -> Result<Vec<GroupDestination>, DockspaceRuntimeError> {
-    let mut destinations = Vec::new();
-    context
-        .plan
-        .visit_surface_program(|step| {
-            if let SurfacePaintProgramStep::Operation {
-                operation: SurfacePaintProgramOperation::TabBar(target),
-                paint,
-                ..
-            } = step
-                && !paint.is_source_gap()
-                && let Some(command) = context
-                    .plan
-                    .tabs_group_center_command(source, target, mode)?
-                && let Some(label) = context.plan.tabs_group_label(target)
-            {
-                destinations.push(GroupDestination {
-                    visual: target.visual_id(),
-                    label: group_destination_label(context, target, label),
-                    command,
-                });
-            }
-            Ok::<(), DockspaceRuntimeError>(())
-        })
-        .map_err(|error| error.into_runtime_error())?;
-    Ok(destinations)
-}
-
-fn group_destination_label(
-    context: &RenderContext<'_, '_, '_>,
-    bar: TabBarPaintRecord<'_>,
-    label: TabLabel<'_>,
-) -> String {
-    let member_title = |member: dockspace::runtime::TabStripMemberPaintRecord<'_>| {
-        let title = context.resources.tab(member.key()).map_or_else(
-            || label_text(context, member.label()),
-            |resource| resource.title.clone(),
-        );
-        let mut chars = title
-            .chars()
-            .map(|ch| if ch.is_whitespace() { ' ' } else { ch });
-        let mut title = chars.by_ref().take(24).collect::<String>();
-        if chars.next().is_some() {
-            title.push('…');
-        }
-        title
-    };
-    // Only direct strip members identify a destination; a layout member keeps
-    // its own title rather than borrowing names from its selected descendants.
-    let count = bar.members().len();
-    let mut titles = bar.members().take(3).map(member_title).collect::<Vec<_>>();
-    if count > titles.len() {
-        titles.push(format!("+{} more", count - titles.len()));
-    }
-    let members = if titles.is_empty() {
-        "Empty group".to_owned()
-    } else {
-        titles.join(", ")
-    };
-    let selection = bar
-        .selected()
-        .and_then(|selected| bar.members().find(|member| member.key() == selected))
-        .map_or_else(
-            || "No selected tab".to_owned(),
-            |member| format!("Selected: {}", member_title(member)),
-        );
-    format!("{}\n{members} · {selection}", label_text(context, label))
-}
-
-const fn group_mode_label(mode: TabGroupDockMode) -> &'static str {
-    match mode {
-        TabGroupDockMode::MergeTabs => "Merge Tab Group Into…",
-        TabGroupDockMode::PreserveLayout => "Dock Tab Group as Layout Tab…",
-    }
-}
-
-const fn group_mode_description(mode: TabGroupDockMode) -> &'static str {
-    match mode {
-        TabGroupDockMode::MergeTabs => "Append this group's direct tabs to the destination group.",
-        TabGroupDockMode::PreserveLayout => {
-            "Insert this complete group as one layout tab in the destination group."
-        }
-    }
-}
-
-fn commands(
-    context: &RenderContext<'_, '_, '_>,
-    scope: Scope<'_>,
-) -> Result<Vec<(&'static str, PresentationCommandPaintRecord)>, DockspaceRuntimeError> {
-    let mut entries = Vec::new();
-    match scope {
-        Scope::Root(anchor) => {
-            for kind in COMMANDS {
-                if let Some(command) = context.plan.presentation_command(anchor.root(), kind)? {
-                    entries.push((command_label(kind), command));
-                }
-            }
-        }
-        Scope::Tabs(bar) => {
-            for (kind, label) in [
-                (DockspaceTabsGroupCommandKind::Float, "Float Tab Group"),
-                (
-                    DockspaceTabsGroupCommandKind::MoveToNewWindow,
-                    "Move Tab Group to New Window",
-                ),
-            ] {
-                if let Some(command) = context.plan.tabs_group_command(bar, kind)? {
-                    entries.push((label, command));
-                }
-            }
-        }
-        Scope::Tab(tab) => {
-            for kind in COMMANDS {
-                if let Some(command) = context.plan.tab_command(tab, kind)? {
-                    let label = match kind {
-                        DockspacePresentationCommandKind::Float if tab.key().is_layout() => {
-                            "Float Layout Tab"
-                        }
-                        DockspacePresentationCommandKind::Float => "Float Tab",
-                        DockspacePresentationCommandKind::MoveToNewWindow
-                            if tab.key().is_layout() =>
-                        {
-                            "Move Layout Tab to New Window"
-                        }
-                        DockspacePresentationCommandKind::MoveToNewWindow => {
-                            "Move Tab to New Window"
-                        }
-                        _ => command_label(kind),
-                    };
-                    entries.push((label, command));
-                }
-            }
-        }
-        Scope::Pane(pane) => {
-            for kind in COMMANDS {
-                if let Some(command) = context.plan.pane_command(pane, kind)? {
-                    let label = match kind {
-                        DockspacePresentationCommandKind::Float => "Float Pane",
-                        DockspacePresentationCommandKind::MoveToNewWindow => {
-                            "Move Pane to New Window"
-                        }
-                        _ => command_label(kind),
-                    };
-                    entries.push((label, command));
-                }
-            }
-        }
-    }
-    entries.retain(|(_, command)| {
-        command.unavailable_reason()
-            != Some(DockspacePresentationCommandUnavailable::Action(
-                DockspaceActionRejection::NativeUnavailable,
-            ))
-    });
-    Ok(entries)
-}
-
 fn paint_anchor_icon(
     context: &RenderContext<'_, '_, '_>,
     anchor: PresentationMenuAnchorPaintRecord<'_>,
@@ -1011,57 +540,4 @@ fn paint_anchor_icon(
     }
     let color = context.interaction_stroke(response, idle_color).color;
     super::chrome_icons::layout_actions(context.ui, bounds, color);
-}
-
-const fn command_label(kind: DockspacePresentationCommandKind) -> &'static str {
-    match kind {
-        DockspacePresentationCommandKind::Float => "Float Layout",
-        DockspacePresentationCommandKind::MoveToNewWindow => "Move Layout to New Window",
-        DockspacePresentationCommandKind::DockBack => "Dock Back",
-        DockspacePresentationCommandKind::DockLeft => "Dock Left",
-        DockspacePresentationCommandKind::DockRight => "Dock Right",
-        DockspacePresentationCommandKind::DockTop => "Dock Top",
-        DockspacePresentationCommandKind::DockBottom => "Dock Bottom",
-        DockspacePresentationCommandKind::DockCenter => "Dock Center",
-    }
-}
-
-const fn unavailable_text(reason: DockspacePresentationCommandUnavailable) -> &'static str {
-    match reason {
-        DockspacePresentationCommandUnavailable::AlreadyContained => {
-            "This root is already in a floating egui window."
-        }
-        DockspacePresentationCommandUnavailable::AlreadyNative => {
-            "This root is already in a native child window."
-        }
-        DockspacePresentationCommandUnavailable::Action(reason) => action_unavailable_text(reason),
-    }
-}
-
-const fn action_unavailable_text(reason: DockspaceActionRejection) -> &'static str {
-    match reason {
-        DockspaceActionRejection::ItemHidden { .. } => "Show the pane before selecting it.",
-        DockspaceActionRejection::PolicyDenied => {
-            "This command is disabled by the current docking policy."
-        }
-        DockspaceActionRejection::Conflict => {
-            "Another docking transition is currently in progress."
-        }
-        DockspaceActionRejection::IdentityExhausted => {
-            "No presentation identity is currently available."
-        }
-        DockspaceActionRejection::NativeUnavailable => {
-            "Native child windows are unavailable for this host."
-        }
-        DockspaceActionRejection::ItemUnavailable { .. }
-        | DockspaceActionRejection::ItemNotContained { .. }
-        | DockspaceActionRejection::AnchorUnavailable { .. }
-        | DockspaceActionRejection::RootUnavailable { .. }
-        | DockspaceActionRejection::DockBackUnavailable { .. }
-        | DockspaceActionRejection::MainSurfaceUnavailable { .. }
-        | DockspaceActionRejection::SurfaceUnavailable { .. }
-        | DockspaceActionRejection::PresentationUnavailable { .. } => {
-            "The current layout cannot perform this command."
-        }
-    }
 }

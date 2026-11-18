@@ -109,6 +109,7 @@ impl Dockspace {
             self.pointer.clear();
         }
         let mut pending_actions = None;
+        let mut menu_action = None;
         let mut pointer_update = PointerUpdate::default();
         let mut focus_before_pointer = None;
         let mut accepted_focus = Vec::new();
@@ -224,6 +225,7 @@ impl Dockspace {
                 pane_focus_capability = paint.pane_focus_capability;
                 pointer_receivers = paint.receivers;
                 focus_bindings = paint.pane_focus_bindings;
+                menu_action = paint.menu_action;
                 self.ui_actions
                     .capture(&mut pending_actions, run_sequence, paint.local_actions)?;
                 #[cfg(test)]
@@ -343,6 +345,10 @@ impl Dockspace {
             pane_focus_capability,
         )?;
         response.include_preceding_feedback(preceding_feedback);
+        if let Some(action) = self.ui_actions.take_menu_action(run_sequence, menu_action) {
+            panes.on_menu_action(action);
+            ui.ctx().request_repaint();
+        }
         Ok(response)
     }
 }

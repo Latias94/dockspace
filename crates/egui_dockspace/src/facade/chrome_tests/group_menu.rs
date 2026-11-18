@@ -458,6 +458,15 @@ fn group_destination_hints_bound_long_titles_and_keep_selected_layout_scope() {
 #[test]
 fn central_group_can_merge_its_contents_but_cannot_move_its_protected_container() {
     let mut harness = setup_with_central(true);
+    harness.panes.customize_menu = Some(|menu| {
+        assert!(matches!(
+            menu.context().target,
+            crate::DockMenuTarget::TabGroup(_)
+        ));
+        for item in &mut menu.items {
+            item.enabled = true;
+        }
+    });
     let central = harness
         .dockspace
         .view()

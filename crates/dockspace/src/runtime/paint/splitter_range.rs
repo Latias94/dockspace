@@ -42,6 +42,20 @@ impl SurfaceSplitterRange {
 }
 
 impl SurfacePaintPlan<'_> {
+    /// Returns the exact divider or junction that owns a pointer resize on this surface.
+    #[must_use]
+    pub fn active_splitter_resize(self) -> Option<DockspaceVisualId> {
+        let resize = self.candidate.interaction().active_resize_view()?;
+        if resize.surface() != self.surface {
+            return None;
+        }
+        let visual = match resize.target() {
+            SplitterResizeTarget::Handle(id) => VisualIdentity::Splitter(id),
+            SplitterResizeTarget::Junction(id) => VisualIdentity::SplitterJunction(id),
+        };
+        Some(DockspaceVisualId(visual))
+    }
+
     /// Resolves a proven resize interval for a splitter in this candidate.
     ///
     /// Returns `None` when resizing is unavailable or the layout cannot prove

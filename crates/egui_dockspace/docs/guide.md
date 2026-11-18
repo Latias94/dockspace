@@ -909,9 +909,10 @@ dragging follows the pointer directly.
 
 ### Custom tabs and tab-bar controls
 
-All tab callbacks are optional methods on `PaneView`. Keep the existing `title`
-method: it supplies measurement, hover text, accessibility names, overflow rows
-and drag-preview text even when the visible tab is custom.
+`PaneView::title(ItemId)` supplies application pane titles and reports missing
+content. `layout_tab_title(TabKey, default_title)` overrides the display name
+of a layout tab. Both titles are used for measurement, hover text, accessibility,
+overflow rows and drag preview text.
 
 For compact single-pane groups, declare
 `TabBarPolicy::new(TabBarVisibility::AutoHideSingle, TabBarInteraction::Enabled)`
@@ -922,10 +923,11 @@ central regions retain their ordinary presentation. The same rule determines
 layout minima and future docking previews. Explicit `Hidden` omits the bar and
 its recovery button entirely.
 
-- `tab_content_width(item, ui, title)` returns intrinsic content width before
+- `tab_content_width(key, ui, title)` returns intrinsic content width before
   docking padding and the close button. The default is the shaped title width.
-  Add space here for custom icons, badges or buttons; measurements must be
-  finite, non-negative and independent of an earlier paint pass.
+  Use `key.item()` for item-specific decorations or `key.is_layout()` for layout
+  tabs. Reserve space for custom icons, badges or buttons with a finite,
+  non-negative width computed from current metadata.
 - `tab_ui(ui, tab)` receives the original response, selected/enabled state,
   unclipped allocation, visible clip, content rect and resolved `TabVisuals`.
   Call `tab.paint(ui)` for defaults, or paint the background and title separately.
@@ -1039,10 +1041,8 @@ under the existing geometry settings.
 
 The workbench's **Custom tabs** toggle demonstrates title icons, rounded
 backgrounds, coordinated drag previews, close-button hover feedback, group
-counts, a fixed **Tint** button, a scrolling help button and circular docking
-guides with an animated accent. Its
-[tab customization module](../examples/workbench/tabs.rs) is separate
-from the host and pane-content code.
+counts, accent controls and circular docking guides with an animated accent.
+See the [workbench's chrome callbacks](../examples/workbench/tabs.rs).
 
 A selected tab gains a two-point underline when its pane owns observed content
 focus. This is distinct from selection and the outline around a keyboard-focused
@@ -1056,6 +1056,53 @@ focus request, and the frontmost floating window alone do not produce the cue.
 Unfocused windows and disabled tab strips do not show it.
 The experimental native host refreshes exact native focus after route enrollment
 and ingress recovery. A pending request does not establish observed focus.
+
+### Splitter appearance
+
+Override `PaneView::splitter_ui(&Painter, &Splitter)` to paint dividers and
+intersections. `SplitterKind::Divider(axis)` identifies the axis along which a
+divider moves. `SplitterKind::Junction` identifies an intersection. The clipped
+painter supports decorations within the handle allocation. `Splitter::paint`
+draws the resolved default. Use `splitter.dragging` to highlight the core-owned
+gesture, including while the pointer moves out of the handle. The adapter
+continues to handle double-click, keyboard and accessibility resizing.
+
+The [shared grid example](../examples/shared_grid.rs) draws a custom junction
+and adds an icon and display title to its nested layout tab.
+
+### Presentation menus
+
+`PaneView::customize_menu` receives an open tab, tab group, root or active-pane
+menu. `menu.context()` identifies its exact subject and logical surface.
+Reorder, relabel or remove supplied rows, set `item.enabled` to disable a row,
+or insert `DockMenuItem::custom` entries. Use `item.kind()` to identify built-in
+rows independently of their labels. Built-in command availability still follows
+core policy and the current layout.
+
+```rust
+fn customize_menu(&self, menu: &mut egui_dockspace::DockMenu) {
+    use egui_dockspace::{DockMenuItem, DockMenuTarget};
+
+    if let DockMenuTarget::Tab(key) = menu.context().target
+        && key.item().is_some()
+    {
+        menu.items.insert(0, DockMenuItem::custom(
+            egui::Id::unique("bookmark-document"), "Bookmark document",
+        ));
+    }
+}
+```
+
+Handle the selected `DockMenuAction` in `PaneView::on_menu_action`, using its
+ID and source context. The adapter delivers it after a successful docking
+update and suppresses repeats from discarded egui passes. Queue workspace
+edits for the application to apply outside the callback. The workbench's
+**Cycle tab accent** action shows the complete implementation.
+
+In the experimental native host, the callback runs under the pane registry
+lock. Consume queued commands with `with_panes_mut` from your root update,
+then submit them to the host outside the callback. Menu delivery schedules
+that root update, including when the action came from an idle child window.
 
 For the experimental native host, create the session with the same
 `style.presentation_config()?` before passing both objects to `NativeDockspaceApp`.

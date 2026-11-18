@@ -208,6 +208,15 @@ It does not read the raw event stream or produce docking gesture phases.
 Button activation preserves keyboard, AccessKit, then local pointer priority.
 Pane focus separately retains its focused, unfocused, and unknown observations.
 
+`presentation_menu/entries.rs` derives menu rows and their actions from one
+exact paint plan before calling `PaneView::customize_menu`. Stable row kinds
+keep labels and display order separate from command authority. Removing a row
+removes its interaction; enabling a row cannot create an unavailable core action.
+Custom row activation uses the same ordered keyboard and pointer arbitration.
+It is retained by the original run and delivered through `on_menu_action` after
+successful host publication. Native runs retain this activation in their
+existing unpublished update across repeated passes.
+
 A policy-disabled visible tab keeps its visible bounds for hover and
 accessibility. Its core drag region may be empty; that does not erase its visual
 or accessible extent. The response remains hover-only, the accessible node stays

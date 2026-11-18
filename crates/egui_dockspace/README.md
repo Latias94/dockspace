@@ -179,10 +179,11 @@ style.tab_background_inset = egui::vec2(3.0, 2.0);
 `TabStylePreset::{Dockspace, Rounded, EguiTiles}` provide theme-relative starting
 points. Rounded uses inset backgrounds, rounded corners and a thin selected
 border. Background insets change appearance while retaining title, close-button
-and hit geometry. `PaneView` callbacks customize tabs, tab-bar controls, close icons,
-guides and previews while retaining the adapter's input and accessibility.
-The [styling guide](docs/guide.md#styling) explains presets, overrides and callback
-geometry; [workbench tabs](examples/workbench/tabs.rs) show a working example.
+and hit geometry. `PaneView` callbacks customize tabs, tab-bar controls, splitters,
+menus, guides and previews while retaining the adapter's input and accessibility.
+See the [styling guide](docs/guide.md#styling) for the callback contracts. Enable
+**Custom tabs** in the workbench and right-click a tab to try an application menu
+action.
 
 Configure gestures and shortcuts with `DockInputConfig`. `DockPolicy` controls
 move/close permissions and resize rules. See [input configuration](docs/guide.md#pointer-input)

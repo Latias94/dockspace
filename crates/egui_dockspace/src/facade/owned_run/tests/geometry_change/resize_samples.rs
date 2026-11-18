@@ -57,6 +57,9 @@ fn fixture(entry: Entry, axis: DockspaceAxis) -> (Harness, Frame) {
 
 fn sample_resize(entry: Entry, axis: DockspaceAxis, sequence: Sequence) {
     let (mut harness, stable) = fixture(entry, axis);
+    let divider = harness.panes.splitters[0];
+    assert_eq!(divider.kind, crate::SplitterKind::Divider(axis));
+    assert!(!divider.dragging);
     let start = stable.splitter.center();
     let offset = match axis {
         DockspaceAxis::Horizontal => egui::vec2(40.0, 0.0),
@@ -86,6 +89,8 @@ fn sample_resize(entry: Entry, axis: DockspaceAxis, sequence: Sequence) {
             harness.frame_with_result(1.1, vec![Event::PointerMoved(start + offset)], result);
         assert_eq!(moved.feedback, []);
         assert!(harness.dockspace.has_active_gesture());
+        assert_eq!(harness.panes.splitters[0].id, divider.id);
+        assert!(harness.panes.splitters[0].dragging);
         assert_eq!(harness.dockspace.version(), before);
         assert!(
             (extent(harness.panes.bounds[&FIRST]) - leading - 40.0).abs() < 0.1,
@@ -103,6 +108,7 @@ fn sample_resize(entry: Entry, axis: DockspaceAxis, sequence: Sequence) {
         )],
     );
     assert!(!harness.dockspace.has_active_gesture());
+    assert!(!harness.panes.splitters[0].dragging);
     assert_ne!(harness.dockspace.version(), before);
     assert!((extent(harness.panes.bounds[&FIRST]) - leading - 60.0).abs() < 0.1);
     assert!((extent(harness.panes.bounds[&THIRD]) - trailing + 60.0).abs() < 0.1);

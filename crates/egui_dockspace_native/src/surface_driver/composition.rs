@@ -279,15 +279,19 @@ mod tests {
 
     #[test]
     fn product_menu_preserves_placement_anchor_scale_hit_accessibility_and_output_proof() {
-        assert_product_menu_geometry(egui::pos2(80.0, 40.0), false);
+        for custom in [false, true] {
+            assert_product_menu_geometry(egui::pos2(80.0, 40.0), false, custom);
+        }
     }
 
     #[test]
     fn product_menu_uses_the_full_viewport_constraint_for_a_clipped_edge_surface() {
-        assert_product_menu_geometry(egui::pos2(420.0, 330.0), true);
+        for custom in [false, true] {
+            assert_product_menu_geometry(egui::pos2(420.0, 330.0), true, custom);
+        }
     }
 
-    fn assert_product_menu_geometry(origin: egui::Pos2, at_edge: bool) {
+    fn assert_product_menu_geometry(origin: egui::Pos2, at_edge: bool, custom: bool) {
         use dockspace::model::{
             DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId,
             RootId,
@@ -296,7 +300,7 @@ mod tests {
         use dockspace::runtime::{DockspaceSession, SurfacePresentationResult};
         use egui_dockspace::{DockStyle, PaneView, native_support};
 
-        struct Panes;
+        struct Panes(bool);
         impl PaneView for Panes {
             fn title(&self, _: ItemId) -> Option<egui::WidgetText> {
                 Some("Placed product pane".into())
@@ -304,7 +308,25 @@ mod tests {
             fn ui(&mut self, _: ItemId, _: &mut egui::Ui) -> egui_dockspace::PaneResponse {
                 egui_dockspace::PaneResponse::default()
             }
+
+            fn customize_menu(&self, menu: &mut egui_dockspace::DockMenu) {
+                if self.0 {
+                    menu.items.insert(
+                        0,
+                        egui_dockspace::DockMenuItem::custom(
+                            egui::Id::unique("placed-application-action"),
+                            "Application tool",
+                        ),
+                    );
+                }
+            }
         }
+        let mut panes = Box::new(Panes(custom));
+        let command_label = if custom {
+            "Application tool"
+        } else {
+            "Float Layout"
+        };
         let surface = SurfaceId::new(1);
         let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
             surface,
@@ -379,7 +401,7 @@ mod tests {
                         &child,
                         child.max_rect(),
                         child.clip_rect(),
-                        &Panes,
+                        &panes,
                         &DockStyle::default(),
                     )
                     .unwrap();
@@ -393,7 +415,7 @@ mod tests {
                             instance,
                             surface,
                             &mut child,
-                            &mut Panes,
+                            &mut panes,
                             &DockStyle::default(),
                             &egui_dockspace::DockInputConfig::default(),
                             &mut scroll,
@@ -427,7 +449,7 @@ mod tests {
                     .iter()
                     .find(|(_, node)| {
                         node.role() == egui::accesskit::Role::MenuItem
-                            && node.label() == Some("Float Layout")
+                            && node.label() == Some(command_label)
                     })
                     .expect("the actual product Float command must be visible");
                 let accessible = accessibility_transform(nodes, *item_id)
@@ -501,15 +523,27 @@ mod tests {
             }
             assert_eq!(
                 paint.take_local_actions().len(),
-                usize::from(phase == 5),
+                usize::from(phase == 5 && !custom),
                 "a real click on the transformed Float command emits one exact action"
             );
+            assert_eq!(
+                paint.take_menu_action(),
+                (phase == 5 && custom).then_some(egui_dockspace::DockMenuAction {
+                    context: egui_dockspace::DockMenuContext {
+                        surface,
+                        root: RootId::new(1),
+                        target: egui_dockspace::DockMenuTarget::Root
+                    },
+                    id: egui::Id::unique("placed-application-action"),
+                },)
+            );
+            assert!(paint.take_menu_action().is_none());
             if phase == 6 {
                 assert!(!egui::Popup::is_any_open(&context));
                 assert!(
                     !nodes.iter().any(|(_, node)| {
                         node.role() == egui::accesskit::Role::MenuItem
-                            && node.label() == Some("Float Layout")
+                            && node.label() == Some(command_label)
                     }),
                     "the committed click closes the product menu"
                 );

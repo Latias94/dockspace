@@ -222,6 +222,7 @@ pub struct NativeSurfacePaint {
     execution_receipt: Option<SurfaceProgramExecutionReceipt>,
     output_proof: Option<crate::output_proof::SurfaceOutputProof>,
     local_actions: Vec<EguiSurfaceAction>,
+    menu_action: Option<crate::DockMenuAction>,
     pane_focus_observation: Option<PreparedPaneFocusObservation>,
     pane_focus_needs_repaint: bool,
     #[cfg(feature = "motion")]
@@ -457,6 +458,14 @@ impl NativeSurfacePaint {
         std::mem::take(&mut self.local_actions)
     }
 
+    /// Takes the application menu activation to deliver after the original run commits.
+    ///
+    /// Retain it across discarded passes and deliver it only once. Schedule
+    /// the owning application update so it can process any queued commands.
+    pub fn take_menu_action(&mut self) -> Option<crate::DockMenuAction> {
+        self.menu_action.take()
+    }
+
     /// Takes the pane-focus observation owned only by this exact pass.
     pub fn take_pane_focus_observation(&mut self) -> Option<PreparedPaneFocusObservation> {
         self.pane_focus_observation.take()
@@ -523,6 +532,7 @@ pub fn paint_surface(
             execution_receipt: None,
             output_proof: None,
             local_actions: Vec::new(),
+            menu_action: None,
             pane_focus_observation: None,
             pane_focus_needs_repaint: false,
             #[cfg(feature = "motion")]
@@ -581,6 +591,7 @@ pub fn paint_surface(
         execution_receipt: painted.execution_receipt,
         output_proof: capture.finish(ui.painter()),
         local_actions: painted.local_actions,
+        menu_action: painted.menu_action,
         pane_focus_observation: painted.pane_focus_observation,
         pane_focus_needs_repaint: painted.pane_focus_needs_repaint,
         #[cfg(feature = "motion")]

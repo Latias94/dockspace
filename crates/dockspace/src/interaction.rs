@@ -647,6 +647,10 @@ impl<'state> ActiveResizeView<'state> {
         self.surface
     }
 
+    pub(crate) const fn target(self) -> SplitterResizeTarget {
+        self.target
+    }
+
     /// Returns the latest validated atomic transient updates.
     #[must_use]
     pub const fn updates(self) -> &'state [TrackResize] {

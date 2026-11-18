@@ -3,6 +3,8 @@
 use super::*;
 use egui::accesskit::{Action, ActionRequest, TreeId};
 
+mod customization;
+
 const WIDTH: f32 = 900.0;
 const A: ItemId = ItemId::new(1);
 const B: ItemId = ItemId::new(2);

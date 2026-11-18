@@ -4,12 +4,12 @@ use std::collections::BTreeMap;
 
 use egui::{Color32, Context, FontId, Frame, Margin, TextStyle, Theme};
 use egui_dockspace::{
-    CloseDecision, CloseItemDecisionState, DockStyle, Dockspace, DockspaceAxis,
-    DockspaceContainedLayout, DockspaceError, DockspaceLayout, DockspaceNode, DockspaceOutput,
-    DockspaceResponse, DockspaceRootLayout, DockspaceSurfaceLayout, DragPreview, DropGuide,
-    FloatingPresentationId, ItemId, LogicalRect, PaneResponse, PaneSizing, PaneView, RootId,
-    SurfaceId, Tab, TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose, TabStylePreset,
-    TabVisuals,
+    CloseDecision, CloseItemDecisionState, DockMenu, DockMenuAction, DockStyle, Dockspace,
+    DockspaceAxis, DockspaceContainedLayout, DockspaceError, DockspaceLayout, DockspaceNode,
+    DockspaceOutput, DockspaceResponse, DockspaceRootLayout, DockspaceSurfaceLayout, DragPreview,
+    DropGuide, FloatingPresentationId, ItemId, LogicalRect, PaneResponse, PaneSizing, PaneView,
+    RootId, SurfaceId, Tab, TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose, TabKey,
+    TabStylePreset, TabVisuals,
 };
 
 #[cfg(feature = "motion")]
@@ -260,7 +260,7 @@ pub(super) struct DemoPanes {
     pub(super) custom_tabs: bool,
     pub(super) tab_preset: TabStylePreset,
     sizing_demo: bool,
-    tab_accent: usize,
+    pub(super) tab_accent: usize,
     pub(super) panes: BTreeMap<ItemId, DemoPane>,
     selection: usize,
     objects: [SceneObject; 3],
@@ -346,7 +346,7 @@ impl PaneView for DemoPanes {
         self.panes.get(&item).map(|pane| pane.title.into())
     }
 
-    fn tab_content_width(&self, _item: ItemId, _ui: &egui::Ui, title: &egui::Galley) -> f32 {
+    fn tab_content_width(&self, _key: TabKey, _ui: &egui::Ui, title: &egui::Galley) -> f32 {
         title.size().x + if self.custom_tabs { 18.0 } else { 0.0 }
     }
 
@@ -359,6 +359,14 @@ impl PaneView for DemoPanes {
 
     fn tab_close_ui(&mut self, ui: &egui::Ui, close: &TabClose<'_>) {
         tabs::tab_close_ui(self, ui, close);
+    }
+
+    fn customize_menu(&self, menu: &mut DockMenu) {
+        tabs::customize_menu(self, menu);
+    }
+
+    fn on_menu_action(&mut self, action: DockMenuAction) {
+        tabs::on_menu_action(self, action);
     }
 
     fn drag_preview_ui(&mut self, ui: &egui::Ui, preview: &DragPreview) {

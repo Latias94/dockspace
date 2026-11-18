@@ -1077,7 +1077,7 @@ fn recoverable_error_after_claim_abandons_the_exact_terminal_pass() {
             egui_dockspace::PaneResponse::default()
         }
 
-        fn tab_content_width(&self, _: ItemId, _: &Ui, _: &egui::Galley) -> f32 {
+        fn tab_content_width(&self, _: egui_dockspace::TabKey, _: &Ui, _: &egui::Galley) -> f32 {
             f32::NAN
         }
     }

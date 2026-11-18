@@ -23,6 +23,7 @@ pub(super) struct NativeUpdatePublication {
     pub(super) retirements: Option<PreparedNativeRetirements>,
     pub(super) application_action: Option<NativeSubmittedApplicationAction>,
     pub(super) ui_actions: Vec<NativeUiActionAcknowledgement>,
+    pub(super) menu_action: Option<egui_dockspace::DockMenuAction>,
     pub(super) native_input_pending: bool,
     pub(super) retain_previous: bool,
     pub(super) follow_up: bool,

@@ -18,6 +18,7 @@ fn unready_paint(surface: SurfaceId) -> NativeSurfacePaint {
         execution_receipt: None,
         output_proof: None,
         local_actions: Vec::new(),
+        menu_action: None,
         pane_focus_observation: None,
         pane_focus_needs_repaint: false,
         #[cfg(feature = "motion")]
@@ -228,7 +229,7 @@ fn native_measurement_error_stops_callbacks_and_preserves_ready_scene_for_retry(
                 .unwrap()
         }
 
-        fn tab_content_width(&self, _: ItemId, _: &Ui, title: &egui::Galley) -> f32 {
+        fn tab_content_width(&self, _: crate::TabKey, _: &Ui, title: &egui::Galley) -> f32 {
             if self.invalid_tab_width {
                 f32::NAN
             } else {

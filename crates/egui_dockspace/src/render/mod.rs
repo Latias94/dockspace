@@ -40,11 +40,11 @@ use dockspace::runtime::{
 use dockspace::runtime::{DockspaceDropDirection, DockspaceVisualId};
 use egui::{Color32, Id, Response, Sense, Shape, Stroke, StrokeKind, Ui};
 
-use crate::DockInputConfig;
 use crate::pane::{PaneFocusState, PaneView};
 use crate::pass_settlement::PendingPaneFocusObservation;
 use crate::response::{DockspaceCapability, DockspaceUnavailableReason};
 use crate::style::{DockStyle, ResolvedDockVisuals};
+use crate::{DockInputConfig, DockMenuAction};
 
 #[cfg(feature = "native-render-support")]
 pub(crate) use measurement::measure_surface;
@@ -131,6 +131,7 @@ struct RenderContext<'ui, 'plan, 'scroll> {
     pane_focus_target: &'ui mut Option<Id>,
     pane_focus_bindings: &'ui mut Vec<(ItemId, Id)>,
     local_actions: &'ui mut Vec<EguiSurfaceAction>,
+    menu_action: &'ui mut Option<DockMenuAction>,
     receivers: &'ui mut Vec<ProductReceiverBinding>,
     #[cfg(test)]
     drop_target_observations: &'ui mut Vec<RegisteredDropTargetObservation>,
@@ -330,6 +331,7 @@ pub(crate) struct RegisteredDropTargetObservation {
 pub(crate) struct ProductPaintOutput {
     pub(crate) execution_receipt: Option<SurfaceProgramExecutionReceipt>,
     pub(crate) local_actions: Vec<EguiSurfaceAction>,
+    pub(crate) menu_action: Option<DockMenuAction>,
     pub(crate) pane_focus_observation: Option<PreparedPaneFocusObservation>,
     pub(crate) pane_focus_pending: Option<PendingPaneFocusObservation>,
     pub(crate) pane_focus_needs_repaint: bool,
@@ -370,6 +372,7 @@ pub(crate) fn paint_surface(
     let mut pane_focus_target = None;
     let mut pane_focus_bindings = Vec::new();
     let mut local_actions = Vec::new();
+    let mut menu_action = None;
     let mut receivers = Vec::new();
     #[cfg(test)]
     let mut drop_target_observations = Vec::new();
@@ -435,6 +438,7 @@ pub(crate) fn paint_surface(
             pane_focus_target: &mut pane_focus_target,
             pane_focus_bindings: &mut pane_focus_bindings,
             local_actions: &mut local_actions,
+            menu_action: &mut menu_action,
             receivers: &mut receivers,
             #[cfg(test)]
             drop_target_observations: &mut drop_target_observations,
@@ -693,6 +697,7 @@ pub(crate) fn paint_surface(
     Ok(ProductPaintOutput {
         execution_receipt,
         local_actions,
+        menu_action,
         pane_focus_observation,
         pane_focus_pending,
         pane_focus_needs_repaint,

@@ -156,6 +156,13 @@ fn junction_pointer_samples_resize_all_four_panes_before_release() {
             None,
         ] {
             let (mut harness, before) = fixture(entry);
+            let junction = *harness
+                .panes
+                .splitters
+                .iter()
+                .find(|handle| handle.kind == crate::SplitterKind::Junction)
+                .unwrap();
+            assert!(!junction.dragging);
             let version = harness.dockspace.version();
             let start = before.junction.center();
             let delta = egui::vec2(32.0, 24.0);
@@ -164,6 +171,16 @@ fn junction_pointer_samples_resize_all_four_panes_before_release() {
                 let pressed = presented(&mut harness, 1.0, press(start));
                 assert_eq!(pressed.feedback, []);
                 assert!(harness.dockspace.has_active_gesture());
+                assert_eq!(
+                    harness
+                        .panes
+                        .splitters
+                        .iter()
+                        .filter(|handle| handle.dragging)
+                        .map(|handle| handle.id)
+                        .collect::<Vec<_>>(),
+                    [junction.id]
+                );
                 let moved = sample(
                     &mut harness,
                     1.1,
@@ -173,6 +190,16 @@ fn junction_pointer_samples_resize_all_four_panes_before_release() {
                 assert_eq!(moved.feedback, []);
                 assert_eq!(harness.dockspace.version(), version);
                 assert_shifted(&before, &moved, delta);
+                assert_eq!(
+                    harness
+                        .panes
+                        .splitters
+                        .iter()
+                        .filter(|handle| handle.dragging)
+                        .map(|handle| handle.id)
+                        .collect::<Vec<_>>(),
+                    [junction.id]
+                );
                 // The release carries a new position without a preceding move.
                 presented(&mut harness, 1.2, vec![button(end, false)])
             } else {
@@ -184,6 +211,13 @@ fn junction_pointer_samples_resize_all_four_panes_before_release() {
             assert_shifted(&before, &released, delta * 1.5);
             assert_ne!(harness.dockspace.version(), version);
             assert!(!harness.dockspace.has_active_gesture());
+            assert!(
+                harness
+                    .panes
+                    .splitters
+                    .iter()
+                    .all(|handle| !handle.dragging)
+            );
             let tail = presented(&mut harness, 1.3, vec![button(end, false)]);
             assert_eq!(tail.feedback, []);
             assert_eq!(tail.panes, released.panes);

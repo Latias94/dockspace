@@ -218,16 +218,35 @@ pub(super) fn show(
             let margins = frame.total_margin();
             let available = (viewport.size() - margins.sum()).max(egui::Vec2::ZERO);
             ui.set_max_width(ui.max_rect().width().min(available.x));
-            let (entries, submenus) = frame
+            frame
                 .show(ui, |ui| {
                     ScrollArea::vertical()
                         .id_salt("presentation-menu-scroll")
                         .max_height(available.y)
-                        .show(ui, content)
+                        .show(ui, |ui| {
+                            let (entries, submenus) = content(ui);
+                            let outcome = keyboard::capture(
+                                ui,
+                                anchor.id,
+                                &entries,
+                                &submenus,
+                                source.is_enabled(),
+                            );
+                            if let Some(focused) = ui.memory(egui::Memory::focused)
+                                && entries.contains(&focused)
+                                && let Some(response) = ui.ctx().read_response(focused)
+                                && !ui.clip_rect().contains_rect(response.rect)
+                            {
+                                response.scroll_to_me_animation(
+                                    None,
+                                    egui::style::ScrollAnimation::none(),
+                                );
+                            }
+                            outcome
+                        })
                         .inner
                 })
-                .inner;
-            keyboard::capture(ui, anchor.id, &entries, &submenus, source.is_enabled())
+                .inner
         });
     if output.response.should_close() || (run.press_started_while_open && clicked) {
         Popup::close_id(context, popup);

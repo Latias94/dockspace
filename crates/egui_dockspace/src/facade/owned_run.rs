@@ -10,7 +10,8 @@ use crate::pass_settlement::{
 use crate::pointer::{PointerUpdate, ProductPointerPresentation};
 use crate::render;
 use crate::{
-    DockspaceCapability, DockspaceError, DockspaceResponse, DockspaceUnavailableReason, PaneView,
+    DockMenuAction, DockspaceCapability, DockspaceError, DockspaceResponse,
+    DockspaceUnavailableReason, PaneView,
 };
 use dockspace::model::{ItemId, SurfaceId};
 use dockspace::runtime::{
@@ -76,6 +77,7 @@ pub(super) struct UiActionQueue {
     current: Option<UiActionRun>,
     sequence: u64,
     touch_menu: Option<(u64, DockspaceContextMenuRequest)>,
+    delivered_menu_run: Option<u64>,
 }
 
 impl UiActionQueue {
@@ -204,6 +206,19 @@ impl UiActionQueue {
         self.touch_menu = None;
     }
 
+    pub(super) fn take_menu_action(
+        &mut self,
+        run: u64,
+        action: Option<DockMenuAction>,
+    ) -> Option<DockMenuAction> {
+        if self.delivered_menu_run == Some(run) {
+            return None;
+        }
+        let action = action?;
+        self.delivered_menu_run = Some(run);
+        Some(action)
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.batches.is_empty() && self.touch_menu.is_none()
     }
@@ -305,6 +320,7 @@ impl Dockspace {
         let run = ProductPassSettlementRun::begin(context, &input);
         let mut run_sequence = None;
         let mut pending_actions = None;
+        let mut menu_action = None;
         let mut terminal = None;
         let mut error = None;
         let mut pointer_update = PointerUpdate::default();
@@ -510,6 +526,7 @@ impl Dockspace {
                             had_plan,
                         };
                         if let Some(paint) = paint {
+                            menu_action = menu_action.or(paint.menu_action);
                             pass.missing.extend(paint.missing_items);
                             pass.receipt = paint.execution_receipt;
                             pass.presentation.receivers = paint.receivers;
@@ -630,6 +647,13 @@ impl Dockspace {
         response.include_preceding_feedback(preceding_feedback);
         output.restore_textures(texture_guard);
         let (output, receipt) = run.complete_owned(output);
+        if let Some(action) = self
+            .ui_actions
+            .take_menu_action(run_sequence.unwrap(), menu_action)
+        {
+            panes.on_menu_action(action);
+            context.request_repaint_of(viewport);
+        }
         Ok((DockspaceOutput::new(output, receipt), response))
     }
 }

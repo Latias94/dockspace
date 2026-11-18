@@ -1,8 +1,9 @@
 //! Optional application chrome. Dockspace still owns docking and close input.
 
-use egui::{Color32, CornerRadius, Rect, Stroke, Ui, pos2, vec2};
+use egui::{Color32, CornerRadius, Id, Rect, Stroke, Ui, pos2, vec2};
 use egui_dockspace::{
-    DockspaceDropEligibility, DragPreview, DropGuide, Tab, TabBar, TabBarSlot, TabClose, TabVisuals,
+    DockMenu, DockMenuAction, DockMenuItem, DockMenuTarget, DockspaceDropEligibility, DragPreview,
+    DropGuide, Tab, TabBar, TabBarSlot, TabClose, TabVisuals,
 };
 
 use super::DemoPanes;
@@ -12,6 +13,33 @@ const ACCENTS: [Color32; 3] = [
     Color32::from_rgb(35, 125, 105),
     Color32::from_rgb(130, 78, 160),
 ];
+
+fn tint_action() -> Id {
+    Id::unique("workbench-cycle-tab-accent")
+}
+
+pub(super) fn customize_menu(panes: &DemoPanes, menu: &mut DockMenu) {
+    if panes.custom_tabs
+        && matches!(
+            menu.context().target,
+            DockMenuTarget::Tab(_) | DockMenuTarget::TabGroup(_)
+        )
+    {
+        menu.items
+            .insert(0, DockMenuItem::custom(tint_action(), "Cycle tab accent"));
+        menu.items.insert(1, DockMenuItem::separator());
+    }
+}
+
+pub(super) fn on_menu_action(panes: &mut DemoPanes, action: DockMenuAction) {
+    if action.id == tint_action() {
+        cycle_accent(panes);
+    }
+}
+
+fn cycle_accent(panes: &mut DemoPanes) {
+    panes.tab_accent = (panes.tab_accent + 1) % ACCENTS.len();
+}
 
 pub(super) fn tab_ui(panes: &DemoPanes, ui: &Ui, tab: &Tab<'_>) -> TabVisuals {
     if !panes.custom_tabs {
@@ -115,7 +143,7 @@ pub(super) fn tab_bar_ui(panes: &mut DemoPanes, ui: &mut Ui, bar: TabBar<'_>, sl
         }
         TabBarSlot::Trailing => {
             if ui.small_button("Tint").clicked() {
-                panes.tab_accent = (panes.tab_accent + 1) % ACCENTS.len();
+                cycle_accent(panes);
             }
         }
         TabBarSlot::AfterTabs => {

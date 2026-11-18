@@ -18,6 +18,10 @@ const D: ItemId = ItemId::new(4);
 struct NestedPanes {
     calls: BTreeMap<ItemId, Rect>,
     tabs: BTreeMap<TabKey, String>,
+    layout_title: Option<&'static str>,
+    layout_padding: f32,
+    layout_tab: Option<Rect>,
+    drag_title: Option<String>,
     text: String,
 }
 
@@ -43,9 +47,31 @@ impl PaneView for NestedPanes {
         Some(egui::Id::unique(("nested-pane-editor", item)))
     }
 
+    fn layout_tab_title(&self, key: TabKey, default_title: &str) -> egui::WidgetText {
+        assert!(key.is_layout());
+        self.layout_title.unwrap_or(default_title).into()
+    }
+
+    fn tab_content_width(&self, key: TabKey, _ui: &Ui, title: &egui::Galley) -> f32 {
+        title.size().x
+            + if key.is_layout() {
+                self.layout_padding
+            } else {
+                0.0
+            }
+    }
+
     fn tab_ui(&mut self, ui: &mut Ui, tab: &Tab<'_>) -> TabVisuals {
         self.tabs.insert(tab.key, tab.title.job.text.clone());
+        if tab.key.is_layout() {
+            self.layout_tab = Some(tab.content_rect);
+        }
         tab.paint(ui)
+    }
+
+    fn drag_preview_ui(&mut self, ui: &Ui, preview: &crate::DragPreview) {
+        self.drag_title = preview.title.as_ref().map(|title| title.job.text.clone());
+        preview.paint(ui);
     }
 }
 
@@ -83,13 +109,25 @@ fn paint(
     panes: &mut NestedPanes,
     events: Vec<Event>,
 ) -> FullOutput {
+    paint_at_width(context, dockspace, panes, 900.0, events)
+}
+
+fn paint_at_width(
+    context: &Context,
+    dockspace: &mut Dockspace,
+    panes: &mut NestedPanes,
+    width: f32,
+    events: Vec<Event>,
+) -> FullOutput {
     panes.calls.clear();
     panes.tabs.clear();
+    panes.layout_tab = None;
+    panes.drag_title = None;
     let (output, _) = dockspace
         .run_single_surface(
             context,
             RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 600.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 600.0))),
                 events,
                 ..Default::default()
             },
@@ -101,6 +139,81 @@ fn paint(
     receipt.report(SurfacePresentationResult::Presented);
     output.textures_delta.clear();
     output
+}
+
+#[test]
+fn layout_tab_title_and_width_feed_the_tab_overflow_and_drag_ghost() {
+    let (context, mut dockspace, mut panes) = setup();
+    panes.layout_title = Some("Tool workspace");
+    let draw = |dockspace: &mut Dockspace, panes: &mut NestedPanes, events| {
+        paint(&context, dockspace, panes, events)
+    };
+    for _ in 0..3 {
+        draw(&mut dockspace, &mut panes, Vec::new());
+    }
+    let before = panes.layout_tab.unwrap().width();
+    panes.layout_padding = 34.0;
+    let mut output = draw(&mut dockspace, &mut panes, Vec::new());
+    for _ in 0..2 {
+        output = draw(&mut dockspace, &mut panes, Vec::new());
+    }
+    let target = panes.layout_tab.unwrap();
+    assert!((target.width() - before - 34.0).abs() < 1.0);
+    assert!(
+        nodes(&output).iter().any(|(_, node)| {
+            node.role() == Role::Tab && node.label() == Some("Tool workspace")
+        })
+    );
+    let start = target.center();
+    let primary = |pos, pressed| Event::PointerButton {
+        pos,
+        pressed,
+        button: egui::PointerButton::Primary,
+        modifiers: egui::Modifiers::NONE,
+    };
+    draw(&mut dockspace, &mut panes, vec![Event::PointerMoved(start)]);
+    draw(&mut dockspace, &mut panes, vec![primary(start, true)]);
+    let end = start + vec2(50.0, 160.0);
+    draw(&mut dockspace, &mut panes, vec![Event::PointerMoved(end)]);
+    assert_eq!(panes.drag_title.as_deref(), Some("Tool workspace"));
+    draw(&mut dockspace, &mut panes, vec![key(Key::Escape)]);
+    draw(&mut dockspace, &mut panes, vec![primary(end, false)]);
+
+    let style = DockStyle {
+        tab_min_width: 210.0,
+        ..dockspace.style().clone()
+    };
+    dockspace.set_style(style).unwrap();
+    let narrow = |dockspace: &mut Dockspace, panes: &mut NestedPanes, events| {
+        paint_at_width(&context, dockspace, panes, 340.0, events)
+    };
+    let mut output = narrow(&mut dockspace, &mut panes, Vec::new());
+    for _ in 0..2 {
+        output = narrow(&mut dockspace, &mut panes, Vec::new());
+    }
+    let list = nodes(&output)
+        .iter()
+        .find(|(_, node)| node.label() == Some("List tabs"))
+        .unwrap()
+        .0;
+    narrow(
+        &mut dockspace,
+        &mut panes,
+        vec![Event::AccessKitActionRequest(
+            egui::accesskit::ActionRequest {
+                action: egui::accesskit::Action::Click,
+                target_tree: egui::accesskit::TreeId::ROOT,
+                target_node: list,
+                data: None,
+            },
+        )],
+    );
+    for _ in 0..3 {
+        output = narrow(&mut dockspace, &mut panes, Vec::new());
+    }
+    assert!(nodes(&output).iter().any(|(_, node)| {
+        node.role() == Role::MenuItem && node.label() == Some("Tool workspace")
+    }));
 }
 
 fn activate(dockspace: &mut Dockspace, item: ItemId) {

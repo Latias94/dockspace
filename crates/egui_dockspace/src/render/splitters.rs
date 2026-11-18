@@ -6,9 +6,9 @@ use dockspace::runtime::{
     SurfaceSplitterAdjustment,
 };
 use egui::accesskit::{Action, Orientation, Role};
-use egui::{CursorIcon, Event, EventFilter, Key, PointerButton, Sense, UiBuilder};
+use egui::{Color32, CursorIcon, Event, EventFilter, Key, PointerButton, Sense, UiBuilder};
 
-use crate::SplitterDoubleClick;
+use crate::{Splitter, SplitterDoubleClick, SplitterKind};
 
 use super::RenderContext;
 use super::actions::{effective_enabled, unambiguous_pointer_click};
@@ -75,13 +75,27 @@ pub(crate) fn paint_splitter(
     });
     configure_accessibility(context.ui, context.plan, &response, splitter, enabled);
     let focused = enabled && response.has_focus();
-    let emphasized = focused || (drag_enabled && response.hovered());
-    let paint_omitted = paint.is_source_gap();
-    if !paint_omitted {
-        context
-            .ui
-            .painter()
-            .rect_filled(draw, 0.0, context.splitter_fill(&response, emphasized));
+    if !paint.is_source_gap() {
+        let hovered = response.hovered();
+        let dragging = context.plan.active_splitter_resize() == Some(splitter.visual_id());
+        let emphasized = focused || dragging || (drag_enabled && hovered);
+        context.panes.splitter_ui(
+            &context.ui.painter_at(draw.union(hit)),
+            &Splitter {
+                id,
+                surface: context.plan.surface(),
+                root: splitter.root(),
+                kind: SplitterKind::Divider(splitter.axis()),
+                rect: draw,
+                hit_rect: response.interact_rect,
+                enabled,
+                drag_enabled,
+                hovered,
+                focused,
+                dragging,
+                fill: context.splitter_fill(&response, emphasized),
+            },
+        );
     }
     if !enabled {
         return;
@@ -196,6 +210,7 @@ pub(crate) fn paint_junction(
                 node.set_disabled();
             }
         });
+    let mut focused = false;
     for (axis, present, _core_axis_operable, axis_operable) in axis_operability {
         if !present {
             continue;
@@ -209,7 +224,9 @@ pub(crate) fn paint_junction(
             continue;
         }
         let horizontal = axis == DockspaceAxis::Horizontal;
-        if axis_response.has_focus() {
+        let axis_focused = axis_response.has_focus();
+        if axis_focused {
+            focused = true;
             context.ui.memory_mut(|memory| {
                 memory.set_focus_lock_filter(
                     axis_response.id,
@@ -225,7 +242,7 @@ pub(crate) fn paint_junction(
             context.ui,
             axis_response.id,
             horizontal,
-            axis_response.has_focus(),
+            axis_focused,
             |adjustments| {
                 context.plan.prepare_splitter_junction_adjustment_sequence(
                     junction.visual_id(),
@@ -237,13 +254,34 @@ pub(crate) fn paint_junction(
             context.push_local_action(origin, action);
         }
     }
-    let paint_omitted = paint.is_source_gap();
-    if !paint_omitted && drag_operable && response.hovered() {
-        context.ui.ctx().set_cursor_icon(CursorIcon::AllScroll);
-        context
-            .ui
-            .painter()
-            .rect_filled(hit, 0.0, context.splitter_fill(&response, true));
+    if !paint.is_source_gap() {
+        let hovered = response.hovered();
+        let dragging = context.plan.active_splitter_resize() == Some(junction.visual_id());
+        if drag_operable && hovered {
+            context.ui.ctx().set_cursor_icon(CursorIcon::AllScroll);
+        }
+        let fill = if focused || dragging || (drag_operable && hovered) {
+            context.splitter_fill(&response, true)
+        } else {
+            Color32::TRANSPARENT
+        };
+        context.panes.splitter_ui(
+            &context.ui.painter_at(hit),
+            &Splitter {
+                id,
+                surface: context.plan.surface(),
+                root: junction.root(),
+                kind: SplitterKind::Junction,
+                rect: hit,
+                hit_rect: response.interact_rect,
+                enabled: drag_operable || axis_operability.iter().any(|axis| axis.3),
+                drag_enabled: drag_operable,
+                hovered,
+                focused,
+                dragging,
+                fill,
+            },
+        );
     }
 }
 

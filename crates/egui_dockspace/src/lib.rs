@@ -58,9 +58,9 @@
 //! # Customize
 //!
 //! [`DockStyle`] follows egui's theme and offers tab presets, density and visual
-//! overrides. [`PaneView`] callbacks customize tabs, controls, guides and previews
-//! while the adapter retains docking input and accessibility. [`DockInputConfig`]
-//! configures gestures and shortcuts.
+//! overrides. [`PaneView`] callbacks customize tabs, splitters, menus, guides and
+//! previews while the adapter retains docking input and accessibility.
+//! [`DockInputConfig`] configures gestures and shortcuts.
 //!
 //! Motion is enabled by default. Set `motion::MotionSettings::mode` to
 //! `motion::MotionMode::Off` to disable it at runtime, or use
@@ -80,7 +80,9 @@
 pub mod drag_preview;
 pub mod drop_guide;
 pub mod drop_preview;
+pub mod menu;
 pub mod pane;
+pub mod splitter;
 pub mod style;
 pub mod tab;
 #[cfg(feature = "winit")]
@@ -150,6 +152,10 @@ pub use drop_preview::{
 pub use error::{DockspaceError, DockspaceErrorKind};
 pub use facade::Dockspace;
 pub use input::{DockInputConfig, DockingActivation, SplitterDoubleClick};
+pub use menu::{
+    DockMenu, DockMenuAction, DockMenuContext, DockMenuItem, DockMenuItemKind, DockMenuTarget,
+    DockspacePresentationCommandKind,
+};
 pub use pane::{PaneFocusState, PaneResponse, PaneView};
 pub use pass_settlement::{DockspaceOutput, DockspaceOutputReceipt, run_ui};
 pub use response::{
@@ -159,6 +165,7 @@ pub use response::{
     DockspaceMutation, DockspaceResponse, DockspaceSurfaceCommitStatus, DockspaceSurfaceStatus,
     DockspaceUnavailableReason,
 };
+pub use splitter::{Splitter, SplitterKind};
 pub use style::{
     DockDensity, DockFrameVisuals, DockStyle, DockStyleError, DockVisualOverrides,
     TabCloseVisibility, TabGroupGripVisibility, TabStylePreset,

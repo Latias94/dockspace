@@ -101,7 +101,12 @@ impl PaneView for Panes {
         PaneResponse::default()
     }
 
-    fn tab_content_width(&self, _item: ItemId, _ui: &Ui, title: &egui::Galley) -> f32 {
+    fn tab_content_width(
+        &self,
+        _key: egui_dockspace::TabKey,
+        _ui: &Ui,
+        title: &egui::Galley,
+    ) -> f32 {
         title.size().x + self.extra_width
     }
 

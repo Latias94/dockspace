@@ -143,6 +143,18 @@ fn a_tab_in_the_main_layout_does_not_offer_center_docking_as_dock_back() {
 #[test]
 fn a_main_bare_pane_menu_does_not_offer_center_docking_as_dock_back() {
     let mut harness = setup();
+    let info = egui::Id::unique("pane-information");
+    harness.panes.customize_menu = Some(|menu| {
+        if menu.context().target == crate::DockMenuTarget::Pane(D) {
+            menu.items.insert(
+                0,
+                crate::DockMenuItem::custom(
+                    egui::Id::unique("pane-information"),
+                    "Pane information",
+                ),
+            );
+        }
+    });
     let output = settle(&mut harness);
     let output = click_named(&mut harness, &output, Role::Button, "Layout actions");
     let output = click_named(&mut harness, &output, Role::MenuItem, "Active Panes…");
@@ -161,6 +173,18 @@ fn a_main_bare_pane_menu_does_not_offer_center_docking_as_dock_back() {
     );
     assert!(harness.dockspace.view().item(D).unwrap().tabs().is_none());
     assert_active(&harness, &[A, D]);
+    click_named(&mut harness, &output, Role::MenuItem, "Pane information");
+    assert_eq!(
+        harness.panes.menu_actions,
+        [crate::DockMenuAction {
+            context: crate::DockMenuContext {
+                surface: SURFACE,
+                root: ROOT,
+                target: crate::DockMenuTarget::Pane(D)
+            },
+            id: info,
+        }]
+    );
 }
 
 const E: ItemId = ItemId::new(5);

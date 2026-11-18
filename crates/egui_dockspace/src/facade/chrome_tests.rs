@@ -9,7 +9,7 @@ use egui::accesskit::{Node, NodeId, Role};
 use egui::{Context, Event, FullOutput, Key, Pos2, RawInput, Rect, Ui, vec2};
 
 use super::Dockspace;
-use crate::{DockStyle, PaneResponse, PaneView};
+use crate::{DockMenu, DockMenuAction, DockStyle, PaneResponse, PaneView};
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 
@@ -30,6 +30,8 @@ struct Panes {
     titles: Vec<String>,
     text: String,
     focused_tabs: Vec<ItemId>,
+    customize_menu: Option<fn(&mut DockMenu)>,
+    menu_actions: Vec<DockMenuAction>,
 }
 
 impl PaneView for Panes {
@@ -57,6 +59,16 @@ impl PaneView for Panes {
             self.focused_tabs.push(item);
         }
         tab.paint(ui)
+    }
+
+    fn customize_menu(&self, menu: &mut DockMenu) {
+        if let Some(customize) = self.customize_menu {
+            customize(menu);
+        }
+    }
+
+    fn on_menu_action(&mut self, action: DockMenuAction) {
+        self.menu_actions.push(action);
     }
 }
 
@@ -91,6 +103,8 @@ impl Harness {
                 titles,
                 text: String::new(),
                 focused_tabs: Vec::new(),
+                customize_menu: None,
+                menu_actions: Vec::new(),
             },
             frame: 0,
             local_style: None,

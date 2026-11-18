@@ -79,7 +79,7 @@ impl PaintResources {
         panes: &dyn PaneView,
     ) -> &TabPaintResource {
         self.tabs.entry(key).or_insert_with(|| {
-            let resource = shape_tab(ui, panes, label);
+            let resource = shape_tab(ui, panes, key, label);
             if resource.missing
                 && let Some(item) = key.item()
             {
@@ -233,7 +233,7 @@ impl<'a> SurfaceMeasurementContext<'a> {
                     resources.get_or_shape(key, label, ui, panes)
                 } else {
                     // Independent native measurement has no same-pass paint owner.
-                    uncached = shape_tab(ui, panes, label);
+                    uncached = shape_tab(ui, panes, key, label);
                     &uncached
                 };
                 if resource.missing
@@ -362,17 +362,13 @@ pub(crate) fn prepare_surface<'frame>(
     ))
 }
 
-fn shape_tab(ui: &Ui, panes: &dyn PaneView, label: TabLabel<'_>) -> TabPaintResource {
-    let (item, widget_text, missing) = match label {
+fn shape_tab(ui: &Ui, panes: &dyn PaneView, key: TabKey, label: TabLabel<'_>) -> TabPaintResource {
+    let (widget_text, missing) = match label {
         TabLabel::Item(item) => match panes.title(item) {
-            Some(title) => (Some(item), title, false),
-            None => (
-                Some(item),
-                format!("Missing pane {}", item.get()).into(),
-                true,
-            ),
+            Some(title) => (title, false),
+            None => (format!("Missing pane {}", item.get()).into(), true),
         },
-        TabLabel::Layout { title } => (None, title.into(), false),
+        TabLabel::Layout { title } => (panes.layout_tab_title(key, title), false),
     };
     let title = widget_text.text().to_owned();
     let galley = widget_text.into_galley(
@@ -382,10 +378,11 @@ fn shape_tab(ui: &Ui, panes: &dyn PaneView, label: TabLabel<'_>) -> TabPaintReso
         FontSelection::Style(TextStyle::Button),
     );
     TabPaintResource {
-        content_width: item.filter(|_| !missing).map_or_else(
-            || galley.size().x,
-            |item| panes.tab_content_width(item, ui, &galley),
-        ),
+        content_width: if missing {
+            galley.size().x
+        } else {
+            panes.tab_content_width(key, ui, &galley)
+        },
         title,
         galley,
         missing,

@@ -3,16 +3,20 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
+use egui::{Color32, Galley, Painter, Rect, Ui, WidgetText, vec2};
 use egui_dockspace::{
     CloseDecision, CloseItemDecisionState, Dockspace, DockspaceAxis, DockspaceGridShape,
     DockspaceLayout, DockspaceNode, DockspaceOutput, DockspaceResponse, DockspaceRootLayout,
-    DockspaceSurfaceLayout, ItemId, PaneResponse, PaneView, RootId, SurfaceId,
+    DockspaceSurfaceLayout, ItemId, PaneResponse, PaneView, RootId, Splitter, SplitterKind,
+    SurfaceId, Tab, TabKey, TabVisuals,
     winit::{
         AppResult, FrameControl, NativeApp, NativeFrameReport, NativeOptions, backend, run_native,
     },
 };
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
+const LAYOUT_ICON_SPACE: f32 = 16.0;
+const GRID_ACCENT: Color32 = Color32::from_rgb(80, 139, 196);
 const ITEMS: [ItemId; 7] = [
     ItemId::new(1),
     ItemId::new(2),
@@ -149,7 +153,7 @@ impl NativeApp for Example {
 fn toolbar(ui: &mut egui::Ui, reset: &mut bool) {
     egui::Panel::top("grid-help").show(ui, |ui| {
         ui.label("Resize a column across both rows, a row across both columns, or their shared intersection.");
-        ui.label("Use Layout actions > Active Panes for bare content. Tools is one layout tab with two independent panes.");
+        ui.label("Use Layout actions > Active Panes for bare content. Tool pair opens two independent panes.");
         *reset |= ui.button("Reset layout").clicked();
     });
 }
@@ -161,6 +165,65 @@ struct Documents {
 impl PaneView for Documents {
     fn title(&self, item: ItemId) -> Option<egui::WidgetText> {
         self.text.contains_key(&item).then(|| title(item).into())
+    }
+
+    fn layout_tab_title(&self, _key: TabKey, default_title: &str) -> WidgetText {
+        if default_title == "Tools" {
+            "Tool pair".into()
+        } else {
+            default_title.into()
+        }
+    }
+
+    fn tab_content_width(&self, key: TabKey, _ui: &Ui, title: &Galley) -> f32 {
+        title.size().x
+            + if key.is_layout() {
+                LAYOUT_ICON_SPACE
+            } else {
+                0.0
+            }
+    }
+
+    fn tab_ui(&mut self, ui: &mut Ui, tab: &Tab<'_>) -> TabVisuals {
+        if !tab.key.is_layout() {
+            return tab.paint(ui);
+        }
+        tab.paint_background(ui.painter());
+        let painter = ui.painter_at(tab.content_clip_rect);
+        let icon_origin = egui::pos2(tab.content_rect.left(), tab.content_rect.center().y - 4.0);
+        for x in [0.0, 6.0] {
+            painter.rect_filled(
+                Rect::from_min_size(icon_origin + vec2(x, 0.0), vec2(4.0, 8.0)),
+                1.0,
+                GRID_ACCENT,
+            );
+        }
+        let title_rect = Rect::from_min_max(
+            tab.content_rect.min + vec2(LAYOUT_ICON_SPACE, 0.0),
+            tab.content_rect.max,
+        );
+        tab.paint_title(ui, title_rect);
+        tab.visuals
+    }
+
+    fn splitter_ui(&mut self, painter: &Painter, splitter: &Splitter) {
+        let emphasized =
+            splitter.dragging || splitter.focused || (splitter.drag_enabled && splitter.hovered);
+        match splitter.kind {
+            SplitterKind::Divider(_) if emphasized => {
+                painter.rect_filled(splitter.rect, 0.0, GRID_ACCENT);
+            }
+            SplitterKind::Divider(_) => splitter.paint(painter),
+            SplitterKind::Junction => {
+                let color = if splitter.enabled {
+                    GRID_ACCENT
+                } else {
+                    Color32::GRAY
+                };
+                let radius = if emphasized { 5.0 } else { 3.0 };
+                painter.circle_filled(splitter.rect.center(), radius, color);
+            }
+        }
     }
 
     fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> PaneResponse {

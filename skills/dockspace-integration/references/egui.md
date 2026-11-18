@@ -34,8 +34,10 @@ Choose the declaration's semantics explicitly: `pane(item)` has no header,
 select a complete named Split or Grid layout. Run `examples/shared_grid.rs`
 with the `wgpu` feature for complete-output composition and drag resizing;
 `examples/composable.rs` demonstrates nested activation in an eframe callback.
-`PaneView` callbacks receive real items; `.named("Tools")` supplies a layout
-tab's own title. The default adapter includes scoped tab/group/layout menus and
+`PaneView::title`, content, sizing and focus use real items. `.named("Tools")`
+supplies the default layout tab title. Override `layout_tab_title` for its
+display name and `tab_content_width(TabKey, ...)` for decorations on either
+kind of tab. The default adapter includes scoped tab/group/layout menus and
 an Active Panes menu for bare content. Its group grip merges direct tabs by
 default; the configurable Alt modifier preserves one complete layout tab.
 
@@ -76,6 +78,13 @@ start with the workbench's `tabs.rs`: `tab_ui`, `tab_close_ui`, `tab_bar_ui`,
 adapter input behavior. Guide callbacks expose a stable ID for color/opacity
 animation while core retains hit geometry. Paint the supplied candidate preview,
 including its future tab order.
+
+Customize the existing menus with `customize_menu` and handle application
+rows in `on_menu_action`. Use the menu context and stable item kinds to edit
+rows, and queue workspace commands for outside the callback. Use `splitter_ui`
+for paint-only divider and intersection customization. See the [styling
+guide](../../../crates/egui_dockspace/docs/guide.md#styling) and the workbench
+and shared-grid examples.
 
 Use the facade's style update API so core geometry and adapter styling publish
 together. When mapping a style into an existing session, use

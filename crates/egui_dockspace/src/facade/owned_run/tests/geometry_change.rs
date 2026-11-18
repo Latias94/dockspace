@@ -20,6 +20,7 @@ const THIRD: ItemId = ItemId::new(3);
 #[derive(Default)]
 struct Panes {
     bounds: BTreeMap<ItemId, Rect>,
+    splitters: Vec<crate::Splitter>,
 }
 
 impl PaneView for Panes {
@@ -30,6 +31,17 @@ impl PaneView for Panes {
     fn ui(&mut self, item: ItemId, ui: &mut Ui) -> crate::PaneResponse {
         self.bounds.insert(item, ui.available_rect_before_wrap());
         crate::PaneResponse::from(&ui.label(format!("Content {}", item.get())))
+    }
+
+    fn splitter_ui(&mut self, painter: &egui::Painter, splitter: &crate::Splitter) {
+        assert!(
+            splitter
+                .rect
+                .union(splitter.hit_rect)
+                .contains_rect(painter.clip_rect())
+        );
+        self.splitters.push(*splitter);
+        painter.circle_filled(splitter.rect.center(), 2.0, egui::Color32::LIGHT_BLUE);
     }
 }
 
@@ -78,6 +90,7 @@ impl Harness {
             panes,
         } = self;
         panes.bounds.clear();
+        panes.splitters.clear();
         let mut raw = input(time, events);
         raw.screen_rect = Some(Rect::from_min_size(
             Pos2::ZERO,

@@ -998,7 +998,8 @@ impl<P: PaneView> NativeRuntimeState<P> {
             return Ok(NativeSurfaceUpdate::RetainPrevious);
         }
 
-        let (mut host_frame, run, publication) = if let Some(update) = self.owned_update.take() {
+        let (mut host_frame, run, mut publication) = if let Some(update) = self.owned_update.take()
+        {
             let NativeOwnedUpdate {
                 host,
                 mut run,
@@ -1204,6 +1205,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
                     },
                     application_action,
                     ui_actions,
+                    menu_action: None,
                     native_input_pending,
                     retain_previous,
                     follow_up: output_prefix_pending
@@ -1308,13 +1310,14 @@ impl<P: PaneView> NativeRuntimeState<P> {
                     self.instance_id.with(surface.get()),
                     surface,
                 );
-                let paint = host_frame.paint_surface(
+                let mut paint = host_frame.paint_surface(
                     self.instance_id.with(surface.get()),
                     surface,
                     surface_ui,
                     &mut self.panes,
                     encoding_style,
                 )?;
+                publication.menu_action = publication.menu_action.or(paint.take_menu_action());
                 let owner = paint.native_binding().or_else(|| {
                     bridge
                         .output_reservation(token)
@@ -1651,6 +1654,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
             self.application_actions.has_queued() || repaint_surface,
         );
         let follow_up = publication.follow_up
+            || publication.menu_action.is_some()
             || self.pending_service
             || retained_actions_need_repaint(&self.pass_actions, focus_pending)
             || semantic_retry
@@ -1659,6 +1663,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
         if follow_up {
             context.request_repaint_of(ViewportId::ROOT);
             context.request_repaint_of(token.viewport_id());
+        }
+        if let Some(action) = publication.menu_action {
+            self.panes.on_menu_action(action);
         }
         Ok(())
     }

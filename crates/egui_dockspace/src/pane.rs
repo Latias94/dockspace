@@ -5,7 +5,9 @@ use egui::scroll_area::ScrollAreaOutput;
 use egui::{Context, Id, Response, Ui, WidgetText};
 
 use crate::tab::{Tab, TabBar, TabBarId, TabBarLayout, TabBarSlot, TabClose, TabVisuals};
-use crate::{DragPreview, DropGuide, DropPreview, PaneSizing};
+use crate::{
+    DockMenu, DockMenuAction, DragPreview, DropGuide, DropPreview, PaneSizing, Splitter, TabKey,
+};
 
 /// Ordinary application-content registrations produced by one pane callback.
 ///
@@ -120,11 +122,12 @@ pub enum PaneFocusState {
 
 /// Resolves and renders application-owned panes by stable item identity.
 ///
-/// The adapter borrows this object only while painting a frame. Implementors
+/// The adapter borrows this object while processing a frame. Implementors
 /// retain ownership of pane state; the docking workspace stores stable
 /// [`ItemId`] content identities and layout metadata.
 ///
-/// Callbacks run synchronously within the current egui pass. Start background
+/// Rendering and customization run synchronously within the current egui pass.
+/// Command delivery follows [`Self::on_menu_action`]. Start background
 /// work in application-owned tasks, apply completed results on the UI thread,
 /// and request a repaint. Do not wait for I/O or retain a [`Ui`] across tasks.
 /// egui may repeat or discard a pass; application state is not rolled back with
@@ -149,14 +152,23 @@ pub trait PaneView {
     /// for painting in that same pass. A later pass reads the title again.
     fn title(&self, item: ItemId) -> Option<WidgetText>;
 
+    /// Returns the display title for a direct layout tab.
+    ///
+    /// The default comes from the layout model. This query supplies visible
+    /// tabs, overflow rows, drag previews and accessibility. The key is local
+    /// to the current workspace; use a model name for persistent naming.
+    fn layout_tab_title(&self, _key: TabKey, default_title: &str) -> WidgetText {
+        default_title.into()
+    }
+
     /// Measures tab content before docking padding and the built-in close button.
     ///
     /// The default is the title width. Reserve extra width here when `tab_ui`
     /// adds icons, badges or buttons. Return a finite, non-negative width in
-    /// egui points; the adapter measures once per item in a UI pass. This query
-    /// must not depend on painting the tab or pane first. Title metadata still
-    /// supplies hover text, accessibility, overflow rows and drag previews.
-    fn tab_content_width(&self, _item: ItemId, _ui: &Ui, title: &egui::Galley) -> f32 {
+    /// egui points for either an application or a layout tab. This query may run
+    /// before painting or for future drop geometry. Title metadata still supplies
+    /// hover text, accessibility, overflow rows and drag previews.
+    fn tab_content_width(&self, _key: TabKey, _ui: &Ui, title: &egui::Galley) -> f32 {
         title.size().x
     }
 
@@ -173,8 +185,7 @@ pub trait PaneView {
     /// registration is needed or accepted for tab chrome.
     /// Return the final appearance so built-in focus and close cues follow it.
     /// `tab.key` identifies the direct tab; `tab.item()` is present only for
-    /// real application content. Layout tabs use their own title and retain
-    /// the default appearance without a content registration.
+    /// real application content. Layout tabs use [`Self::layout_tab_title`].
     fn tab_ui(&mut self, ui: &mut Ui, tab: &Tab<'_>) -> TabVisuals {
         tab.paint(ui)
     }
@@ -183,6 +194,34 @@ pub trait PaneView {
     fn tab_close_ui(&mut self, ui: &Ui, close: &TabClose<'_>) {
         close.paint(ui);
     }
+
+    /// Paints a divider or intersection into its clipped allocation.
+    ///
+    /// Call [`Splitter::paint`] for the default appearance. The adapter owns
+    /// hit testing, cursor, focus, double-click, keyboard and accessibility.
+    /// While resizing, `splitter.dragging` reflects the core gesture owner.
+    fn splitter_ui(&mut self, painter: &egui::Painter, splitter: &Splitter) {
+        splitter.paint(painter);
+    }
+
+    /// Edits the title and ordered rows of an open presentation menu page.
+    ///
+    /// Retain, reorder or relabel the supplied rows, or insert a
+    /// [`crate::DockMenuItem::custom`] row. Built-in commands retain their
+    /// current core availability. The adapter handles input, focus and
+    /// accessibility for all rows. This query can repeat during a run.
+    fn customize_menu(&self, _menu: &mut DockMenu) {}
+
+    /// Receives the selected application row after a successful docking update.
+    ///
+    /// A menu activation is delivered once per original egui run, including
+    /// retried passes. Queue workspace mutations for the application to apply
+    /// outside this callback. For `show_single_surface`, delivery happens
+    /// during the enclosing egui pass after this dockspace has committed.
+    /// Native hosts call under the pane registry lock and wake the root update
+    /// for queued application work. Queue commands for later rather than
+    /// re-entering the host from here.
+    fn on_menu_action(&mut self, _action: DockMenuAction) {}
 
     /// Paints the source's drag ghost without adding interactive widgets.
     ///
@@ -333,8 +372,12 @@ impl<T: PaneView + ?Sized> PaneView for Box<T> {
         (**self).ui(item, ui)
     }
 
-    fn tab_content_width(&self, item: ItemId, ui: &Ui, title: &egui::Galley) -> f32 {
-        (**self).tab_content_width(item, ui, title)
+    fn layout_tab_title(&self, key: TabKey, default_title: &str) -> WidgetText {
+        (**self).layout_tab_title(key, default_title)
+    }
+
+    fn tab_content_width(&self, key: TabKey, ui: &Ui, title: &egui::Galley) -> f32 {
+        (**self).tab_content_width(key, ui, title)
     }
 
     fn tab_ui(&mut self, ui: &mut Ui, tab: &Tab<'_>) -> TabVisuals {
@@ -343,6 +386,18 @@ impl<T: PaneView + ?Sized> PaneView for Box<T> {
 
     fn tab_close_ui(&mut self, ui: &Ui, close: &TabClose<'_>) {
         (**self).tab_close_ui(ui, close);
+    }
+
+    fn splitter_ui(&mut self, painter: &egui::Painter, splitter: &Splitter) {
+        (**self).splitter_ui(painter, splitter);
+    }
+
+    fn customize_menu(&self, menu: &mut DockMenu) {
+        (**self).customize_menu(menu);
+    }
+
+    fn on_menu_action(&mut self, action: DockMenuAction) {
+        (**self).on_menu_action(action);
     }
 
     fn drag_preview_ui(&mut self, ui: &Ui, preview: &DragPreview) {

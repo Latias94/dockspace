@@ -115,7 +115,11 @@ impl egui::plugin::Plugin for BatchProbe {
     }
 }
 
-fn batch_events(harness: &mut Harness, events: Vec<Event>, discards: usize) -> Vec<Event> {
+pub(super) fn batch_events(
+    harness: &mut Harness,
+    events: Vec<Event>,
+    discards: usize,
+) -> Vec<Event> {
     harness.context.options_mut(|options| {
         options.max_passes = (discards + 1).try_into().unwrap();
     });
