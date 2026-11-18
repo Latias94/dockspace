@@ -65,6 +65,13 @@ impl DockEngine {
         if authority_domain != self.authority_domain || expected != self.version {
             return Ok(Unavailable(DockspaceActionRejection::Conflict));
         }
+        if let Some(surface) =
+            Self::first_missing_required_surface(&self.workspace, required_surfaces)
+        {
+            return Ok(Unavailable(DockspaceActionRejection::SurfaceRequired {
+                surface,
+            }));
+        }
         if self
             .product_presentation_source_root(action)
             .is_some_and(|root| self.root_has_pending_presentation_transition(root))
@@ -97,17 +104,10 @@ impl DockEngine {
             Err(reason) => return Ok(Unavailable(reason)),
         };
         let ProductActionPlan::Command { command, .. } = plan else {
-            return Ok(
-                match Self::first_missing_required_surface(&self.workspace, required_surfaces) {
-                    Some(surface) => {
-                        Unavailable(DockspaceActionRejection::SurfaceRequired { surface })
-                    }
-                    None => Ready {
-                        retired_surfaces: Vec::new(),
-                        requires_presentation: false,
-                    },
-                },
-            );
+            return Ok(Ready {
+                retired_surfaces: Vec::new(),
+                requires_presentation: false,
+            });
         };
         if self
             .product_command_complete_root(&command)

@@ -850,6 +850,35 @@ fn explicit_placement_can_recover_a_contained_root_without_visible_chrome() {
 }
 
 #[test]
+fn native_tear_off_cannot_preserve_a_surface_that_does_not_yet_exist() {
+    let mut fixture = Fixture::new();
+    let missing = SurfaceId::new(2);
+    assert!(fixture.session.view().surface(missing).is_none());
+    let before = fixture.session.version();
+    let action = fixture
+        .session
+        .prepare_move_to_new_window(DockMoveSource::Item(B), placement())
+        .preserving_surfaces([missing]);
+    assert_eq!(
+        fixture.session.action_availability(&action).unwrap(),
+        dockspace::model::DockspaceActionAvailability::Unavailable(
+            DockspaceActionRejection::SurfaceRequired { surface: missing }
+        )
+    );
+    let mut frame = native_frame(&mut fixture.session);
+    let submitted = frame.submit_prepared_action(action).unwrap();
+    let mut report = finish(frame);
+    assert_eq!(
+        report.submitted_action_outcome(submitted),
+        Some(&HostInputOutcome::ProductActionRejected(
+            DockspaceActionRejection::SurfaceRequired { surface: missing }
+        ))
+    );
+    assert!(report.take_native_effects().is_empty());
+    fixture.assert_source(before);
+}
+
+#[test]
 fn native_tear_off_availability_reports_the_previous_child_surface_retirement() {
     let mut fixture = Fixture::configured(3, false);
     let action = fixture

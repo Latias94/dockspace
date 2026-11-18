@@ -608,6 +608,7 @@ impl PreparedDockAction {
 
     /// Requires these logical surfaces to survive this action's candidate publication.
     ///
+    /// Required surfaces must already exist in the captured workspace.
     /// The core checks the real candidate at submission and, for deferred native
     /// transfers, again at completion. Read-only availability is advisory: later
     /// measurement or window facts cannot bypass this constraint. Repeated calls
