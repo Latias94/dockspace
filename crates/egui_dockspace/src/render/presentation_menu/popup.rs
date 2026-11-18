@@ -23,6 +23,7 @@ struct MenuRun {
     toggled_in: Option<(ViewportId, u64)>,
     visible_pass: u64,
     press_started_while_open: bool,
+    focused_entry: Option<Id>,
 }
 
 fn run_id() -> Id {
@@ -138,6 +139,7 @@ pub(super) fn show(
             toggled_in: None,
             visible_pass: 0,
             press_started_while_open: false,
+            focused_entry: None,
         });
     if run.workspace != workspace {
         Popup::close_id(context, popup);
@@ -225,6 +227,19 @@ pub(super) fn show(
                         .max_height(available.y)
                         .show(ui, |ui| {
                             let (entries, submenus) = content(ui);
+                            // Removed or disabled rows still own their preceding focus.
+                            // Return it to the anchor without taking a newer application's focus.
+                            if !ui.is_sizing_pass()
+                                && let Some(previous) = run.focused_entry
+                                && !entries.contains(&previous)
+                                && ui.memory(|memory| {
+                                    memory.focused() == Some(previous)
+                                        || (memory.focused().is_none()
+                                            && memory.had_focus_last_frame(previous))
+                                })
+                            {
+                                anchor.request_focus();
+                            }
                             let outcome = keyboard::capture(
                                 ui,
                                 anchor.id,
@@ -232,6 +247,11 @@ pub(super) fn show(
                                 &submenus,
                                 source.is_enabled(),
                             );
+                            if !ui.is_sizing_pass() {
+                                run.focused_entry = ui
+                                    .memory(egui::Memory::focused)
+                                    .filter(|focused| entries.contains(focused));
+                            }
                             if let Some(focused) = ui.memory(egui::Memory::focused)
                                 && entries.contains(&focused)
                                 && let Some(response) = ui.ctx().read_response(focused)

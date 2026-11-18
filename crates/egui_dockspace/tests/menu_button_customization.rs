@@ -36,7 +36,10 @@ struct Snapshot {
 }
 
 #[derive(Default)]
-struct Buttons(Vec<Snapshot>);
+struct Buttons {
+    snapshots: Vec<Snapshot>,
+    default_paint: bool,
+}
 
 impl PaneView for Buttons {
     fn title(&self, item: ItemId) -> Option<egui::WidgetText> {
@@ -48,7 +51,7 @@ impl PaneView for Buttons {
     }
 
     fn menu_button_ui(&mut self, ui: &Ui, button: &DockMenuButton<'_>) {
-        self.0.push(Snapshot {
+        self.snapshots.push(Snapshot {
             id: button.response.id,
             kind: button.kind,
             context: button.context,
@@ -64,6 +67,10 @@ impl PaneView for Buttons {
             icon_color: button.icon_color,
             opacity: ui.opacity(),
         });
+        if self.default_paint {
+            button.paint(ui);
+            return;
+        }
         // Deliberate overdraw checks the callback's actual painter clip.
         ui.painter()
             .rect_filled(button.rect.expand(100.0), 9.0, CUSTOM_FILL);
@@ -129,7 +136,7 @@ impl Harness {
     }
 
     fn run(&mut self, events: Vec<Event>) -> FullOutput {
-        self.panes.0.clear();
+        self.panes.snapshots.clear();
         self.frame += 1;
         let raw = RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(WIDTH, 600.0))),
@@ -166,10 +173,10 @@ impl Harness {
 
     fn button(&self, kind: DockMenuButtonKind, root: RootId) -> Snapshot {
         self.panes
-            .0
+            .snapshots
             .iter()
             .find(|button| button.kind == kind && button.context.root == root)
-            .unwrap_or_else(|| panic!("missing {kind:?} in {root:?}: {:?}", self.panes.0))
+            .unwrap_or_else(|| panic!("missing {kind:?} in {root:?}: {:?}", self.panes.snapshots))
             .clone()
     }
 }
@@ -326,7 +333,7 @@ fn disabled_menu_buttons_keep_custom_paint_without_accepting_activation() {
     harness.settle();
     harness.enabled = false;
     let output = harness.settle();
-    for button in &harness.panes.0 {
+    for button in &harness.panes.snapshots {
         assert!(!button.enabled);
         assert!(!button.ui_enabled);
         assert_expanded(&output, button, false);
@@ -340,7 +347,7 @@ fn disabled_menu_buttons_keep_custom_paint_without_accepting_activation() {
     }
     let source = harness.button(DockMenuButtonKind::Layout, MAIN);
     harness.run(vec![action(source.id, Action::Click)]);
-    assert!(harness.panes.0.iter().all(|button| !button.open));
+    assert!(harness.panes.snapshots.iter().all(|button| !button.open));
     harness.enabled = true;
     harness.settle();
     harness.run(vec![action(source.id, Action::Click)]);
@@ -381,5 +388,68 @@ fn a_core_disabled_tab_list_applies_disabled_opacity_exactly_once() {
         harness.run(vec![action(button.id, Action::Click)]);
         harness.settle();
         assert!(!harness.button(DockMenuButtonKind::TabList, MAIN).open);
+    }
+}
+
+#[test]
+fn switching_button_paint_during_an_open_menu_preserves_its_identity_across_repeated_passes() {
+    struct RepeatPasses(usize);
+    impl egui::plugin::Plugin for RepeatPasses {
+        fn debug_name(&self) -> &'static str {
+            "repeat-menu-button-paint"
+        }
+        fn output_hook(&mut self, _: &Context, output: &mut FullOutput) {
+            if self.0 > 0 {
+                self.0 -= 1;
+                output.platform_output.request_discard_reasons.push(
+                    egui::RepaintCause::new_reason("repeat after switching menu-button appearance"),
+                );
+            }
+        }
+    }
+
+    for callback in [false, true] {
+        for kind in [
+            DockMenuButtonKind::Layout,
+            DockMenuButtonKind::TabGroup,
+            DockMenuButtonKind::TabList,
+        ] {
+            let mut harness = Harness::new(callback);
+            harness.settle();
+            let original = harness.button(kind, MAIN);
+            harness.run(vec![action(original.id, Action::Click)]);
+            let output = harness.settle();
+            assert_expanded(&output, &harness.button(kind, MAIN), true);
+
+            harness.panes.default_paint = true;
+            harness
+                .context
+                .options_mut(|options| options.max_passes = 3.try_into().unwrap());
+            harness.context.add_plugin(RepeatPasses(2));
+            let output = harness.run(Vec::new());
+            assert_eq!(output.platform_output.num_completed_passes, 3);
+            let repainted = harness.button(kind, MAIN);
+            assert_eq!(repainted.id, original.id);
+            assert_eq!(repainted.hit, original.hit);
+            assert_expanded(&output, &repainted, true);
+            assert!(
+                harness
+                    .panes
+                    .snapshots
+                    .iter()
+                    .filter(|button| button.id == original.id)
+                    .all(|button| button.open)
+            );
+
+            harness.panes.default_paint = false;
+            harness.run(vec![key(Key::Escape)]);
+            let output = harness.settle();
+            let closed = harness.button(kind, MAIN);
+            assert_expanded(&output, &closed, false);
+            assert!(closed.focused);
+            harness.run(vec![action(original.id, Action::Click)]);
+            let output = harness.settle();
+            assert_expanded(&output, &harness.button(kind, MAIN), true);
+        }
     }
 }

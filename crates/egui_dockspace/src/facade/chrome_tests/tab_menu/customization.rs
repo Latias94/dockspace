@@ -4,6 +4,8 @@ use super::super::presentation_keyboard::batch_events;
 use super::*;
 use crate::{DockMenuContext, DockMenuItem, DockMenuItemKind, DockMenuTarget};
 
+mod dynamic;
+
 fn custom_tab_menu(menu: &mut DockMenu) {
     assert_eq!(menu.context().target, DockMenuTarget::Tab(B.into()));
     menu.heading = "Document tools".to_owned();
