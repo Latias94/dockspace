@@ -141,7 +141,9 @@ fn modifier_only_input_remembers_shift_without_enrolling_a_pointer() {
         |ui| {
             let mut frame = session.begin_host_frame().unwrap();
             let mut draft = pointer.clone();
-            let input = draft.prepare(&frame, SURFACE, ui);
+            let input = pointer
+                .prepare_draft(&mut draft, &frame, SURFACE, ui)
+                .unwrap();
             submissions += usize::from(!input.is_empty());
             input.submit_into(&mut frame).unwrap();
             frame

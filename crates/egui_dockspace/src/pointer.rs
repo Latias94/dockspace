@@ -1,7 +1,7 @@
 //! Ordered transport for the official host-local pointer lane.
 
 use std::cell::OnceCell;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,7 +21,7 @@ use egui::{
 
 use crate::focus::DeferredTabFocus;
 use crate::input::DockInputConfig;
-use crate::pass_settlement::{ProductPointerPacket, pointer_packet};
+use crate::pass_settlement::{InputPassId, ProductPointerPacket, pointer_packet};
 use crate::render::ProductReceiverBinding;
 
 mod touch;
@@ -34,15 +34,16 @@ mod ownership_tests;
 
 use touch::TouchContacts;
 
+const GENERIC_POINTER: SurfacePointerId = SurfacePointerId::new(1);
+
 /// Framework receiver authority frozen before any application callback runs.
 pub(crate) struct ProductPointerInputSnapshot {
-    completed_pass: u64,
     widgets: WidgetRects,
     interactive_layers: Vec<(LayerId, Rect, f32)>,
     interaction_radius: f32,
     transformed_layers: HashSet<LayerId>,
     layer_at: Box<dyn Fn(Pos2) -> Option<LayerId> + Send + Sync>,
-    foreign_drag: bool,
+    pub(crate) foreign_drag: bool,
 }
 
 /// Metadata pairing one committed egui output with its new receiver graph.
@@ -53,7 +54,7 @@ pub(crate) struct ProductPointerInputSnapshot {
 /// lifecycles remain intentionally separate.
 pub(crate) struct ProductPointerPresentation {
     pub(crate) layer: LayerId,
-    pub(crate) completed_pass: u64,
+    pub(crate) input_pass: Option<InputPassId>,
     pub(crate) coordinates_supported: bool,
     pub(crate) receivers: Vec<ProductReceiverBinding>,
     pub(crate) focus_bindings: Vec<(dockspace::model::ItemId, Id)>,
@@ -116,7 +117,6 @@ impl ProductPointerInputSnapshot {
             (transformed_layers, layer_at, interactive_layers)
         });
         Self {
-            completed_pass: context.cumulative_pass_nr(),
             widgets,
             interactive_layers,
             interaction_radius,
@@ -221,7 +221,7 @@ impl PacketPointerOwnership {
 struct PointerScene {
     artifact: SurfacePresentationArtifact,
     layer: LayerId,
-    completed_pass: u64,
+    input_pass: Option<InputPassId>,
     coordinates_supported: bool,
     receivers: Arc<[ProductReceiverBinding]>,
     focus_bindings: Arc<[(dockspace::model::ItemId, Id)]>,
@@ -234,6 +234,8 @@ pub(crate) struct ProductPointer {
     presented: Option<PointerScene>,
     consumed_run: Option<ProductPointerPacket>,
     rejected_run: Option<ProductPointerPacket>,
+    observed_through_pass: Option<InputPassId>,
+    pending_stream_cancellations: BTreeSet<SurfacePointerId>,
     position: Option<Pos2>,
     // Adapter input enrollment only; core remains the sole gesture owner.
     generic_phase: GenericPointerPhase,
@@ -283,7 +285,7 @@ impl PointerSample {
         group_dock_mode: Option<TabGroupDockMode>,
     ) -> Self {
         Self {
-            pointer: SurfacePointerId::new(1),
+            pointer: GENERIC_POINTER,
             device: PointerDeviceKind::Unknown,
             event,
             position,
@@ -412,7 +414,7 @@ impl ProductPointer {
         &mut self,
         artifact: SurfacePresentationArtifact,
         layer: LayerId,
-        completed_pass: u64,
+        input_pass: Option<InputPassId>,
         coordinates_supported: bool,
         receivers: Vec<ProductReceiverBinding>,
         focus_bindings: Vec<(dockspace::model::ItemId, Id)>,
@@ -420,7 +422,7 @@ impl ProductPointer {
         self.pending.push(PointerScene {
             artifact,
             layer,
-            completed_pass,
+            input_pass,
             coordinates_supported,
             receivers: receivers.into(),
             focus_bindings: focus_bindings.into(),
@@ -438,7 +440,7 @@ impl ProductPointer {
             self.emitted(
                 output.presentation_artifact(),
                 presentation.layer,
-                presentation.completed_pass,
+                presentation.input_pass,
                 presentation.coordinates_supported,
                 presentation.receivers,
                 presentation.focus_bindings,
@@ -495,41 +497,92 @@ impl ProductPointer {
         }
     }
 
-    pub(crate) fn prepare(
+    pub(crate) fn prepare_draft(
         &mut self,
+        draft: &mut Self,
         frame: &DockspaceHostFrame<'_>,
         surface: SurfaceId,
         ui: &Ui,
-    ) -> PreparedProductPointerInput {
-        self.sync_presented(frame, surface);
-        let Some(packet) = pointer_packet(ui) else {
-            return PreparedProductPointerInput {
-                input: Ok(PreparedPointerEdges::default()),
-                observed_at: None,
-            };
-        };
+    ) -> Option<PreparedProductPointerInput> {
+        draft.sync_presented(frame, surface);
+        let packet = pointer_packet(ui)?;
+        let previous_pass = self.observed_through_pass;
+        self.record_observed_pass(draft, packet.observed_input_pass());
         let observed_at = packet.observed_at();
-        let input = if self
+        let input = if draft
             .consumed_run
             .as_ref()
             .is_some_and(|previous| previous.same_run(&packet))
         {
             Ok(PreparedPointerEdges::default())
-        } else if self
+        } else if draft
             .rejected_run
             .as_ref()
             .is_some_and(|previous| previous.same_run(&packet))
         {
             Err(DockspaceInteractionError::PointerInputAlreadySubmitted.into())
         } else {
-            let input = self.prepare_packet(frame, surface, ui, &packet);
-            if input.is_ok() {
-                self.consumed_run = Some(packet);
-                self.rejected_run = None;
+            if previous_pass.is_some() && previous_pass != packet.preceding_input_pass() {
+                // Omitted passes may have consumed the end of any enrolled stream.
+                self.mark_input_gap();
+            }
+            let input = draft.prepare_packet(
+                frame,
+                surface,
+                ui,
+                &packet,
+                &self.pending_stream_cancellations,
+            );
+            if let Ok(input) = &input {
+                // egui has already consumed these edges. Keep cancellation evidence
+                // on the live adapter until the draft publishes their effects.
+                self.record_uncommitted_terminals(&input.raw);
+                draft.pending_stream_cancellations.clear();
+                draft.consumed_run = Some(packet);
+                draft.rejected_run = None;
+            } else {
+                self.mark_input_gap();
             }
             input
         };
-        PreparedProductPointerInput { input, observed_at }
+        Some(PreparedProductPointerInput { input, observed_at })
+    }
+
+    fn mark_input_gap(&mut self) {
+        if self.generic_phase.is_live() {
+            self.pending_stream_cancellations.insert(GENERIC_POINTER);
+        }
+        self.pending_stream_cancellations
+            .extend(self.touches.pointers());
+    }
+
+    fn record_uncommitted_terminals(&mut self, edges: &[Edge]) {
+        self.pending_stream_cancellations
+            .extend(edges.iter().filter_map(|edge| {
+                if !ends_primary_gesture(edge.event)
+                    && edge.event != SurfacePointerEvent::CaptureChanged
+                {
+                    return None;
+                }
+                let was_enrolled = if edge.pointer == GENERIC_POINTER {
+                    match edge.event {
+                        SurfacePointerEvent::ButtonReleased(_) => {
+                            self.generic_phase == GenericPointerPhase::Pressed
+                        }
+                        _ => self.generic_phase.is_live(),
+                    }
+                } else {
+                    self.touches
+                        .pointers()
+                        .any(|pointer| pointer == edge.pointer)
+                };
+                was_enrolled.then_some(edge.pointer)
+            }));
+    }
+
+    pub(crate) fn record_observed_pass(&mut self, draft: &mut Self, pass: InputPassId) {
+        self.observed_through_pass = Some(pass);
+        draft.observed_through_pass = Some(pass);
     }
 
     /// A failed frame may not reinterpret the same raw run on a later pass.
@@ -550,6 +603,7 @@ impl ProductPointer {
         surface: SurfaceId,
         ui: &Ui,
         packet: &ProductPointerPacket,
+        pending_stream_cancellations: &BTreeSet<SurfacePointerId>,
     ) -> Result<PreparedPointerEdges, DockspaceRuntimeError> {
         let current = frame.presented_surface(surface);
         let scene = self.presented.as_ref().filter(|scene| {
@@ -588,26 +642,29 @@ impl ProductPointer {
         let mut touches = self.touches.clone();
         let host_focused = packet.focused();
         let mut pointer_focused = host_focused;
-        let mut touch_interval = !touches.is_empty() || focus_interval_has_touch(packet.events());
         let mut records = Vec::new();
-        if rejected_previous || !coordinates_supported || !host_focused {
-            if generic_phase.is_live() {
-                records.push(PointerSample::generic(
-                    SurfacePointerEvent::StreamCancelled(
-                        SurfacePointerCancelReason::ExplicitPlatformCancellation,
-                    ),
-                    position,
-                    docking_enabled,
-                    group_dock_mode,
-                ));
-                generic_phase = GenericPointerPhase::Idle;
-            }
-            records.extend(touches.cancel_all(
+        let cancel_all = rejected_previous || !coordinates_supported || !host_focused;
+        let should_cancel = |pointer| cancel_all || pending_stream_cancellations.contains(&pointer);
+        if generic_phase.is_live() && should_cancel(GENERIC_POINTER) {
+            records.push(PointerSample::generic(
+                SurfacePointerEvent::StreamCancelled(
+                    SurfacePointerCancelReason::ExplicitPlatformCancellation,
+                ),
+                position,
+                docking_enabled,
+                group_dock_mode,
+            ));
+            generic_phase = GenericPointerPhase::Idle;
+        }
+        if cancel_all || !pending_stream_cancellations.is_empty() {
+            records.extend(touches.cancel_where(
+                should_cancel,
                 SurfacePointerCancelReason::ExplicitPlatformCancellation,
                 docking_enabled,
                 group_dock_mode,
             ));
         }
+        let mut touch_interval = !touches.is_empty() || focus_interval_has_touch(packet.events());
         if foreign_drag && !self.foreign_capture {
             if generic_phase.is_live() {
                 records.push(PointerSample::generic(
@@ -878,15 +935,7 @@ impl ProductPointer {
             let manipulation_surface = frame_owner
                 .filter(|_| retain_frame_owner)
                 .or(current.filter(|_| coordinates_supported));
-            if frame_owner.is_some()
-                && matches!(
-                    sample.event,
-                    SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary)
-                        | SurfacePointerEvent::ContactEnded(SurfacePointerButton::Primary)
-                        | SurfacePointerEvent::StreamCancelled(_)
-                        | SurfacePointerEvent::StreamEnded
-                )
-            {
+            if frame_owner.is_some() && ends_primary_gesture(sample.event) {
                 // Only the original owner may retain its old coordinate proof.
                 // Its terminal ends that exception within this raw packet too;
                 // a later down and its suffix use the current presented output.
@@ -895,7 +944,8 @@ impl ProductPointer {
             let qualified = scene.zip(position).is_some_and(|(scene, position)| {
                 !foreign_drag
                     && ui.is_enabled()
-                    && snapshot.completed_pass == scene.completed_pass
+                    && scene.input_pass.is_some()
+                    && scene.input_pass == packet.preceding_input_pass()
                     && (snapshot.layer_at)(position) == Some(scene.layer)
                     && coordinates_supported
                     && ownership
@@ -986,6 +1036,16 @@ impl ProductPointer {
     }
 }
 
+fn ends_primary_gesture(event: SurfacePointerEvent) -> bool {
+    matches!(
+        event,
+        SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary)
+            | SurfacePointerEvent::ContactEnded(SurfacePointerButton::Primary)
+            | SurfacePointerEvent::StreamCancelled(_)
+            | SurfacePointerEvent::StreamEnded
+    )
+}
+
 fn focus_interval_has_touch(events: &[Event]) -> bool {
     events
         .iter()
@@ -993,7 +1053,7 @@ fn focus_interval_has_touch(events: &[Event]) -> bool {
         .any(|event| matches!(event, Event::Touch { .. }))
 }
 
-fn has_foreign_drag(context: &Context) -> bool {
+pub(crate) fn has_foreign_drag(context: &Context) -> bool {
     egui::DragAndDrop::has_any_payload(context)
         || context.input(|input| {
             !input.raw.hovered_files.is_empty() || !input.raw.dropped_files.is_empty()
@@ -1008,7 +1068,7 @@ fn continuation_sample(
     pointer: SurfacePointerId,
     event: SurfacePointerEvent,
 ) -> Option<PointerSample> {
-    if pointer == SurfacePointerId::new(1) {
+    if pointer == GENERIC_POINTER {
         Some(PointerSample::generic(
             event,
             position,

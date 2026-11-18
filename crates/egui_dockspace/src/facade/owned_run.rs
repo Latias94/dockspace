@@ -217,7 +217,6 @@ struct EncodedPass {
     receivers: Vec<render::ProductReceiverBinding>,
     focus_bindings: Vec<(ItemId, Id)>,
     layer: egui::LayerId,
-    completed_pass: u64,
     coordinates_supported: bool,
     pane_focus: Option<PreparedPaneFocusObservation>,
     pending_focus: Option<PendingPaneFocusObservation>,
@@ -237,6 +236,8 @@ impl Dockspace {
     /// runs once per actual pass. A failed run is never automatically replayed.
     /// A rejected final proof leaves the preceding committed gesture intact;
     /// its raw input and producer watermark remain in the discarded candidate.
+    /// If egui consumed that gesture's terminal input, the next successful run
+    /// cancels the gesture and preserves the layout.
     ///
     /// Chrome actions produced during UI encoding enter a bounded queue for the
     /// next run. The returned response describes this run's single publication.
@@ -355,6 +356,7 @@ impl Dockspace {
         let mut update: Option<DockspaceUpdate> = Some(frame.suspend());
         let mut pointer = self.pointer.clone();
         let mut pass_count = 0_usize;
+        let mut observed_pointer_input = false;
         let mut output = OwnedRunOutput::new(context.run_ui(input, |ui| {
             let Some(scope) = run.begin_pass(ui) else {
                 error.get_or_insert_with(|| DockspaceErrorSource::PassSettlementConflict.into());
@@ -428,16 +430,19 @@ impl Dockspace {
                                     .submit_deferred_surface_action(action)
                                     .map_err(DockspaceError::from_detail)?;
                             }
-                            let input = pointer.prepare(&frame, surface, ui);
-                            observed_at = input.observed_at();
                             focus_before_pointer = frame.pane_focus_request(surface);
-                            // This owner admits input only on its first pass and
-                            // abandons the run on error. Keep its consumed-run
-                            // marker private with the candidate: leaking a rejected
-                            // draft would cancel the preceding committed gesture.
-                            deferred_focus = input
-                                .submit_into(&mut frame)
-                                .map_err(DockspaceError::from_detail)?;
+                            if let Some(input) =
+                                self.pointer
+                                    .prepare_draft(&mut pointer, &frame, surface, ui)
+                            {
+                                observed_pointer_input = true;
+                                observed_at = input.observed_at();
+                                // This owner admits only the first pass. The producer
+                                // watermark publishes with the candidate.
+                                deferred_focus = input
+                                    .submit_into(&mut frame)
+                                    .map_err(DockspaceError::from_detail)?;
+                            }
                             frame
                                 .begin_encoding_pass()
                                 .map_err(DockspaceError::from_detail)?;
@@ -508,7 +513,6 @@ impl Dockspace {
                             receivers: Vec::new(),
                             focus_bindings: Vec::new(),
                             layer: ui.layer_id(),
-                            completed_pass: context.cumulative_pass_nr().saturating_add(1),
                             coordinates_supported: context
                                 .layer_transform_to_global(ui.layer_id())
                                 .is_none_or(|transform| {
@@ -554,6 +558,10 @@ impl Dockspace {
                 Err(failure) => error = Some(failure),
             }
         }));
+        if observed_pointer_input && let Some(pass) = run.observed_input_pass() {
+            // Discarded passes share the owned run's first raw input packet.
+            self.pointer.record_observed_pass(&mut pointer, pass);
+        }
         let texture_guard = output.take_textures(context);
         if let Some(error) = error {
             return Err(error);
@@ -594,7 +602,7 @@ impl Dockspace {
             &mut report,
             crate::pointer::ProductPointerPresentation {
                 layer: pass.layer,
-                completed_pass: pass.completed_pass,
+                input_pass: Some(pass.claim.input_pass()),
                 coordinates_supported: pass.coordinates_supported,
                 receivers: pass.receivers,
                 focus_bindings: pass.focus_bindings,

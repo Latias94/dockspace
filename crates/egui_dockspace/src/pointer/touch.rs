@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use egui::{Pos2, TouchDeviceId, TouchId, TouchPhase};
 
 use super::{
-    DockspaceInteractionError, PointerDeviceKind, PointerSample, SurfacePointerButton,
-    SurfacePointerCancelReason, SurfacePointerEvent, SurfacePointerId, TabGroupDockMode,
+    DockspaceInteractionError, GENERIC_POINTER, PointerDeviceKind, PointerSample,
+    SurfacePointerButton, SurfacePointerCancelReason, SurfacePointerEvent, SurfacePointerId,
+    TabGroupDockMode,
 };
 
 #[derive(Clone, Copy)]
@@ -26,7 +27,7 @@ impl Default for TouchContacts {
         Self {
             active: BTreeMap::new(),
             // Pointer one belongs to generic, unclassified egui input.
-            last_pointer: 1,
+            last_pointer: GENERIC_POINTER.get(),
         }
     }
 }
@@ -38,6 +39,10 @@ impl TouchContacts {
 
     pub(super) fn clear(&mut self) {
         self.active.clear();
+    }
+
+    pub(super) fn pointers(&self) -> impl Iterator<Item = SurfacePointerId> {
+        self.active.values().map(|contact| contact.pointer)
     }
 
     pub(super) fn observe(
@@ -106,9 +111,19 @@ impl TouchContacts {
         docking_enabled: Option<bool>,
         group_dock_mode: Option<TabGroupDockMode>,
     ) -> Vec<PointerSample> {
-        std::mem::take(&mut self.active)
-            .into_values()
-            .map(|contact| {
+        self.cancel_where(|_| true, reason, docking_enabled, group_dock_mode)
+    }
+
+    pub(super) fn cancel_where(
+        &mut self,
+        mut should_cancel: impl FnMut(SurfacePointerId) -> bool,
+        reason: SurfacePointerCancelReason,
+        docking_enabled: Option<bool>,
+        group_dock_mode: Option<TabGroupDockMode>,
+    ) -> Vec<PointerSample> {
+        self.active
+            .extract_if(.., |_, contact| should_cancel(contact.pointer))
+            .map(|(_, contact)| {
                 sample(
                     contact,
                     SurfacePointerEvent::StreamCancelled(reason),

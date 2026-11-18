@@ -32,6 +32,8 @@ mod contained_redock;
 mod drag_entry_paths;
 #[path = "product/feedback.rs"]
 mod feedback;
+#[path = "product/input_continuity.rs"]
+mod input_continuity;
 #[path = "product/output_authority.rs"]
 mod output_authority;
 #[path = "product/overflow_ownership.rs"]

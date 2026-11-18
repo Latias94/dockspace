@@ -1,6 +1,7 @@
 //! Pointer resize samples are direct manipulation, including an unseen release.
 
 use super::*;
+use dockspace::runtime::DockspaceManipulationCancelReason;
 
 #[derive(Clone, Copy, Debug)]
 enum Sequence {
@@ -223,6 +224,56 @@ fn cancelling_a_resize_restores_the_current_partition_and_accepts_a_fresh_press(
             for focus_loss in [false, true] {
                 cancel_resize(entry, axis, focus_loss);
             }
+        }
+    }
+}
+
+#[test]
+fn a_splitter_release_while_unmounted_discards_the_preview_and_allows_another_resize() {
+    for entry in [Entry::Owned, Entry::Callback] {
+        for axis in [DockspaceAxis::Horizontal, DockspaceAxis::Vertical] {
+            let (mut harness, stable) = fixture(entry, axis);
+            let version = harness.dockspace.version();
+            let original_bounds = harness.panes.bounds.clone();
+            let start = stable.splitter.center();
+            let offset = match axis {
+                DockspaceAxis::Horizontal => egui::vec2(40.0, 0.0),
+                DockspaceAxis::Vertical => egui::vec2(0.0, 40.0),
+            };
+            let end = start + offset;
+            harness.frame(1.0, press(start));
+            let moved = harness.frame(1.1, vec![Event::PointerMoved(end)]);
+            assert_eq!(moved.splitter.center(), end);
+            assert!(harness.dockspace.has_active_gesture());
+            assert_eq!(harness.dockspace.version(), version);
+
+            harness
+                .context
+                .run_ui(input(1.2, vec![button(end, false)]), |_| {})
+                .drop_without_applying_deltas();
+            let shown = harness.frame(1.3, Vec::new());
+            assert_eq!(
+                shown.feedback,
+                [DockspaceManipulationStatus::Cancelled(
+                    DockspaceManipulationCancelReason::PointerStreamCancelled,
+                )]
+            );
+            assert_eq!(shown.splitter, stable.splitter);
+            assert_eq!(harness.panes.bounds, original_bounds);
+            assert_eq!(harness.dockspace.version(), version);
+            assert!(!harness.dockspace.has_active_gesture());
+
+            harness.frame(1.4, press(start));
+            let released = harness.frame(1.5, vec![button(end, false)]);
+            assert_eq!(
+                released.feedback,
+                [DockspaceManipulationStatus::Delivered(
+                    DockspaceManipulationDelivery::SplitterResize,
+                )]
+            );
+            assert_eq!(released.splitter.center(), end);
+            assert_ne!(harness.dockspace.version(), version);
+            assert!(!harness.dockspace.has_active_gesture());
         }
     }
 }

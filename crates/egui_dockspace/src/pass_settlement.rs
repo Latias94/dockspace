@@ -16,7 +16,9 @@ use crate::pane::PaneFocusState;
 mod run_input;
 mod textures;
 
-pub(super) use run_input::{ProductPointerPacket, RUN_SCOPE_TAG, RunScope, pointer_packet};
+pub(super) use run_input::{
+    InputPassId, ProductPointerPacket, RUN_SCOPE_TAG, RunScope, pointer_packet,
+};
 use run_input::{RunInput, RunInputSnapshot, ui_run_scope};
 use textures::{OutputTexturesGuard, restore_retained_textures};
 
@@ -355,10 +357,14 @@ pub(super) enum ProductPassEnrollment {
 pub(super) struct ProductPassClaim {
     state: Arc<Mutex<PassSettlementState>>,
     run: Arc<RunIdentity>,
-    pass: u64,
+    pass: InputPassId,
 }
 
 impl ProductPassClaim {
+    pub(super) const fn input_pass(&self) -> InputPassId {
+        self.pass
+    }
+
     pub(super) fn stage(self, batch: ProductPassSettlementBatch) -> bool {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(active) = state
@@ -465,15 +471,18 @@ impl ProductPassSettlementRun {
                 .poisoned = true;
             panic!("nested egui_dockspace::run_ui calls on one Context are unsupported");
         }
-        context.add_plugin(RunInputSnapshot);
+        context.add_plugin(RunInputSnapshot::default());
         let portal = Arc::new(Mutex::new(ActiveRunPortal {
             run: Arc::new(RunIdentity),
             input: None,
+            preceding_input_pass: None,
+            last_input_pass: None,
+            observed_input_pass: None,
+            unobserved_input: false,
             observed_at: input
                 .time
                 .and_then(|time| std::time::Duration::try_from_secs_f64(time).ok()),
             viewport: input.viewport_id,
-            next_pass: 0,
             current_pass: None,
             poisoned: false,
             participants: Vec::new(),
@@ -497,20 +506,24 @@ impl ProductPassSettlementRun {
         }
         self.retire_terminal(false);
         let mut portal = self.portal.lock().unwrap_or_else(PoisonError::into_inner);
-        portal.next_pass = portal
-            .next_pass
-            .checked_add(1)
-            .expect("egui pass identity exhausted");
-        portal.current_pass = Some(portal.next_pass);
+        let pass = portal.last_input_pass?;
+        portal.current_pass = Some(pass);
         // A caught recursive run poisons the whole run, including later passes.
         Some(RunScope {
             run: Arc::clone(&portal.run),
-            pass: portal.next_pass,
+            pass,
         })
     }
 
     pub(super) fn layer_order_witness(&self) -> Vec<egui::LayerId> {
         final_paint_layer_order(&self.context)
+    }
+
+    pub(super) fn observed_input_pass(&self) -> Option<InputPassId> {
+        self.portal
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .observed_input_pass
     }
 
     pub(super) fn complete(self, output: &mut FullOutput) -> DockspaceOutputReceipt {
@@ -624,6 +637,7 @@ impl ProductPassSettlementRun {
         scrub_private_markers(output);
         self.remove_portal();
         self.completed = true;
+        self.wake_for_unobserved_input();
         for (context, viewport) in retire_discarded_outputs(&mut rejected) {
             context.request_repaint_of(viewport);
         }
@@ -648,7 +662,7 @@ impl ProductPassSettlementRun {
         &self,
     ) -> Option<(
         Arc<RunIdentity>,
-        u64,
+        InputPassId,
         bool,
         Vec<Weak<Mutex<PassSettlementState>>>,
     )> {
@@ -696,6 +710,17 @@ impl ProductPassSettlementRun {
             }
         });
     }
+
+    fn wake_for_unobserved_input(&self) {
+        let unobserved = self
+            .portal
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .unobserved_input;
+        if unobserved {
+            self.context.request_repaint_of(self.viewport);
+        }
+    }
 }
 
 impl Drop for ProductPassSettlementRun {
@@ -703,6 +728,7 @@ impl Drop for ProductPassSettlementRun {
         if !self.completed {
             self.retire_terminal(true);
             self.remove_portal();
+            self.wake_for_unobserved_input();
             for (context, viewport) in retire_discarded_outputs(self.discarded.get_mut()) {
                 context.request_repaint_of(viewport);
             }
@@ -712,11 +738,14 @@ impl Drop for ProductPassSettlementRun {
 
 struct ActiveRunPortal {
     input: Option<Arc<RunInput>>,
+    preceding_input_pass: Option<InputPassId>,
+    last_input_pass: Option<InputPassId>,
+    observed_input_pass: Option<InputPassId>,
+    unobserved_input: bool,
     observed_at: Option<std::time::Duration>,
     run: Arc<RunIdentity>,
     viewport: ViewportId,
-    next_pass: u64,
-    current_pass: Option<u64>,
+    current_pass: Option<InputPassId>,
     poisoned: bool,
     participants: Vec<Weak<Mutex<PassSettlementState>>>,
 }
@@ -774,7 +803,7 @@ impl PassSettlementState {
         })
     }
 
-    fn take_open(&mut self, run: &Arc<RunIdentity>, pass: u64) -> Option<OpenProductPass> {
+    fn take_open(&mut self, run: &Arc<RunIdentity>, pass: InputPassId) -> Option<OpenProductPass> {
         if self
             .active
             .as_ref()
@@ -794,11 +823,11 @@ struct SettlementLane {
 }
 struct OpenProductPass {
     run: Arc<RunIdentity>,
-    pass: u64,
+    pass: InputPassId,
     batch: Option<ProductPassSettlementBatch>,
 }
 impl OpenProductPass {
-    fn matches(&self, run: &Arc<RunIdentity>, pass: u64) -> bool {
+    fn matches(&self, run: &Arc<RunIdentity>, pass: InputPassId) -> bool {
         self.pass == pass && Arc::ptr_eq(&self.run, run)
     }
 }

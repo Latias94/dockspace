@@ -24,6 +24,8 @@ impl Dockspace {
     /// enter one frame before measurement and encoding. This callback publishes
     /// once. UI actions discovered while encoding enter a bounded queue for the
     /// next original egui run; repeated passes never replay those actions.
+    /// If the application skips this Dockspace while processing egui input, the
+    /// next committed callback cancels the old gesture and preserves the layout.
     ///
     /// [`Self::run_single_surface`] is the recommended entry point: it owns the
     /// complete run and can validate terminal output hooks before publication.
@@ -165,13 +167,17 @@ impl Dockspace {
                     .map_err(DockspaceError::from_detail)?;
             }
             if presentation_settlement_available {
-                let input = pointer.prepare(&frame, surface, ui);
-                observed_at = input.observed_at();
                 focus_before_pointer = frame.pane_focus_request(surface);
-                self.pointer.record_rejected_run(&pointer);
-                deferred_focus = input
-                    .submit_into(&mut frame)
-                    .map_err(DockspaceError::from_detail)?;
+                if let Some(input) = self
+                    .pointer
+                    .prepare_draft(&mut pointer, &frame, surface, ui)
+                {
+                    observed_at = input.observed_at();
+                    self.pointer.record_rejected_run(&pointer);
+                    deferred_focus = input
+                        .submit_into(&mut frame)
+                        .map_err(DockspaceError::from_detail)?;
+                }
             }
             frame
                 .begin_encoding_pass()
@@ -268,7 +274,9 @@ impl Dockspace {
             &mut report,
             crate::pointer::ProductPointerPresentation {
                 layer: ui.layer_id(),
-                completed_pass: ui.ctx().cumulative_pass_nr().saturating_add(1),
+                input_pass: settlement_claim
+                    .as_ref()
+                    .map(crate::pass_settlement::ProductPassClaim::input_pass),
                 coordinates_supported: ui
                     .ctx()
                     .layer_transform_to_global(ui.layer_id())

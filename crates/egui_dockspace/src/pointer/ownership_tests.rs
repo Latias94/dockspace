@@ -15,7 +15,7 @@ use dockspace::runtime::{
 };
 use egui::{Context, Event, Id, LayerId, Pos2, RawInput, Rect, Sense};
 
-use super::{PointerScene, ProductPointer, ProductPointerInputSnapshot};
+use super::{InputPassId, PointerScene, ProductPointer, ProductPointerInputSnapshot};
 use crate::render::ProductReceiverBinding;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -97,7 +97,7 @@ fn emit(
     pointer.emitted(
         output.presentation_artifact(),
         layer,
-        1,
+        None,
         true,
         (0..count)
             .map(|index| ProductReceiverBinding {
@@ -212,46 +212,46 @@ fn widgets(
     context: &Context,
     receiver: DockspaceReceiverDescriptor,
     count: usize,
-) -> Vec<ProductReceiverBinding> {
+) -> (Vec<ProductReceiverBinding>, InputPassId) {
     let mut bindings = Vec::new();
+    let mut pass = None;
     for _ in 0..2 {
         bindings.clear();
-        context
-            .run_ui(
-                RawInput {
-                    screen_rect: Some(Rect::from_min_max(Pos2::ZERO, Pos2::new(800.0, 600.0))),
-                    ..RawInput::default()
-                },
-                |ui| {
-                    egui::Area::new(Id::unique("ownership-test-layer"))
-                        .fixed_pos(Pos2::ZERO)
-                        .movable(false)
-                        // The area routes the layer; only content widgets are interactive.
-                        .sense(Sense::hover())
-                        .show(ui.ctx(), |ui| {
-                            let bounds =
-                                Rect::from_min_max(Pos2::new(10.0, 20.0), Pos2::new(100.0, 120.0));
-                            ui.allocate_rect(bounds, Sense::hover());
-                            for index in 0..count {
-                                let response = ui.interact(
-                                    bounds,
-                                    Id::unique(("content", index)),
-                                    Sense::click(),
-                                );
-                                bindings.push(ProductReceiverBinding {
-                                    interact_rect: response.interact_rect,
-                                    interactive: true,
-                                    widget_id: response.id,
-                                    layer_id: response.layer_id,
-                                    receiver,
-                                });
-                            }
-                        });
-                },
-            )
-            .drop_without_applying_deltas();
+        let (output, _receipt) = crate::run_ui(
+            context,
+            RawInput {
+                screen_rect: Some(Rect::from_min_max(Pos2::ZERO, Pos2::new(800.0, 600.0))),
+                ..RawInput::default()
+            },
+            |ui| {
+                pass = Some(super::pointer_packet(ui).unwrap().observed_input_pass());
+                egui::Area::new(Id::unique("ownership-test-layer"))
+                    .fixed_pos(Pos2::ZERO)
+                    .movable(false)
+                    // The area routes the layer; only content widgets are interactive.
+                    .sense(Sense::hover())
+                    .show(ui.ctx(), |ui| {
+                        let bounds =
+                            Rect::from_min_max(Pos2::new(10.0, 20.0), Pos2::new(100.0, 120.0));
+                        ui.allocate_rect(bounds, Sense::hover());
+                        for index in 0..count {
+                            let response =
+                                ui.interact(bounds, Id::unique(("content", index)), Sense::click());
+                            bindings.push(ProductReceiverBinding {
+                                interact_rect: response.interact_rect,
+                                interactive: true,
+                                widget_id: response.id,
+                                layer_id: response.layer_id,
+                                receiver,
+                            });
+                        }
+                    });
+            },
+        )
+        .into_parts();
+        output.drop_without_applying_deltas();
     }
-    bindings
+    (bindings, pass.unwrap())
 }
 
 #[test]
@@ -262,14 +262,14 @@ fn a_pointer_packet_joins_content_ownership_once_for_all_edges() {
             context.options_mut(|options| options.max_passes = 1.try_into().unwrap());
             let mut session = session();
             let (output, receiver) = paint(&mut session);
-            let mut bindings = widgets(&context, receiver, count + unknown);
+            let (mut bindings, pass) = widgets(&context, receiver, count + unknown);
             let point = bindings[0].interact_rect.center();
             bindings.truncate(count);
             bindings.extend_from_within(..);
             let scene = PointerScene {
                 artifact: output.presentation_artifact(),
                 layer: bindings[0].layer_id,
-                completed_pass: context.cumulative_pass_nr(),
+                input_pass: Some(pass),
                 coordinates_supported: true,
                 receivers: bindings.into(),
                 focus_bindings: Arc::from([]),
@@ -294,7 +294,7 @@ fn a_pointer_packet_joins_content_ownership_once_for_all_edges() {
                     let packet = super::pointer_packet(ui).unwrap();
                     let scene = pointer.presented.as_ref().unwrap();
                     let snapshot = packet.receivers();
-                    assert_eq!(snapshot.completed_pass, scene.completed_pass);
+                    assert!(packet.preceding_input_pass() == scene.input_pass);
                     assert_eq!((snapshot.layer_at)(point), Some(scene.layer));
                     assert_eq!(
                         snapshot
@@ -311,7 +311,7 @@ fn a_pointer_packet_joins_content_ownership_once_for_all_edges() {
                         .show(ui.ctx(), |ui| {
                             let frame = session.begin_host_frame().unwrap();
                             let prepared = pointer
-                                .prepare_packet(&frame, SURFACE, ui, &packet)
+                                .prepare_packet(&frame, SURFACE, ui, &packet, &Default::default())
                                 .unwrap();
                             assert_eq!(prepared.raw.len(), 128);
                             assert!(
@@ -338,7 +338,7 @@ fn packet_join_keeps_equal_rectangles_distinct_without_repeating_per_point() {
             let context = Context::default();
             context.options_mut(|options| options.max_passes = 1.try_into().unwrap());
             let (output, receiver) = paint(&mut session());
-            let mut bindings = widgets(&context, receiver, count + unknown);
+            let (mut bindings, _) = widgets(&context, receiver, count + unknown);
             let bounds = bindings[0].interact_rect;
             bindings.truncate(count);
             // Repeated declarations must not consume the undeclared widget's
@@ -347,7 +347,7 @@ fn packet_join_keeps_equal_rectangles_distinct_without_repeating_per_point() {
             let scene = PointerScene {
                 artifact: output.presentation_artifact(),
                 layer: bindings[0].layer_id,
-                completed_pass: context.cumulative_pass_nr(),
+                input_pass: None,
                 coordinates_supported: true,
                 receivers: bindings.into(),
                 focus_bindings: Arc::from([]),
@@ -372,7 +372,7 @@ fn packet_join_keeps_equal_rectangles_distinct_without_repeating_per_point() {
 fn ownership_join_keeps_unproven_or_noninteractive_widget_rectangles_blocked() {
     let context = Context::default();
     let (output, receiver) = paint(&mut session());
-    let binding = widgets(&context, receiver, 1)[0];
+    let binding = widgets(&context, receiver, 1).0[0];
     for changed in [
         ProductReceiverBinding {
             interactive: false,
@@ -394,7 +394,7 @@ fn ownership_join_keeps_unproven_or_noninteractive_widget_rectangles_blocked() {
         let scene = PointerScene {
             artifact: output.presentation_artifact(),
             layer: binding.layer_id,
-            completed_pass: context.cumulative_pass_nr(),
+            input_pass: None,
             coordinates_supported: true,
             receivers: Arc::from([changed]),
             focus_bindings: Arc::from([]),
@@ -466,7 +466,7 @@ fn ordered_ownership_requires_both_capture_lanes_to_shield_unknown_widgets() {
         let scene = PointerScene {
             artifact: output.presentation_artifact(),
             layer: binding.layer_id,
-            completed_pass: context.cumulative_pass_nr(),
+            input_pass: None,
             coordinates_supported: true,
             receivers: Arc::from([binding]),
             focus_bindings: Arc::from([]),
@@ -574,7 +574,7 @@ fn nearby_undeclared_widget_blocks_a_single_lane_owned_drag() {
                 let scene = PointerScene {
                     artifact: output.presentation_artifact(),
                     layer: binding.layer_id,
-                    completed_pass: context.cumulative_pass_nr(),
+                    input_pass: None,
                     coordinates_supported: true,
                     receivers: Arc::from([binding]),
                     focus_bindings: Arc::from([]),
@@ -658,7 +658,7 @@ fn scaled_foreign_layer_nearby_widget_blocks_a_single_lane_owned_drag() {
     let scene = PointerScene {
         artifact: output.presentation_artifact(),
         layer: binding.layer_id,
-        completed_pass: context.cumulative_pass_nr(),
+        input_pass: None,
         coordinates_supported: true,
         receivers: Arc::from([binding]),
         focus_bindings: Arc::from([]),

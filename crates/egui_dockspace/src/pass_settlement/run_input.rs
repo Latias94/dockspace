@@ -3,36 +3,64 @@
 use std::cell::RefCell;
 use std::sync::{Arc, PoisonError};
 
-use egui::{Context, RawInput, Ui, ViewportId};
+use egui::{Context, Event, PointerButton, RawInput, Ui, ViewportId, ViewportIdMap};
 
-use crate::pointer::ProductPointerInputSnapshot;
+use crate::pointer::{ProductPointerInputSnapshot, has_foreign_drag};
 
 use super::{RunIdentity, active_run_portal};
 
 pub(crate) const RUN_SCOPE_TAG: &str = "egui_dockspace::official_run_scope";
 
 pub(super) struct RunInput {
-    events: Vec<egui::Event>,
+    events: Vec<Event>,
     focused: bool,
     receivers: ProductPointerInputSnapshot,
 }
 
-pub(super) struct RunInputSnapshot;
+/// Identity of a real egui input pass, unique within one Context.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct InputPassId(u64);
+
+#[derive(Default)]
+pub(super) struct RunInputSnapshot {
+    last_id: u64,
+    last_pass: ViewportIdMap<InputPassId>,
+}
 
 impl egui::plugin::Plugin for RunInputSnapshot {
     fn debug_name(&self) -> &'static str {
         "egui_dockspace::run_input_snapshot"
     }
 
-    fn input_hook(&mut self, context: &Context, _input: &mut RawInput) {
+    fn input_hook(&mut self, context: &Context, input: &mut RawInput) {
+        let viewport = input.viewport_id;
+        let Some(portal) = active_run_portal(context) else {
+            // Direct egui passes can consume input without opening a docking run.
+            self.last_pass.remove(&viewport);
+            return;
+        };
+        let mut portal = portal.lock().unwrap_or_else(PoisonError::into_inner);
         // egui can reject recursive root borrowing before on_begin_pass runs.
-        if in_run_callback(context)
-            && let Some(portal) = active_run_portal(context)
-        {
-            portal
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .poisoned = true;
+        if in_run_callback(context) {
+            portal.poisoned = true;
+            self.last_pass.remove(&viewport);
+            return;
+        }
+        if portal.viewport != viewport || portal.poisoned {
+            self.last_pass.remove(&viewport);
+            return;
+        }
+        self.last_id = self
+            .last_id
+            .checked_add(1)
+            .expect("egui input pass identity exhausted");
+        let pass = InputPassId(self.last_id);
+        let previous = self.last_pass.insert(viewport, pass);
+        if portal.last_input_pass.replace(pass).is_none() {
+            // egui can reuse a viewport ID after destroying the old viewport.
+            portal.preceding_input_pass = previous.filter(|_| {
+                viewport == ViewportId::ROOT || context.cumulative_pass_nr_for(viewport) != 0
+            });
         }
     }
 
@@ -46,7 +74,18 @@ impl egui::plugin::Plugin for RunInputSnapshot {
             portal.poisoned = true;
             return;
         }
-        if portal.viewport == ui.ctx().viewport_id() && portal.input.is_none() {
+        if portal.poisoned || portal.unobserved_input || portal.viewport != ui.ctx().viewport_id() {
+            return;
+        }
+        if let Some(first) = &portal.input {
+            // egui re-runs input hooks on discard. A plugin may add new edges
+            // after the packet we froze. That suffix cannot share its receivers.
+            portal.unobserved_input = (!first.receivers.foreign_drag && has_foreign_drag(ui.ctx()))
+                || ui.ctx().input(|input| {
+                    (!input.raw.focused && first.focused)
+                        || input.raw.events.iter().any(affects_pointer_stream)
+                });
+        } else {
             let (events, focused) = ui
                 .ctx()
                 .input(|input| (input.raw.events.clone(), input.raw.focused));
@@ -56,13 +95,40 @@ impl egui::plugin::Plugin for RunInputSnapshot {
                 receivers: ProductPointerInputSnapshot::capture(ui.ctx()),
             }));
         }
+        if !portal.unobserved_input {
+            portal.observed_input_pass = portal.last_input_pass;
+        }
     }
+
+    fn output_hook(&mut self, context: &Context, _output: &mut egui::FullOutput) {
+        self.last_pass.retain(|&viewport, _| {
+            viewport == ViewportId::ROOT || context.cumulative_pass_nr_for(viewport) != 0
+        });
+    }
+}
+
+fn affects_pointer_stream(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::PointerMoved(_)
+            | Event::PointerGone
+            | Event::PointerButton {
+                button: PointerButton::Primary,
+                ..
+            }
+            | Event::Touch { .. }
+            | Event::WindowFocused(_)
+            | Event::ModifiersChanged(_)
+            | Event::Key { pressed: true, .. }
+    )
 }
 
 #[derive(Clone)]
 pub(crate) struct ProductPointerPacket {
     run: Arc<RunIdentity>,
     input: Arc<RunInput>,
+    preceding_input_pass: Option<InputPassId>,
+    observed_input_pass: InputPassId,
     observed_at: Option<std::time::Duration>,
 }
 
@@ -81,6 +147,14 @@ impl ProductPointerPacket {
 
     pub(crate) fn receivers(&self) -> &ProductPointerInputSnapshot {
         &self.input.receivers
+    }
+
+    pub(crate) const fn preceding_input_pass(&self) -> Option<InputPassId> {
+        self.preceding_input_pass
+    }
+
+    pub(crate) const fn observed_input_pass(&self) -> InputPassId {
+        self.observed_input_pass
     }
 
     pub(crate) const fn observed_at(&self) -> Option<std::time::Duration> {
@@ -103,6 +177,8 @@ pub(crate) fn pointer_packet(ui: &Ui) -> Option<ProductPointerPacket> {
     Some(ProductPointerPacket {
         run: Arc::clone(&portal.run),
         input,
+        preceding_input_pass: portal.preceding_input_pass,
+        observed_input_pass: portal.observed_input_pass?,
         observed_at: portal.observed_at,
     })
 }
@@ -110,7 +186,7 @@ pub(crate) fn pointer_packet(ui: &Ui) -> Option<ProductPointerPacket> {
 #[derive(Clone)]
 pub(crate) struct RunScope {
     pub(super) run: Arc<RunIdentity>,
-    pub(super) pass: u64,
+    pub(super) pass: InputPassId,
 }
 
 thread_local! {
