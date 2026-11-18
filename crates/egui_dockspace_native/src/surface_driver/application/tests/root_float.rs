@@ -276,9 +276,18 @@ fn deferred_measurements_must_preserve_the_fixed_host() {
         LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
     );
     assert_eq!(state.coordinator.session().version(), version);
-    state
-        .service_native_events(&egui::Context::default())
-        .unwrap();
+    let context = egui::Context::default();
+    let mut wake = state.service_native_events(&context).unwrap();
+    for _ in 0..32 {
+        match wake {
+            eframe::NativeHostWake::Wait => break,
+            eframe::NativeHostWake::ServiceAfterCurrent => {
+                wake = state.service_native_events(&context).unwrap();
+            }
+            other => panic!("deferred command requested an unexpected wake: {other:?}"),
+        }
+    }
+    assert_eq!(wake, eframe::NativeHostWake::Wait);
     assert!(matches!(
         receipt.try_recv().unwrap().unwrap(),
         NativeActionStatus::Dock(DockspaceActionStatus::Rejected(
