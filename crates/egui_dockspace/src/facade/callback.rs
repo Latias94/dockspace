@@ -5,7 +5,7 @@ use crate::error_detail::DockspaceErrorSource;
 use crate::pass_settlement::{
     PresentationSettlementFailure, ProductPassEnrollment, ProductPassSettlementBatch,
 };
-use crate::pointer::ProductPointerPresentation;
+use crate::pointer::{PointerUpdate, ProductPointerPresentation};
 use crate::render;
 use crate::{
     DockspaceCapability, DockspaceError, DockspaceResponse, DockspaceUnavailableReason, PaneView,
@@ -41,7 +41,8 @@ impl Dockspace {
     ///
     /// Returns an error when this is not the sole surface, measurements or UI
     /// intent admission fail, or the frame cannot publish. Before publication,
-    /// an error drops the complete docking candidate.
+    /// an error drops the complete docking candidate. Input already submitted to
+    /// the candidate is consumed for the whole egui run, including later passes.
     pub fn show_single_surface(
         &mut self,
         surface: SurfaceId,
@@ -107,10 +108,8 @@ impl Dockspace {
             }
             self.pointer.clear();
         }
-        let mut pointer = self.pointer.clone();
         let mut pending_actions = None;
-        let mut observed_at = None;
-        let mut deferred_focus = crate::focus::DeferredTabFocus::default();
+        let mut pointer_update = PointerUpdate::default();
         let mut focus_before_pointer = None;
         let mut accepted_focus = Vec::new();
         let mut missing = BTreeSet::new();
@@ -145,7 +144,7 @@ impl Dockspace {
                     ui.ctx()
                         .layer_transform_to_global(ui.layer_id())
                         .map_or(dock_rect, |transform| transform * dock_rect),
-                    pointer.presented_focus_bindings(&frame, surface),
+                    self.pointer.presented_focus_bindings(&frame, surface),
                 )
             });
             accepted_focus = self
@@ -164,22 +163,16 @@ impl Dockspace {
             }
             if presentation_settlement_available {
                 focus_before_pointer = frame.pane_focus_request(surface);
-                if let Some(input) = self
+                pointer_update = self
                     .pointer
-                    .prepare_draft(&mut pointer, &frame, surface, ui)
-                {
-                    observed_at = input.observed_at();
-                    self.pointer.record_rejected_run(&pointer);
-                    deferred_focus = input
-                        .submit_into(&mut frame)
-                        .map_err(DockspaceError::from_detail)?;
-                }
+                    .submit(&mut frame, surface, ui)
+                    .map_err(DockspaceError::from_detail)?;
             }
             frame
                 .begin_encoding_pass()
                 .map_err(DockspaceError::from_detail)?;
             let mut resources = render::PaintResources::default();
-            let presented_focus_bindings = pointer.presented_focus_bindings(&frame, surface);
+            let presented_focus_bindings = self.pointer.presented_focus_bindings(&frame, surface);
             let candidate_version = frame.version();
             let (work, measured_missing) = render::prepare_surface(
                 &mut frame,
@@ -257,13 +250,8 @@ impl Dockspace {
                 .map_err(DockspaceError::from_detail)?;
             frame.commit().map_err(DockspaceError::from_detail)
         })();
-        let mut report = match result {
-            Ok(report) => report,
-            Err(error) => {
-                self.pointer.record_rejected_run(&pointer);
-                return Err(error);
-            }
-        };
+        let mut report = result?;
+        self.pointer.commit_input(&mut pointer_update);
         self.ui_actions
             .publish(pending_actions, run_sequence, &report);
         let mut presentation = ProductPointerPresentation::new(
@@ -274,11 +262,10 @@ impl Dockspace {
         );
         presentation.receivers = pointer_receivers;
         presentation.focus_bindings = focus_bindings;
-        let output = pointer.settle_report(&mut report, presentation);
-        self.pointer = pointer;
+        let output = self.pointer.settle_report(&mut report, presentation);
         self.pending_focus.settle(&accepted_focus, &report);
-        deferred_focus.apply(ui.ctx());
-        deferred_focus.handoff_after_commit(
+        pointer_update.focus.apply(ui.ctx());
+        pointer_update.focus.handoff_after_commit(
             ui.ctx(),
             self.id,
             ui.ctx().viewport_id(),
@@ -289,7 +276,7 @@ impl Dockspace {
             &self.session,
             ui.ctx(),
             ui.ctx().viewport_id(),
-            observed_at,
+            pointer_update.observed_at,
         );
         let needs_presentation_settlement = defer_measurement || pane_focus_needs_repaint;
         let continuation_awaits_presentation = self

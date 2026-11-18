@@ -304,7 +304,7 @@ fn official_hover_stops_at_composed_ui_blockers_and_never_falls_back() {
 }
 
 #[test]
-fn official_blocked_release_cannot_deliver_an_earlier_clear_preview() {
+fn a_presented_blocker_revokes_stationary_hover_and_prevents_delivery() {
     for blocker in [
         Blocker::SameLayer,
         Blocker::Foreground,
@@ -314,17 +314,13 @@ fn official_blocked_release_cannot_deliver_an_earlier_clear_preview() {
         let mut fixture = Fixture::new();
         let target = fixture.arm();
         let before = fixture.dock.version();
-        let mut preview = false;
         for _ in 0..8 {
-            preview |= has_preview(
-                &fixture
-                    .frame(vec![Event::PointerMoved(target)], Blocker::Clear)
-                    .0,
-            );
+            fixture.frame(vec![Event::PointerMoved(target)], Blocker::Clear);
         }
+        let (hovered, _) = fixture.frame(Vec::new(), Blocker::Clear);
         assert!(
-            preview,
-            "the exact ordinary-content preview existed before the blocker"
+            has_preview(&hovered),
+            "the stationary preview is visible immediately before the blocker"
         );
         fixture.frame(Vec::new(), blocker);
         let (_, bounds) = fixture.frame(Vec::new(), blocker);
@@ -332,6 +328,15 @@ fn official_blocked_release_cannot_deliver_an_earlier_clear_preview() {
             bounds.unwrap().contains(target),
             "{blocker:?}: the real blocker covers release"
         );
+        for _ in 0..3 {
+            let (covered, _) = fixture.frame(Vec::new(), blocker);
+            assert!(
+                !has_preview(&covered),
+                "{blocker:?}: a presented blocker revokes hover without pointer motion"
+            );
+            assert!(fixture.dock.has_active_gesture());
+            assert_eq!(fixture.dock.version(), before);
+        }
         fixture.frame(vec![button(target, false)], blocker);
         for _ in 0..3 {
             fixture.frame(Vec::new(), blocker);
@@ -342,6 +347,7 @@ fn official_blocked_release_cannot_deliver_an_earlier_clear_preview() {
             "{blocker:?}: no stale-preview delivery"
         );
         assert_eq!(fixture.source_pane(), vec![SOURCE, SOURCE_PEER]);
+        assert!(!fixture.dock.has_active_gesture());
         // Removing the blocker after release must not resurrect the old pending gesture.
         for _ in 0..3 {
             fixture.frame(Vec::new(), Blocker::Clear);

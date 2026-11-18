@@ -4,10 +4,10 @@ use super::{Dockspace, product_response};
 use crate::error_detail::DockspaceErrorSource;
 use crate::pass_settlement::{
     DockspaceOutput, OwnedRunOutput, PendingPaneFocusObservation, ProductPassClaim,
-    ProductPassEnrollment, ProductPassSettlementBatch, ProductPassSettlementRun,
-    ProductPointerPacket, RUN_SCOPE_TAG, pointer_packet,
+    ProductPassEnrollment, ProductPassSettlementBatch, ProductPassSettlementRun, RUN_SCOPE_TAG,
+    RunIdentity, pointer_packet,
 };
-use crate::pointer::ProductPointerPresentation;
+use crate::pointer::{PointerUpdate, ProductPointerPresentation};
 use crate::render;
 use crate::{
     DockspaceCapability, DockspaceError, DockspaceResponse, DockspaceUnavailableReason, PaneView,
@@ -22,6 +22,7 @@ use egui::emath::GuiRounding;
 use egui::{Context, RawInput, UiBuilder, UiStackInfo};
 use egui::{Id, Ui};
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 const UI_ACTION_CAPACITY: usize = 64;
 
@@ -30,7 +31,7 @@ struct UiActionRun {
     viewport: egui::ViewportId,
     frame: u64,
     first_pass: u64,
-    packet: Option<ProductPointerPacket>,
+    input_run: Option<Arc<RunIdentity>>,
 }
 
 impl UiActionRun {
@@ -43,15 +44,15 @@ impl UiActionRun {
                 .ctx()
                 .cumulative_pass_nr()
                 .saturating_sub(u64::try_from(ui.ctx().current_pass_index()).unwrap_or(u64::MAX)),
-            packet: pointer_packet(ui),
+            input_run: pointer_packet(ui).map(|packet| Arc::clone(packet.run_identity())),
         }
     }
 
     fn same_run(&self, other: &Self) -> bool {
         self.context == other.context
             && self.viewport == other.viewport
-            && match (&self.packet, &other.packet) {
-                (Some(left), Some(right)) => left.same_run(right),
+            && match (&self.input_run, &other.input_run) {
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
                 (None, None) => self.frame == other.frame && self.first_pass == other.first_pass,
                 _ => false,
             }
@@ -235,9 +236,8 @@ impl Dockspace {
     /// into the same unpublished candidate; discarded passes release their
     /// private payloads. Only the terminal output, after output hooks, can
     /// publish docking state and obtain a renderer settlement receipt. Pane UI
-    /// runs once per actual pass. A failed run is never automatically replayed.
-    /// A rejected final proof leaves the preceding committed gesture intact;
-    /// its raw input and producer watermark remain in the discarded candidate.
+    /// runs once per actual pass. The run consumes its original egui input even
+    /// when the final proof is rejected and the preceding gesture stays live.
     /// If egui consumed that gesture's terminal input, the next successful run
     /// cancels the gesture and preserves the layout.
     /// A consumed pointer exit clears the old hover on recovery, leaving the
@@ -307,8 +307,7 @@ impl Dockspace {
         let mut pending_actions = None;
         let mut terminal = None;
         let mut error = None;
-        let mut observed_at = None;
-        let mut deferred_focus = crate::focus::DeferredTabFocus::default();
+        let mut pointer_update = PointerUpdate::default();
         let mut focus_before_pointer = None;
         let mut accepted_focus = Vec::new();
         let mut preceding_feedback = Vec::new();
@@ -351,9 +350,7 @@ impl Dockspace {
             .into());
         }
         let mut update: Option<DockspaceUpdate> = Some(frame.suspend());
-        let mut pointer = self.pointer.clone();
         let mut pass_count = 0_usize;
-        let mut observed_pointer_input = false;
         let mut output = OwnedRunOutput::new(context.run_ui(input, |ui| {
             let Some(scope) = run.begin_pass(ui) else {
                 error.get_or_insert_with(|| DockspaceErrorSource::PassSettlementConflict.into());
@@ -410,7 +407,7 @@ impl Dockspace {
                                     ui.ctx()
                                         .layer_transform_to_global(ui.layer_id())
                                         .map_or(dock_rect, |transform| transform * dock_rect),
-                                    pointer.presented_focus_bindings(&frame, surface),
+                                    self.pointer.presented_focus_bindings(&frame, surface),
                                 )
                             });
                             accepted_focus = self
@@ -428,25 +425,17 @@ impl Dockspace {
                                     .map_err(DockspaceError::from_detail)?;
                             }
                             focus_before_pointer = frame.pane_focus_request(surface);
-                            if let Some(input) =
-                                self.pointer
-                                    .prepare_draft(&mut pointer, &frame, surface, ui)
-                            {
-                                observed_pointer_input = true;
-                                observed_at = input.observed_at();
-                                // This owner admits only the first pass. The producer
-                                // watermark publishes with the candidate.
-                                deferred_focus = input
-                                    .submit_into(&mut frame)
-                                    .map_err(DockspaceError::from_detail)?;
-                            }
+                            pointer_update = self
+                                .pointer
+                                .submit(&mut frame, surface, ui)
+                                .map_err(DockspaceError::from_detail)?;
                             frame
                                 .begin_encoding_pass()
                                 .map_err(DockspaceError::from_detail)?;
                         }
                         let mut resources = render::PaintResources::default();
                         let presented_focus_bindings =
-                            pointer.presented_focus_bindings(&frame, surface);
+                            self.pointer.presented_focus_bindings(&frame, surface);
                         let candidate_version = frame.version();
                         let (work, missing) = render::prepare_surface(
                             &mut frame,
@@ -540,7 +529,7 @@ impl Dockspace {
                                 self.drop_target_observations = paint.drop_target_observations;
                             }
                         }
-                        deferred_focus.apply(ui.ctx());
+                        pointer_update.focus.apply(ui.ctx());
                         update = Some(frame.suspend());
                         Ok(pass)
                     },
@@ -551,9 +540,8 @@ impl Dockspace {
                 Err(failure) => error = Some(failure),
             }
         }));
-        if observed_pointer_input && let Some(pass) = run.observed_input_pass() {
-            // Discarded passes share the owned run's first raw input packet.
-            self.pointer.record_observed_pass(&mut pointer, pass);
+        if let Some((identity, pass)) = run.observed_pointer_pass() {
+            self.pointer.observe_later_pass(&identity, pass);
         }
         let texture_guard = output.take_textures(context);
         if let Some(error) = error {
@@ -582,7 +570,8 @@ impl Dockspace {
             .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
             .map_err(DockspaceError::from_detail)?;
         let mut report = frame.commit().map_err(DockspaceError::from_detail)?;
-        deferred_focus.handoff_after_commit(
+        self.pointer.commit_input(&mut pointer_update);
+        pointer_update.focus.handoff_after_commit(
             context,
             self.id,
             viewport,
@@ -591,14 +580,13 @@ impl Dockspace {
         );
         self.ui_actions
             .publish(pending_actions, run_sequence.unwrap(), &report);
-        let painted = pointer.settle_report(&mut report, pass.presentation);
-        self.pointer = pointer;
+        let painted = self.pointer.settle_report(&mut report, pass.presentation);
         self.pending_focus.settle(&accepted_focus, &report);
         crate::pointer::schedule_pointer_continuation(
             &self.session,
             context,
             viewport,
-            observed_at,
+            pointer_update.observed_at,
         );
         let needs_repaint = pass.defer_measurement
             || pass.focus_needs_repaint

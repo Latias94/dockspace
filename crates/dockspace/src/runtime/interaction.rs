@@ -1294,6 +1294,42 @@ impl DockspaceHostFrame<'_> {
         host_pointer_manipulation_surface(self.frame.candidate_engine(), pointer)
     }
 
+    /// Returns the point where the active host-local drag retains hover feedback or work.
+    ///
+    /// A host can recheck framework occlusion at this point without pointer motion.
+    /// When the current presentation proves that the point is blocked, submit a
+    /// move with blocked hover and the retained source route to revoke the feedback.
+    #[must_use]
+    pub fn host_pointer_hover_position(
+        &self,
+        surface: SurfaceId,
+    ) -> Option<(SurfacePointerId, LogicalPoint)> {
+        let engine = self.frame.candidate_engine();
+        let provider = engine.pointer_provider()?;
+        provider.scope().host_local()?;
+        let interaction = engine.interaction();
+        let crate::interaction::InteractionStatus::Dragging { session } = interaction.status()
+        else {
+            return None;
+        };
+        let drag = interaction.active_drag(session).ok()?;
+        if drag.owner.lease() != provider
+            || (drag.preview().is_none()
+                && drag.drop_affordance().is_none()
+                && drag.timed.is_none())
+        {
+            return None;
+        }
+        let position = drag.last_advanced_position()?;
+        if position.hover_surface() != Some(surface) {
+            return None;
+        }
+        Some((
+            SurfacePointerId::new(drag.owner.pointer().get()),
+            position.logical_point()?,
+        ))
+    }
+
     /// Returns the exact presented capability after this update's accepted observations.
     ///
     /// A host-reported paint remains withheld until its presentation prefix is

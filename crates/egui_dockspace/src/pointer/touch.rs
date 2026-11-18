@@ -2,13 +2,14 @@
 
 use std::collections::BTreeMap;
 
+use dockspace::model::TabGroupDockMode;
+use dockspace::runtime::{
+    DockspaceInteractionError, PointerDeviceKind, SurfacePointerButton, SurfacePointerCancelReason,
+    SurfacePointerEvent, SurfacePointerId,
+};
 use egui::{Pos2, TouchDeviceId, TouchId, TouchPhase};
 
-use super::{
-    DockspaceInteractionError, GENERIC_POINTER, PointerDeviceKind, PointerSample,
-    SurfacePointerButton, SurfacePointerCancelReason, SurfacePointerEvent, SurfacePointerId,
-    TabGroupDockMode,
-};
+use super::stream::{GENERIC_POINTER, PointerSample};
 
 #[derive(Clone, Copy)]
 struct Contact {
@@ -197,25 +198,6 @@ impl TouchContacts {
                 group_dock_mode,
             )
         })
-    }
-
-    pub(super) fn clipped_moves(
-        &self,
-        became_clipped: impl Fn(Pos2) -> bool,
-        docking_enabled: Option<bool>,
-        group_dock_mode: Option<TabGroupDockMode>,
-    ) -> impl Iterator<Item = PointerSample> {
-        self.active
-            .values()
-            .filter(move |contact| became_clipped(contact.position))
-            .map(move |&contact| {
-                sample(
-                    contact,
-                    SurfacePointerEvent::Moved,
-                    docking_enabled,
-                    group_dock_mode,
-                )
-            })
     }
 }
 

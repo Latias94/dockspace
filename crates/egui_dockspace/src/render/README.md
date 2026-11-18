@@ -88,9 +88,10 @@ cancel the pointer stream rather than supplying raw manipulation coordinates
 to an existing gesture.
 
 The emitted output also retains the UI's clip rectangle. New deliveries and
-drop targets must be inside that presented clip. A newly presented clip that
-excludes the last pointer position also revokes the stationary drop target.
-Captured gestures can still receive position updates outside it.
+drop targets must be inside that presented clip. The adapter uses the same
+receiver check to revoke a stationary drop target when the matching egui pass
+shows that an application overlay or the clip blocks the retained hover point.
+Captured gestures can still receive position updates outside the clip.
 
 At each input point, the official adapter checks interactive widgets from front
 to back. A direct owned widget sensing both click and drag shields unknown

@@ -615,7 +615,10 @@ fn ordered_input_keeps_raw_batch_time_across_reruns_without_using_predicted_time
         let (output, receipt) = output.into_parts();
         assert_eq!(output.platform_output.num_completed_passes, 2);
         assert_eq!(packets.len(), 2);
-        assert!(packets[0].same_run(&packets[1]));
+        assert!(Arc::ptr_eq(
+            packets[0].run_identity(),
+            packets[1].run_identity()
+        ));
         output.drop_without_applying_deltas();
         drop(receipt);
     }

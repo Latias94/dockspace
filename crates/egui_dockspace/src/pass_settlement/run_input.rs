@@ -151,7 +151,6 @@ fn affects_pointer_stream(event: &Event) -> bool {
         )
 }
 
-#[derive(Clone)]
 pub(crate) struct ProductPointerPacket {
     run: Arc<RunIdentity>,
     input: Arc<RunInput>,
@@ -162,8 +161,8 @@ pub(crate) struct ProductPointerPacket {
 }
 
 impl ProductPointerPacket {
-    pub(crate) fn same_run(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.run, &other.run)
+    pub(crate) const fn run_identity(&self) -> &Arc<RunIdentity> {
+        &self.run
     }
 
     pub(crate) fn events(&self) -> &[egui::Event] {

@@ -4,7 +4,7 @@ use super::*;
 use egui::{RawInput, TouchDeviceId, TouchId, TouchPhase, ViewportBuilder, ViewportId};
 use egui_dockspace::{
     DockspaceErrorKind, DockspaceManipulationCancelReason, DockspaceManipulationStatus,
-    DockspaceTouchEvent,
+    DockspaceTouchEvent, TabBarId, TabBarLayout,
 };
 
 #[derive(Clone, Copy)]
@@ -379,6 +379,70 @@ fn rolled_back_frames_cannot_lose_an_existing_drag_terminal() {
         assert_eq!(harness.dockspace.version(), version);
         harness.reorder_after_recovery();
     }
+}
+
+struct InvalidTabStrip;
+
+impl PaneView for InvalidTabStrip {
+    fn title(&self, item: ItemId) -> Option<egui::WidgetText> {
+        Panes.title(item)
+    }
+
+    fn ui(&mut self, item: ItemId, ui: &mut Ui) -> PaneResponse {
+        Panes.ui(item, ui)
+    }
+
+    fn tab_bar_layout(&self, _bar: TabBarId, _ui: &Ui) -> TabBarLayout {
+        TabBarLayout {
+            leading_width: -1.0,
+            ..TabBarLayout::default()
+        }
+    }
+}
+
+#[test]
+fn a_rejected_callback_release_is_never_replayed_on_another_egui_pass() {
+    let mut harness = DragHarness::new(ViewportId::ROOT, RunMode::Callback);
+    harness
+        .context
+        .options_mut(|options| options.max_passes = 2.try_into().unwrap());
+    let target = harness.start_reorder();
+    let version = harness.dockspace.version();
+    let raw = harness.input(vec![pointer_button(target, false)]);
+    let mut errors = Vec::new();
+    let mut rejected = run_headless(&harness.context, raw, |ui| {
+        let result = if errors.is_empty() {
+            let result = harness
+                .dockspace
+                .show_single_surface(SURFACE, ui, &mut InvalidTabStrip);
+            ui.ctx()
+                .request_discard("try the callback again with valid measurements");
+            result
+        } else {
+            harness
+                .dockspace
+                .show_single_surface(SURFACE, ui, &mut Panes)
+        };
+        errors.push(result.err().expect("the callback rejects this pass").kind());
+    });
+    rejected.textures_delta.clear();
+    assert_eq!(
+        errors,
+        [
+            DockspaceErrorKind::InvalidConfiguration,
+            DockspaceErrorKind::OperationConflict
+        ]
+    );
+    assert!(harness.dockspace.has_active_gesture());
+    assert_eq!(harness.dockspace.version(), version);
+
+    let recovered = harness.frame(Vec::new());
+    harness.assert_cancelled_with(
+        &recovered,
+        DockspaceManipulationCancelReason::PointerProviderRetired,
+    );
+    assert_eq!(harness.dockspace.version(), version);
+    harness.reorder_after_recovery();
 }
 
 #[test]

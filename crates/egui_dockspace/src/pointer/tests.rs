@@ -16,9 +16,9 @@ use egui::{
 use crate::input::{DockInputConfig, DockingActivation};
 use crate::{Dockspace, PaneView};
 
-use super::{
-    GenericPointerPhase, ProductPointer, continuation_sample, event_modifiers,
-    update_docking_enabled,
+use super::ProductPointer;
+use super::stream::{
+    GENERIC_POINTER, GenericPointerPhase, event_modifiers, update_docking_enabled,
 };
 
 mod reentry;
@@ -140,28 +140,23 @@ fn modifier_only_input_remembers_shift_without_enrolling_a_pointer() {
         },
         |ui| {
             let mut frame = session.begin_host_frame().unwrap();
-            let mut draft = pointer.clone();
-            let input = pointer
-                .prepare_draft(&mut draft, &frame, SURFACE, ui)
-                .unwrap();
-            submissions += usize::from(!input.is_empty());
-            input.submit_into(&mut frame).unwrap();
+            let mut input = pointer.submit(&mut frame, SURFACE, ui).unwrap();
             frame
                 .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
                 .unwrap();
-            frame.commit().unwrap();
-            pointer = draft;
+            submissions += frame.commit().unwrap().inputs().len();
+            pointer.commit_input(&mut input);
         },
     )
     .into_parts();
     output.textures_delta.clear();
     receipt.report(crate::SurfacePresentationResult::Presented);
     assert_eq!(submissions, 0, "idle modifiers need no host pointer batch");
-    assert_eq!(pointer.docking_enabled, Some(false));
+    assert_eq!(pointer.streams.docking_enabled, Some(false));
     assert_eq!(pointer.observed_modifiers, Some(Modifiers::SHIFT));
-    assert_eq!(pointer.generic_phase, GenericPointerPhase::Idle);
-    assert!(pointer.touches.is_empty());
-    assert_eq!(pointer.position, None);
+    assert_eq!(pointer.streams.generic_phase, GenericPointerPhase::Idle);
+    assert!(pointer.streams.touches.is_empty());
+    assert_eq!(pointer.streams.position, None);
 }
 
 #[test]
@@ -223,69 +218,43 @@ fn ordered_modifier_sources_preserve_intent_across_events_without_a_directive() 
 
 #[test]
 fn touch_samples_and_continuations_retain_the_observed_docking_intent() {
-    let mut pointer = ProductPointer {
-        docking_enabled: Some(false),
-        group_dock_mode: Some(TabGroupDockMode::PreserveLayout),
-        ..ProductPointer::default()
-    };
     let point = Pos2::new(180.0, 160.0);
-    let sample = pointer
+    let mut pointer = ProductPointer::default();
+    let streams = &mut pointer.streams;
+    streams.position = Some(point);
+    streams.docking_enabled = Some(false);
+    streams.group_dock_mode = Some(TabGroupDockMode::PreserveLayout);
+    let sample = streams
         .touches
         .observe(
             egui::TouchDeviceId(1),
             egui::TouchId(7),
             TouchPhase::Start,
             point,
-            pointer.docking_enabled,
-            pointer.group_dock_mode,
+            streams.docking_enabled,
+            streams.group_dock_mode,
         )
         .unwrap()
         .unwrap();
-    assert_eq!(sample.docking_enabled, Some(false));
-    assert_eq!(
-        sample.group_dock_mode,
-        Some(TabGroupDockMode::PreserveLayout)
-    );
-    let touch = continuation_sample(
-        &pointer.touches,
-        Some(point),
-        pointer.docking_enabled,
-        pointer.group_dock_mode,
-        sample.pointer,
-        SurfacePointerEvent::Moved,
-    )
-    .unwrap();
-    assert_eq!(touch.docking_enabled, Some(false));
-    assert_eq!(
-        touch.group_dock_mode,
-        Some(TabGroupDockMode::PreserveLayout)
-    );
-    let generic = continuation_sample(
-        &pointer.touches,
-        Some(point),
-        pointer.docking_enabled,
-        pointer.group_dock_mode,
-        dockspace::runtime::SurfacePointerId::new(1),
-        SurfacePointerEvent::Moved,
-    )
-    .unwrap();
-    pointer.docking_enabled = Some(true);
-    pointer.group_dock_mode = Some(TabGroupDockMode::MergeTabs);
-    assert_eq!(generic.docking_enabled, Some(false));
-    assert_eq!(
-        generic.group_dock_mode,
-        Some(TabGroupDockMode::PreserveLayout)
-    );
-    assert_eq!(generic.position, Some(point));
-    let changed = continuation_sample(
-        &pointer.touches,
-        Some(point),
-        pointer.docking_enabled,
-        pointer.group_dock_mode,
-        sample.pointer,
-        SurfacePointerEvent::Moved,
-    )
-    .unwrap();
+    let touch = streams
+        .sample(sample.pointer, SurfacePointerEvent::Moved)
+        .unwrap();
+    let generic = streams
+        .sample(GENERIC_POINTER, SurfacePointerEvent::Moved)
+        .unwrap();
+    streams.docking_enabled = Some(true);
+    streams.group_dock_mode = Some(TabGroupDockMode::MergeTabs);
+    for sample in [sample, touch, generic] {
+        assert_eq!(sample.docking_enabled, Some(false));
+        assert_eq!(
+            sample.group_dock_mode,
+            Some(TabGroupDockMode::PreserveLayout)
+        );
+        assert_eq!(sample.position, Some(point));
+    }
+    let changed = streams
+        .sample(sample.pointer, SurfacePointerEvent::Moved)
+        .unwrap();
     assert_eq!(changed.docking_enabled, Some(true));
     assert_eq!(changed.group_dock_mode, Some(TabGroupDockMode::MergeTabs));
     assert_eq!(changed.pointer, sample.pointer);
@@ -330,18 +299,19 @@ fn configured_activation_rechecks_observations_without_modifier_events() {
     pointer.clear();
     assert_eq!(pointer.input(), config);
     assert_eq!(pointer.observed_modifiers, None);
-    assert_eq!(pointer.docking_enabled, None);
-    assert_eq!(pointer.group_dock_mode, None);
+    assert_eq!(pointer.streams.docking_enabled, None);
+    assert_eq!(pointer.streams.group_dock_mode, None);
 }
 
 #[test]
 fn modifier_markers_only_name_existing_generic_and_touch_streams() {
     let mut pointer = ProductPointer::default();
     assert_eq!(
-        super::docking_change_samples(&pointer.touches, false, false).count(),
+        super::stream::docking_change_samples(&pointer.streams.touches, false, false).count(),
         0,
     );
     let first = pointer
+        .streams
         .touches
         .observe(
             egui::TouchDeviceId(1),
@@ -354,6 +324,7 @@ fn modifier_markers_only_name_existing_generic_and_touch_streams() {
         .unwrap()
         .unwrap();
     let second = pointer
+        .streams
         .touches
         .observe(
             egui::TouchDeviceId(1),
@@ -365,7 +336,8 @@ fn modifier_markers_only_name_existing_generic_and_touch_streams() {
         )
         .unwrap()
         .unwrap();
-    let markers = super::docking_change_samples(&pointer.touches, true, false).collect::<Vec<_>>();
+    let markers = super::stream::docking_change_samples(&pointer.streams.touches, true, false)
+        .collect::<Vec<_>>();
     assert_eq!(
         markers
             .iter()
@@ -392,12 +364,17 @@ fn group_mode_modifiers_update_existing_streams_without_motion_and_recheck_confi
     let mut pointer = ProductPointer::default();
     let mut mode = None;
     assert_eq!(
-        super::group_dock_change_samples(&pointer.touches, false, TabGroupDockMode::PreserveLayout)
-            .count(),
+        super::stream::group_dock_change_samples(
+            &pointer.streams.touches,
+            false,
+            TabGroupDockMode::PreserveLayout
+        )
+        .count(),
         0,
         "a modifier cannot enroll a pointer stream",
     );
     let contact = pointer
+        .streams
         .touches
         .observe(
             egui::TouchDeviceId(1),
@@ -410,9 +387,11 @@ fn group_mode_modifiers_update_existing_streams_without_motion_and_recheck_confi
         .unwrap()
         .unwrap();
     for modifiers in [Modifiers::ALT, Modifiers::NONE] {
-        let changed = super::update_group_dock_mode(&mut mode, pointer.input(), modifiers).unwrap();
+        let changed =
+            super::stream::update_group_dock_mode(&mut mode, pointer.input(), modifiers).unwrap();
         let markers =
-            super::group_dock_change_samples(&pointer.touches, true, changed).collect::<Vec<_>>();
+            super::stream::group_dock_change_samples(&pointer.streams.touches, true, changed)
+                .collect::<Vec<_>>();
         assert_eq!(markers.len(), 2);
         assert_eq!(markers[1].pointer, contact.pointer);
         assert!(markers.iter().all(|marker| {
@@ -424,7 +403,7 @@ fn group_mode_modifiers_update_existing_streams_without_motion_and_recheck_confi
     }
     pointer.observed_modifiers = Some(Modifiers::ALT);
     assert_eq!(
-        super::update_group_dock_mode(&mut mode, pointer.input(), Modifiers::ALT),
+        super::stream::update_group_dock_mode(&mut mode, pointer.input(), Modifiers::ALT),
         Some(TabGroupDockMode::PreserveLayout)
     );
     pointer.set_input(DockInputConfig {
@@ -432,7 +411,7 @@ fn group_mode_modifiers_update_existing_streams_without_motion_and_recheck_confi
         ..pointer.input()
     });
     assert_eq!(
-        super::update_group_dock_mode(
+        super::stream::update_group_dock_mode(
             &mut mode,
             pointer.input(),
             pointer.observed_modifiers.unwrap()

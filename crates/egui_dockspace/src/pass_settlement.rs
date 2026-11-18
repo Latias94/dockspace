@@ -524,11 +524,9 @@ impl ProductPassSettlementRun {
         final_paint_layer_order(&self.context)
     }
 
-    pub(super) fn observed_input_pass(&self) -> Option<InputPassId> {
-        self.portal
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .observed_input_pass
+    pub(super) fn observed_pointer_pass(&self) -> Option<(Arc<RunIdentity>, InputPassId)> {
+        let portal = self.portal.lock().unwrap_or_else(PoisonError::into_inner);
+        Some((Arc::clone(&portal.run), portal.observed_input_pass?))
     }
 
     pub(super) fn complete(self, output: &mut FullOutput) -> DockspaceOutputReceipt {
@@ -757,7 +755,7 @@ struct ActiveRunPortal {
     participants: Vec<Weak<Mutex<PassSettlementState>>>,
 }
 
-struct RunIdentity;
+pub(crate) struct RunIdentity;
 struct ContextIdentity;
 struct LaneIdentity;
 

@@ -1,436 +1,58 @@
-//! Ordered transport for the official host-local pointer lane.
+//! Admission and publication of the official host-local pointer lane.
 
-use std::cell::OnceCell;
-use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use dockspace::geometry::LogicalPoint;
-use dockspace::model::{SurfaceId, TabGroupDockMode};
+use dockspace::model::{ItemId, SurfaceId};
 use dockspace::runtime::{
-    DockspaceHostFrame, DockspaceInteractionError, DockspacePointerContinuation,
-    DockspaceRuntimeError, DockspaceSession, HostFrameReport, HostPointerInput, HostPointerRoute,
-    PaintedSurfaceOutput, PointerDeviceKind, PointerEventMetadata, PresentedDockReceiver,
-    PresentedDockspaceSurface, SurfacePointerButton, SurfacePointerCancelReason,
-    SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts,
-    SurfacePresentationArtifact, SurfacePresentationCommit,
+    DockspaceHostFrame, DockspaceInteractionError, DockspaceRuntimeError, DockspaceSession,
+    HostFrameReport, PaintedSurfaceOutput,
 };
-use egui::{
-    AreaState, Context, Event, Id, LayerId, Modifiers, PointerButton, Pos2, Rect, Ui, WidgetRect,
-    WidgetRects,
-};
+use egui::{Id, Modifiers, Ui};
 
 use crate::focus::DeferredTabFocus;
 use crate::input::DockInputConfig;
-use crate::pass_settlement::{InputPassId, ProductPointerPacket, pointer_packet};
-use crate::render::ProductReceiverBinding;
+use crate::pass_settlement::{InputPassId, RunIdentity, pointer_packet};
 
+mod receiver;
+mod stream;
 mod touch;
 
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
-mod ownership_tests;
+pub(crate) use receiver::{
+    ProductPointerInputSnapshot, ProductPointerPresentation, has_foreign_drag,
+};
+pub(crate) use stream::event_modifiers;
 
-use touch::TouchContacts;
-
-const GENERIC_POINTER: SurfacePointerId = SurfacePointerId::new(1);
-
-/// Framework receiver authority frozen before any application callback runs.
-pub(crate) struct ProductPointerInputSnapshot {
-    widgets: WidgetRects,
-    interactive_layers: Vec<(LayerId, Rect, f32)>,
-    interaction_radius: f32,
-    transformed_layers: HashSet<LayerId>,
-    layer_at: Box<dyn Fn(Pos2) -> Option<LayerId> + Send + Sync>,
-    pub(crate) foreign_drag: bool,
-}
-
-/// Metadata pairing one committed egui output with its new receiver graph.
-///
-/// Preceding output observations settle before this pass's graph is queued.
-/// Keeping that ordering in one private helper prevents the callback and
-/// owned-run facades from drifting apart while their focus and repaint
-/// lifecycles remain intentionally separate.
-pub(crate) struct ProductPointerPresentation {
-    layer: LayerId,
-    input_pass: Option<InputPassId>,
-    pointer_clip: Option<Rect>,
-    pub(crate) receivers: Vec<ProductReceiverBinding>,
-    pub(crate) focus_bindings: Vec<(dockspace::model::ItemId, Id)>,
-}
-
-impl ProductPointerPresentation {
-    pub(crate) fn new(ui: &Ui, input_pass: Option<InputPassId>) -> Self {
-        let layer = ui.layer_id();
-        let pointer_clip = ui
-            .ctx()
-            .layer_transform_to_global(layer)
-            .is_none_or(|transform| transform == egui::emath::TSTransform::IDENTITY)
-            .then(|| ui.clip_rect());
-        Self {
-            layer,
-            input_pass,
-            pointer_clip,
-            receivers: Vec::new(),
-            focus_bindings: Vec::new(),
-        }
-    }
-}
-
-fn pointer_clip_contains(clip: Rect, point: Pos2) -> bool {
-    clip.is_positive() && clip.contains(point)
-}
-
-impl ProductPointerInputSnapshot {
-    pub(crate) fn capture(context: &Context) -> Self {
-        let widgets = context.viewport(|viewport| viewport.prev_pass.widgets.clone());
-        let interaction_radius = context.global_style().interaction.interact_radius;
-        // egui excludes click-through areas from its widget hit test even
-        // when their children register interactive senses.
-        let click_through_layers = widgets
-            .layer_ids()
-            .filter(|layer| {
-                AreaState::load(context, layer.id).is_some_and(|area| !area.interactable)
-            })
-            .collect::<HashSet<_>>();
-        let (transformed_layers, layer_at, interactive_layers) = context.memory(|memory| {
-            let areas = memory.areas().clone();
-            let transforms = memory.to_global.clone();
-            let interactive_layers = widgets
-                .layers()
-                .filter(|(layer, _)| {
-                    !click_through_layers.contains(layer) && memory.allows_interaction(**layer)
-                })
-                .flat_map(|(layer, widgets)| {
-                    let transforms = &transforms;
-                    widgets.iter().filter_map(move |widget| {
-                        if !widget.enabled || !widget.sense.interactive() {
-                            return None;
-                        }
-                        let rect = transforms
-                            .get(layer)
-                            .map_or(widget.interact_rect, |transform| {
-                                *transform * widget.interact_rect
-                            });
-                        let radius = interaction_radius
-                            * transforms
-                                .get(layer)
-                                .map_or(1.0, |transform| transform.scaling.abs());
-                        (rect.is_finite() && rect.is_positive()).then_some((
-                            *layer,
-                            rect,
-                            radius * radius,
-                        ))
-                    })
-                })
-                .collect();
-            let transformed_layers = transforms
-                .iter()
-                .filter(|(_, transform)| **transform != egui::emath::TSTransform::IDENTITY)
-                .map(|(layer, _)| *layer)
-                .collect();
-            let blocked = memory
-                .layer_ids()
-                .filter(|layer| !memory.is_above_modal_layer(*layer))
-                .collect::<HashSet<_>>();
-            let modal = memory.top_modal_layer();
-            // Erase the private Areas type while using egui's own hit test.
-            // Capturing Memory itself would retain unrelated user data and the run portal.
-            let layer_at: Box<dyn Fn(Pos2) -> Option<LayerId> + Send + Sync> =
-                Box::new(move |position| {
-                    let layer = areas.layer_id_at(position, &transforms)?;
-                    if blocked.contains(&layer) {
-                        modal
-                    } else {
-                        Some(layer)
-                    }
-                });
-            (transformed_layers, layer_at, interactive_layers)
-        });
-        Self {
-            widgets,
-            interactive_layers,
-            interaction_radius,
-            transformed_layers,
-            layer_at,
-            foreign_drag: has_foreign_drag(context),
-        }
-    }
-
-    fn identity_layer(&self, layer: LayerId) -> bool {
-        !self.transformed_layers.contains(&layer)
-    }
-
-    /// Joins exact registrations without discarding their framework paint order.
-    fn ownership(&self, scene: &PointerScene) -> PacketPointerOwnership {
-        #[cfg(test)]
-        ownership_tests::record_join(
-            scene.receivers.len(),
-            self.widgets
-                .get_layer(scene.layer)
-                .filter(|widget| widget.enabled && widget.sense.interactive())
-                .count(),
-        );
-
-        let owned = scene
-            .receivers
-            .iter()
-            .filter(|binding| {
-                binding.interactive
-                    && binding.layer_id == scene.layer
-                    && self.widgets.get(binding.widget_id).is_some_and(|widget| {
-                        widget.enabled
-                            && widget.sense.interactive()
-                            && widget.layer_id == binding.layer_id
-                            && widget.interact_rect == binding.interact_rect
-                    })
-            })
-            .map(|binding| binding.widget_id)
-            .collect::<HashSet<_>>();
-        PacketPointerOwnership {
-            interaction_radius_sq: self.interaction_radius * self.interaction_radius,
-            foreign_layers: self
-                .interactive_layers
-                .iter()
-                .filter(|(layer, _, _)| *layer != scene.layer)
-                .map(|(_, rect, radius_sq)| (*rect, *radius_sq))
-                .collect(),
-            widgets: self
-                .widgets
-                .get_layer(scene.layer)
-                .filter(|widget| widget.enabled && widget.sense.interactive())
-                .map(|widget| (*widget, owned.contains(&widget.id)))
-                .collect(),
-        }
-    }
-}
-
-struct PacketPointerOwnership {
-    interaction_radius_sq: f32,
-    foreign_layers: Vec<(Rect, f32)>,
-    widgets: Vec<(WidgetRect, bool)>,
-}
-
-impl PacketPointerOwnership {
-    fn is_clear_at(&self, position: Pos2) -> bool {
-        // A custom Ui can draw on another layer without registering an Area.
-        // The layer-at-point check alone cannot prove that layer is absent.
-        if self
-            .foreign_layers
-            .iter()
-            .any(|(rect, radius_sq)| rect.distance_sq_to_pos(position) <= *radius_sq)
-        {
-            return false;
-        }
-        let mut nearby_unknown = false;
-        for (widget, owned) in self.widgets.iter().rev() {
-            if widget.interact_rect.distance_sq_to_pos(position) > self.interaction_radius_sq {
-                continue;
-            }
-            if !owned {
-                if widget.interact_rect.contains(position) {
-                    return false;
-                }
-                nearby_unknown = true;
-                continue;
-            }
-            // A direct owner of both lanes shields the widgets behind it.
-            // Keep single-lane overlaps conservative: egui's nearby-widget
-            // assistance can prefer another drag-only widget underneath one.
-            if widget.interact_rect.contains(position)
-                && widget.sense.senses_click()
-                && widget.sense.senses_drag()
-            {
-                return true;
-            }
-        }
-        !nearby_unknown
-    }
-}
-
-#[derive(Clone)]
-struct PointerScene {
-    artifact: SurfacePresentationArtifact,
-    layer: LayerId,
-    input_pass: Option<InputPassId>,
-    pointer_clip: Option<Rect>,
-    receivers: Arc<[ProductReceiverBinding]>,
-    focus_bindings: Arc<[(dockspace::model::ItemId, Id)]>,
-}
-
-#[derive(Clone, Default)]
-pub(crate) struct ProductPointer {
-    config: DockInputConfig,
-    pending: Vec<PointerScene>,
-    presented: Option<PointerScene>,
-    consumed_run: Option<ProductPointerPacket>,
-    rejected_run: Option<ProductPointerPacket>,
-    observed_through_pass: Option<InputPassId>,
-    recovery: PendingPointerRecovery,
-    position: Option<Pos2>,
-    // Adapter input enrollment only; core remains the sole gesture owner.
-    generic_phase: GenericPointerPhase,
-    observed_modifiers: Option<Modifiers>,
-    docking_enabled: Option<bool>,
-    group_dock_mode: Option<TabGroupDockMode>,
-    foreign_capture: bool,
-    touches: TouchContacts,
-}
-
-/// Effects of physical input consumed before the corresponding draft commits.
-#[derive(Clone, Default)]
-struct PendingPointerRecovery {
-    cancelled_streams: BTreeSet<SurfacePointerId>,
-    generic_position_lost: bool,
-    paused_docking: bool,
-    changed_group_mode: Option<TabGroupDockMode>,
-}
-
-/// Phase of the synthesized generic pointer stream.
-///
-/// A hover stream remains live after a release so ordinary motion and focus
-/// observations keep their existing ownership semantics. The explicit
-/// pressed phase is needed to recover when a host loses a release and later
-/// delivers another primary press; a second press cannot be sent to the core
-/// as though the first one had ended.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum GenericPointerPhase {
-    #[default]
-    Idle,
-    Hover,
-    Pressed,
-}
-
-impl GenericPointerPhase {
-    const fn is_live(self) -> bool {
-        !matches!(self, Self::Idle)
-    }
-}
-
-#[derive(Clone, Copy)]
-struct PointerSample {
-    pointer: SurfacePointerId,
-    device: PointerDeviceKind,
-    event: SurfacePointerEvent,
-    position: Option<Pos2>,
-    docking_enabled: Option<bool>,
-    group_dock_mode: Option<TabGroupDockMode>,
-}
-
-impl PointerSample {
-    const fn generic(
-        event: SurfacePointerEvent,
-        position: Option<Pos2>,
-        docking_enabled: Option<bool>,
-        group_dock_mode: Option<TabGroupDockMode>,
-    ) -> Self {
-        Self {
-            pointer: GENERIC_POINTER,
-            device: PointerDeviceKind::Unknown,
-            event,
-            position,
-            docking_enabled,
-            group_dock_mode,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct Edge {
-    pointer: SurfacePointerId,
-    device: PointerDeviceKind,
-    event: SurfacePointerEvent,
-    point: Option<LogicalPoint>,
-    surface: Option<PresentedDockspaceSurface>,
-    manipulation_surface: Option<PresentedDockspaceSurface>,
-    delivery: Option<PresentedDockReceiver>,
-    drag_delivery: Option<PresentedDockReceiver>,
-    blocked: bool,
-    docking_enabled: Option<bool>,
-    group_dock_mode: Option<TabGroupDockMode>,
-    capture: SurfacePointerCapture,
-}
-
-/// One normalized run, prepared against this update's presented output.
-///
-/// Prepare on a pointer draft and install that draft only after publication.
-/// Normalization errors travel with the affine input, so a failed run cannot
-/// be prepared again with different contact identities or receiver facts.
-#[must_use = "submit the prepared input into its update before publishing the pointer draft"]
-pub(crate) struct PreparedProductPointerInput {
-    input: Result<PreparedPointerEdges, DockspaceRuntimeError>,
-    observed_at: Option<Duration>,
-}
+use receiver::{PointerReceivers, PointerScenes};
+use stream::{PendingPointerRecovery, PointerStreams};
 
 #[derive(Default)]
-struct PreparedPointerEdges {
-    raw: Vec<Edge>,
-    continuation: Option<QualifiedPointerContinuation>,
-    deferred_focus: DeferredTabFocus,
+pub(crate) struct ProductPointer {
+    config: DockInputConfig,
+    scenes: PointerScenes,
+    streams: PointerStreams,
+    observed: Option<ObservedRun>,
+    observed_modifiers: Option<Modifiers>,
+    recovery: PendingPointerRecovery,
 }
 
-struct QualifiedPointerContinuation {
-    request: DockspacePointerContinuation,
-    edge: Edge,
+/// egui's input watermark advances even when the Dockspace frame fails.
+struct ObservedRun {
+    identity: Arc<RunIdentity>,
+    through: InputPassId,
+    committed: bool,
 }
 
-impl PreparedProductPointerInput {
-    /// Returns the run's original clock sample for post-publication scheduling.
-    pub(crate) const fn observed_at(&self) -> Option<Duration> {
-        self.observed_at
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.input
-            .as_ref()
-            .is_ok_and(|input| input.raw.is_empty() && input.continuation.is_none())
-    }
-
-    /// Appends raw input and then an exact surviving stationary request.
-    ///
-    /// The returned intent applies framework tab focus once and preserves whether
-    /// this input handled a tab press, even if a later application press replaced
-    /// its focus destination. It does not acknowledge core presentation. No new
-    /// hit test selects a destination against post-input geometry. The host must
-    /// call `schedule_pointer_continuation` after publication, even when this
-    /// input is empty. Raw events must never be replayed to service that wake.
-    pub(crate) fn submit_into(
-        self,
-        frame: &mut DockspaceHostFrame<'_>,
-    ) -> Result<DeferredTabFocus, DockspaceRuntimeError> {
-        let input = self.input?;
-        if !input.raw.is_empty() {
-            frame.submit_host_pointer_batch(
-                input
-                    .raw
-                    .iter()
-                    .map(|edge| pointer_input(edge, self.observed_at)),
-            )?;
-        }
-        if let Some(probe) = input.continuation
-            && let Some(request) = frame.pointer_continuation()
-            && request.pointer() == probe.request.pointer()
-            && request.surface() == probe.request.surface()
-            && request.deadline() == probe.request.deadline()
-            && request.position() == probe.request.position()
-            && probe.edge.point == Some(probe.request.position())
-            && probe.edge.surface == frame.presented_surface(probe.request.surface())
-        {
-            // A release or cancellation in the raw prefix revokes the request
-            // before this check. Motion can refresh its token while retaining
-            // the same dwell deadline. Reuse only the exact pre-input framework
-            // proof at the unchanged point and output, with the current token.
-            let edge = Edge {
-                event: request.event(),
-                ..probe.edge
-            };
-            frame.submit_host_pointer(pointer_input(&edge, self.observed_at))?;
-        }
-        Ok(input.deferred_focus)
-    }
+/// Stream state belongs to the same unpublished update as the core input prefix.
+#[derive(Default)]
+#[must_use = "publish this input only after committing its host frame"]
+pub(crate) struct PointerUpdate {
+    streams: Option<PointerStreams>,
+    pub(crate) observed_at: Option<Duration>,
+    pub(crate) focus: DeferredTabFocus,
 }
 
 impl ProductPointer {
@@ -443,28 +65,13 @@ impl ProductPointer {
     }
 
     pub(crate) fn clear(&mut self) {
-        let mut touches = std::mem::take(&mut self.touches);
-        touches.clear();
+        let mut streams = std::mem::take(&mut self.streams);
+        streams.clear();
         *self = Self {
             config: self.config,
-            touches,
+            streams,
             ..Self::default()
         };
-    }
-
-    fn emitted(
-        &mut self,
-        artifact: SurfacePresentationArtifact,
-        presentation: ProductPointerPresentation,
-    ) {
-        self.pending.push(PointerScene {
-            artifact,
-            layer: presentation.layer,
-            input_pass: presentation.input_pass,
-            pointer_clip: presentation.pointer_clip,
-            receivers: presentation.receivers.into(),
-            focus_bindings: presentation.focus_bindings.into(),
-        });
     }
 
     pub(crate) fn settle_report(
@@ -473,9 +80,10 @@ impl ProductPointer {
         presentation: ProductPointerPresentation,
     ) -> Option<PaintedSurfaceOutput> {
         let output = report.take_painted_outputs().pop();
-        self.observe(report.surface_presentation_commits());
+        self.scenes.observe(report.surface_presentation_commits());
         if let Some(output) = output.as_ref() {
-            self.emitted(output.presentation_artifact(), presentation);
+            self.scenes
+                .emitted(output.presentation_artifact(), presentation);
         }
         output
     }
@@ -484,831 +92,110 @@ impl ProductPointer {
         &self,
         frame: &DockspaceHostFrame<'_>,
         surface: SurfaceId,
-    ) -> &[(dockspace::model::ItemId, Id)] {
-        let Some(current) = frame.presented_surface(surface) else {
-            return &[];
-        };
-        self.presented
-            .iter()
-            .chain(self.pending.iter())
-            .find(|scene| current.matches_presentation_artifact(scene.artifact))
-            .map_or(&[], |scene| scene.focus_bindings.as_ref())
+    ) -> &[(ItemId, Id)] {
+        self.scenes.focus_bindings(frame.presented_surface(surface))
     }
 
-    pub(crate) fn observe(&mut self, commits: &[SurfacePresentationCommit]) {
-        for scene in std::mem::take(&mut self.pending) {
-            if commits.iter().any(|commit| commit.presents(scene.artifact)) {
-                self.presented = Some(scene);
-            } else if !commits.iter().any(|commit| commit.settles(scene.artifact)) {
-                self.pending.push(scene);
-            }
-        }
-    }
-
-    fn sync_presented(&mut self, frame: &DockspaceHostFrame<'_>, surface: SurfaceId) {
-        let Some(current) = frame.presented_surface(surface) else {
-            return;
-        };
-        if self
-            .presented
-            .as_ref()
-            .is_some_and(|scene| current.matches_presentation_artifact(scene.artifact))
-        {
-            return;
-        }
-        if let Some(scene) = self
-            .pending
-            .iter()
-            .rev()
-            .find(|scene| current.matches_presentation_artifact(scene.artifact))
-        {
-            // The prelude may have accepted this artifact without publishing
-            // it yet. Keep pending intact until the committed report settles it.
-            self.presented = Some(scene.clone());
-        }
-    }
-
-    pub(crate) fn prepare_draft(
+    /// Reduces the original packet once and remembers consumed physical facts even on failure.
+    pub(crate) fn submit(
         &mut self,
-        draft: &mut Self,
-        frame: &DockspaceHostFrame<'_>,
+        frame: &mut DockspaceHostFrame<'_>,
         surface: SurfaceId,
         ui: &Ui,
-    ) -> Option<PreparedProductPointerInput> {
-        let previous_clip = self.presented.as_ref().and_then(|scene| scene.pointer_clip);
-        draft.sync_presented(frame, surface);
-        let packet = pointer_packet(ui)?;
-        let previous_pass = self.observed_through_pass;
-        self.record_observed_pass(draft, packet.observed_input_pass());
+    ) -> Result<PointerUpdate, DockspaceRuntimeError> {
+        let Some(packet) = pointer_packet(ui) else {
+            return Ok(PointerUpdate::default());
+        };
         let observed_at = packet.observed_at();
-        let input = if draft
-            .consumed_run
-            .as_ref()
-            .is_some_and(|previous| previous.same_run(&packet))
+        if let Some(run) = self.observed.as_mut()
+            && Arc::ptr_eq(&run.identity, packet.run_identity())
         {
-            Ok(PreparedPointerEdges::default())
-        } else if draft
-            .rejected_run
-            .as_ref()
-            .is_some_and(|previous| previous.same_run(&packet))
-        {
-            Err(DockspaceInteractionError::PointerInputAlreadySubmitted.into())
-        } else {
-            let input_gap = previous_pass != packet.preceding_input_pass();
-            if input_gap {
-                // Omitted passes may have consumed the end of any enrolled stream.
-                self.mark_input_gap();
-            }
-            if previous_pass.is_none() || input_gap {
-                draft.observed_modifiers = Some(packet.initial_modifiers());
-            }
-            let input =
-                draft.prepare_packet(frame, surface, ui, &packet, previous_clip, &self.recovery);
-            if let Ok(input) = &input {
-                // egui has already consumed the input. Keep the observations
-                // needed for recovery until the draft publishes their effects.
-                self.record_uncommitted_input(&input.raw);
-                self.observed_modifiers = draft.observed_modifiers;
-                draft.recovery = PendingPointerRecovery::default();
-                draft.consumed_run = Some(packet);
-                draft.rejected_run = None;
+            run.through = packet.observed_input_pass();
+            return if run.committed {
+                Ok(PointerUpdate {
+                    observed_at,
+                    ..PointerUpdate::default()
+                })
             } else {
-                self.mark_input_gap();
-            }
-            input
-        };
-        Some(PreparedProductPointerInput { input, observed_at })
-    }
-
-    fn mark_input_gap(&mut self) {
-        if self.generic_phase.is_live() {
-            self.recovery.cancelled_streams.insert(GENERIC_POINTER);
+                Err(DockspaceInteractionError::PointerInputAlreadySubmitted.into())
+            };
         }
-        self.recovery
-            .cancelled_streams
-            .extend(self.touches.pointers());
-    }
 
-    fn record_uncommitted_input(&mut self, edges: &[Edge]) {
-        for edge in edges {
-            match edge.event {
-                SurfacePointerEvent::Moved
-                    if edge.pointer == GENERIC_POINTER && edge.point.is_none() =>
-                {
-                    self.recovery.generic_position_lost = true;
-                }
-                SurfacePointerEvent::DockingEnabledChanged { enabled: false } => {
-                    self.recovery.paused_docking = true;
-                }
-                SurfacePointerEvent::GroupDockModeChanged { mode }
-                    if self.group_dock_mode != Some(mode) =>
-                {
-                    self.recovery.changed_group_mode = Some(mode);
-                }
-                event
-                    if ends_primary_gesture(event)
-                        || event == SurfacePointerEvent::CaptureChanged =>
-                {
-                    let was_enrolled = if edge.pointer == GENERIC_POINTER {
-                        match event {
-                            SurfacePointerEvent::ButtonReleased(_) => {
-                                self.generic_phase == GenericPointerPhase::Pressed
-                            }
-                            _ => self.generic_phase.is_live(),
-                        }
-                    } else {
-                        self.touches
-                            .pointers()
-                            .any(|pointer| pointer == edge.pointer)
-                    };
-                    if was_enrolled {
-                        self.recovery.cancelled_streams.insert(edge.pointer);
-                    }
-                }
-                _ => {}
-            }
+        let previous_pass = self.observed.as_ref().map(|run| run.through);
+        let input_gap = previous_pass != packet.preceding_input_pass();
+        if input_gap {
+            self.recovery.mark_gap(&self.streams);
         }
-    }
-
-    pub(crate) fn record_observed_pass(&mut self, draft: &mut Self, pass: InputPassId) {
-        self.observed_through_pass = Some(pass);
-        draft.observed_through_pass = Some(pass);
-    }
-
-    /// A failed frame may not reinterpret the same raw run on a later pass.
-    pub(crate) fn record_rejected_run(&mut self, draft: &Self) {
-        if let Some(packet) = draft.rejected_run.as_ref().or(draft.consumed_run.as_ref())
-            && self
-                .consumed_run
-                .as_ref()
-                .is_none_or(|previous| !previous.same_run(packet))
-        {
-            self.rejected_run = Some(packet.clone());
-        }
-    }
-
-    fn prepare_packet(
-        &mut self,
-        frame: &DockspaceHostFrame<'_>,
-        surface: SurfaceId,
-        ui: &Ui,
-        packet: &ProductPointerPacket,
-        previous_clip: Option<Rect>,
-        recovery: &PendingPointerRecovery,
-    ) -> Result<PreparedPointerEdges, DockspaceRuntimeError> {
-        let current = frame.presented_surface(surface);
-        let scene = self.presented.as_ref().filter(|scene| {
-            current.is_some_and(|surface| surface.matches_presentation_artifact(scene.artifact))
-        });
-        let snapshot = packet.receivers();
-        // Keep original-run ownership even when an earlier application callback
-        // consumes the payload. Also honor a source started before this call.
-        let foreign_drag = snapshot.foreign_drag || has_foreign_drag(ui.ctx());
-        let capture = if foreign_drag {
-            SurfacePointerCapture::Foreign
+        let modifiers = if previous_pass.is_none() || input_gap {
+            packet.initial_modifiers()
         } else {
-            SurfacePointerCapture::None
-        };
-        let current_identity_layer = |layer| {
-            ui.ctx()
-                .layer_transform_to_global(layer)
-                .is_none_or(|transform| transform == egui::emath::TSTransform::IDENTITY)
-        };
-        let coordinates_supported = snapshot.identity_layer(ui.layer_id())
-            && current_identity_layer(ui.layer_id())
-            && scene.is_none_or(|scene| {
-                scene.pointer_clip.is_some()
-                    && snapshot.identity_layer(scene.layer)
-                    && current_identity_layer(scene.layer)
-            });
-        let rejected_previous = self.rejected_run.is_some();
-        // Normalization may also fail. Neither boundary may replay this run
-        // with a new contact identity or different receiver facts.
-        self.rejected_run = Some(packet.clone());
-        let mut position = self.position.filter(|_| !recovery.generic_position_lost);
-        let mut generic_phase = self.generic_phase;
-        let host_focused = packet.focused();
-        let mut observed_modifiers = if host_focused {
             self.observed_modifiers.unwrap_or(Modifiers::NONE)
-        } else {
-            Modifiers::NONE
         };
-        let mut docking_enabled = self.docking_enabled;
-        let mut group_dock_mode = self.group_dock_mode;
-        let mut touches = self.touches.clone();
-        let mut pointer_focused = host_focused;
-        let mut records = Vec::new();
-        let cancel_all = rejected_previous || !coordinates_supported || !host_focused;
-        let should_cancel = |pointer| cancel_all || recovery.cancelled_streams.contains(&pointer);
-        if generic_phase.is_live() && should_cancel(GENERIC_POINTER) {
-            records.push(PointerSample::generic(
-                SurfacePointerEvent::StreamCancelled(
-                    SurfacePointerCancelReason::ExplicitPlatformCancellation,
-                ),
-                position,
-                docking_enabled,
-                group_dock_mode,
-            ));
-            generic_phase = GenericPointerPhase::Idle;
-        }
-        if cancel_all || !recovery.cancelled_streams.is_empty() {
-            records.extend(touches.cancel_where(
-                should_cancel,
-                SurfacePointerCancelReason::ExplicitPlatformCancellation,
-                docking_enabled,
-                group_dock_mode,
-            ));
-        }
-        let mut touch_interval = !touches.is_empty() || focus_interval_has_touch(packet.events());
-        if foreign_drag && !self.foreign_capture {
-            if generic_phase.is_live() {
-                records.push(PointerSample::generic(
-                    SurfacePointerEvent::CaptureChanged,
-                    position,
-                    docking_enabled,
-                    group_dock_mode,
-                ));
-            }
-            records.extend(touches.capture_changed(docking_enabled, group_dock_mode));
-        }
-        if recovery.generic_position_lost && generic_phase.is_live() {
-            // Revoke the consumed position before any new coordinates arrive,
-            // keeping the stream available for reentry.
-            records.push(PointerSample::generic(
-                SurfacePointerEvent::Moved,
-                None,
-                docking_enabled,
-                group_dock_mode,
-            ));
-        }
-        // A modifier round trip may have left the final keys unchanged while
-        // invalidating the old preview. Apply that discontinuity before using
-        // the current policy; neither step generates pointer motion.
-        if recovery.paused_docking && docking_enabled == Some(true) {
-            docking_enabled = Some(false);
-            records.extend(docking_change_samples(
-                &touches,
-                generic_phase.is_live(),
-                false,
-            ));
-        }
-        if let Some(mode) = recovery
-            .changed_group_mode
-            .filter(|&mode| group_dock_mode != Some(mode))
-        {
-            group_dock_mode = Some(mode);
-            records.extend(group_dock_change_samples(
-                &touches,
-                generic_phase.is_live(),
-                mode,
-            ));
-        }
-        // Re-evaluate the last actual modifier observation after a configuration
-        // change, without fabricating pointer motion or enrolling a new stream.
-        if let Some(enabled) =
-            update_docking_enabled(&mut docking_enabled, self.config, observed_modifiers)
-        {
-            records.extend(docking_change_samples(
-                &touches,
-                generic_phase.is_live(),
-                enabled,
-            ));
-        }
-        if let Some(mode) =
-            update_group_dock_mode(&mut group_dock_mode, self.config, observed_modifiers)
-        {
-            records.extend(group_dock_change_samples(
-                &touches,
-                generic_phase.is_live(),
-                mode,
-            ));
-        }
-        if let Some((previous, current)) =
-            previous_clip.zip(scene.and_then(|scene| scene.pointer_clip))
-            && coordinates_supported
-            && frame.has_active_gesture()
-            && previous != current
-        {
-            // The newly presented clip can hide the last hovered point even
-            // when the platform has no fresh motion to report. A move at the
-            // retained point now carries blocked hover, with capture intact.
-            let became_clipped = |point| {
-                pointer_clip_contains(previous, point) && !pointer_clip_contains(current, point)
-            };
-            if generic_phase == GenericPointerPhase::Pressed && position.is_some_and(became_clipped)
-            {
-                records.push(PointerSample::generic(
-                    SurfacePointerEvent::Moved,
-                    position,
-                    docking_enabled,
-                    group_dock_mode,
-                ));
-            }
-            records.extend(touches.clipped_moves(became_clipped, docking_enabled, group_dock_mode));
-        }
-        for (event_index, event) in packet.events().iter().cloned().enumerate() {
-            if let Event::WindowFocused(focused) = &event {
-                // A false host snapshot denies this whole packet. Within a
-                // focused packet, ordered loss/gain events still delimit the
-                // intervals that can deliver pointer input.
-                let next_focused = host_focused && *focused;
-                if next_focused && !pointer_focused {
-                    // Loss cancelled the preceding contacts. Only touch in
-                    // this new interval can suppress its synthesized mouse
-                    // tail. Each interval is scanned at most once.
-                    touch_interval = !touches.is_empty()
-                        || focus_interval_has_touch(&packet.events()[event_index + 1..]);
-                }
-                pointer_focused = next_focused;
-            }
-            if !pointer_focused
-                && matches!(
-                    &event,
-                    Event::Touch { .. }
-                        | Event::PointerMoved(_)
-                        | Event::PointerButton { .. }
-                        | Event::PointerGone
-                        | Event::Key { .. }
-                )
-            {
-                // A queued key release can still contain modifiers from before blur.
-                continue;
-            }
-            if let Some(modifiers) = event_modifiers(&event) {
-                observed_modifiers = modifiers;
-                if let Some(enabled) =
-                    update_docking_enabled(&mut docking_enabled, self.config, modifiers)
-                {
-                    records.extend(docking_change_samples(
-                        &touches,
-                        generic_phase.is_live(),
-                        enabled,
-                    ));
-                }
-                if let Some(mode) =
-                    update_group_dock_mode(&mut group_dock_mode, self.config, modifiers)
-                {
-                    records.extend(group_dock_change_samples(
-                        &touches,
-                        generic_phase.is_live(),
-                        mode,
-                    ));
-                }
-            }
-            if touch_interval
-                && generic_phase.is_live()
-                && matches!(
-                    &event,
-                    Event::Touch { .. }
-                        | Event::PointerMoved(_)
-                        | Event::PointerButton { .. }
-                        | Event::PointerGone
-                )
-            {
-                // Touch input suppresses ambiguous synthesized generic tails.
-                // Retire an enrolled generic stream at that exact raw boundary
-                // before its terminal could disappear or a contact requests ownership.
-                records.push(PointerSample::generic(
-                    SurfacePointerEvent::StreamCancelled(
-                        SurfacePointerCancelReason::ExplicitPlatformCancellation,
-                    ),
-                    position,
-                    docking_enabled,
-                    group_dock_mode,
-                ));
-                generic_phase = GenericPointerPhase::Idle;
-            }
-            let event = match event {
-                Event::Touch {
-                    device_id,
-                    id,
-                    phase,
-                    pos,
-                    ..
-                } => {
-                    if coordinates_supported
-                        && let Some(sample) = touches.observe(
-                            device_id,
-                            id,
-                            phase,
-                            pos,
-                            docking_enabled,
-                            group_dock_mode,
-                        )?
-                    {
-                        records.push(sample);
-                    }
-                    None
-                }
-                Event::PointerMoved(_) | Event::PointerButton { .. } | Event::PointerGone
-                    if touch_interval =>
-                {
-                    None
-                }
-                Event::PointerMoved(point) => {
-                    position = Some(point);
-                    Some(SurfacePointerEvent::Moved)
-                }
-                Event::PointerButton {
-                    pos,
-                    button: PointerButton::Primary,
-                    pressed,
-                    ..
-                } => {
-                    position = Some(pos);
-                    if pressed && generic_phase == GenericPointerPhase::Pressed {
-                        // A second primary press means the platform dropped
-                        // the preceding release. End the old stream before
-                        // admitting the new edge in this same host batch.
-                        records.push(PointerSample::generic(
-                            SurfacePointerEvent::StreamCancelled(
-                                SurfacePointerCancelReason::ExplicitPlatformCancellation,
-                            ),
-                            position,
-                            docking_enabled,
-                            group_dock_mode,
-                        ));
-                        generic_phase = GenericPointerPhase::Idle;
-                    }
-                    Some(if pressed {
-                        SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary)
-                    } else {
-                        SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary)
-                    })
-                }
-                Event::PointerGone => {
-                    position = None;
-                    Some(SurfacePointerEvent::Moved)
-                }
-                Event::WindowFocused(false) => {
-                    records.extend(touches.cancel_all(
-                        SurfacePointerCancelReason::ExplicitPlatformCancellation,
-                        docking_enabled,
-                        group_dock_mode,
-                    ));
-                    Some(SurfacePointerEvent::StreamCancelled(
-                        SurfacePointerCancelReason::ExplicitPlatformCancellation,
-                    ))
-                }
-                Event::Key {
-                    key,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } if self.config.cancel_matches(key, modifiers) => {
-                    records.extend(touches.cancel_all(
-                        SurfacePointerCancelReason::ExplicitCancellation,
-                        docking_enabled,
-                        group_dock_mode,
-                    ));
-                    Some(SurfacePointerEvent::StreamCancelled(
-                        SurfacePointerCancelReason::ExplicitCancellation,
-                    ))
-                }
-                _ => None,
-            };
-            if let Some(event) = event {
-                if matches!(event, SurfacePointerEvent::StreamCancelled(_)) {
-                    if !generic_phase.is_live() {
-                        continue;
-                    }
-                    generic_phase = GenericPointerPhase::Idle;
-                } else {
-                    generic_phase = match event {
-                        SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary) => {
-                            GenericPointerPhase::Pressed
-                        }
-                        SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary) => {
-                            GenericPointerPhase::Hover
-                        }
-                        _ if generic_phase == GenericPointerPhase::Idle => {
-                            GenericPointerPhase::Hover
-                        }
-                        _ => generic_phase,
-                    };
-                }
-                records.push(PointerSample::generic(
-                    event,
-                    position,
-                    docking_enabled,
-                    group_dock_mode,
-                ));
-            }
-        }
-        // Empty packets and blocked layers need no join. All qualified edges
-        // and stationary probes in this packet share the same frozen result.
-        let ownership = OnceCell::new();
-        let mut retain_frame_owner = true;
-        let mut edge_at = |sample: PointerSample| {
-            if matches!(
-                sample.event,
-                SurfacePointerEvent::DockingEnabledChanged { .. }
-                    | SurfacePointerEvent::GroupDockModeChanged { .. }
-            ) {
-                // A semantic marker has no coordinate or receiver observation.
-                return Edge {
-                    pointer: sample.pointer,
-                    device: sample.device,
-                    event: sample.event,
-                    point: None,
-                    surface: None,
-                    manipulation_surface: None,
-                    delivery: None,
-                    drag_delivery: None,
-                    blocked: false,
-                    docking_enabled: sample.docking_enabled,
-                    group_dock_mode: sample.group_dock_mode,
-                    capture,
-                };
-            }
-            let position = sample.position;
-            let point = position
-                .filter(|_| coordinates_supported)
-                .and_then(|position| {
-                    LogicalPoint::new(f64::from(position.x), f64::from(position.y)).ok()
-                });
-            let hit = point
-                .and_then(|point| frame.host_pointer_hit_for_device(surface, point, sample.device));
-            let frame_owner = frame
-                .host_pointer_manipulation_surface(sample.pointer)
-                .filter(|source| coordinates_supported && source.surface() == surface);
-            if frame_owner.is_some()
-                && matches!(
-                    sample.event,
-                    SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary)
-                )
-            {
-                retain_frame_owner = false;
-            }
-            let manipulation_surface = frame_owner
-                .filter(|_| retain_frame_owner)
-                .or(current.filter(|_| coordinates_supported));
-            if frame_owner.is_some() && ends_primary_gesture(sample.event) {
-                // Only the original owner may retain its old coordinate proof.
-                // Its terminal ends that exception within this raw packet too;
-                // a later down and its suffix use the current presented output.
-                retain_frame_owner = false;
-            }
-            let qualified = scene.zip(position).is_some_and(|(scene, position)| {
-                !foreign_drag
-                    && ui.is_enabled()
-                    && scene.input_pass.is_some()
-                    && scene.input_pass == packet.preceding_input_pass()
-                    && scene
-                        .pointer_clip
-                        .is_some_and(|clip| pointer_clip_contains(clip, position))
-                    && (snapshot.layer_at)(position) == Some(scene.layer)
-                    && coordinates_supported
-                    && ownership
-                        .get_or_init(|| snapshot.ownership(scene))
-                        .is_clear_at(position)
-            });
-            Edge {
-                pointer: sample.pointer,
-                device: sample.device,
-                event: sample.event,
-                point,
-                surface: hit.map(|hit| hit.surface()),
-                manipulation_surface,
-                delivery: qualified
-                    .then(|| hit.and_then(|hit| hit.delivery()))
-                    .flatten(),
-                drag_delivery: qualified
-                    .then(|| hit.and_then(|hit| hit.drag_delivery()))
-                    .flatten(),
-                blocked: !qualified,
-                docking_enabled: sample.docking_enabled,
-                group_dock_mode: sample.group_dock_mode,
-                capture,
+        self.observed = Some(ObservedRun {
+            identity: Arc::clone(packet.run_identity()),
+            through: packet.observed_input_pass(),
+            committed: false,
+        });
+
+        let receivers =
+            PointerReceivers::new(&self.scenes, frame.presented_surface(surface), ui, &packet);
+        let mut streams = self.streams.clone();
+        let samples = match streams.normalize(
+            &packet,
+            self.config,
+            modifiers,
+            &self.recovery,
+            receivers.coordinates_supported(),
+            receivers.foreign_drag(),
+        ) {
+            Ok(samples) => samples,
+            Err(error) => {
+                // No complete normalization is available. Retire the admitted streams on recovery.
+                self.recovery.mark_gap(&self.streams);
+                return Err(error.into());
             }
         };
-        let edges = records.into_iter().map(&mut edge_at).collect::<Vec<_>>();
-        let continuation = frame.pointer_continuation().and_then(|request| {
-            if !pointer_focused
-                || request.surface() != surface
-                || !packet
-                    .observed_at()
-                    .is_some_and(|now| now >= request.deadline())
-            {
-                return None;
-            }
-            let sample = continuation_sample(
-                &touches,
-                position,
-                docking_enabled,
-                group_dock_mode,
-                request.pointer(),
-                request.event(),
-            )?;
-            let edge = edge_at(sample);
-            (!edge.blocked
-                && edge.point == Some(request.position())
-                && edge.surface.is_some()
-                && edge.surface == current)
-                .then_some(QualifiedPointerContinuation { request, edge })
-        });
-        let mut deferred_focus = DeferredTabFocus::default();
-        if let Some(scene) = scene {
-            for edge in &edges {
-                if !matches!(
-                    edge.event,
-                    SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary)
-                ) {
-                    continue;
-                }
-                let target = if edge.device == PointerDeviceKind::Unknown
-                    && let Some(receiver) = edge.delivery
-                    && receiver.descriptor().role()
-                        == dockspace::runtime::DockspaceReceiverRole::TabBody
-                    && let Some(binding) = scene
-                        .receivers
-                        .iter()
-                        .find(|binding| binding.receiver == receiver.descriptor())
-                {
-                    Some(binding.widget_id)
-                } else {
-                    None
-                };
-                deferred_focus.observe_primary_press(target);
-            }
-        }
-        self.position = position;
-        self.generic_phase = generic_phase;
-        self.observed_modifiers = Some(observed_modifiers);
-        self.docking_enabled = docking_enabled;
-        self.group_dock_mode = group_dock_mode;
-        self.foreign_capture = foreign_drag;
-        self.touches = touches;
-        Ok(PreparedPointerEdges {
-            raw: edges,
-            continuation,
-            deferred_focus,
+        let blocker = receivers.stationary_blocker(
+            frame,
+            surface,
+            &self.streams,
+            &self.recovery,
+            &samples.events,
+        );
+        self.observed_modifiers = Some(samples.modifiers);
+        self.recovery.remember(&self.streams, &samples.events);
+        let focus = receivers.submit(
+            frame,
+            surface,
+            blocker.into_iter().chain(samples.events),
+            &streams,
+            samples.focused,
+        )?;
+        Ok(PointerUpdate {
+            streams: Some(streams),
+            observed_at,
+            focus,
         })
     }
-}
 
-fn ends_primary_gesture(event: SurfacePointerEvent) -> bool {
-    matches!(
-        event,
-        SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary)
-            | SurfacePointerEvent::ContactEnded(SurfacePointerButton::Primary)
-            | SurfacePointerEvent::StreamCancelled(_)
-            | SurfacePointerEvent::StreamEnded
-    )
-}
-
-fn focus_interval_has_touch(events: &[Event]) -> bool {
-    events
-        .iter()
-        .take_while(|event| !matches!(event, Event::WindowFocused(false)))
-        .any(|event| matches!(event, Event::Touch { .. }))
-}
-
-pub(crate) fn has_foreign_drag(context: &Context) -> bool {
-    egui::DragAndDrop::has_any_payload(context)
-        || context.input(|input| {
-            !input.raw.hovered_files.is_empty() || !input.raw.dropped_files.is_empty()
-        })
-}
-
-fn continuation_sample(
-    touches: &TouchContacts,
-    position: Option<Pos2>,
-    docking_enabled: Option<bool>,
-    group_dock_mode: Option<TabGroupDockMode>,
-    pointer: SurfacePointerId,
-    event: SurfacePointerEvent,
-) -> Option<PointerSample> {
-    if pointer == GENERIC_POINTER {
-        Some(PointerSample::generic(
-            event,
-            position,
-            docking_enabled,
-            group_dock_mode,
-        ))
-    } else {
-        touches.continuation(pointer, event, docking_enabled, group_dock_mode)
-    }
-}
-
-pub(crate) fn event_modifiers(event: &Event) -> Option<Modifiers> {
-    match event {
-        Event::ModifiersChanged(modifiers)
-        | Event::Key { modifiers, .. }
-        | Event::PointerButton { modifiers, .. } => Some(*modifiers),
-        Event::WindowFocused(false) => Some(Modifiers::NONE),
-        _ => None,
-    }
-}
-
-fn update_docking_enabled(
-    current: &mut Option<bool>,
-    config: DockInputConfig,
-    modifiers: Modifiers,
-) -> Option<bool> {
-    let enabled = config.docking_enabled(modifiers);
-    let changed = *current != Some(enabled);
-    *current = Some(enabled);
-    changed.then_some(enabled)
-}
-
-fn docking_change_samples(
-    touches: &TouchContacts,
-    generic_live: bool,
-    enabled: bool,
-) -> impl Iterator<Item = PointerSample> {
-    generic_live
-        .then(|| {
-            PointerSample::generic(
-                SurfacePointerEvent::DockingEnabledChanged { enabled },
-                None,
-                Some(enabled),
-                None,
-            )
-        })
-        .into_iter()
-        .chain(touches.docking_enabled_changed(enabled))
-}
-
-fn update_group_dock_mode(
-    current: &mut Option<TabGroupDockMode>,
-    config: DockInputConfig,
-    modifiers: Modifiers,
-) -> Option<TabGroupDockMode> {
-    let mode = config.tab_group_dock_mode(modifiers);
-    let changed = *current != Some(mode);
-    *current = Some(mode);
-    changed.then_some(mode)
-}
-
-fn group_dock_change_samples(
-    touches: &TouchContacts,
-    generic_live: bool,
-    mode: TabGroupDockMode,
-) -> impl Iterator<Item = PointerSample> {
-    generic_live
-        .then(|| {
-            PointerSample::generic(
-                SurfacePointerEvent::GroupDockModeChanged { mode },
-                None,
-                None,
-                Some(mode),
-            )
-        })
-        .into_iter()
-        .chain(touches.group_dock_mode_changed(mode))
-}
-
-fn pointer_input(edge: &Edge, observed_at: Option<Duration>) -> HostPointerInput<'_> {
-    let route = edge
-        .surface
-        .zip(edge.point)
-        .map_or(HostPointerRoute::Unknown, |(surface, point)| {
-            HostPointerRoute::new(surface, point)
-        });
-    let manipulation = edge
-        .manipulation_surface
-        .zip(edge.point)
-        .map_or(HostPointerRoute::Unknown, |(surface, point)| {
-            HostPointerRoute::new(surface, point)
-        });
-    let mut facts = SurfacePointerReceiverFacts::unknown();
-    if let Some(surface) = edge.surface.as_ref() {
-        if edge.blocked {
-            facts = facts
-                .with_blocked_delivery(surface)
-                .with_blocked_hover(surface);
-        } else {
-            facts = edge.delivery.as_ref().map_or_else(
-                || facts.with_empty_delivery_lane(surface),
-                |receiver| facts.with_delivery(receiver),
-            );
-            facts = edge.drag_delivery.as_ref().map_or_else(
-                || facts.with_empty_drag_delivery_lane(surface),
-                |receiver| facts.with_drag_delivery(receiver),
-            );
-            facts = facts.with_clear_hover_lane(surface);
+    /// An owned run encodes later passes without submitting the packet again.
+    pub(crate) fn observe_later_pass(&mut self, identity: &Arc<RunIdentity>, through: InputPassId) {
+        if let Some(run) = self.observed.as_mut()
+            && Arc::ptr_eq(&run.identity, identity)
+        {
+            run.through = through;
         }
     }
-    let mut metadata = observed_at.map_or_else(
-        || PointerEventMetadata::untimed(edge.device),
-        |time| PointerEventMetadata::new(edge.device, time),
-    );
-    if let Some(enabled) = edge.docking_enabled {
-        metadata = metadata.with_docking_enabled(enabled);
+
+    pub(crate) fn commit_input(&mut self, update: &mut PointerUpdate) {
+        if let Some(streams) = update.streams.take() {
+            self.streams = streams;
+            self.recovery = PendingPointerRecovery::default();
+            if let Some(run) = self.observed.as_mut() {
+                run.committed = true;
+            }
+        }
     }
-    if let Some(mode) = edge.group_dock_mode {
-        metadata = metadata.with_group_dock_mode(mode);
-    }
-    HostPointerInput::new(
-        edge.pointer,
-        edge.event,
-        manipulation,
-        route,
-        edge.capture,
-        facts,
-    )
-    .with_metadata(metadata)
 }
 
 /// Schedules retained stationary work from the state that actually published.

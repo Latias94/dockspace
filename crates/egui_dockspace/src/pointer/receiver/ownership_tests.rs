@@ -1,7 +1,6 @@
-//! Shared output tables and packet-scoped framework ownership joins.
+//! Exact output binding and packet-scoped framework ownership joins.
 
 use std::cell::Cell;
-use std::sync::Arc;
 
 use dockspace::geometry::{LogicalRect, LogicalSize};
 use dockspace::model::{
@@ -16,9 +15,10 @@ use dockspace::runtime::{
 use egui::{Context, Event, Id, LayerId, Pos2, RawInput, Rect, Sense};
 
 use super::{
-    InputPassId, PointerScene, ProductPointer, ProductPointerInputSnapshot,
-    ProductPointerPresentation,
+    InputPassId, PointerReceivers, PointerScene, PointerScenes, PointerStreams,
+    ProductPointerInputSnapshot, ProductPointerPresentation,
 };
+use crate::pass_settlement::pointer_packet;
 use crate::render::ProductReceiverBinding;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -91,13 +91,13 @@ fn settle(session: &mut DockspaceSession) -> Vec<dockspace::runtime::SurfacePres
 }
 
 fn emit(
-    pointer: &mut ProductPointer,
+    scenes: &mut PointerScenes,
     output: &PaintedSurfaceOutput,
     receiver: DockspaceReceiverDescriptor,
     count: usize,
 ) {
     let layer = LayerId::new(egui::Order::Background, Id::unique("output-layer"));
-    pointer.emitted(
+    scenes.emitted(
         output.presentation_artifact(),
         ProductPointerPresentation {
             layer,
@@ -118,99 +118,53 @@ fn emit(
 }
 
 #[test]
-fn pointer_drafts_share_output_tables_and_discard_only_private_changes() {
-    for count in [1, 16, 128] {
-        let mut session = session();
-        let mut pointer = ProductPointer::default();
-        let mut outputs = Vec::new();
-        for _ in 0..4 {
-            let (output, receiver) = paint(&mut session);
-            emit(&mut pointer, &output, receiver, count);
-            outputs.push(output);
-        }
-        pointer.position = Some(Pos2::new(12.0, 34.0));
-        let mut draft = pointer.clone();
-        for (original, copied) in pointer.pending.iter().zip(&draft.pending) {
-            assert_eq!(original.receivers.len(), count);
-            assert!(Arc::ptr_eq(&original.receivers, &copied.receivers));
-            assert!(Arc::ptr_eq(
-                &original.focus_bindings,
-                &copied.focus_bindings
-            ));
-        }
-        draft.position = Some(Pos2::new(56.0, 78.0));
-        draft.pending.clear();
-        drop(draft);
-        assert_eq!(pointer.position, Some(Pos2::new(12.0, 34.0)));
-        assert_eq!(pointer.pending.len(), outputs.len());
-        assert!(
-            pointer
-                .pending
-                .iter()
-                .all(|scene| scene.receivers.len() == count)
-        );
-    }
-}
-
-#[test]
-fn reversed_output_reports_keep_shared_tables_bound_to_the_exact_artifact() {
+fn reversed_output_reports_retain_the_exact_receiver_and_focus_tables() {
     let mut session = session();
-    let mut pointer = ProductPointer::default();
+    let mut scenes = PointerScenes::default();
     let mut outputs = Vec::new();
     for count in [1, 16, 128] {
         let (output, receiver) = paint(&mut session);
-        emit(&mut pointer, &output, receiver, count);
+        emit(&mut scenes, &output, receiver, count);
         outputs.push(output);
     }
-    let final_scene = pointer.pending.last().unwrap().clone();
+    let expected = scenes.pending.last().unwrap();
+    let artifact = expected.artifact;
+    let expected_receivers = expected.receivers.as_ptr();
+    let expected_focus = expected.focus_bindings.as_ptr();
     session
         .report_surface_presentation(outputs.pop().unwrap(), SurfacePresentationResult::Presented)
         .unwrap();
-    pointer.observe(&settle(&mut session));
-    assert!(pointer.presented.is_none());
-    assert_eq!(pointer.pending.len(), 3);
+    scenes.observe(&settle(&mut session));
+    assert!(scenes.presented.is_none());
+    assert_eq!(scenes.pending.len(), 3);
     session
         .report_surface_presentation(outputs.pop().unwrap(), SurfacePresentationResult::Dropped)
         .unwrap();
-    pointer.observe(&settle(&mut session));
-    assert!(pointer.presented.is_none());
-    assert_eq!(pointer.pending.len(), 3);
+    scenes.observe(&settle(&mut session));
+    assert!(scenes.presented.is_none());
+    assert_eq!(scenes.pending.len(), 3);
     session
         .report_surface_presentation(outputs.pop().unwrap(), SurfacePresentationResult::Presented)
         .unwrap();
-    let commits = settle(&mut session);
-    assert!(
-        commits
-            .iter()
-            .any(|commit| commit.presents(final_scene.artifact))
-    );
 
-    // A draft can synchronize the committed presentation without consuming the
-    // original's still-pending tables. Abandoning it preserves that original.
-    let mut draft = pointer.clone();
+    // The prelude can bind the new artifact without consuming pending tables.
     let frame = session.begin_host_frame().unwrap();
-    draft.sync_presented(&frame, SURFACE);
-    let presented = draft.presented.as_ref().unwrap();
-    assert_eq!(presented.artifact, final_scene.artifact);
-    assert!(Arc::ptr_eq(&presented.receivers, &final_scene.receivers));
-    assert!(Arc::ptr_eq(
-        &presented.focus_bindings,
-        &final_scene.focus_bindings
-    ));
+    let presented = scenes.for_output(frame.presented_surface(SURFACE)).unwrap();
+    assert_eq!(presented.artifact, artifact);
+    assert_eq!(presented.receivers.as_ptr(), expected_receivers);
+    assert_eq!(presented.focus_bindings.as_ptr(), expected_focus);
     drop(frame);
-    drop(draft);
-    assert!(pointer.presented.is_none());
-    assert_eq!(pointer.pending.len(), 3);
+    assert!(scenes.presented.is_none());
+    assert_eq!(scenes.pending.len(), 3);
 
-    pointer.observe(&commits);
-    assert!(pointer.pending.is_empty());
-    let presented = pointer.presented.as_ref().unwrap();
-    assert_eq!(presented.artifact, final_scene.artifact);
-    assert!(Arc::ptr_eq(&presented.receivers, &final_scene.receivers));
-    assert!(Arc::ptr_eq(
-        &presented.focus_bindings,
-        &final_scene.focus_bindings
-    ));
+    let commits = settle(&mut session);
+    assert!(commits.iter().any(|commit| commit.presents(artifact)));
+    scenes.observe(&commits);
+    assert!(scenes.pending.is_empty());
+    let presented = scenes.presented.as_ref().unwrap();
+    assert_eq!(presented.artifact, artifact);
+    assert_eq!(presented.receivers.as_ptr(), expected_receivers);
+    assert_eq!(presented.focus_bindings.as_ptr(), expected_focus);
 }
 
 fn widgets(
@@ -229,7 +183,7 @@ fn widgets(
                 ..RawInput::default()
             },
             |ui| {
-                pass = Some(super::pointer_packet(ui).unwrap().observed_input_pass());
+                pass = Some(pointer_packet(ui).unwrap().observed_input_pass());
                 egui::Area::new(Id::unique("ownership-test-layer"))
                     .fixed_pos(Pos2::ZERO)
                     .movable(false)
@@ -276,16 +230,16 @@ fn a_pointer_packet_joins_content_ownership_once_for_all_edges() {
                 layer: bindings[0].layer_id,
                 input_pass: Some(pass),
                 pointer_clip: Some(Rect::EVERYTHING),
-                receivers: bindings.into(),
-                focus_bindings: Arc::from([]),
+                receivers: bindings,
+                focus_bindings: Vec::new(),
             };
             session
                 .report_surface_presentation(output, SurfacePresentationResult::Presented)
                 .unwrap();
             settle(&mut session);
-            let mut pointer = ProductPointer {
+            let scenes = PointerScenes {
                 presented: Some(scene),
-                ..ProductPointer::default()
+                ..PointerScenes::default()
             };
             take_join_work();
             let output = crate::run_ui(
@@ -296,8 +250,8 @@ fn a_pointer_packet_joins_content_ownership_once_for_all_edges() {
                     ..RawInput::default()
                 },
                 |ui| {
-                    let packet = super::pointer_packet(ui).unwrap();
-                    let scene = pointer.presented.as_ref().unwrap();
+                    let packet = pointer_packet(ui).unwrap();
+                    let scene = scenes.presented.as_ref().unwrap();
                     let snapshot = packet.receivers();
                     assert!(packet.preceding_input_pass() == scene.input_pass);
                     assert_eq!((snapshot.layer_at)(point), Some(scene.layer));
@@ -315,20 +269,34 @@ fn a_pointer_packet_joins_content_ownership_once_for_all_edges() {
                         .sense(Sense::hover())
                         .show(ui.ctx(), |ui| {
                             let frame = session.begin_host_frame().unwrap();
-                            let prepared = pointer
-                                .prepare_packet(
-                                    &frame,
-                                    SURFACE,
-                                    ui,
+                            let receivers = PointerReceivers::new(
+                                &scenes,
+                                frame.presented_surface(SURFACE),
+                                ui,
+                                &packet,
+                            );
+                            let mut streams = PointerStreams::default();
+                            let samples = streams
+                                .normalize(
                                     &packet,
-                                    None,
+                                    Default::default(),
+                                    Default::default(),
                                     &Default::default(),
+                                    receivers.coordinates_supported(),
+                                    receivers.foreign_drag(),
                                 )
                                 .unwrap();
-                            assert_eq!(prepared.raw.len(), 128);
+                            let prepared = receivers.prepare(
+                                &frame,
+                                SURFACE,
+                                samples.events,
+                                &streams,
+                                samples.focused,
+                            );
+                            assert_eq!(prepared.edges.len(), 128);
                             assert!(
                                 prepared
-                                    .raw
+                                    .edges
                                     .iter()
                                     .all(|edge| edge.blocked == (unknown == 1))
                             );
@@ -361,8 +329,8 @@ fn packet_join_keeps_equal_rectangles_distinct_without_repeating_per_point() {
                 layer: bindings[0].layer_id,
                 input_pass: None,
                 pointer_clip: Some(Rect::EVERYTHING),
-                receivers: bindings.into(),
-                focus_bindings: Arc::from([]),
+                receivers: bindings,
+                focus_bindings: Vec::new(),
             };
             let snapshot = ProductPointerInputSnapshot::capture(&context);
             take_join_work();
@@ -408,8 +376,8 @@ fn ownership_join_keeps_unproven_or_noninteractive_widget_rectangles_blocked() {
             layer: binding.layer_id,
             input_pass: None,
             pointer_clip: Some(Rect::EVERYTHING),
-            receivers: Arc::from([changed]),
-            focus_bindings: Arc::from([]),
+            receivers: vec![changed],
+            focus_bindings: Vec::new(),
         };
         let snapshot = ProductPointerInputSnapshot::capture(&context);
         assert!(
@@ -480,8 +448,8 @@ fn ordered_ownership_requires_both_capture_lanes_to_shield_unknown_widgets() {
             layer: binding.layer_id,
             input_pass: None,
             pointer_clip: Some(Rect::EVERYTHING),
-            receivers: Arc::from([binding]),
-            focus_bindings: Arc::from([]),
+            receivers: vec![binding],
+            focus_bindings: Vec::new(),
         };
         let actual_clear = context.viewport(|viewport| {
             assert!(
@@ -588,8 +556,8 @@ fn nearby_undeclared_widget_blocks_a_single_lane_owned_drag() {
                     layer: binding.layer_id,
                     input_pass: None,
                     pointer_clip: Some(Rect::EVERYTHING),
-                    receivers: Arc::from([binding]),
-                    focus_bindings: Arc::from([]),
+                    receivers: vec![binding],
+                    focus_bindings: Vec::new(),
                 };
                 let snapshot = ProductPointerInputSnapshot::capture(&context);
                 assert_eq!((snapshot.layer_at)(point), Some(scene.layer));
@@ -672,8 +640,8 @@ fn scaled_foreign_layer_nearby_widget_blocks_a_single_lane_owned_drag() {
         layer: binding.layer_id,
         input_pass: None,
         pointer_clip: Some(Rect::EVERYTHING),
-        receivers: Arc::from([binding]),
-        focus_bindings: Arc::from([]),
+        receivers: vec![binding],
+        focus_bindings: Vec::new(),
     };
     let snapshot = ProductPointerInputSnapshot::capture(&context);
     assert_eq!((snapshot.layer_at)(point), Some(scene.layer));
