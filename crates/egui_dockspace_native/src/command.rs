@@ -5,7 +5,7 @@ use dockspace::close::{
 };
 use dockspace::model::{
     DockPlacement, ItemId, NativeTearOffSource, NativeWindowPlacement, PreparedTab,
-    PreparedTabsGroup, RootId, SurfaceId,
+    PreparedTabsGroup, RootId, SurfaceId, TabGroupDockMode,
 };
 use dockspace::policy::DockPolicy;
 
@@ -123,6 +123,13 @@ pub enum NativeCommand {
         group: PreparedTabsGroup,
         /// Destination in the captured workspace version.
         placement: DockPlacement,
+        /// Center insertion semantics for the captured group.
+        ///
+        /// Edge placements keep their structural behavior. A center
+        /// placement can either merge the group's direct tabs or preserve the
+        /// complete group as one layout tab, matching the pointer gesture's
+        /// modifier policy.
+        mode: TabGroupDockMode,
     },
     /// Dock an entire root as one group.
     DockRoot {

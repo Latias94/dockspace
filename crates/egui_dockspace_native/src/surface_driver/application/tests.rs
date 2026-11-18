@@ -7,7 +7,7 @@ use dockspace::model::{
     DockAnchor, DockPlacement, DockspaceActionOutcome, DockspaceActionRejection, DockspaceAxis,
     DockspaceContainedLayout, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
     DockspaceSurfaceLayout, FloatingPresentationId, ItemId, NativeTearOffSource,
-    NativeWindowPlacement, RootId, SurfaceId,
+    NativeWindowPlacement, RootId, SurfaceId, TabGroupDockMode,
 };
 use dockspace::policy::{CloseCapability, DockPolicy};
 use dockspace::runtime::{
@@ -154,6 +154,7 @@ fn moving_the_last_noncentral_host_item_to_another_surface_is_refused_before_adm
         NativeCommand::DockTabs {
             group: group.clone(),
             placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+            mode: TabGroupDockMode::MergeTabs,
         },
         NativeCommand::FloatTabs {
             group,
@@ -237,6 +238,7 @@ fn host_protection_follows_contained_root_lifecycle_through_empty_central_and_ne
         NativeCommand::DockTabs {
             group: group.clone(),
             placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+            mode: TabGroupDockMode::MergeTabs,
         },
         NativeCommand::FloatTabs {
             group,
@@ -1054,6 +1056,7 @@ fn return_complete_group_through_the_result_slot(
         NativeCommand::DockTabs {
             group,
             placement: DockPlacement::After(FIRST),
+            mode: TabGroupDockMode::MergeTabs,
         }
     };
     state.request_command(command).unwrap();
@@ -1317,6 +1320,7 @@ fn native_group_commands_preserve_the_remaining_central_area() {
             NativeCommand::DockTabs {
                 group,
                 placement: DockPlacement::After(FIRST),
+                mode: TabGroupDockMode::MergeTabs,
             }
         };
         state.request_command(command).unwrap();
@@ -1391,7 +1395,11 @@ fn native_group_commands_preserve_the_remaining_central_area() {
 
 #[test]
 fn native_group_dock_and_float_commands_keep_stale_and_foreign_authority() {
-    for float in [false, true] {
+    for mode in [
+        None,
+        Some(TabGroupDockMode::MergeTabs),
+        Some(TabGroupDockMode::PreserveLayout),
+    ] {
         for foreign in [false, true] {
             let mut source = state();
             let group = source.capture_tabs_group(DockAnchor::Item(FIRST)).unwrap();
@@ -1405,16 +1413,16 @@ fn native_group_dock_and_float_commands_keep_stale_and_foreign_authority() {
             }
             let mut target = if foreign { state() } else { source };
             let accepted = target.coordinator.session().version();
-            let command = if float {
-                NativeCommand::FloatTabs {
+            let command = match mode {
+                None => NativeCommand::FloatTabs {
                     group,
                     surface: SURFACE,
-                }
-            } else {
-                NativeCommand::DockTabs {
+                },
+                Some(mode) => NativeCommand::DockTabs {
                     group,
                     placement: DockPlacement::After(FIRST),
-                }
+                    mode,
+                },
             };
             target.request_command(command).unwrap();
             let report = commit_queued_report(&mut target);

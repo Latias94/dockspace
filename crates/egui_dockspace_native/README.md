@@ -113,6 +113,13 @@ consume its exact committed result with `take_action_status` before submitting
 another. Use the returned close tokens for deferred saving. Apply completed pane
 data through `with_panes_mut` and request repaint on the affected egui viewport.
 
+`NativeCommand::DockTabs` takes an explicit `TabGroupDockMode`. Use `MergeTabs`
+to insert the captured group's direct children as neighboring tabs, or
+`PreserveLayout` to insert the complete group as one layout tab. Center and
+before/after destinations honor the mode; edge targets retain their structural
+split behavior. Captures keep their original session and workspace version in
+both modes, as they do during pointer docking.
+
 Use `NativeCommand::FloatRoot { root, surface }` for the layout menu's **Float
 Layout** operation: the complete root becomes one contained floating window,
 preserving Pane/Tabs/Split/Grid structure, layout titles, track shares and tab

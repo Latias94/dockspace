@@ -2,6 +2,159 @@
 
 use super::*;
 
+fn group_move_state() -> NativeRuntimeState<Panes> {
+    let content = DockspaceNode::equal_split(
+        DockspaceAxis::Horizontal,
+        [
+            DockspaceNode::central_tabs([FIRST]),
+            DockspaceNode::tabs_with_selection([SECOND, THIRD], Some(THIRD)).unwrap(),
+        ],
+    )
+    .unwrap();
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(ROOT, content),
+    )])
+    .unwrap()
+    .with_hidden_items([SECOND])
+    .unwrap();
+    let mut state = state_with_layout(layout);
+    present_geometry(
+        &mut state,
+        LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
+    );
+    state
+}
+
+#[test]
+fn native_group_insertion_mode_controls_center_and_ordered_tab_destinations() {
+    use dockspace::model::DockspaceTabView;
+
+    for mode in [
+        TabGroupDockMode::MergeTabs,
+        TabGroupDockMode::PreserveLayout,
+    ] {
+        for placement in [
+            DockPlacement::Center(DockAnchor::Item(FIRST)),
+            DockPlacement::Before(FIRST),
+            DockPlacement::After(FIRST),
+        ] {
+            let mut state = group_move_state();
+            let source = state.view().item(THIRD).unwrap().tabs().unwrap().key();
+            let group = state.capture_tabs_group(DockAnchor::Item(THIRD)).unwrap();
+            state
+                .request_command(NativeCommand::DockTabs {
+                    group,
+                    placement,
+                    mode,
+                })
+                .unwrap();
+            commit_queued(&mut state);
+            assert!(matches!(
+                take(&mut state),
+                NativeActionStatus::Dock(DockspaceActionStatus::Applied(
+                    DockspaceActionOutcome::TabsDocked { items, changed: true, .. }
+                )) if items == [SECOND, THIRD]
+            ));
+
+            let view = state.view();
+            let target = view.item(FIRST).unwrap().tabs().unwrap();
+            let before = matches!(placement, DockPlacement::Before(_));
+            match mode {
+                TabGroupDockMode::MergeTabs => {
+                    let expected = if before {
+                        [SECOND, THIRD, FIRST]
+                    } else {
+                        [FIRST, SECOND, THIRD]
+                    };
+                    assert_eq!(target.tabs(), expected.map(Into::into));
+                    assert_eq!(target.selected(), Some(THIRD.into()));
+                }
+                TabGroupDockMode::PreserveLayout => {
+                    assert_eq!(target.tabs().len(), 2);
+                    let index = usize::from(!before);
+                    let key = target.tabs()[index];
+                    let Some(DockspaceTabView::Layout(layout)) = target.child(key) else {
+                        panic!("preserved groups must remain complete layout tabs");
+                    };
+                    assert_eq!(layout.key(), source);
+                    assert_eq!(target.selected(), Some(key));
+                    let nested = layout.tabs().unwrap();
+                    assert_eq!(nested.tabs(), [SECOND.into(), THIRD.into()]);
+                    assert_eq!(nested.selected(), Some(THIRD.into()));
+                    assert_eq!(target.tabs()[1 - index], FIRST.into());
+                }
+            }
+            assert!(view.item(SECOND).unwrap().is_hidden());
+            assert!(view.item(THIRD).unwrap().is_active());
+            assert_eq!(view.root(ROOT).unwrap().items().count(), 3);
+            assert!(view.root(ROOT).unwrap().central().is_some());
+            assert!(!state.coordinator.session().has_pending_presentation());
+            assert!(state.error().is_none());
+        }
+    }
+}
+
+#[test]
+fn native_group_insertion_modes_share_the_same_edge_split_behavior() {
+    use dockspace::model::{DockEdge, DockFraction};
+
+    for edge in [
+        DockEdge::Left,
+        DockEdge::Right,
+        DockEdge::Top,
+        DockEdge::Bottom,
+    ] {
+        let mut layouts = Vec::new();
+        for mode in [
+            TabGroupDockMode::MergeTabs,
+            TabGroupDockMode::PreserveLayout,
+        ] {
+            let mut state = group_move_state();
+            let group = state.capture_tabs_group(DockAnchor::Item(THIRD)).unwrap();
+            state
+                .request_command(NativeCommand::DockTabs {
+                    group,
+                    placement: DockPlacement::InnerEdge {
+                        anchor: DockAnchor::Item(FIRST),
+                        edge,
+                        fraction: DockFraction::new(0.35).unwrap(),
+                    },
+                    mode,
+                })
+                .unwrap();
+            commit_queued(&mut state);
+            assert!(matches!(
+                take(&mut state),
+                NativeActionStatus::Dock(DockspaceActionStatus::Applied(
+                    DockspaceActionOutcome::TabsDocked { changed: true, .. }
+                ))
+            ));
+            let view = state.view();
+            assert!(view.item(SECOND).unwrap().is_hidden());
+            assert_eq!(
+                view.item(THIRD).unwrap().tabs().unwrap().selected(),
+                Some(THIRD.into())
+            );
+            assert_eq!(view.root(ROOT).unwrap().items().count(), 3);
+            let split = view.root(ROOT).unwrap().content().unwrap().split().unwrap();
+            let children = split
+                .children()
+                .map(|node| (node.is_central(), node.items().collect::<Vec<_>>()))
+                .collect::<Vec<_>>();
+            layouts.push((
+                split.axis(),
+                split.weights().map(f64::to_bits).collect::<Vec<_>>(),
+                children,
+            ));
+        }
+        assert_eq!(
+            layouts[0], layouts[1],
+            "edge insertion must ignore center mode"
+        );
+    }
+}
+
 #[test]
 fn a_complete_native_group_menu_does_not_offer_another_window_for_the_same_payload() {
     use dockspace::runtime::{

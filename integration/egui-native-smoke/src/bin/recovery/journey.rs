@@ -93,6 +93,7 @@ impl Journey {
                     app.request_command(NativeCommand::DockTabs {
                         group,
                         placement: super::DockPlacement::After(ITEMS[0]),
+                        mode: dockspace::model::TabGroupDockMode::MergeTabs,
                     })
                     .map_err(|error| error.to_string())?;
                     self.phase = Phase::RejectStale;

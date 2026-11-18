@@ -354,9 +354,13 @@ impl<P: PaneView> NativeRuntimeState<P> {
                 NativeCommand::DockTab { tab, placement } => {
                     session.prepare_dock_tab(tab, placement).into()
                 }
-                NativeCommand::DockTabs { group, placement } => {
-                    session.prepare_dock_tabs(group, placement).into()
-                }
+                NativeCommand::DockTabs {
+                    group,
+                    placement,
+                    mode,
+                } => session
+                    .prepare_dock_tabs_with_mode(group, placement, mode)
+                    .into(),
                 NativeCommand::DockRoot { root, placement } => {
                     session.prepare_dock_root(root, placement).into()
                 }
@@ -481,9 +485,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
             NativeCommand::DockTab { tab, placement } if complete_tab(tab) => {
                 self.placement_surface(*placement)
             }
-            NativeCommand::DockTabs { group, placement } if complete_tabs(group) => {
-                self.placement_surface(*placement)
-            }
+            NativeCommand::DockTabs {
+                group, placement, ..
+            } if complete_tabs(group) => self.placement_surface(*placement),
             NativeCommand::DockRoot {
                 root: source,
                 placement,
