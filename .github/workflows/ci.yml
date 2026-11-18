@@ -184,7 +184,7 @@ jobs:
           -o Acquire::https::Timeout=20 update &&
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20
           -o Acquire::https::Timeout=20 install --no-install-recommends -y
-          libwayland-dev libxkbcommon-x11-0 openbox x11-utils xauth xvfb
+          libegl1 libgl1-mesa-dri libwayland-dev libxkbcommon-x11-0 openbox x11-utils xauth xvfb
       - name: Exercise renderer-neutral native window lifecycle
         run: |
           cargo build --package dockspace_winit --example multiview --no-default-features --features x11,native,example-app --locked
@@ -193,6 +193,16 @@ jobs:
         run: >-
           cargo fmt --manifest-path integration/egui-fork-workspace/Cargo.toml
           --all --check
+      - name: Exercise official WGPU surface recovery
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          LP_NUM_THREADS: "1"
+        run: |
+          cargo test --package egui_dockspace --lib --features wgpu --no-run --locked
+          xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+            python3 integration/egui-native-smoke/with_openbox.py --timeout 120 -- \
+            cargo nextest run --package egui_dockspace --lib --features wgpu --locked \
+            --test-threads=1 --run-ignored only -E 'test(real_wgpu_surface_recovery_)'
       - name: Check native adapter without optional features
         run: >-
           cargo check --manifest-path integration/egui-fork-workspace/Cargo.toml

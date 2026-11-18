@@ -71,18 +71,7 @@ impl HostWindow {
             .paint(&self.window, pixels_per_point, &primitives);
         let paint_duration = paint_started.elapsed();
         let now = Instant::now();
-        if let Some(reason) = self.renderer.drop_reason {
-            repaint.defer_until(now + reason.retry_delay());
-            if reason.needs_retry() {
-                repaint.request(now);
-            }
-        } else {
-            repaint.resume();
-        }
-        if self.renderer.needs_another_frame() {
-            repaint.request(now);
-        }
-        receipt.report(presentation);
+        settle_presentation(&self.renderer, receipt, presentation, repaint, now);
         let frame_duration = started.elapsed();
         let control = app
             .frame_finished(NativeFrameReport {
@@ -108,7 +97,7 @@ impl HostWindow {
     }
 }
 
-fn stage_output(
+pub(super) fn stage_output(
     mut output: FullOutput,
     pending_textures: &mut egui::TexturesDelta,
 ) -> Result<FullOutput, NativeError> {
@@ -122,6 +111,27 @@ fn stage_output(
         return Err(NativeError::AdditionalViewport);
     }
     Ok(output)
+}
+
+pub(super) fn settle_presentation(
+    renderer: &WgpuRenderer,
+    receipt: crate::DockspaceOutputReceipt,
+    presentation: crate::SurfacePresentationResult,
+    repaint: &mut Repaint,
+    now: Instant,
+) {
+    if let Some(reason) = renderer.drop_reason {
+        repaint.defer_until(now + reason.retry_delay());
+        if reason.needs_retry() {
+            repaint.request(now);
+        }
+    } else {
+        repaint.resume();
+    }
+    if renderer.needs_another_frame() {
+        repaint.request(now);
+    }
+    receipt.report(presentation);
 }
 
 #[cfg(test)]

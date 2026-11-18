@@ -5,7 +5,10 @@ use proptest::prelude::*;
 use super::*;
 use crate::{DockspaceActionOutcome, DockspaceActionStatus, DockspaceNodeView};
 
+mod coverage;
 mod external_edits;
+
+use coverage::{DragAttempt, DragCoverage};
 
 #[derive(Clone, Debug)]
 struct TabSlot {
@@ -121,7 +124,7 @@ struct TabSelector {
     index: u8,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Finish {
     Release,
     Escape,
@@ -325,20 +328,11 @@ impl GridHarness {
         direction: DockspaceDropDirection,
         finish: Finish,
         trace: &mut Vec<String>,
-    ) {
+    ) -> DragAttempt {
         let targets = self.guide_targets(source);
         if targets.is_empty() {
-            trace.push(
-                "no exposed guide target with room for its buttons; use a tab click".to_owned(),
-            );
-            self.random_click(
-                TabSelector {
-                    prefer_layout: false,
-                    index: target,
-                },
-                trace,
-            );
-            return;
+            trace.push("no exposed guide target with room for its buttons".to_owned());
+            return DragAttempt::Unavailable;
         }
         let target = targets[usize::from(target) % targets.len()];
         let location = self.dockspace.view().item(target).unwrap();
@@ -455,6 +449,7 @@ impl GridHarness {
                 self.assert_edge_commit(source, target, target_owner, &target_items, direction);
             }
         }
+        DragAttempt::Finished(finish)
     }
 
     fn assert_edge_commit(
@@ -574,7 +569,7 @@ impl GridHarness {
         after: bool,
         finish: Finish,
         trace: &mut Vec<String>,
-    ) {
+    ) -> DragAttempt {
         let choices = self
             .exposed_tabs(false)
             .into_iter()
@@ -611,15 +606,8 @@ impl GridHarness {
         };
         let Some(selected) = selected else {
             // Availability is decided from the pre-gesture view, never from a rejected drop.
-            trace.push("no exposed tab gap; resolve the selector to a center guide".to_owned());
-            self.random_guide(
-                source,
-                target,
-                DockspaceDropDirection::Center,
-                finish,
-                trace,
-            );
-            return;
+            trace.push("no exposed tab gap".to_owned());
+            return DragAttempt::Unavailable;
         };
         let (destination, point, _) = &choices[selected];
         let visible = self
@@ -687,7 +675,7 @@ impl GridHarness {
                 "gap target not selected: current_gap={current_gap}, guide_overlap={guide_overlap}; cancel before target motion"
             ));
             self.finish_random_drag(source_point, source_point, Finish::Escape, &before);
-            return;
+            return DragAttempt::CancelledBeforePreview;
         }
         self.run(vec![Event::PointerMoved(*point)]);
         let preview = self
@@ -722,6 +710,7 @@ impl GridHarness {
         } else {
             self.finish_random_drag(source_point, *point, finish, &before);
         }
+        DragAttempt::Finished(finish)
     }
 
     fn finish_random_drag(
@@ -739,6 +728,7 @@ impl GridHarness {
                 self.run(vec![button(outside, false), Event::PointerGone]);
                 self.run(vec![Event::PointerMoved(egui::pos2(1050.0, 720.0))]);
                 self.settle();
+                assert_eq!(self.layout_signature().as_slice(), before);
             }
             Finish::Escape | Finish::PointerGone => {
                 if matches!(finish, Finish::PointerGone) {
@@ -1491,6 +1481,7 @@ proptest! {
         actions in proptest::collection::vec(random_action(), 1..17),
     ) {
         let mut trace = vec![format!("initial geometry={geometry}, hidden={hidden:#07b}")];
+        let mut coverage = DragCoverage::default();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut harness = GridHarness::new();
             let physical_size = vec2(1100.0, 760.0);
@@ -1531,20 +1522,22 @@ proptest! {
                     Action::Click(selector) => harness.random_click(selector, &mut trace),
                     Action::ToggleVisibility(selector) => harness.random_visibility(selector, &mut trace),
                     Action::Guide { source, target, direction, finish } => {
-                        if let Some(source) = harness.pick_tab(source, true) {
-                            harness.random_guide(&source, target, direction, finish, &mut trace);
+                        let attempt = if let Some(source) = harness.pick_tab(source, true) {
+                            harness.random_guide(&source, target, direction, finish, &mut trace)
                         } else {
-                            trace.push("no exposed movable header; resolve to resize".to_owned());
-                            harness.random_resize(source.index, true, &mut trace);
-                        }
+                            trace.push("no exposed movable header".to_owned());
+                            DragAttempt::Unavailable
+                        };
+                        coverage.guide(direction, attempt);
                     }
                     Action::Gap { source, target, after, finish } => {
-                        if let Some(source) = harness.pick_tab(source, true) {
-                            harness.random_gap(&source, target, after, finish, &mut trace);
+                        let attempt = if let Some(source) = harness.pick_tab(source, true) {
+                            harness.random_gap(&source, target, after, finish, &mut trace)
                         } else {
-                            trace.push("no exposed movable header; resolve to resize".to_owned());
-                            harness.random_resize(source.index, true, &mut trace);
-                        }
+                            trace.push("no exposed movable header".to_owned());
+                            DragAttempt::Unavailable
+                        };
+                        coverage.gap(attempt);
                     }
                     Action::Resize { boundary, positive } => {
                         harness.random_resize(boundary, positive, &mut trace);
@@ -1555,11 +1548,12 @@ proptest! {
                 harness.random_click(TabSelector { prefer_layout: step % 2 == 0, index: 0 }, &mut trace);
                 harness.assert_random_invariants();
             }
+            coverage.assert_requests(&actions);
         }));
         if let Err(error) = result {
             let reason = error.downcast_ref::<String>().map(String::as_str)
                 .or_else(|| error.downcast_ref::<&str>().copied()).unwrap_or("non-string panic");
-            prop_assert!(false, "{reason}\nresolved trace:\n{}", trace.join("\n"));
+            prop_assert!(false, "{reason}\n{coverage:#?}\nresolved trace:\n{}", trace.join("\n"));
         }
     }
 }

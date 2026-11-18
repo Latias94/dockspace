@@ -242,6 +242,14 @@ keyboard/accessibility packets. Test an outward step at a size or scroll limit
 followed by an inward step: summing deltas before clamping loses that order.
 After menu activation or dismissal, preserve the unconsumed packet suffix.
 
+Edit application-supplied menus while they remain open, without changing the
+workspace. Remove or disable the focused row, reorder rows, empty and repopulate
+the menu, and release a press after its row disappears. Old input must not
+activate a replacement row. Recover obsolete menu focus to the original anchor
+so Escape and navigation remain usable, while preserving a newer application
+focus owner. Repeat the edit across discarded passes. Switching button paint
+must preserve the same anchor, expanded state and dismissal behavior.
+
 The workbench's seeded journeys interleave mixed resize packets with docking,
 floating, cancellation and layout restoration. They select currently registered
 controls and require actual event consumption. Precise batched-versus-separate
@@ -351,6 +359,12 @@ Use different tools for different failure seams:
   center membership or edge direction, exact pane ownership, cancellation
   rollback and a subsequent real click. These local egui events do not qualify
   operating-system capture or native window delivery.
+  Guide and gap attempts report unavailable prerequisites, acquired gestures,
+  previews, deliveries and cancellations separately; a missing source or gap
+  does not turn into another operation. Counts describe actual attempts, not
+  sufficient coverage. A constructive property runs every guide direction and
+  an exact gap after generated selection/visibility history with declared
+  restored prerequisites, requiring delivery rather than allowing a skip.
 - Numeric regressions preserve shared corners across the `f32` adapter boundary
   and exercise resize capacity contacts in `f64`. Distinguish a rounding residue
   from real outward overflow, retain hard size bounds, and check that consecutive
@@ -438,3 +452,11 @@ cargo nextest run -p egui_dockspace --lib --all-features --locked --test-threads
 
 The dependency check covers core normal/build dependencies across features and
 targets. It does not certify an adapter's dependency graph or runtime behavior.
+
+The Linux renderer smoke `real_wgpu_surface_recovery_` requires X11, a window
+manager and software-capable WGPU GL. CI runs it under Xvfb/Openbox. It injects
+Lost, Timeout and Outdated only at frame acquisition, then uses actual surface
+recreation, texture upload, submission and presentation. The journey checks
+retained full/partial updates, deferred frees, exact output settlement, rejection
+of unpresented coordinates, fresh input and eventual repaint idleness. It does
+not qualify hardware device loss, physical mouse delivery or pixel readback.

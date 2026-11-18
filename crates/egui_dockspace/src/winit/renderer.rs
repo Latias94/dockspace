@@ -7,7 +7,7 @@ use egui_wgpu::wgpu;
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DropReason {
     ZeroSized,
     RecreationFailed,
@@ -155,6 +155,18 @@ impl WgpuRenderer {
         pixels_per_point: f32,
         clipped_primitives: &[egui::ClippedPrimitive],
     ) -> SurfacePresentationResult {
+        self.paint_with_acquire(window, pixels_per_point, clipped_primitives, |surface| {
+            surface.get_current_texture()
+        })
+    }
+
+    fn paint_with_acquire(
+        &mut self,
+        window: &Arc<Window>,
+        pixels_per_point: f32,
+        clipped_primitives: &[egui::ClippedPrimitive],
+        acquire: impl FnOnce(&wgpu::Surface<'_>) -> wgpu::CurrentSurfaceTexture,
+    ) -> SurfacePresentationResult {
         self.drop_reason = None;
         let size = window.inner_size();
         if size.width == 0 || size.height == 0 {
@@ -185,7 +197,7 @@ impl WgpuRenderer {
             surface.configure(&self.device, &self.config);
             self.needs_reconfigure = false;
         }
-        let frame = match surface.get_current_texture() {
+        let frame = match acquire(surface) {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 // Reconfigure only after this frame has been presented and released.
@@ -275,6 +287,9 @@ impl WgpuRenderer {
         SurfacePresentationResult::Presented
     }
 }
+
+#[cfg(all(test, target_os = "linux", feature = "x11"))]
+mod recovery_tests;
 
 impl Drop for WgpuRenderer {
     fn drop(&mut self) {

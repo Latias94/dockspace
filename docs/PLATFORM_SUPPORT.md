@@ -201,6 +201,8 @@ support needs actual input and presentation tests as well as compile coverage.
 The default [CI workflow](../.github/workflows/ci.yml) checks core behavior,
 independent consumers, feature combinations, native compilation/tests and a
 small real-renderer publication/backpressure smoke.
+It also runs an official WGPU surface-recovery journey under X11/software GL,
+injecting acquisition failures before real resource recovery and presentation.
 The separate [native qualification workflow](../.github/workflows/native-qualification.yml)
 runs the real-window, X11 and Wayland input journeys on demand, including separate
 official-host and fork-backed native local-docking profiles. Run it before a
