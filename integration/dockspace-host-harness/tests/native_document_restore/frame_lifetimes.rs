@@ -161,3 +161,70 @@ fn physical_child_placement_roundtrips_without_a_presentation_scale() {
     assert!(idle(&mut session).notification().is_empty());
     assert!(idle(&mut session).notification().is_empty());
 }
+
+#[test]
+fn preserve_outer_when_optional_client_size_is_zero() {
+    let mut session =
+        DockspaceSession::from_persistent_layout(document_layout(), policy(), bootstrap(true))
+            .unwrap();
+    session
+        .enable_managed_native_host(NativePointerRoster::Exact(Vec::new()))
+        .unwrap();
+    session
+        .configure_managed_native_capabilities(capabilities())
+        .unwrap();
+    session
+        .register_native_root(HOST, HostWindowToken::new(91))
+        .unwrap();
+    let root = idle(&mut session).native_bindings()[0];
+    let mut rows = vec![(root, root_facts())];
+    for (index, surface) in CHILDREN.into_iter().enumerate() {
+        session
+            .register_owned_native_child(surface, HostWindowToken::new(20 + index as u64), HOST)
+            .unwrap();
+        let report = idle(&mut session);
+        let child = *report
+            .native_bindings()
+            .iter()
+            .find(|binding| binding.surface() == surface)
+            .unwrap();
+        let facts = NativeWindowFacts::live()
+            .with_outer_bounds(placement(index))
+            .with_content_size(dockspace::geometry::PhysicalSize::new(0.0, 8.0).unwrap())
+            .with_native_scale_factor(ScaleFactor::new(2.0).unwrap())
+            .with_presentation(NativeWindowPresentationState::Visible);
+        rows.push((child, facts));
+    }
+    session
+        .report_managed_native_snapshot(rows.clone(), work_areas())
+        .unwrap();
+    idle(&mut session);
+    for binding in session
+        .native_window_bindings()
+        .flat_map(|window| session.native_surface_bindings_for_window(window))
+        .filter(|binding| binding.surface() != HOST)
+    {
+        assert!(
+            session.native_local_coordinates(binding).is_none(),
+            "physical placement must not fabricate render coordinates"
+        );
+    }
+    let bytes = session.save_document_json().unwrap();
+    let restore = session
+        .prepare_document_restore_json(&bytes, recognize)
+        .unwrap();
+
+    let child = CHILDREN[0];
+    let preference = restore
+        .surface_presentation_preferences()
+        .find(|row| row.surface() == child)
+        .unwrap();
+    let result = restore.validate_native_surface_hosting(HOST);
+    assert_eq!(
+        preference.outer_rect(),
+        Some(placement(0)),
+        "native validation: {result:?}"
+    );
+    assert_eq!(preference.inner_size_hint(), None);
+    assert!(result.is_ok());
+}
