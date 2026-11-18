@@ -18,6 +18,8 @@ use run_support::{
     run_pane_frame_with_mutation, run_two_discarded_dockspace_passes, settle_until,
 };
 
+#[path = "product/accessibility_tree.rs"]
+mod accessibility_tree;
 #[path = "product/arrangement_lock.rs"]
 mod arrangement_lock;
 #[path = "product/capacity.rs"]
