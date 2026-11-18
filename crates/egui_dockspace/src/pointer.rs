@@ -235,7 +235,7 @@ pub(crate) struct ProductPointer {
     consumed_run: Option<ProductPointerPacket>,
     rejected_run: Option<ProductPointerPacket>,
     observed_through_pass: Option<InputPassId>,
-    pending_stream_cancellations: BTreeSet<SurfacePointerId>,
+    recovery: PendingPointerRecovery,
     position: Option<Pos2>,
     // Adapter input enrollment only; core remains the sole gesture owner.
     generic_phase: GenericPointerPhase,
@@ -244,6 +244,14 @@ pub(crate) struct ProductPointer {
     group_dock_mode: Option<TabGroupDockMode>,
     foreign_capture: bool,
     touches: TouchContacts,
+}
+
+/// Effects of physical input consumed before the corresponding draft commits.
+#[derive(Clone, Default)]
+struct PendingPointerRecovery {
+    cancelled_streams: BTreeSet<SurfacePointerId>,
+    paused_docking: bool,
+    changed_group_mode: Option<TabGroupDockMode>,
 }
 
 /// Phase of the synthesized generic pointer stream.
@@ -522,22 +530,21 @@ impl ProductPointer {
         {
             Err(DockspaceInteractionError::PointerInputAlreadySubmitted.into())
         } else {
-            if previous_pass.is_some() && previous_pass != packet.preceding_input_pass() {
+            let input_gap = previous_pass != packet.preceding_input_pass();
+            if input_gap {
                 // Omitted passes may have consumed the end of any enrolled stream.
                 self.mark_input_gap();
             }
-            let input = draft.prepare_packet(
-                frame,
-                surface,
-                ui,
-                &packet,
-                &self.pending_stream_cancellations,
-            );
+            if previous_pass.is_none() || input_gap {
+                draft.observed_modifiers = Some(packet.initial_modifiers());
+            }
+            let input = draft.prepare_packet(frame, surface, ui, &packet, &self.recovery);
             if let Ok(input) = &input {
-                // egui has already consumed these edges. Keep cancellation evidence
-                // on the live adapter until the draft publishes their effects.
-                self.record_uncommitted_terminals(&input.raw);
-                draft.pending_stream_cancellations.clear();
+                // egui has already consumed the input. Keep the observations
+                // needed for recovery until the draft publishes their effects.
+                self.record_uncommitted_input(&input.raw);
+                self.observed_modifiers = draft.observed_modifiers;
+                draft.recovery = PendingPointerRecovery::default();
                 draft.consumed_run = Some(packet);
                 draft.rejected_run = None;
             } else {
@@ -550,34 +557,47 @@ impl ProductPointer {
 
     fn mark_input_gap(&mut self) {
         if self.generic_phase.is_live() {
-            self.pending_stream_cancellations.insert(GENERIC_POINTER);
+            self.recovery.cancelled_streams.insert(GENERIC_POINTER);
         }
-        self.pending_stream_cancellations
+        self.recovery
+            .cancelled_streams
             .extend(self.touches.pointers());
     }
 
-    fn record_uncommitted_terminals(&mut self, edges: &[Edge]) {
-        self.pending_stream_cancellations
-            .extend(edges.iter().filter_map(|edge| {
-                if !ends_primary_gesture(edge.event)
-                    && edge.event != SurfacePointerEvent::CaptureChanged
-                {
-                    return None;
+    fn record_uncommitted_input(&mut self, edges: &[Edge]) {
+        for edge in edges {
+            match edge.event {
+                SurfacePointerEvent::DockingEnabledChanged { enabled: false } => {
+                    self.recovery.paused_docking = true;
                 }
-                let was_enrolled = if edge.pointer == GENERIC_POINTER {
-                    match edge.event {
-                        SurfacePointerEvent::ButtonReleased(_) => {
-                            self.generic_phase == GenericPointerPhase::Pressed
+                SurfacePointerEvent::GroupDockModeChanged { mode }
+                    if self.group_dock_mode != Some(mode) =>
+                {
+                    self.recovery.changed_group_mode = Some(mode);
+                }
+                event
+                    if ends_primary_gesture(event)
+                        || event == SurfacePointerEvent::CaptureChanged =>
+                {
+                    let was_enrolled = if edge.pointer == GENERIC_POINTER {
+                        match event {
+                            SurfacePointerEvent::ButtonReleased(_) => {
+                                self.generic_phase == GenericPointerPhase::Pressed
+                            }
+                            _ => self.generic_phase.is_live(),
                         }
-                        _ => self.generic_phase.is_live(),
+                    } else {
+                        self.touches
+                            .pointers()
+                            .any(|pointer| pointer == edge.pointer)
+                    };
+                    if was_enrolled {
+                        self.recovery.cancelled_streams.insert(edge.pointer);
                     }
-                } else {
-                    self.touches
-                        .pointers()
-                        .any(|pointer| pointer == edge.pointer)
-                };
-                was_enrolled.then_some(edge.pointer)
-            }));
+                }
+                _ => {}
+            }
+        }
     }
 
     pub(crate) fn record_observed_pass(&mut self, draft: &mut Self, pass: InputPassId) {
@@ -603,7 +623,7 @@ impl ProductPointer {
         surface: SurfaceId,
         ui: &Ui,
         packet: &ProductPointerPacket,
-        pending_stream_cancellations: &BTreeSet<SurfacePointerId>,
+        recovery: &PendingPointerRecovery,
     ) -> Result<PreparedPointerEdges, DockspaceRuntimeError> {
         let current = frame.presented_surface(surface);
         let scene = self.presented.as_ref().filter(|scene| {
@@ -636,15 +656,19 @@ impl ProductPointer {
         self.rejected_run = Some(packet.clone());
         let mut position = self.position;
         let mut generic_phase = self.generic_phase;
-        let mut observed_modifiers = self.observed_modifiers;
+        let host_focused = packet.focused();
+        let mut observed_modifiers = if host_focused {
+            self.observed_modifiers.unwrap_or(Modifiers::NONE)
+        } else {
+            Modifiers::NONE
+        };
         let mut docking_enabled = self.docking_enabled;
         let mut group_dock_mode = self.group_dock_mode;
         let mut touches = self.touches.clone();
-        let host_focused = packet.focused();
         let mut pointer_focused = host_focused;
         let mut records = Vec::new();
         let cancel_all = rejected_previous || !coordinates_supported || !host_focused;
-        let should_cancel = |pointer| cancel_all || pending_stream_cancellations.contains(&pointer);
+        let should_cancel = |pointer| cancel_all || recovery.cancelled_streams.contains(&pointer);
         if generic_phase.is_live() && should_cancel(GENERIC_POINTER) {
             records.push(PointerSample::generic(
                 SurfacePointerEvent::StreamCancelled(
@@ -656,7 +680,7 @@ impl ProductPointer {
             ));
             generic_phase = GenericPointerPhase::Idle;
         }
-        if cancel_all || !pending_stream_cancellations.is_empty() {
+        if cancel_all || !recovery.cancelled_streams.is_empty() {
             records.extend(touches.cancel_where(
                 should_cancel,
                 SurfacePointerCancelReason::ExplicitPlatformCancellation,
@@ -676,24 +700,42 @@ impl ProductPointer {
             }
             records.extend(touches.capture_changed(docking_enabled, group_dock_mode));
         }
+        // A modifier round trip may have left the final keys unchanged while
+        // invalidating the old preview. Apply that discontinuity before using
+        // the current policy; neither step generates pointer motion.
+        if recovery.paused_docking && docking_enabled == Some(true) {
+            docking_enabled = Some(false);
+            records.extend(docking_change_samples(
+                &touches,
+                generic_phase.is_live(),
+                false,
+            ));
+        }
+        if let Some(mode) = recovery
+            .changed_group_mode
+            .filter(|&mode| group_dock_mode != Some(mode))
+        {
+            group_dock_mode = Some(mode);
+            records.extend(group_dock_change_samples(
+                &touches,
+                generic_phase.is_live(),
+                mode,
+            ));
+        }
         // Re-evaluate the last actual modifier observation after a configuration
         // change, without fabricating pointer motion or enrolling a new stream.
-        if let Some(enabled) = update_docking_enabled(
-            &mut docking_enabled,
-            self.config,
-            observed_modifiers.unwrap_or(Modifiers::NONE),
-        ) {
+        if let Some(enabled) =
+            update_docking_enabled(&mut docking_enabled, self.config, observed_modifiers)
+        {
             records.extend(docking_change_samples(
                 &touches,
                 generic_phase.is_live(),
                 enabled,
             ));
         }
-        if let Some(mode) = update_group_dock_mode(
-            &mut group_dock_mode,
-            self.config,
-            observed_modifiers.unwrap_or(Modifiers::NONE),
-        ) {
+        if let Some(mode) =
+            update_group_dock_mode(&mut group_dock_mode, self.config, observed_modifiers)
+        {
             records.extend(group_dock_change_samples(
                 &touches,
                 generic_phase.is_live(),
@@ -722,12 +764,14 @@ impl ProductPointer {
                         | Event::PointerMoved(_)
                         | Event::PointerButton { .. }
                         | Event::PointerGone
+                        | Event::Key { .. }
                 )
             {
+                // A queued key release can still contain modifiers from before blur.
                 continue;
             }
             if let Some(modifiers) = event_modifiers(&event) {
-                observed_modifiers = Some(modifiers);
+                observed_modifiers = modifiers;
                 if let Some(enabled) =
                     update_docking_enabled(&mut docking_enabled, self.config, modifiers)
                 {
@@ -1023,7 +1067,7 @@ impl ProductPointer {
         }
         self.position = position;
         self.generic_phase = generic_phase;
-        self.observed_modifiers = observed_modifiers;
+        self.observed_modifiers = Some(observed_modifiers);
         self.docking_enabled = docking_enabled;
         self.group_dock_mode = group_dock_mode;
         self.foreign_capture = foreign_drag;
@@ -1080,11 +1124,12 @@ fn continuation_sample(
     }
 }
 
-fn event_modifiers(event: &Event) -> Option<Modifiers> {
+pub(crate) fn event_modifiers(event: &Event) -> Option<Modifiers> {
     match event {
         Event::ModifiersChanged(modifiers)
         | Event::Key { modifiers, .. }
         | Event::PointerButton { modifiers, .. } => Some(*modifiers),
+        Event::WindowFocused(false) => Some(Modifiers::NONE),
         _ => None,
     }
 }

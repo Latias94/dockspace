@@ -906,6 +906,7 @@ fn foreign_context_and_viewport_readers_cannot_drain_an_owner_delivery() {
 fn rebinding_context_or_viewport_rejects_a_retained_foreign_lane_receipt() {
     for change_context in [true, false] {
         let original_context = test_context();
+        original_context.set_embed_viewports(false);
         let other_context = test_context();
         let rebound_context = if change_context {
             &other_context
@@ -934,11 +935,19 @@ fn rebinding_context_or_viewport_rejects_a_retained_foreign_lane_receipt() {
         assert_eq!(ready.presentation_failure, None);
 
         current_receipt.report(SurfacePresentationResult::Presented);
-        assert!(
-            take_ready(&settlement, &original_context, ViewportId::ROOT)
-                .presentations
-                .is_empty()
-        );
+        original_context
+            .run_ui(input(ViewportId::ROOT), |ui| {
+                if !change_context {
+                    // Keep the child alive while the parent attempts to read its output.
+                    ui.ctx().show_viewport_deferred(
+                        rebound_viewport,
+                        egui::ViewportBuilder::default(),
+                        |_, _| {},
+                    );
+                }
+                assert!(settlement.take_ready(ui).presentations.is_empty());
+            })
+            .drop_without_applying_deltas();
         let ready = take_ready(&settlement, rebound_context, rebound_viewport);
         assert_eq!(ready.presentations.len(), 1);
         assert_eq!(

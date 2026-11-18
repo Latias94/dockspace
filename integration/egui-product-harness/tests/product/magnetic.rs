@@ -997,6 +997,244 @@ fn shift_only_frames_clear_magnetic_preview_and_reenable_waits_for_real_motion()
 }
 
 #[test]
+fn a_rejected_modifier_change_still_pauses_the_active_drag_on_recovery() {
+    for modifiers in [
+        vec![Event::ModifiersChanged(Modifiers::SHIFT)],
+        vec![Event::Key {
+            key: Key::A,
+            physical_key: Some(Key::A),
+            pressed: false,
+            repeat: false,
+            modifiers: Modifiers::SHIFT,
+        }],
+        vec![
+            Event::ModifiersChanged(Modifiers::SHIFT),
+            Event::ModifiersChanged(Modifiers::NONE),
+        ],
+    ] {
+        let (context, mut dockspace, mut panes, source, target_rect) = magnetic_modifier_fixture();
+        let point = Pos2::new(
+            egui::lerp(target_rect.x_range(), 0.28),
+            egui::lerp(target_rect.y_range(), 0.28),
+        );
+        let style = dockspace.style().clone();
+        let drop_fill = style.visuals.drop_fill.unwrap();
+        let before = dockspace.version();
+        let _ = run_pane_frame(
+            &context,
+            &mut dockspace,
+            &mut panes,
+            vec![Event::PointerMoved(source), pointer_button(source, true)],
+        );
+        let moved = run_pane_frame(
+            &context,
+            &mut dockspace,
+            &mut panes,
+            vec![Event::PointerMoved(point)],
+        );
+        assert!(rect_fill_count(&moved.output, drop_fill) > 0);
+
+        context
+            .plugin_or_default::<LateDiscardPlugin>()
+            .lock()
+            .strip_callback_compounds_once = true;
+        assert!(
+            dockspace
+                .run_single_surface(&context, input(modifiers), SURFACE, &mut panes)
+                .is_err()
+        );
+        assert_eq!(dockspace.version(), before);
+        assert!(dockspace.has_active_gesture());
+
+        let stationary = run_pane_frame(&context, &mut dockspace, &mut panes, Vec::new());
+        assert_eq!(
+            rect_fill_count(&stationary.output, drop_fill),
+            0,
+            "the physical modifier change survives output rollback"
+        );
+        assert!(dockspace.has_active_gesture());
+        assert_eq!(dockspace.version(), before);
+        let _ = run_pane_frame(
+            &context,
+            &mut dockspace,
+            &mut panes,
+            vec![Event::ModifiersChanged(Modifiers::NONE)],
+        );
+        let reacquired = run_pane_frame(
+            &context,
+            &mut dockspace,
+            &mut panes,
+            vec![Event::PointerMoved(point)],
+        );
+        assert!(rect_fill_count(&reacquired.output, drop_fill) > 0);
+        let _ = run_pane_frame(
+            &context,
+            &mut dockspace,
+            &mut panes,
+            vec![pointer_button(point, false)],
+        );
+        let first = dockspace.view().item(FIRST).unwrap();
+        assert!(first.tabs().unwrap().items().eq([FIRST, SECOND]));
+        assert!(!dockspace.has_active_gesture());
+    }
+}
+
+#[test]
+fn a_rejected_group_mode_round_trip_invalidates_the_old_preview() {
+    let (context, mut dockspace, mut panes, _, target_rect) = magnetic_modifier_fixture();
+    let stable = run_pane_frame(&context, &mut dockspace, &mut panes, Vec::new());
+    let tab = node_rect(&stable.output, Role::Tab, "Second");
+    let source = stable
+        .output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .filter(|(_, node)| node.label() == Some("Drag tab group"))
+        .map(|(_, node)| accesskit_node_rect(node))
+        .filter(|rect| rect.y_range().contains(tab.center().y) && rect.right() <= tab.left())
+        .max_by(|a, b| a.right().total_cmp(&b.right()))
+        .unwrap()
+        .center();
+    let target = Pos2::new(
+        egui::lerp(target_rect.x_range(), 0.28),
+        egui::lerp(target_rect.y_range(), 0.28),
+    );
+    let fill = dockspace.style().visuals.drop_fill.unwrap();
+    let before = dockspace.version();
+    let _ = run_pane_frame(
+        &context,
+        &mut dockspace,
+        &mut panes,
+        vec![Event::PointerMoved(source), pointer_button(source, true)],
+    );
+    let preview = run_pane_frame(
+        &context,
+        &mut dockspace,
+        &mut panes,
+        vec![Event::PointerMoved(target)],
+    );
+    assert!(rect_fill_count(&preview.output, fill) > 0);
+
+    context
+        .plugin_or_default::<LateDiscardPlugin>()
+        .lock()
+        .strip_callback_compounds_once = true;
+    assert!(
+        dockspace
+            .run_single_surface(
+                &context,
+                input(vec![
+                    Event::ModifiersChanged(Modifiers::ALT),
+                    Event::ModifiersChanged(Modifiers::NONE),
+                ]),
+                SURFACE,
+                &mut panes,
+            )
+            .is_err()
+    );
+    let recovered = run_pane_frame(&context, &mut dockspace, &mut panes, Vec::new());
+    assert_eq!(rect_fill_count(&recovered.output, fill), 0);
+    assert_eq!(dockspace.version(), before);
+    assert!(dockspace.has_active_gesture());
+
+    let _ = run_pane_frame(
+        &context,
+        &mut dockspace,
+        &mut panes,
+        vec![Event::PointerMoved(target)],
+    );
+    let _ = run_pane_frame(
+        &context,
+        &mut dockspace,
+        &mut panes,
+        vec![pointer_button(target, false)],
+    );
+    let first = dockspace.view().item(FIRST).unwrap();
+    assert!(first.tabs().unwrap().items().eq([FIRST, SECOND, THIRD]));
+    assert!(!dockspace.has_active_gesture());
+}
+
+#[test]
+fn touch_docking_uses_current_modifiers_after_focus_loss_or_a_hidden_pass() {
+    for (hidden_shift_press, late_key_release) in [(false, false), (false, true), (true, false)] {
+        let (context, mut dockspace, mut panes, source, target_rect) = magnetic_modifier_fixture();
+        context.options_mut(|options| options.max_passes = 1.try_into().unwrap());
+        let target = Pos2::new(
+            egui::lerp(target_rect.x_range(), 0.28),
+            egui::lerp(target_rect.y_range(), 0.28),
+        );
+        let contact = |phase, pos| Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase,
+            pos,
+            force: None,
+        };
+        let mut frame = |time, events, focused| {
+            let mut raw = input(events);
+            raw.time = Some(time);
+            raw.focused = focused;
+            let (output, _) = dockspace
+                .run_single_surface(&context, raw, SURFACE, &mut panes)
+                .unwrap();
+            let (mut output, receipt) = output.into_parts();
+            receipt.report(SurfacePresentationResult::Presented);
+            output.textures_delta.clear();
+            output
+        };
+        if hidden_shift_press {
+            run_headless(
+                &context,
+                input(vec![Event::ModifiersChanged(Modifiers::SHIFT)]),
+                |_| {},
+            )
+            .drop_without_applying_deltas();
+            assert_eq!(context.input(|state| state.modifiers), Modifiers::SHIFT);
+        } else {
+            let _ = frame(1.0, vec![Event::ModifiersChanged(Modifiers::SHIFT)], true);
+            let mut loss = vec![Event::WindowFocused(false)];
+            if late_key_release {
+                loss.push(Event::Key {
+                    key: Key::A,
+                    physical_key: Some(Key::A),
+                    pressed: false,
+                    repeat: false,
+                    modifiers: Modifiers::SHIFT,
+                });
+            }
+            let _ = frame(1.1, loss, false);
+            let _ = frame(1.2, vec![Event::WindowFocused(true)], true);
+        }
+        let _ = frame(1.3, Vec::new(), true);
+        let _ = frame(2.0, vec![contact(egui::TouchPhase::Start, source)], true);
+        let _ = frame(2.35, Vec::new(), true);
+        let preview = frame(2.4, vec![contact(egui::TouchPhase::Move, target)], true);
+        let _ = frame(2.5, vec![contact(egui::TouchPhase::End, target)], true);
+        let visuals = &dockspace.style().visuals;
+        assert_eq!(
+            guide_button_count(
+                &preview,
+                visuals.drop_guide_fill.unwrap(),
+                visuals.drop_guide_active_fill.unwrap(),
+            ) > 0,
+            !hidden_shift_press,
+            "docking guides must use the held modifiers without a mouse edge"
+        );
+        let first = dockspace.view().item(FIRST).unwrap();
+        let items = first.tabs().unwrap().items().collect::<Vec<_>>();
+        assert_eq!(items.contains(&SECOND), !hidden_shift_press);
+        assert_eq!(
+            dockspace.view().item(SECOND).unwrap().contained().is_some(),
+            hidden_shift_press,
+        );
+        assert!(!dockspace.has_active_gesture());
+    }
+}
+
+#[test]
 fn same_packet_shift_release_cannot_commit_an_earlier_magnetic_target() {
     for shift_release in [false, true] {
         let (context, mut dockspace, mut panes, source, target_rect) = magnetic_modifier_fixture();

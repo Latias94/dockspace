@@ -3,9 +3,9 @@
 use std::cell::RefCell;
 use std::sync::{Arc, PoisonError};
 
-use egui::{Context, Event, PointerButton, RawInput, Ui, ViewportId, ViewportIdMap};
+use egui::{Context, Event, Modifiers, RawInput, Ui, ViewportId, ViewportIdMap};
 
-use crate::pointer::{ProductPointerInputSnapshot, has_foreign_drag};
+use crate::pointer::{ProductPointerInputSnapshot, event_modifiers, has_foreign_drag};
 
 use super::{RunIdentity, active_run_portal};
 
@@ -24,8 +24,17 @@ pub(crate) struct InputPassId(u64);
 #[derive(Default)]
 pub(super) struct RunInputSnapshot {
     last_id: u64,
-    last_pass: ViewportIdMap<InputPassId>,
+    viewports: ViewportIdMap<ViewportHistory>,
 }
+
+#[derive(Default)]
+struct ViewportHistory {
+    lifetime: Arc<ViewportLifetime>,
+    last_owned_pass: Option<InputPassId>,
+}
+
+#[derive(Default)]
+pub(super) struct ViewportLifetime;
 
 impl egui::plugin::Plugin for RunInputSnapshot {
     fn debug_name(&self) -> &'static str {
@@ -36,18 +45,18 @@ impl egui::plugin::Plugin for RunInputSnapshot {
         let viewport = input.viewport_id;
         let Some(portal) = active_run_portal(context) else {
             // Direct egui passes can consume input without opening a docking run.
-            self.last_pass.remove(&viewport);
+            self.break_continuity(viewport);
             return;
         };
         let mut portal = portal.lock().unwrap_or_else(PoisonError::into_inner);
         // egui can reject recursive root borrowing before on_begin_pass runs.
         if in_run_callback(context) {
             portal.poisoned = true;
-            self.last_pass.remove(&viewport);
+            self.break_continuity(viewport);
             return;
         }
         if portal.viewport != viewport || portal.poisoned {
-            self.last_pass.remove(&viewport);
+            self.break_continuity(viewport);
             return;
         }
         self.last_id = self
@@ -55,8 +64,19 @@ impl egui::plugin::Plugin for RunInputSnapshot {
             .checked_add(1)
             .expect("egui input pass identity exhausted");
         let pass = InputPassId(self.last_id);
-        let previous = self.last_pass.insert(viewport, pass);
+        let history = self.viewports.entry(viewport).or_default();
+        let previous = history.last_owned_pass.replace(pass);
         if portal.last_input_pass.replace(pass).is_none() {
+            portal.viewport_lifetime = Some(Arc::downgrade(&history.lifetime));
+            // The previous InputState already includes events from passes that
+            // may have run while this Dockspace was absent.
+            portal.initial_modifiers = context.input_for(viewport, |previous| {
+                if previous.focused {
+                    previous.modifiers
+                } else {
+                    Modifiers::NONE
+                }
+            });
             // egui can reuse a viewport ID after destroying the old viewport.
             portal.preceding_input_pass = previous.filter(|_| {
                 viewport == ViewportId::ROOT || context.cumulative_pass_nr_for(viewport) != 0
@@ -101,32 +121,36 @@ impl egui::plugin::Plugin for RunInputSnapshot {
     }
 
     fn output_hook(&mut self, context: &Context, _output: &mut egui::FullOutput) {
-        self.last_pass.retain(|&viewport, _| {
+        self.viewports.retain(|&viewport, _| {
             viewport == ViewportId::ROOT || context.cumulative_pass_nr_for(viewport) != 0
         });
     }
 }
 
+impl RunInputSnapshot {
+    fn break_continuity(&mut self, viewport: ViewportId) {
+        if let Some(history) = self.viewports.get_mut(&viewport) {
+            history.last_owned_pass = None;
+        }
+    }
+}
+
 fn affects_pointer_stream(event: &Event) -> bool {
-    matches!(
-        event,
-        Event::PointerMoved(_)
-            | Event::PointerGone
-            | Event::PointerButton {
-                button: PointerButton::Primary,
-                ..
-            }
-            | Event::Touch { .. }
-            | Event::WindowFocused(_)
-            | Event::ModifiersChanged(_)
-            | Event::Key { pressed: true, .. }
-    )
+    event_modifiers(event).is_some()
+        || matches!(
+            event,
+            Event::PointerMoved(_)
+                | Event::PointerGone
+                | Event::Touch { .. }
+                | Event::WindowFocused(_)
+        )
 }
 
 #[derive(Clone)]
 pub(crate) struct ProductPointerPacket {
     run: Arc<RunIdentity>,
     input: Arc<RunInput>,
+    initial_modifiers: Modifiers,
     preceding_input_pass: Option<InputPassId>,
     observed_input_pass: InputPassId,
     observed_at: Option<std::time::Duration>,
@@ -143,6 +167,10 @@ impl ProductPointerPacket {
 
     pub(crate) fn focused(&self) -> bool {
         self.input.focused
+    }
+
+    pub(crate) const fn initial_modifiers(&self) -> Modifiers {
+        self.initial_modifiers
     }
 
     pub(crate) fn receivers(&self) -> &ProductPointerInputSnapshot {
@@ -177,6 +205,7 @@ pub(crate) fn pointer_packet(ui: &Ui) -> Option<ProductPointerPacket> {
     Some(ProductPointerPacket {
         run: Arc::clone(&portal.run),
         input,
+        initial_modifiers: portal.initial_modifiers,
         preceding_input_pass: portal.preceding_input_pass,
         observed_input_pass: portal.observed_input_pass?,
         observed_at: portal.observed_at,

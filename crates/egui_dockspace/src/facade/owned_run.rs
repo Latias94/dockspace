@@ -198,6 +198,10 @@ impl UiActionQueue {
         }
     }
 
+    pub(super) fn clear_touch_menu(&mut self) {
+        self.touch_menu = None;
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.batches.is_empty() && self.touch_menu.is_none()
     }
@@ -313,19 +317,12 @@ impl Dockspace {
             .pass_settlement
             .take_ready_before_run(context, input.viewport_id)
             .ok_or(DockspaceErrorSource::PassSettlementConflict)?;
-        if ready.lane_changed {
-            if let Some(retired) = self
-                .session
-                .disable_host_pointer()
-                .map_err(DockspaceError::from_detail)?
-            {
-                preceding_feedback.extend_from_slice(retired.manipulation_feedback());
-                retirement_repaint |= retired.repaint_required();
-            }
-            // The lane rebind and provider retirement survive a deferred run.
-            // Old contacts must not survive with only the private copy cleared.
-            self.pointer.clear();
-            self.pending_focus.clear();
+        // Retire the old input before reserving output, which can defer this run.
+        if ready.lane_changed
+            && let Some(retired) = self.retire_viewport_input()?
+        {
+            preceding_feedback.extend_from_slice(retired.manipulation_feedback());
+            retirement_repaint |= retired.repaint_required();
         }
         for presentation in ready.presentations {
             let artifact = presentation.output.presentation_artifact();

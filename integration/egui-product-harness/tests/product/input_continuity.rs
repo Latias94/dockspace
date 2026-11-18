@@ -4,6 +4,7 @@ use super::*;
 use egui::{RawInput, TouchDeviceId, TouchId, TouchPhase, ViewportBuilder, ViewportId};
 use egui_dockspace::{
     DockspaceErrorKind, DockspaceManipulationCancelReason, DockspaceManipulationStatus,
+    DockspaceTouchEvent,
 };
 
 #[derive(Clone, Copy)]
@@ -23,6 +24,7 @@ struct InputFrame {
     output: FullOutput,
     feedback: Vec<DockspaceManipulationStatus>,
     close_requests: usize,
+    touch_menu_requested: bool,
 }
 
 enum RepaintInput {
@@ -97,6 +99,7 @@ impl DragHarness {
         raw.time = time;
         let mut feedback = Vec::new();
         let mut close_requests = 0;
+        let mut touch_menu_requested = false;
         let mut observe = |response: egui_dockspace::DockspaceResponse| {
             feedback.extend(
                 response
@@ -105,6 +108,10 @@ impl DragHarness {
                     .map(|item| item.status()),
             );
             close_requests += response.close_request_events().len();
+            touch_menu_requested |= response
+                .touch_events()
+                .iter()
+                .any(|event| matches!(event, DockspaceTouchEvent::ContextMenuRequested(_)));
         };
         let mut output = match self.mode {
             RunMode::Callback => run_headless(&self.context, raw, |ui| {
@@ -130,6 +137,7 @@ impl DragHarness {
             output,
             feedback,
             close_requests,
+            touch_menu_requested,
         }
     }
 
@@ -206,6 +214,13 @@ impl DragHarness {
     }
 
     fn assert_cancelled(&self, frame: &InputFrame) {
+        self.assert_cancelled_with(
+            frame,
+            DockspaceManipulationCancelReason::PointerStreamCancelled,
+        );
+    }
+
+    fn assert_cancelled_with(&self, frame: &InputFrame, reason: DockspaceManipulationCancelReason) {
         assert!(!self.dockspace.has_active_gesture());
         assert_eq!(
             rect_fill_count(
@@ -216,9 +231,7 @@ impl DragHarness {
         );
         assert_eq!(
             frame.feedback,
-            [DockspaceManipulationStatus::Cancelled(
-                DockspaceManipulationCancelReason::PointerStreamCancelled
-            )]
+            [DockspaceManipulationStatus::Cancelled(reason)]
         );
         assert_eq!(root_tabs(&self.dockspace), Some(vec![FIRST, SECOND]));
     }
@@ -388,6 +401,38 @@ fn a_release_injected_only_on_an_egui_repaint_pass_cancels_the_drag() {
 }
 
 #[test]
+fn modifier_sources_injected_only_on_repaint_mark_the_pointer_input_gap() {
+    for mode in [RunMode::Callback, RunMode::Owned] {
+        for event in [
+            Event::Key {
+                key: Key::A,
+                physical_key: Some(Key::A),
+                pressed: false,
+                repeat: false,
+                modifiers: Modifiers::SHIFT,
+            },
+            Event::PointerButton {
+                pos: Pos2::new(200.0, 200.0),
+                button: PointerButton::Secondary,
+                pressed: true,
+                modifiers: Modifiers::SHIFT,
+            },
+        ] {
+            let mut harness = DragHarness::new(ViewportId::ROOT, mode);
+            harness.start_reorder();
+            let version = harness.dockspace.version();
+            let _ = harness.repaint_with_extra_input(RepaintInput::Event(event));
+            assert!(harness.dockspace.has_active_gesture());
+
+            let recovered = harness.frame(Vec::new());
+            harness.assert_cancelled(&recovered);
+            assert_eq!(harness.dockspace.version(), version);
+            harness.reorder_after_recovery();
+        }
+    }
+}
+
+#[test]
 fn a_recovery_frame_accepts_mouse_input_after_a_touch_terminal_on_repaint() {
     for mode in [RunMode::Callback, RunMode::Owned] {
         let mut harness = DragHarness::new(ViewportId::ROOT, mode);
@@ -506,7 +551,10 @@ fn a_live_egui_viewport_keeps_its_drag_but_recreating_the_same_viewport_cancels_
             );
         }
         let shown = harness.frame(Vec::new());
-        harness.assert_cancelled(&shown);
+        harness.assert_cancelled_with(
+            &shown,
+            DockspaceManipulationCancelReason::PointerProviderRetired,
+        );
         assert_eq!(harness.dockspace.version(), version);
         harness.reorder_after_recovery();
     }
@@ -561,4 +609,184 @@ fn a_late_output_cannot_authorize_a_close_in_a_recreated_egui_viewport() {
         1,
         "the freshly presented output owns its close control"
     );
+}
+
+#[test]
+fn a_retired_viewport_cannot_acknowledge_pane_focus_in_its_replacement() {
+    for (mode, originally_available) in [
+        (RunMode::Callback, false),
+        (RunMode::Callback, true),
+        (RunMode::Owned, false),
+        (RunMode::Owned, true),
+    ] {
+        let child = ViewportId::from_hash_of("product-recreated-viewport-pane-focus");
+        let mut harness = DragHarness::new(child, mode);
+        harness.context.set_embed_viewports(false);
+        harness.context.options_mut(|options| {
+            options.max_passes = 1.try_into().unwrap();
+        });
+        harness.show_child_from_parent(true);
+        let _ = harness.frame(Vec::new());
+        let _ = harness.frame(Vec::new());
+        let selected = harness.dockspace.select_item_current(SECOND).unwrap();
+        assert!(matches!(
+            selected.status(),
+            DockspaceActionStatus::Applied(_)
+        ));
+        let mut panes = FocusPanes::new("replacement-pane-focus", originally_available);
+        let run_with_focus_pane = |harness: &mut DragHarness, panes: &mut FocusPanes| {
+            let raw = harness.input(Vec::new());
+            match mode {
+                RunMode::Callback => {
+                    let mut capability = None;
+                    let output = run_ui(&harness.context, raw, |ui| {
+                        let response = harness
+                            .dockspace
+                            .show_single_surface(SURFACE, ui, panes)
+                            .unwrap();
+                        capability = Some(response.pane_focus_capability());
+                    });
+                    (output, capability.unwrap())
+                }
+                RunMode::Owned => {
+                    let (output, response) = harness
+                        .dockspace
+                        .run_single_surface(&harness.context, raw, SURFACE, panes)
+                        .unwrap();
+                    (output, response.pane_focus_capability())
+                }
+            }
+        };
+        let (old, capability) = run_with_focus_pane(&mut harness, &mut panes);
+        let expected = if originally_available {
+            DockspaceCapability::Supported
+        } else {
+            DockspaceCapability::Unavailable(
+                DockspaceUnavailableReason::PaneFocusBindingUnavailable,
+            )
+        };
+        assert_eq!(capability, expected);
+        assert_eq!(
+            harness
+                .context
+                .memory(|memory| memory.has_focus(panes.target)),
+            originally_available,
+        );
+        let (output, receipt) = old.into_parts();
+        output.drop_without_applying_deltas();
+        let late_receipt = if originally_available {
+            receipt.report(SurfacePresentationResult::Presented);
+            None
+        } else {
+            Some(receipt)
+        };
+        harness.show_child_from_parent(false);
+        harness.show_child_from_parent(true);
+        assert_eq!(harness.context.cumulative_pass_nr_for(child), 0);
+        if let Some(receipt) = late_receipt {
+            receipt.report(SurfacePresentationResult::Presented);
+        }
+        assert!(
+            !harness
+                .context
+                .memory(|memory| memory.has_focus(panes.target))
+        );
+
+        panes.expose_target = true;
+        let (new, capability) = run_with_focus_pane(&mut harness, &mut panes);
+        assert_eq!(capability, DockspaceCapability::Supported);
+        let (output, receipt) = new.into_parts();
+        output.drop_without_applying_deltas();
+        receipt.report(SurfacePresentationResult::Presented);
+        assert!(
+            harness
+                .context
+                .memory(|memory| memory.has_focus(panes.target)),
+            "the replacement must receive the pending focus request (old binding available: {originally_available})"
+        );
+    }
+}
+
+#[test]
+fn a_recreated_viewport_does_not_open_the_retired_viewports_touch_menu() {
+    for mode in [RunMode::Callback, RunMode::Owned] {
+        let child = ViewportId::from_hash_of("product-recreated-viewport-touch-menu");
+        let mut harness = DragHarness::new(child, mode);
+        harness.context.set_embed_viewports(false);
+        harness.context.options_mut(|options| {
+            options.max_passes = 1.try_into().unwrap();
+        });
+        harness.show_child_from_parent(true);
+        let has_menu = |frame: &InputFrame| {
+            frame
+                .output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .any(|(_, node)| node.role() == Role::Menu && node.label() == Some("Tab actions"))
+        };
+        let mut time = 0.1;
+        for recreated in [false, true] {
+            let _ = harness.frame_at(Some(time), Vec::new());
+            time += 0.1;
+            let ready = harness.frame_at(Some(time), Vec::new());
+            assert!(!has_menu(&ready));
+            let point = tab_center(&ready.output, "Second");
+            let _ = harness.frame_at(Some(time + 0.1), vec![contact(1, TouchPhase::Start, point)]);
+            let _ = harness.frame_at(Some(time + 0.5), Vec::new());
+            let released =
+                harness.frame_at(Some(time + 0.6), vec![contact(1, TouchPhase::End, point)]);
+            assert!(released.touch_menu_requested);
+            assert!(!has_menu(&released));
+            time += 0.8;
+            if !recreated {
+                harness.show_child_from_parent(false);
+                harness.show_child_from_parent(true);
+                assert_eq!(harness.context.cumulative_pass_nr_for(child), 0);
+            }
+            let mut appeared = false;
+            for _ in 0..3 {
+                appeared |= has_menu(&harness.frame_at(Some(time), Vec::new()));
+                time += 0.05;
+            }
+            assert_eq!(appeared, recreated);
+        }
+    }
+}
+
+#[test]
+fn a_recreated_viewport_does_not_inherit_the_retired_viewports_output_error() {
+    let child = ViewportId::from_hash_of("product-recreated-viewport-output-error");
+    let mut harness = DragHarness::new(child, RunMode::Callback);
+    harness.context.set_embed_viewports(false);
+    harness.context.options_mut(|options| {
+        options.max_passes = 1.try_into().unwrap();
+    });
+    harness.show_child_from_parent(true);
+    let _ = harness.frame(Vec::new());
+    let _ = harness.frame(Vec::new());
+    harness
+        .context
+        .plugin_or_default::<LateDiscardPlugin>()
+        .lock()
+        .strip_callback_compounds_once = true;
+    let _ = harness.frame(Vec::new());
+    harness.show_child_from_parent(false);
+    harness.show_child_from_parent(true);
+
+    let raw = harness.input(Vec::new());
+    run_headless(&harness.context, raw, |ui| {
+        let response = harness
+            .dockspace
+            .show_single_surface(SURFACE, ui, &mut Panes)
+            .unwrap();
+        assert_eq!(
+            response.presentation_settlement_capability(),
+            DockspaceCapability::Supported,
+        );
+    })
+    .drop_without_applying_deltas();
 }

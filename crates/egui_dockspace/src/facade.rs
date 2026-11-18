@@ -6,7 +6,8 @@ use std::{fmt::Debug, hash::Hash};
 use dockspace::model::{DockspaceLayout, DockspaceView, ItemId, SurfaceId};
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
-    DockspaceSession, HostFrameReport, SurfaceUnavailableReason, WorkspaceVersion,
+    DockspaceSession, HostFrameReport, HostPointerRetirement, SurfaceUnavailableReason,
+    WorkspaceVersion,
 };
 use egui::Id;
 
@@ -112,6 +113,17 @@ impl Dockspace {
     #[must_use]
     pub fn has_active_gesture(&self) -> bool {
         self.session.has_active_gesture()
+    }
+
+    fn retire_viewport_input(&mut self) -> Result<Option<HostPointerRetirement>, DockspaceError> {
+        let retirement = self
+            .session
+            .disable_host_pointer()
+            .map_err(DockspaceError::from_detail)?;
+        self.pointer.clear();
+        self.pending_focus.clear();
+        self.ui_actions.clear_touch_menu();
+        Ok(retirement)
     }
 
     /// Returns the current declarative docking policy.

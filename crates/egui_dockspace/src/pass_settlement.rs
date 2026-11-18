@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use dockspace::runtime::{
     PaintedSurfaceOutput, PreparedPaneFocusObservation, SurfacePresentationResult,
 };
-use egui::{Context, FullOutput, Id, RawInput, Ui, UiBuilder, UiStackInfo, ViewportId};
+use egui::{Context, FullOutput, Id, Modifiers, RawInput, Ui, UiBuilder, UiStackInfo, ViewportId};
 
 use crate::output_proof::{
     OwnedOutputCheck, SurfaceOutputProof, final_paint_layer_order, scrub_private_markers,
@@ -19,7 +19,7 @@ mod textures;
 pub(super) use run_input::{
     InputPassId, ProductPointerPacket, RUN_SCOPE_TAG, RunScope, pointer_packet,
 };
-use run_input::{RunInput, RunInputSnapshot, ui_run_scope};
+use run_input::{RunInput, RunInputSnapshot, ViewportLifetime, ui_run_scope};
 use textures::{OutputTexturesGuard, restore_retained_textures};
 
 /// Complete egui output and the affine receipt for its docking emissions.
@@ -79,7 +79,7 @@ impl DockspaceOutputReceipt {
             let lane_matches = state
                 .lane
                 .as_ref()
-                .is_some_and(|lane| Arc::ptr_eq(&lane.identity, &delivery.lane));
+                .is_some_and(|lane| lane.is_live() && Arc::ptr_eq(&lane.identity, &delivery.lane));
             if lane_matches {
                 needs_repaint |= delivery.needs_repaint;
                 state.ready.push(ReadySurfacePresentation {
@@ -95,7 +95,7 @@ impl DockspaceOutputReceipt {
                 drop(delivery.output);
                 state.output_retired = true;
             }
-            if let Some(waiter) = state.waiting_for_output.take() {
+            if let Some(waiter) = state.take_output_waiter() {
                 output_wakeups.push(waiter);
             }
         }
@@ -290,7 +290,7 @@ impl ProductPassSettlement {
             portal.poisoned = true;
             return ProductPassEnrollment::Conflict;
         }
-        state.bind_lane(&context, viewport);
+        state.bind_lane(&context, viewport, portal.viewport_lifetime.clone());
         state.active = Some(OpenProductPass {
             run: Arc::clone(&portal.run),
             pass,
@@ -327,7 +327,7 @@ impl ProductPassSettlement {
         if state.active.is_some() {
             return None;
         }
-        state.bind_lane(&context, viewport);
+        state.bind_lane(&context, viewport, None);
         Some(state.take_ready())
     }
 
@@ -412,7 +412,7 @@ fn retire_discarded_outputs(
             let state = state.upgrade()?;
             let mut state = state.lock().unwrap_or_else(PoisonError::into_inner);
             state.output_retired = true;
-            state.waiting_for_output.take()
+            state.take_output_waiter()
         })
         .collect()
 }
@@ -475,6 +475,8 @@ impl ProductPassSettlementRun {
         let portal = Arc::new(Mutex::new(ActiveRunPortal {
             run: Arc::new(RunIdentity),
             input: None,
+            initial_modifiers: Modifiers::NONE,
+            viewport_lifetime: None,
             preceding_input_pass: None,
             last_input_pass: None,
             observed_input_pass: None,
@@ -738,6 +740,8 @@ impl Drop for ProductPassSettlementRun {
 
 struct ActiveRunPortal {
     input: Option<Arc<RunInput>>,
+    initial_modifiers: Modifiers,
+    viewport_lifetime: Option<Weak<ViewportLifetime>>,
     preceding_input_pass: Option<InputPassId>,
     last_input_pass: Option<InputPassId>,
     observed_input_pass: Option<InputPassId>,
@@ -766,10 +770,18 @@ struct PassSettlementState {
 }
 
 impl PassSettlementState {
-    fn bind_lane(&mut self, context: &Arc<ContextIdentity>, viewport: ViewportId) {
+    fn bind_lane(
+        &mut self,
+        context: &Arc<ContextIdentity>,
+        viewport: ViewportId,
+        lifetime: Option<Weak<ViewportLifetime>>,
+    ) {
         if !self.lane_matches(context, viewport) {
             self.lane_changed |= self.lane.is_some();
-            if self.lane.is_some() && !self.ready.is_empty() {
+            if self.lane.as_ref().is_some_and(|lane| !lane.is_live()) {
+                // A replacement cannot inherit failures from the retired viewport.
+                self.failure = None;
+            } else if !self.ready.is_empty() {
                 self.failure = Some(PresentationSettlementFailure::Abandoned);
             }
             self.ready.clear();
@@ -778,8 +790,14 @@ impl PassSettlementState {
             self.lane = Some(SettlementLane {
                 context: Arc::downgrade(context),
                 viewport,
+                lifetime,
                 identity: Arc::new(LaneIdentity),
             });
+        } else if let Some(lane) = &mut self.lane
+            && lane.lifetime.is_none()
+        {
+            // The owned driver reserves capacity before egui consumes input.
+            lane.lifetime = lifetime;
         }
     }
 
@@ -795,12 +813,19 @@ impl PassSettlementState {
 
     fn lane_matches(&self, context: &Arc<ContextIdentity>, viewport: ViewportId) -> bool {
         self.lane.as_ref().is_some_and(|lane| {
-            lane.viewport == viewport
+            lane.is_live()
+                && lane.viewport == viewport
                 && lane
                     .context
                     .upgrade()
                     .is_some_and(|current| Arc::ptr_eq(&current, context))
         })
+    }
+
+    fn take_output_waiter(&mut self) -> Option<(Context, ViewportId)> {
+        self.waiting_for_output
+            .take()
+            .filter(|_| self.lane.as_ref().is_some_and(SettlementLane::is_live))
     }
 
     fn take_open(&mut self, run: &Arc<RunIdentity>, pass: InputPassId) -> Option<OpenProductPass> {
@@ -819,7 +844,16 @@ impl PassSettlementState {
 struct SettlementLane {
     context: Weak<ContextIdentity>,
     viewport: ViewportId,
+    lifetime: Option<Weak<ViewportLifetime>>,
     identity: Arc<LaneIdentity>,
+}
+
+impl SettlementLane {
+    fn is_live(&self) -> bool {
+        self.lifetime
+            .as_ref()
+            .is_none_or(|lifetime| lifetime.strong_count() != 0)
+    }
 }
 struct OpenProductPass {
     run: Arc<RunIdentity>,

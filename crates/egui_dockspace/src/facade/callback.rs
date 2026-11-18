@@ -26,6 +26,7 @@ impl Dockspace {
     /// next original egui run; repeated passes never replay those actions.
     /// If the application skips this Dockspace while processing egui input, the
     /// next committed callback cancels the old gesture and preserves the layout.
+    /// Recreating a viewport also retires its output and pending touch menus.
     ///
     /// [`Self::run_single_surface`] is the recommended entry point: it owns the
     /// complete run and can validate terminal output hooks before publication.
@@ -70,17 +71,11 @@ impl Dockspace {
         let ready_settlement = self.pass_settlement.take_ready(ui);
         let mut preceding_feedback = Vec::new();
         let mut retirement_repaint = false;
-        if ready_settlement.lane_changed {
-            if let Some(retired) = self
-                .session
-                .disable_host_pointer()
-                .map_err(DockspaceError::from_detail)?
-            {
-                preceding_feedback.extend_from_slice(retired.manipulation_feedback());
-                retirement_repaint |= retired.repaint_required();
-            }
-            self.pending_focus.clear();
-            self.pointer.clear();
+        if ready_settlement.lane_changed
+            && let Some(retired) = self.retire_viewport_input()?
+        {
+            preceding_feedback.extend_from_slice(retired.manipulation_feedback());
+            retirement_repaint |= retired.repaint_required();
         }
         let presentation_failure = ready_settlement.presentation_failure;
         let presentation_settlement_available =
