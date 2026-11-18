@@ -15,6 +15,80 @@ const ROOT: RootId = RootId::new(1);
 const ITEM: ItemId = ItemId::new(1);
 const SECOND_ITEM: ItemId = ItemId::new(2);
 
+#[test]
+fn public_facade_captures_and_moves_a_split_as_one_layout_tab() {
+    use egui_dockspace::{
+        DockAnchor, DockMoveSource, DockMoveTarget, DockPlacement, PreparedTab, TabGroupDockMode,
+    };
+
+    let target_item = ItemId::new(3);
+    let target_root = RootId::new(2);
+    let split = DockspaceNode::equal_split(
+        DockspaceAxis::Horizontal,
+        [
+            DockspaceNode::pane(ITEM),
+            DockspaceNode::tabs([SECOND_ITEM]),
+        ],
+    )
+    .unwrap()
+    .named("Tools");
+    let layout = DockspaceLayout::new([
+        DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(
+                ROOT,
+                DockspaceNode::composed_tabs([DockspaceNode::pane(ItemId::new(4)), split]),
+            ),
+        ),
+        DockspaceSurfaceLayout::new(
+            SurfaceId::new(2),
+            DockspaceRootLayout::new(target_root, DockspaceNode::central_tabs([target_item])),
+        ),
+    ])
+    .unwrap();
+    let mut dockspace = Dockspace::builder("public-layout-tab-move", layout)
+        .build()
+        .unwrap();
+    let key = dockspace
+        .view()
+        .root(ROOT)
+        .unwrap()
+        .content()
+        .unwrap()
+        .tabs()
+        .unwrap()
+        .tabs()[1];
+    let capture: PreparedTab = dockspace.capture_tab(key).unwrap();
+    let action = dockspace.prepare_move(
+        DockMoveSource::Tab(capture),
+        DockMoveTarget::Dock {
+            placement: DockPlacement::Center(DockAnchor::Item(target_item)),
+            mode: TabGroupDockMode::PreserveLayout,
+        },
+    );
+    assert!(
+        matches!(dockspace.submit_prepared_action(action).unwrap().status(),
+            DockspaceActionStatus::Applied(DockspaceActionOutcome::TabDocked { tab, items, .. })
+                if *tab == key && items == &[ITEM, SECOND_ITEM]
+        )
+    );
+    let view = dockspace.view();
+    assert_eq!(view.item(ITEM).unwrap().root(), target_root);
+    assert_eq!(view.item(SECOND_ITEM).unwrap().root(), target_root);
+    let tabs = view
+        .root(target_root)
+        .unwrap()
+        .content()
+        .unwrap()
+        .tabs()
+        .unwrap();
+    assert_eq!(tabs.tabs(), [target_item.into(), key]);
+    let egui_dockspace::DockspaceTabView::Layout(layout) = tabs.child(key).unwrap() else {
+        panic!("the captured split must remain one layout tab");
+    };
+    assert!(layout.split().is_some());
+}
+
 #[derive(Default)]
 struct SmokePanes {
     paint_count: usize,

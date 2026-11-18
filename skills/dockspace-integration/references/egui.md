@@ -41,6 +41,12 @@ kind of tab. The default adapter includes scoped tab/group/layout menus and
 an Active Panes menu for bare content. Its group grip merges direct tabs by
 default; the configurable Alt modifier preserves one complete layout tab.
 
+For application moves, use `Dockspace::capture_tab(TabKey)` and
+`DockMoveSource::Tab` to move one direct layout tab. The facade exports
+`PreparedTab`; the capture includes the whole nested layout and retains its
+session and revision. Obtain the key from the current view and capture it on
+the same facade that will submit the move.
+
 Use `select_item_current(item)` to activate every containing tab choice. Showing
 hidden content retains selection until explicit activation. Pane state belongs
 to the application's registry throughout these changes. A surface containing

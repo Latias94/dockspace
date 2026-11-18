@@ -120,7 +120,7 @@ pub use dockspace::model::{
     DockspaceGridView, DockspaceLayout, DockspaceLayoutError, DockspaceNode, DockspaceNodeView,
     DockspaceRootLayout, DockspaceRootView, DockspaceSplitView, DockspaceSurfaceLayout,
     DockspaceSurfaceView, DockspaceTabView, DockspaceTabsView, DockspaceView,
-    FloatingPresentationId, InvalidDockFraction, ItemId, NodeKey, PreparedDockAction,
+    FloatingPresentationId, InvalidDockFraction, ItemId, NodeKey, PreparedDockAction, PreparedTab,
     PreparedTabsGroup, RootAllocation, RootId, SurfaceId, TabGroupDockMode, TabKey,
     WorkspaceVersion,
 };

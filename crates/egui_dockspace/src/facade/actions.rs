@@ -10,7 +10,7 @@ use dockspace::close::{
 };
 use dockspace::model::{
     DockAnchor, DockMoveSource, DockMoveTarget, DockPlacement, DockspaceActionRejection, ItemId,
-    PreparedDockAction, PreparedTabsGroup, RootId, SurfaceId,
+    PreparedDockAction, PreparedTab, PreparedTabsGroup, RootId, SurfaceId, TabKey,
 };
 use dockspace::runtime::{PreparedCloseRequest, SurfaceUnavailableReason};
 
@@ -47,6 +47,14 @@ impl Dockspace {
         target: DockMoveTarget,
     ) -> PreparedDockAction {
         self.session.prepare_move(source, target)
+    }
+
+    /// Captures one direct tab, including a complete nested layout, at this revision.
+    ///
+    /// Returns `None` when the key is not a current direct child of a tabs node.
+    /// Preparing a move from this capture never refreshes its session or revision.
+    pub fn capture_tab(&self, key: TabKey) -> Option<PreparedTab> {
+        self.session.capture_tab(key)
     }
 
     /// Prepares a revision-bound item docking action.
