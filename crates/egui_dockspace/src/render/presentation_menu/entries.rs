@@ -584,6 +584,9 @@ const fn action_unavailable_text(reason: DockspaceActionRejection) -> &'static s
         DockspaceActionRejection::PolicyDenied => {
             "This command is disabled by the current docking policy."
         }
+        DockspaceActionRejection::SurfaceRequired { .. } => {
+            "This command would remove a required host surface."
+        }
         DockspaceActionRejection::Conflict => {
             "Another docking transition is currently in progress."
         }

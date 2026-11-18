@@ -2235,7 +2235,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         };
         let record = match self.candidate.prepare_product_action_if_available(action)? {
             Ok(prepared) => {
-                let (authority_domain, version, action) = prepared.into_parts();
+                let (authority_domain, version, action, _) = prepared.into_parts();
                 debug_assert_eq!(authority_domain, self.authority_domain);
                 debug_assert_eq!(version, self.version);
                 PresentationCommandPaintRecord::ready(

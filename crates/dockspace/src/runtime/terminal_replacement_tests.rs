@@ -90,9 +90,10 @@ fn duplicate_sequence_after_scope_expansion_poison_rolls_back_and_restore_retrie
         .append_input(
             APPLICATION_INPUT_SOURCE,
             sequence,
-            EngineInput::SelectItem {
+            EngineInput::ProductAction {
                 expected: before_version,
-                item: KNOWN,
+                action: crate::model::ProductAction::SelectItem { item: KNOWN },
+                required_surfaces: Vec::new(),
             },
         )
         .unwrap();
@@ -130,10 +131,13 @@ fn duplicate_sequence_after_scope_expansion_poison_rolls_back_and_restore_retrie
             candidate.append_input(
                 APPLICATION_INPUT_SOURCE,
                 SourceSequence::new(sequence.get() + 1),
-                EngineInput::OpenItem {
+                EngineInput::ProductAction {
                     expected: prefix_version,
-                    item: INCOMING,
-                    placement: DockPlacement::After(FIRST),
+                    action: crate::model::ProductAction::OpenItem {
+                        item: INCOMING,
+                        placement: DockPlacement::After(FIRST)
+                    },
+                    required_surfaces: Vec::new()
                 },
             ),
             Err(CoreHostFrameError::InputPrefixReductionFailed { .. })

@@ -656,9 +656,12 @@ fn programmatic_selection_activates_an_existing_native_window_before_pane_focus(
     let transition = submit_test_input(
         &mut fixture.engine,
         fixture.presentation_host,
-        EngineInput::SelectItem {
+        EngineInput::ProductAction {
             expected,
-            item: ItemId::new(2),
+            action: crate::model::ProductAction::SelectItem {
+                item: ItemId::new(2),
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("explicit selection must reduce even when the pane is already selected");
@@ -1108,9 +1111,12 @@ fn workspace_replacement_waits_for_fresh_native_binding_readiness() {
     submit_test_input(
         &mut fixture.engine,
         fixture.presentation_host,
-        EngineInput::SelectItem {
+        EngineInput::ProductAction {
             expected,
-            item: ItemId::new(1),
+            action: crate::model::ProductAction::SelectItem {
+                item: ItemId::new(1),
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .unwrap();
@@ -1244,9 +1250,12 @@ fn workspace_replacement_preserves_explicit_outside_focus_without_fallback() {
         submit_test_input(
             &mut fixture.engine,
             fixture.presentation_host,
-            EngineInput::SelectItem {
+            EngineInput::ProductAction {
                 expected,
-                item: ItemId::new(1),
+                action: crate::model::ProductAction::SelectItem {
+                    item: ItemId::new(1),
+                },
+                required_surfaces: Vec::new(),
             },
         )
         .unwrap();
@@ -1319,9 +1328,12 @@ fn another_native_surface_does_not_turn_a_logical_replacement_target_native() {
     submit_test_input(
         &mut fixture.engine,
         fixture.presentation_host,
-        EngineInput::SelectItem {
+        EngineInput::ProductAction {
             expected,
-            item: ItemId::new(5),
+            action: crate::model::ProductAction::SelectItem {
+                item: ItemId::new(5),
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .unwrap();

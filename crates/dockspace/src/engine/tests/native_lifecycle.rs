@@ -861,10 +861,13 @@ fn product_main_root_skips_a_pending_native_root_reservation() {
     let transition = submit_test_input(
         &mut fixture.engine,
         fixture.presentation_host,
-        EngineInput::OpenItem {
+        EngineInput::ProductAction {
             expected,
-            item: ItemId::new(99),
-            placement: DockPlacement::Main(TARGET_SURFACE),
+            action: crate::model::ProductAction::OpenItem {
+                item: ItemId::new(99),
+                placement: DockPlacement::Main(TARGET_SURFACE),
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("product main-root action must reduce beside the pending native saga");
@@ -2047,11 +2050,14 @@ fn product_native_root_to_contained_waits_for_presented_target_before_transfer()
     let staged = submit_test_input(
         &mut fixture.engine,
         fixture.presentation_host,
-        EngineInput::FloatRoot {
+        EngineInput::ProductAction {
             expected: source_version,
-            root,
-            surface: TARGET_SURFACE,
-            rect: None,
+            action: crate::model::ProductAction::FloatRoot {
+                root,
+                surface: TARGET_SURFACE,
+                rect: None,
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("native-to-contained product action stages");
@@ -2357,10 +2363,13 @@ fn product_single_item_native_child_dock_waits_for_target_presentation() {
     let staged = submit_test_input(
         &mut fixture.engine,
         fixture.presentation_host,
-        EngineInput::DockItem {
+        EngineInput::ProductAction {
             expected: source_version,
-            item: ItemId::new(1),
-            placement: DockPlacement::Before(ItemId::new(3)),
+            action: crate::model::ProductAction::DockItem {
+                item: ItemId::new(1),
+                placement: DockPlacement::Before(ItemId::new(3)),
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("single-item native root dock must stage");
@@ -2518,25 +2527,20 @@ fn product_native_main_dock_back_uses_bound_recovery_after_target_presentation()
     let source_version = fixture.engine.version();
     let action = fixture.engine.prepare_dock_root_back(root);
     assert!(
-        fixture
-            .engine
-            .action_removes_surface(&action, NATIVE_SURFACE)
-            .expect("the rehome candidate uses its bound recovery authority")
-    );
-    assert!(
-        !fixture
-            .engine
-            .action_removes_surface(&action, target_surface)
-            .expect("the recovery host survives the candidate")
+        matches!(fixture.engine.action_availability(&action).unwrap(),
+            crate::model::DockspaceActionAvailability::Ready { retired_surfaces, requires_presentation: true }
+            if retired_surfaces.contains(&NATIVE_SURFACE) && !retired_surfaces.contains(&target_surface)
+        )
     );
     assert_eq!(fixture.engine.version(), source_version);
 
     let staged = submit_test_input(
         &mut fixture.engine,
         fixture.presentation_host,
-        EngineInput::DockBackRoot {
+        EngineInput::ProductAction {
             expected: source_version,
-            root,
+            action: crate::model::ProductAction::DockBackRoot { root },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("native main dock-back must stage against its bound recovery");
@@ -2691,9 +2695,10 @@ fn runtime_owned_native_main_dock_back_requires_window_lifecycle_capability() {
     let rejected = submit_test_input(
         &mut fixture.engine,
         fixture.presentation_host,
-        EngineInput::DockBackRoot {
+        EngineInput::ProductAction {
             expected: version,
-            root,
+            action: crate::model::ProductAction::DockBackRoot { root },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("runtime-owned dock-back must return a typed rejection");
@@ -2735,11 +2740,14 @@ fn root_presentation_transitions_share_one_pending_reservation() {
     let conflict = submit_test_input(
         &mut creating.engine,
         creating.presentation_host,
-        EngineInput::FloatRoot {
+        EngineInput::ProductAction {
             expected: version,
-            root,
-            surface: TARGET_SURFACE,
-            rect: None,
+            action: crate::model::ProductAction::FloatRoot {
+                root,
+                surface: TARGET_SURFACE,
+                rect: None,
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("a competing contained transition must reduce as a typed conflict");
@@ -2784,11 +2792,14 @@ fn root_presentation_transitions_share_one_pending_reservation() {
     let staged = submit_test_input(
         &mut rehoming.engine,
         rehoming.presentation_host,
-        EngineInput::FloatRoot {
+        EngineInput::ProductAction {
             expected: version,
-            root,
-            surface: TARGET_SURFACE,
-            rect: None,
+            action: crate::model::ProductAction::FloatRoot {
+                root,
+                surface: TARGET_SURFACE,
+                rect: None,
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("the first presentation transition stages");
@@ -2809,13 +2820,16 @@ fn root_presentation_transitions_share_one_pending_reservation() {
     let tear_off = submit_test_input(
         &mut rehoming.engine,
         rehoming.presentation_host,
-        EngineInput::TearOffNative {
+        EngineInput::ProductAction {
             expected: version,
-            source: crate::model::DockMoveSource::Root(root),
-            placement: Some(crate::model::NativeWindowPlacement::new(
-                PhysicalRect::new(800.0, 120.0, 360.0, 260.0)
-                    .expect("native placement must validate"),
-            )),
+            action: crate::model::ProductAction::TearOffNative {
+                source: crate::model::DockMoveSource::Root(root),
+                placement: Some(crate::model::NativeWindowPlacement::new(
+                    PhysicalRect::new(800.0, 120.0, 360.0, 260.0)
+                        .expect("native placement must validate"),
+                )),
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("a competing native transition must reduce as a typed conflict");
@@ -2829,11 +2843,14 @@ fn root_presentation_transitions_share_one_pending_reservation() {
     let dock = submit_test_input(
         &mut rehoming.engine,
         rehoming.presentation_host,
-        EngineInput::DockRoot {
+        EngineInput::ProductAction {
             expected: version,
-            root,
-            placement: crate::model::DockPlacement::Main(SOURCE_SURFACE),
-            mode: crate::model::TabGroupDockMode::MergeTabs,
+            action: crate::model::ProductAction::DockRoot {
+                root,
+                placement: crate::model::DockPlacement::Main(SOURCE_SURFACE),
+                mode: crate::model::TabGroupDockMode::MergeTabs,
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("a competing dock transition must reduce as a typed conflict");
@@ -2855,11 +2872,14 @@ fn root_presentation_transitions_share_one_pending_reservation() {
     let different_root = submit_test_input(
         &mut rehoming.engine,
         rehoming.presentation_host,
-        EngineInput::FloatRoot {
+        EngineInput::ProductAction {
             expected: version,
-            root: SOURCE_ROOT,
-            surface: TARGET_SURFACE,
-            rect: None,
+            action: crate::model::ProductAction::FloatRoot {
+                root: SOURCE_ROOT,
+                surface: TARGET_SURFACE,
+                rect: None,
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("the single rehome coordinator rejects a different root");
@@ -3037,13 +3057,16 @@ fn active_surface_local_drag_rejects_programmatic_native_tear_off_atomically() {
     TestInputStream::resume(&fixture.engine, ENGINE_TEST_INPUT_SOURCE)
         .append(
             &mut frame,
-            EngineInput::TearOffNative {
+            EngineInput::ProductAction {
                 expected: version,
-                source: crate::model::DockMoveSource::Root(SOURCE_ROOT),
-                placement: Some(crate::model::NativeWindowPlacement::new(
-                    PhysicalRect::new(700.0, 100.0, 420.0, 320.0)
-                        .expect("native placement must validate"),
-                )),
+                action: crate::model::ProductAction::TearOffNative {
+                    source: crate::model::DockMoveSource::Root(SOURCE_ROOT),
+                    placement: Some(crate::model::NativeWindowPlacement::new(
+                        PhysicalRect::new(700.0, 100.0, 420.0, 320.0)
+                            .expect("native placement must validate"),
+                    )),
+                },
+                required_surfaces: Vec::new(),
             },
         )
         .expect("the competing tear-off stages after the pointer checkpoint");
@@ -3367,11 +3390,14 @@ fn product_native_root_to_contained_settles_when_the_source_host_retires() {
     let staged = submit_test_input(
         &mut fixture.engine,
         fixture.presentation_host,
-        EngineInput::FloatRoot {
+        EngineInput::ProductAction {
             expected: source_version,
-            root,
-            surface: TARGET_SURFACE,
-            rect: None,
+            action: crate::model::ProductAction::FloatRoot {
+                root,
+                surface: TARGET_SURFACE,
+                rect: None,
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("native-to-contained product action stages");
@@ -3471,11 +3497,14 @@ fn product_native_root_rehome_terminates_on_exact_backend_failure() {
     let _ = submit_test_input(
         &mut fixture.engine,
         fixture.presentation_host,
-        EngineInput::FloatRoot {
+        EngineInput::ProductAction {
             expected: source_version,
-            root,
-            surface: TARGET_SURFACE,
-            rect: None,
+            action: crate::model::ProductAction::FloatRoot {
+                root,
+                surface: TARGET_SURFACE,
+                rect: None,
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("native-to-contained transition must stage");
@@ -3566,11 +3595,14 @@ fn product_native_root_rehome_ignores_target_failure_without_preview_token() {
     let _ = submit_test_input(
         &mut fixture.engine,
         fixture.presentation_host,
-        EngineInput::FloatRoot {
+        EngineInput::ProductAction {
             expected: source_version,
-            root,
-            surface: TARGET_SURFACE,
-            rect: None,
+            action: crate::model::ProductAction::FloatRoot {
+                root,
+                surface: TARGET_SURFACE,
+                rect: None,
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("native-to-contained transition must stage");
@@ -4229,11 +4261,14 @@ fn rootless_native_child_rehome_waits_for_target_presentation_before_release() {
     let staged = submit_test_input(
         &mut engine,
         presentation_host,
-        EngineInput::FloatRoot {
+        EngineInput::ProductAction {
             expected: source_version,
-            root: child_root,
-            surface: host_surface,
-            rect: None,
+            action: crate::model::ProductAction::FloatRoot {
+                root: child_root,
+                surface: host_surface,
+                rect: None,
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("rootless child rehome must stage");
@@ -4653,11 +4688,14 @@ fn product_native_root_docks_into_empty_main_after_target_presentation() {
     let staged = submit_test_input(
         &mut fixture.engine,
         fixture.presentation_host,
-        EngineInput::DockRoot {
+        EngineInput::ProductAction {
             expected: source_version,
-            root,
-            placement: DockPlacement::Main(TARGET_SURFACE),
-            mode: crate::model::TabGroupDockMode::MergeTabs,
+            action: crate::model::ProductAction::DockRoot {
+                root,
+                placement: DockPlacement::Main(TARGET_SURFACE),
+                mode: crate::model::TabGroupDockMode::MergeTabs,
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("native-to-main docking reduces");

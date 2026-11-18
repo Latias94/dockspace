@@ -237,13 +237,16 @@ fn source_recovery_cancels_first_live_projection_without_workspace_or_version_ch
     let created = submit_test_input(
         &mut fixture.engine,
         fixture.presentation_host,
-        EngineInput::TearOffNative {
+        EngineInput::ProductAction {
             expected: version,
-            source: crate::model::DockMoveSource::Root(SOURCE_ROOT),
-            placement: Some(crate::model::NativeWindowPlacement::new(
-                PhysicalRect::new(1000.0, 0.0, 400.0, 300.0)
-                    .expect("the prospective window placement must be valid"),
-            )),
+            action: crate::model::ProductAction::TearOffNative {
+                source: crate::model::DockMoveSource::Root(SOURCE_ROOT),
+                placement: Some(crate::model::NativeWindowPlacement::new(
+                    PhysicalRect::new(1000.0, 0.0, 400.0, 300.0)
+                        .expect("the prospective window placement must be valid"),
+                )),
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("the current-action reducer must accept a native child source");
@@ -535,12 +538,15 @@ fn source_recovery_revokes_later_direct_prepared_action_in_the_same_snapshot() {
         let created = submit_test_input(
             &mut fixture.engine,
             fixture.presentation_host,
-            EngineInput::TearOffNative {
+            EngineInput::ProductAction {
                 expected,
-                source: crate::model::DockMoveSource::Root(root),
-                placement: Some(crate::model::NativeWindowPlacement::new(
-                    PhysicalRect::new(x, 0.0, 400.0, 300.0).unwrap(),
-                )),
+                action: crate::model::ProductAction::TearOffNative {
+                    source: crate::model::DockMoveSource::Root(root),
+                    placement: Some(crate::model::NativeWindowPlacement::new(
+                        PhysicalRect::new(x, 0.0, 400.0, 300.0).unwrap(),
+                    )),
+                },
+                required_surfaces: Vec::new(),
             },
         )
         .expect("both independent roots must request real native creates");

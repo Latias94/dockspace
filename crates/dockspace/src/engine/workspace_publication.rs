@@ -265,13 +265,26 @@ impl DockEngine {
         action_barrier: Option<&BTreeMap<crate::ids::SurfaceId, SurfaceRosterDisposition>>,
         saga: NativeCreateSagaId,
     ) -> Result<(Option<StagedWorkspacePublication>, CommandApplication), EngineError> {
-        self.stage_workspace_command_with_authority(
+        let staged = self.stage_workspace_command_with_authority(
             input,
             policy,
             command,
             action_barrier,
             WorkspacePublicationAuthority::NativeCommit { saga },
-        )
+        )?;
+        if let Some(publication) = &staged.0
+            && let Some(create) = self.viewport.native_create_saga(saga)
+            && let Some(surface) = Self::first_missing_required_surface(
+                &publication.workspace,
+                create.prepared().required_surfaces(),
+            )
+        {
+            return Ok((
+                None,
+                CommandApplication::Rejected(CommandError::SurfaceLifecycleFrozen { surface }),
+            ));
+        }
+        Ok(staged)
     }
 
     pub(super) fn stage_workspace_command_with_authority(

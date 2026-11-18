@@ -3205,9 +3205,10 @@ fn native_main_dock_back_preflight_rejects_arrangement_lock_without_mutation() {
     let rejected = submit_test_input(
         &mut fixture.engine,
         &mut fixture.presentation_host,
-        EngineInput::DockBackRoot {
+        EngineInput::ProductAction {
             expected: version,
-            root: ROOT_CHILD,
+            action: crate::model::ProductAction::DockBackRoot { root: ROOT_CHILD },
+            required_surfaces: Vec::new(),
         },
     )
     .expect("locked native dock-back must reduce to a typed rejection");

@@ -126,7 +126,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         Ok(Some(
             match self.candidate.prepare_product_action_if_available(action)? {
                 Ok(prepared) => {
-                    let (domain, version, action) = prepared.into_parts();
+                    let (domain, version, action, _) = prepared.into_parts();
                     PresentationCommandPaintRecord::ready(
                         domain,
                         version,
@@ -234,7 +234,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         Ok(Some(
             match self.candidate.prepare_product_action_if_available(action)? {
                 Ok(prepared) => {
-                    let (domain, version, action) = prepared.into_parts();
+                    let (domain, version, action, _) = prepared.into_parts();
                     PresentationCommandPaintRecord::ready(
                         domain,
                         version,

@@ -572,15 +572,7 @@ impl<'session> DockspaceHostFrame<'session> {
         &mut self,
         item: crate::ids::ItemId,
     ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
-        let frame_attempt = self.frame.presentation_attempt();
-        let source_sequence = self.append_identified(EngineInput::SelectItem {
-            expected: self.frame.view().version(),
-            item,
-        })?;
-        Ok(DockspaceSubmittedAction::new(
-            frame_attempt,
-            source_sequence,
-        ))
+        self.submit_current_product_action(crate::model::ProductAction::SelectItem { item })
     }
 
     /// Shows or hides an owned item without removing its layout membership.
@@ -599,16 +591,10 @@ impl<'session> DockspaceHostFrame<'session> {
         item: crate::ids::ItemId,
         visible: bool,
     ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
-        let frame_attempt = self.frame.presentation_attempt();
-        let source_sequence = self.append_identified(EngineInput::SetItemVisibility {
-            expected: self.frame.view().version(),
+        self.submit_current_product_action(crate::model::ProductAction::SetItemVisibility {
             item,
             visible,
-        })?;
-        Ok(DockspaceSubmittedAction::new(
-            frame_attempt,
-            source_sequence,
-        ))
+        })
     }
 
     /// Opens one item at a stable product placement.
@@ -627,16 +613,10 @@ impl<'session> DockspaceHostFrame<'session> {
         item: crate::ids::ItemId,
         placement: DockPlacement,
     ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
-        let frame_attempt = self.frame.presentation_attempt();
-        let source_sequence = self.append_identified(EngineInput::OpenItem {
-            expected: self.frame.view().version(),
+        self.submit_current_product_action(crate::model::ProductAction::OpenItem {
             item,
             placement,
-        })?;
-        Ok(DockspaceSubmittedAction::new(
-            frame_attempt,
-            source_sequence,
-        ))
+        })
     }
 
     /// Docks one currently open item at a stable product placement.
@@ -653,16 +633,10 @@ impl<'session> DockspaceHostFrame<'session> {
         item: crate::ids::ItemId,
         placement: DockPlacement,
     ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
-        let frame_attempt = self.frame.presentation_attempt();
-        let source_sequence = self.append_identified(EngineInput::DockItem {
-            expected: self.frame.view().version(),
+        self.submit_current_product_action(crate::model::ProductAction::DockItem {
             item,
             placement,
-        })?;
-        Ok(DockspaceSubmittedAction::new(
-            frame_attempt,
-            source_sequence,
-        ))
+        })
     }
 
     /// Docks a previously captured complete tabs group in one transaction.
@@ -698,17 +672,11 @@ impl<'session> DockspaceHostFrame<'session> {
         root: crate::ids::RootId,
         placement: DockPlacement,
     ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
-        let frame_attempt = self.frame.presentation_attempt();
-        let source_sequence = self.append_identified(EngineInput::DockRoot {
-            expected: self.frame.view().version(),
+        self.submit_current_product_action(crate::model::ProductAction::DockRoot {
             root,
             placement,
             mode: crate::model::TabGroupDockMode::MergeTabs,
-        })?;
-        Ok(DockspaceSubmittedAction::new(
-            frame_attempt,
-            source_sequence,
-        ))
+        })
     }
 
     /// Requests a native child window for one complete root.
@@ -748,16 +716,10 @@ impl<'session> DockspaceHostFrame<'session> {
         source: crate::model::DockMoveSource,
         placement: NativeWindowPlacement,
     ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
-        let frame_attempt = self.frame.presentation_attempt();
-        let source_sequence = self.append_identified(EngineInput::TearOffNative {
-            expected: self.frame.view().version(),
+        self.submit_current_product_action(crate::model::ProductAction::TearOffNative {
             source,
             placement: Some(placement),
-        })?;
-        Ok(DockspaceSubmittedAction::new(
-            frame_attempt,
-            source_sequence,
-        ))
+        })
     }
 
     /// Requests native tear-off using core placement from current authoritative facts.
@@ -775,16 +737,10 @@ impl<'session> DockspaceHostFrame<'session> {
         &mut self,
         source: crate::model::DockMoveSource,
     ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
-        let frame_attempt = self.frame.presentation_attempt();
-        let source_sequence = self.append_identified(EngineInput::TearOffNative {
-            expected: self.frame.view().version(),
+        self.submit_current_product_action(crate::model::ProductAction::TearOffNative {
             source,
             placement: None,
-        })?;
-        Ok(DockspaceSubmittedAction::new(
-            frame_attempt,
-            source_sequence,
-        ))
+        })
     }
 
     /// Moves one open item into a contained presentation on an existing surface.
@@ -803,16 +759,7 @@ impl<'session> DockspaceHostFrame<'session> {
         item: crate::ids::ItemId,
         surface: crate::ids::SurfaceId,
     ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
-        let frame_attempt = self.frame.presentation_attempt();
-        let source_sequence = self.append_identified(EngineInput::FloatItem {
-            expected: self.frame.view().version(),
-            item,
-            surface,
-        })?;
-        Ok(DockspaceSubmittedAction::new(
-            frame_attempt,
-            source_sequence,
-        ))
+        self.submit_current_product_action(crate::model::ProductAction::FloatItem { item, surface })
     }
 
     /// Floats one previously captured complete tabs group as an atomic payload.
@@ -847,15 +794,7 @@ impl<'session> DockspaceHostFrame<'session> {
         &mut self,
         item: crate::ids::ItemId,
     ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
-        let frame_attempt = self.frame.presentation_attempt();
-        let source_sequence = self.append_identified(EngineInput::RaiseContained {
-            expected: self.frame.view().version(),
-            item,
-        })?;
-        Ok(DockspaceSubmittedAction::new(
-            frame_attempt,
-            source_sequence,
-        ))
+        self.submit_current_product_action(crate::model::ProductAction::RaiseContained { item })
     }
 
     /// Clamps the contained presentation owning one item into current exact surface bounds.
@@ -873,10 +812,20 @@ impl<'session> DockspaceHostFrame<'session> {
         &mut self,
         item: crate::ids::ItemId,
     ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
-        let frame_attempt = self.frame.presentation_attempt();
-        let source_sequence = self.append_identified(EngineInput::BringContainedIntoView {
-            expected: self.frame.view().version(),
+        self.submit_current_product_action(crate::model::ProductAction::BringContainedIntoView {
             item,
+        })
+    }
+
+    fn submit_current_product_action(
+        &mut self,
+        action: crate::model::ProductAction,
+    ) -> Result<DockspaceSubmittedAction, DockspaceRuntimeError> {
+        let frame_attempt = self.frame.presentation_attempt();
+        let source_sequence = self.append_identified(EngineInput::ProductAction {
+            expected: self.frame.view().version(),
+            action,
+            required_surfaces: Vec::new(),
         })?;
         Ok(DockspaceSubmittedAction::new(
             frame_attempt,

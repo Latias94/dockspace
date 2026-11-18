@@ -248,9 +248,10 @@ fn changed_selection_retains_sealed_facts_but_rebinds_current_semantics_and_outp
         &mut engine,
         &mut host,
         StableInputSourceId::new(1),
-        EngineInput::SelectItem {
+        EngineInput::ProductAction {
             expected: previous_version,
-            item: SECOND,
+            action: crate::model::ProductAction::SelectItem { item: SECOND },
+            required_surfaces: Vec::new(),
         },
     )
     .unwrap();
@@ -485,9 +486,10 @@ fn unchanged_answers_rebuild_when_selected_items_have_different_actual_minima() 
         &mut engine,
         &mut host,
         StableInputSourceId::new(2),
-        EngineInput::SelectItem {
+        EngineInput::ProductAction {
             expected,
-            item: SECOND,
+            action: crate::model::ProductAction::SelectItem { item: SECOND },
+            required_surfaces: Vec::new(),
         },
     )
     .unwrap();
@@ -569,9 +571,10 @@ fn selecting_an_offscreen_tab_rebuilds_reveal_geometry_and_hit_receivers() {
         &mut engine,
         &mut host,
         StableInputSourceId::new(3),
-        EngineInput::SelectItem {
+        EngineInput::ProductAction {
             expected,
-            item: selected,
+            action: crate::model::ProductAction::SelectItem { item: selected },
+            required_surfaces: Vec::new(),
         },
     )
     .unwrap();
@@ -650,9 +653,10 @@ fn local_selection_rebuilds_when_another_items_measurements_change() {
             &mut engine,
             &mut host,
             StableInputSourceId::new(4),
-            EngineInput::SelectItem {
+            EngineInput::ProductAction {
                 expected,
-                item: SECOND,
+                action: crate::model::ProductAction::SelectItem { item: SECOND },
+                required_surfaces: Vec::new(),
             },
         )
         .unwrap();
@@ -831,9 +835,10 @@ fn retained_facts_use_current_drop_policy_without_reauthorizing_old_output() {
         &mut engine,
         &mut host,
         StableInputSourceId::new(5),
-        EngineInput::SelectItem {
+        EngineInput::ProductAction {
             expected,
-            item: SECOND,
+            action: crate::model::ProductAction::SelectItem { item: SECOND },
+            required_surfaces: Vec::new(),
         },
     )
     .unwrap();

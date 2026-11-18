@@ -61,6 +61,17 @@ impl DockEngine {
             Ok(staged) => staged,
             Err(source) => return Ok(Err(source)),
         };
+        self.publish_journal_workspace_command(cause, command, staged, events)
+            .map(Ok)
+    }
+
+    pub(in crate::engine) fn publish_journal_workspace_command(
+        &mut self,
+        cause: ReductionCause,
+        command: &WorkspaceCommand,
+        staged: StagedJournalWorkspaceCommand,
+        events: &mut Vec<WorkspaceEvent>,
+    ) -> Result<(CommandOutcome, bool), EngineError> {
         self.publish_workspace(staged.publication);
         self.reconcile_viewport_focus_authority();
         if staged.changed {
@@ -89,7 +100,7 @@ impl DockEngine {
                 ));
             }
         }
-        Ok(Ok((staged.outcome, staged.changed)))
+        Ok((staged.outcome, staged.changed))
     }
 
     pub(in crate::engine) fn stage_journal_workspace_command(

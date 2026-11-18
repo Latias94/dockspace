@@ -68,6 +68,7 @@ fn reserve_partial_source(
             command,
             proposal,
             PaneFocusDisposition::Clear,
+            &[],
             &policy,
         )
         .expect("partial native creation must not fail an engine invariant")

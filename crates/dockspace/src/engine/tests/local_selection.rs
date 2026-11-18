@@ -24,9 +24,12 @@ fn local_selection_and_reselection_preserve_revision_events_and_focus() {
                 .unwrap();
             structural_work::reset();
             let input = if product_action {
-                EngineInput::SelectItem {
+                EngineInput::ProductAction {
                     expected: before,
-                    item: ItemId::new(2),
+                    action: crate::model::ProductAction::SelectItem {
+                        item: ItemId::new(2),
+                    },
+                    required_surfaces: Vec::new(),
                 }
             } else {
                 EngineInput::WorkspaceCommand {
@@ -95,9 +98,12 @@ fn reselection_keeps_the_index_source_for_later_unchanged_actions() {
     submit_test_input(
         &mut engine,
         host,
-        EngineInput::SelectItem {
+        EngineInput::ProductAction {
             expected: version,
-            item: ItemId::new(1),
+            action: crate::model::ProductAction::SelectItem {
+                item: ItemId::new(1),
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .unwrap();
@@ -107,12 +113,15 @@ fn reselection_keeps_the_index_source_for_later_unchanged_actions() {
         submit_test_input(
             &mut engine,
             host,
-            EngineInput::OpenItem {
+            EngineInput::ProductAction {
                 expected: version,
-                item: ItemId::new(1),
-                placement: crate::model::DockPlacement::Center(crate::model::DockAnchor::Item(
-                    ItemId::new(1),
-                )),
+                action: crate::model::ProductAction::OpenItem {
+                    item: ItemId::new(1),
+                    placement: crate::model::DockPlacement::Center(crate::model::DockAnchor::Item(
+                        ItemId::new(1),
+                    )),
+                },
+                required_surfaces: Vec::new(),
             },
         )
         .unwrap();

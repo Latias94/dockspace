@@ -35,6 +35,7 @@ pub(super) struct PendingDragRelease {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct PendingPresentationRehome {
+    pub(super) required_surfaces: Vec<SurfaceId>,
     pub(super) source_version: WorkspaceVersion,
     pub(super) policy_revision: PolicyRevision,
     pub(super) cause: ReductionCause,

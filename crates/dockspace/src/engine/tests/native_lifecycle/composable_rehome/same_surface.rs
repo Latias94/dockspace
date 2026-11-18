@@ -117,10 +117,13 @@ fn same_surface_move_to_a_contained_peer_preserves_binding_and_exact_payload_sco
         let opened = submit_test_input(
             &mut fixture.engine,
             fixture.presentation_host,
-            EngineInput::OpenItem {
+            EngineInput::ProductAction {
                 expected,
-                item: PEER,
-                placement: DockPlacement::Center(DockAnchor::Item(TARGET)),
+                action: crate::model::ProductAction::OpenItem {
+                    item: PEER,
+                    placement: DockPlacement::Center(DockAnchor::Item(TARGET)),
+                },
+                required_surfaces: Vec::new(),
             },
         )
         .expect("the existing target must retain a peer while a new item opens");
@@ -132,10 +135,13 @@ fn same_surface_move_to_a_contained_peer_preserves_binding_and_exact_payload_sco
         let floated = submit_test_input(
             &mut fixture.engine,
             fixture.presentation_host,
-            EngineInput::FloatItem {
+            EngineInput::ProductAction {
                 expected,
-                item: PEER,
-                surface: SOURCE_SURFACE,
+                action: crate::model::ProductAction::FloatItem {
+                    item: PEER,
+                    surface: SOURCE_SURFACE,
+                },
+                required_surfaces: Vec::new(),
             },
         )
         .expect("an ordinary partial item float must establish the same-surface peer");

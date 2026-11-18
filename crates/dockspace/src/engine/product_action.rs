@@ -207,62 +207,17 @@ impl DockEngine {
             });
         }
 
-        match action {
-            ProductAction::DockRoot { .. }
-            | ProductAction::DockItem { .. }
-            | ProductAction::FloatItem { .. }
-            | ProductAction::DockTab { .. }
-            | ProductAction::FloatTab { .. }
-            | ProductAction::DockTabs { .. }
-            | ProductAction::FloatTabs { .. } => self.reduce_product_action(
-                input,
-                cause,
-                focus_causal,
-                expected,
-                action,
-                policy,
-                events,
-                interaction_events,
-            ),
-            ProductAction::FloatRoot {
-                root,
-                surface,
-                rect,
-            } => self.reduce_product_root_float(
-                input,
-                cause,
-                focus_causal,
-                expected,
-                root,
-                surface,
-                rect,
-                policy,
-                events,
-                interaction_events,
-            ),
-            ProductAction::DockBackRoot { root } => self.reduce_product_dock_back(
-                input,
-                cause,
-                focus_causal,
-                expected,
-                root,
-                policy,
-                events,
-                interaction_events,
-            ),
-            ProductAction::TearOffNative { source, placement } => self
-                .reduce_product_native_payload_tear_off(
-                    cause,
-                    focus_causal,
-                    expected,
-                    &source,
-                    placement,
-                    policy,
-                ),
-            _ => Err(EngineError::ReductionCauseInvariant {
-                detail: "local presentation command changed action class during reduction",
-            }),
-        }
+        self.reduce_requested_product_action(
+            input,
+            cause,
+            focus_causal,
+            expected,
+            action,
+            &[],
+            policy,
+            events,
+            interaction_events,
+        )
     }
 
     /// Prepares one selection action against the exact published workspace version.
@@ -525,90 +480,90 @@ impl DockEngine {
         &self,
         prepared: PreparedDockAction,
     ) -> Result<EngineInput, PreparedDockActionAuthorityMismatch> {
-        let (authority_domain, expected, action) = prepared.into_parts();
+        let (authority_domain, expected, action, required_surfaces) = prepared.into_parts();
         if authority_domain != self.authority_domain {
             return Err(PreparedDockActionAuthorityMismatch);
         }
-        Ok(match action {
-            ProductAction::SetItemVisibility { item, visible } => EngineInput::SetItemVisibility {
-                expected,
-                item,
-                visible,
-            },
-            ProductAction::SelectItem { item } => EngineInput::SelectItem { expected, item },
-            ProductAction::OpenItem { item, placement } => EngineInput::OpenItem {
-                expected,
-                item,
-                placement,
-            },
-            ProductAction::DockItem { item, placement } => EngineInput::DockItem {
-                expected,
-                item,
-                placement,
-            },
-            ProductAction::DockTab { tab, placement } => EngineInput::DockTab {
-                expected,
-                tab,
-                placement,
-            },
-            ProductAction::FloatTab { tab, surface } => EngineInput::FloatTab {
-                expected,
-                tab,
-                surface,
-            },
-            ProductAction::DockTabs {
-                group,
-                placement,
-                mode,
-            } => EngineInput::DockTabs {
-                expected,
-                group,
-                placement,
-                mode,
-            },
-            ProductAction::DockRoot {
-                root,
-                placement,
-                mode,
-            } => EngineInput::DockRoot {
+        Ok(EngineInput::ProductAction {
+            expected,
+            action,
+            required_surfaces,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn reduce_requested_product_action(
+        &mut self,
+        input: InputSequence,
+        cause: ReductionCause,
+        focus_causal: FocusCausalStamp,
+        expected: WorkspaceVersion,
+        action: ProductAction,
+        required_surfaces: &[SurfaceId],
+        policy: &DockPolicySnapshot,
+        events: &mut Vec<WorkspaceEvent>,
+        interaction_events: &mut Vec<InteractionEvent>,
+    ) -> Result<InputOutcome, EngineError> {
+        if expected == self.version
+            && let Some(surface) =
+                Self::first_missing_required_surface(&self.workspace, required_surfaces)
+        {
+            return Ok(InputOutcome::ProductActionRejected {
+                reason: DockspaceActionRejection::SurfaceRequired { surface },
+                version: self.version,
+            });
+        }
+        match action {
+            ProductAction::DockBackRoot { root } => self.reduce_product_dock_back(
+                input,
+                cause,
+                focus_causal,
                 expected,
                 root,
-                placement,
-                mode,
-            },
-            ProductAction::DockBackRoot { root } => EngineInput::DockBackRoot { expected, root },
-            ProductAction::TearOffNative { source, placement } => EngineInput::TearOffNative {
-                expected,
-                source,
-                placement,
-            },
+                required_surfaces,
+                policy,
+                events,
+                interaction_events,
+            ),
             ProductAction::FloatRoot {
                 root,
                 surface,
                 rect,
-            } => EngineInput::FloatRoot {
+            } => self.reduce_product_root_float(
+                input,
+                cause,
+                focus_causal,
                 expected,
                 root,
                 surface,
                 rect,
-            },
-            ProductAction::FloatItem { item, surface } => EngineInput::FloatItem {
+                required_surfaces,
+                policy,
+                events,
+                interaction_events,
+            ),
+            ProductAction::TearOffNative { source, placement } => self
+                .reduce_product_native_payload_tear_off(
+                    cause,
+                    focus_causal,
+                    expected,
+                    &source,
+                    placement,
+                    required_surfaces,
+                    policy,
+                ),
+            action => self.reduce_product_action(
+                input,
+                cause,
+                focus_causal,
                 expected,
-                item,
-                surface,
-            },
-            ProductAction::FloatTabs { group, surface } => EngineInput::FloatTabs {
-                expected,
-                group,
-                surface,
-            },
-            ProductAction::RaiseContained { item } => {
-                EngineInput::RaiseContained { expected, item }
-            }
-            ProductAction::BringContainedIntoView { item } => {
-                EngineInput::BringContainedIntoView { expected, item }
-            }
-        })
+                action,
+                required_surfaces,
+                policy,
+                events,
+                interaction_events,
+            ),
+        }
     }
 
     pub(super) fn reduce_product_action(
@@ -618,6 +573,7 @@ impl DockEngine {
         focus_causal: FocusCausalStamp,
         expected: WorkspaceVersion,
         action: ProductAction,
+        required_surfaces: &[SurfaceId],
         policy: &DockPolicySnapshot,
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
@@ -690,8 +646,13 @@ impl DockEngine {
                 version: self.version,
             });
         }
-        let (publication, application) =
-            self.stage_application_workspace_command(input, policy, &command)?;
+        let (publication, application) = self.stage_product_command(
+            input,
+            &command,
+            required_surfaces,
+            policy,
+            WorkspacePublicationAuthority::Ordinary,
+        )?;
         if let Some(candidate) = &publication
             && let Some(outcome) = self.reduce_native_product_rehome(
                 input,
@@ -702,6 +663,7 @@ impl DockEngine {
                 command.clone(),
                 context.clone(),
                 &candidate.workspace,
+                required_surfaces,
                 policy,
                 events,
             )?
@@ -765,6 +727,16 @@ impl DockEngine {
                 detail: "product action command produced an unrelated input outcome",
             }),
         }
+    }
+
+    pub(super) fn first_missing_required_surface(
+        candidate: &Workspace,
+        required: &[SurfaceId],
+    ) -> Option<SurfaceId> {
+        required
+            .iter()
+            .copied()
+            .find(|surface| candidate.surface(*surface).is_none())
     }
 
     fn visibility_focus_successor(&self, item: ItemId) -> Option<(SurfaceId, NodeId)> {
@@ -2009,6 +1981,9 @@ pub(super) fn product_command_rejection(
     error: &CommandError,
 ) -> Result<DockspaceActionRejection, EngineError> {
     match error {
+        CommandError::RequiredSurfaceRemoved { surface } => {
+            Ok(DockspaceActionRejection::SurfaceRequired { surface: *surface })
+        }
         CommandError::Policy(_) => Ok(DockspaceActionRejection::PolicyDenied),
         CommandError::ItemHidden { item } => {
             Ok(DockspaceActionRejection::ItemHidden { item: *item })

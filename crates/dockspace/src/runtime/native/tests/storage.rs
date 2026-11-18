@@ -349,9 +349,10 @@ fn native_input_capacity_rejects_unknown_semantic_storage_instead_of_undercounti
         .as_mut()
         .unwrap()
         .recorder_mut()
-        .record_semantic_input(EngineInput::SelectItem {
+        .record_semantic_input(EngineInput::ProductAction {
             expected,
-            item: ITEM,
+            action: crate::model::ProductAction::SelectItem { item: ITEM },
+            required_surfaces: Vec::new(),
         })
         .unwrap();
     assert!(session.native_input_owned_capacity_bytes().is_err());

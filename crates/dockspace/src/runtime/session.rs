@@ -304,26 +304,20 @@ impl DockspaceSession {
         self.engine.prepare_move(source, target)
     }
 
-    /// Checks whether a currently executable action's candidate removes a surface.
+    /// Inspects the canonical action candidate using current layout and native facts.
     ///
-    /// A fixed host can refuse such an application request without duplicating
-    /// graph topology rules. This read-only preflight grants no authority and
-    /// changes no layout, native state or input sequence. Stale, foreign and
-    /// ordinarily rejected actions return `false`, preserving their normal
-    /// submitted result. Native creation uses its own source-retaining protocol.
-    /// The submitted action still revalidates its exact session and revision.
+    /// Reports rejection separately from surface retirement and native presentation
+    /// waiting. This read-only query reserves nothing. Attach required surfaces with
+    /// [`PreparedDockAction::preserving_surfaces`] to enforce them at actual publication.
     ///
     /// # Errors
     ///
-    /// Returns an error if candidate preparation violates an internal invariant.
-    pub fn action_removes_surface(
+    /// Returns an error only when candidate staging violates an internal invariant.
+    pub fn action_availability(
         &self,
         action: &PreparedDockAction,
-        surface: crate::model::SurfaceId,
-    ) -> Result<bool, DockspaceRuntimeError> {
-        self.engine
-            .action_removes_surface(action, surface)
-            .map_err(Into::into)
+    ) -> Result<crate::model::DockspaceActionAvailability, DockspaceRuntimeError> {
+        self.engine.action_availability(action).map_err(Into::into)
     }
 
     /// Prepares one revision-bound move action from the published workspace.

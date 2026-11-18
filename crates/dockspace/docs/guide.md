@@ -196,6 +196,15 @@ A native target may request explicit physical bounds or derive placement from
 current platform facts; source ownership still waits for exact first-live admission.
 The source never widens to a representative pane or refreshes its captured revision.
 
+For a fixed host, attach `.preserving_surfaces([host_surface])` to the prepared
+action. Core checks the actual candidate before publication and retains the
+requirement through deferred native completion. A rejected removal returns
+`DockspaceActionRejection::SurfaceRequired`. `session.action_availability(&action)`
+reports current rejection or the candidate's retired surfaces and whether exact
+target presentation is required. Availability reserves nothing: measurement,
+window inventory and presentation can change without a workspace-version change.
+Submit the same constrained action and inspect its committed outcome.
+
 To move a complete tabs container, capture it once with
 `session.capture_tabs_group(DockAnchor::Item(item))`, then pass it as
 `DockMoveSource::Tabs`. `DockAnchor::Node(tabs.key())` also addresses a group

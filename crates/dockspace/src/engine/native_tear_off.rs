@@ -57,6 +57,11 @@ struct PreparedProductNativeTearOff {
     items: Vec<ItemId>,
 }
 
+struct CheckedNativeRootCreate {
+    obligation: SurfaceRecoveryObligation,
+    retired_surfaces: Vec<SurfaceId>,
+}
+
 impl DockEngine {
     pub(super) fn root_is_bound_native_main(&self, root: RootId) -> bool {
         matches!(
@@ -369,8 +374,9 @@ impl DockEngine {
         &self,
         source: &DockMoveSource,
         placement: Option<NativeWindowPlacement>,
+        required_surfaces: &[SurfaceId],
         policy: &DockPolicySnapshot,
-    ) -> Result<Result<(), DockspaceActionRejection>, EngineError> {
+    ) -> Result<Result<Vec<SurfaceId>, DockspaceActionRejection>, EngineError> {
         let prepared =
             match self.prepare_product_native_payload_tear_off(source, placement, policy)? {
                 Ok(prepared) => prepared,
@@ -380,9 +386,10 @@ impl DockEngine {
             prepared.source_presentation.surface(),
             &prepared.command,
             &prepared.proposal,
+            required_surfaces,
             policy,
         )? {
-            Ok(_) => Ok(Ok(())),
+            Ok(checked) => Ok(Ok(checked.retired_surfaces)),
             Err(reason) => Ok(Err(reason.into_product_rejection(
                 ProductAction::TearOffNative {
                     source: source.clone(),
@@ -399,6 +406,7 @@ impl DockEngine {
         expected: WorkspaceVersion,
         source: &DockMoveSource,
         placement: Option<NativeWindowPlacement>,
+        required_surfaces: &[SurfaceId],
         policy: &DockPolicySnapshot,
     ) -> Result<InputOutcome, EngineError> {
         if expected != self.version {
@@ -427,6 +435,7 @@ impl DockEngine {
             prepared.command,
             prepared.proposal,
             prepared.pane_focus,
+            required_surfaces,
             policy,
         )? {
             Ok(request) => Ok(InputOutcome::ProductActionProcessed {
@@ -458,6 +467,7 @@ impl DockEngine {
         command: WorkspaceCommand,
         proposal: crate::platform::frame::NativeCreateProposal,
         pane_focus: PaneFocusDisposition,
+        required_surfaces: &[SurfaceId],
         policy: &DockPolicySnapshot,
     ) -> Result<
         Result<crate::platform::frame::NativeCreateRequest, NativeRootCreateRejection>,
@@ -465,7 +475,13 @@ impl DockEngine {
     > {
         let source_surface = source_presentation.surface();
         let checked = self
-            .check_native_root_create(source_surface, &command, &proposal, policy)
+            .check_native_root_create(
+                source_surface,
+                &command,
+                &proposal,
+                required_surfaces,
+                policy,
+            )
             .map_err(|error| match error {
                 EngineError::WorkspaceCommandPreflight { source } => {
                     EngineError::PointerInteractionInvariant {
@@ -476,7 +492,7 @@ impl DockEngine {
                 error => error,
             })?;
         let obligation = match checked {
-            Ok(obligation) => obligation,
+            Ok(checked) => checked.obligation,
             Err(reason) => return Ok(Err(reason)),
         };
         let id = obligation.id();
@@ -491,7 +507,8 @@ impl DockEngine {
             proposal,
             obligation,
             focus_causal,
-        );
+        )
+        .with_required_surfaces(required_surfaces);
         let request = self
             .viewport
             .start_native_create(prepared)
@@ -518,8 +535,9 @@ impl DockEngine {
         source_surface: SurfaceId,
         command: &WorkspaceCommand,
         proposal: &crate::platform::frame::NativeCreateProposal,
+        required_surfaces: &[SurfaceId],
         policy: &DockPolicySnapshot,
-    ) -> Result<Result<SurfaceRecoveryObligation, NativeRootCreateRejection>, EngineError> {
+    ) -> Result<Result<CheckedNativeRootCreate, NativeRootCreateRejection>, EngineError> {
         // Availability and delivery inspect the same canonical future. This
         // proof stays read-only until a create saga adopts its obligation.
         if !self.viewport.native_binding_allocation_available() {
@@ -551,6 +569,11 @@ impl DockEngine {
                 Ok(future) => future,
                 Err(error) => return Ok(Err(NativeRootCreateRejection::Command(error))),
             };
+        if let Some(surface) = Self::first_missing_required_surface(&future, required_surfaces) {
+            return Ok(Err(NativeRootCreateRejection::Command(
+                CommandError::RequiredSurfaceRemoved { surface },
+            )));
+        }
         if future.surface(recovery_target.host_surface()).is_none() {
             return Ok(Err(NativeRootCreateRejection::RecoveryUnavailable {
                 source_surface,
@@ -575,7 +598,15 @@ impl DockEngine {
                 });
             }
         };
-        Ok(Ok(obligation))
+        Ok(Ok(CheckedNativeRootCreate {
+            obligation,
+            retired_surfaces: self
+                .workspace
+                .surfaces()
+                .map(|(surface, _)| surface)
+                .filter(|surface| future.surface(*surface).is_none())
+                .collect(),
+        }))
     }
 
     fn preflight_native_root_create_command(

@@ -16,8 +16,9 @@ pub use crate::graph::{InvalidSplitWeight, InvalidSplitWeights, TabLabel};
 pub use crate::ids::{FloatingPresentationId, ItemId, NodeKey, RootId, SurfaceId, TabKey};
 pub use action::{
     DockAnchor, DockEdge, DockFraction, DockMoveSource, DockMoveTarget, DockPlacement,
-    DockspaceActionOutcome, DockspaceActionRejection, InvalidDockFraction, LogicalSurfaceRejection,
-    NativeWindowPlacement, PreparedDockAction, PreparedTab, PreparedTabsGroup, TabGroupDockMode,
+    DockspaceActionAvailability, DockspaceActionOutcome, DockspaceActionRejection,
+    InvalidDockFraction, LogicalSurfaceRejection, NativeWindowPlacement, PreparedDockAction,
+    PreparedTab, PreparedTabsGroup, TabGroupDockMode,
 };
 pub(crate) use action::{PreparedDockActionAuthorityMismatch, ProductAction};
 pub use grid::{DockspaceGridError, DockspaceGridShape, DockspaceGridShares};

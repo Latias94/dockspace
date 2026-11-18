@@ -26,10 +26,10 @@ fn set_visibility(
     let transition = submit_test_input(
         &mut fixture.engine,
         host,
-        EngineInput::SetItemVisibility {
+        EngineInput::ProductAction {
             expected,
-            item,
-            visible,
+            action: crate::model::ProductAction::SetItemVisibility { item, visible },
+            required_surfaces: Vec::new(),
         },
     )
     .unwrap();

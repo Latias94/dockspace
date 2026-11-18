@@ -42,6 +42,7 @@ impl DockEngine {
             command,
             normalized,
             pane_focus,
+            &[],
             policy,
         )? {
             Ok(request) => request,

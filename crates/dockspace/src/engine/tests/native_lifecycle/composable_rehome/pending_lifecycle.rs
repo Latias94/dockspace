@@ -199,10 +199,13 @@ fn pending_nested_rehome_rejects_source_hide_then_target_hide_revokes_late_prese
         let source_hidden = submit_test_input(
             &mut fixture.engine,
             fixture.presentation_host,
-            EngineInput::SetItemVisibility {
+            EngineInput::ProductAction {
                 expected: version,
-                item: FIRST,
-                visible: false,
+                action: crate::model::ProductAction::SetItemVisibility {
+                    item: FIRST,
+                    visible: false,
+                },
+                required_surfaces: Vec::new(),
             },
         )
         .expect("a source edit must receive a typed reservation rejection");
@@ -220,10 +223,13 @@ fn pending_nested_rehome_rejects_source_hide_then_target_hide_revokes_late_prese
         let target_hidden = submit_test_input(
             &mut fixture.engine,
             fixture.presentation_host,
-            EngineInput::SetItemVisibility {
+            EngineInput::ProductAction {
                 expected: version,
-                item: TARGET,
-                visible: false,
+                action: crate::model::ProductAction::SetItemVisibility {
+                    item: TARGET,
+                    visible: false,
+                },
+                required_surfaces: Vec::new(),
             },
         )
         .expect("the unrelated target item remains editable during a pending rehome");

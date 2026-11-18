@@ -2580,7 +2580,10 @@ impl CoreHostFrame {
             EngineInput::WorkspaceCommand { command, .. } => {
                 command.opened_item().filter(|item| !scope.contains(item))
             }
-            EngineInput::OpenItem { item, .. } => (!scope.contains(item)).then_some(*item),
+            EngineInput::ProductAction {
+                action: crate::model::ProductAction::OpenItem { item, .. },
+                ..
+            } => (!scope.contains(item)).then_some(*item),
             _ => None,
         }
     }

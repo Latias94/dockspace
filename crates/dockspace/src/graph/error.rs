@@ -160,6 +160,9 @@ pub enum CommandError {
     /// A native lifecycle decision froze the exact presentation roster.
     #[error("surface {surface} presentation roster is frozen by native lifecycle recovery")]
     SurfaceLifecycleFrozen { surface: SurfaceId },
+    /// A caller requires this surface to survive a candidate publication.
+    #[error("surface {surface} is required by the action")]
+    RequiredSurfaceRemoved { surface: SurfaceId },
     /// A contained presentation identity is absent.
     #[error("floating presentation {floating} does not exist")]
     MissingFloating { floating: FloatingPresentationId },
@@ -304,6 +307,7 @@ impl CommandError {
             | Self::MissingSurface { .. }
             | Self::SurfaceNotEmpty { .. }
             | Self::SurfaceLifecycleFrozen { .. }
+            | Self::RequiredSurfaceRemoved { .. }
             | Self::MissingFloating { .. }
             | Self::FloatingPresentationMismatch { .. }
             | Self::StaleContainedRect { .. }

@@ -788,138 +788,11 @@ pub enum EngineInput {
         /// Checked durable mutation.
         command: WorkspaceCommand,
     },
-    /// Select one item by stable application identity.
-    SelectItem {
-        /// Exact workspace version from which this product action was derived.
+    /// A product action with its revision and candidate-publication constraints.
+    ProductAction {
         expected: WorkspaceVersion,
-        /// Stable application item.
-        item: ItemId,
-    },
-    /// Changes whether one owned item participates in presentation layout.
-    SetItemVisibility {
-        /// Exact workspace version against which the request was prepared.
-        expected: WorkspaceVersion,
-        /// Owned application item, including one currently hidden.
-        item: ItemId,
-        /// Whether this item should participate in layout.
-        visible: bool,
-    },
-    /// Open one item at a stable product placement.
-    OpenItem {
-        /// Exact workspace version from which this product action was derived.
-        expected: WorkspaceVersion,
-        /// Stable application item.
-        item: ItemId,
-        /// Item-, root-, or surface-centric destination.
-        placement: crate::model::DockPlacement,
-    },
-    /// Move one open item to a stable product placement.
-    DockItem {
-        /// Exact workspace version from which this product action was derived.
-        expected: WorkspaceVersion,
-        /// Stable application item.
-        item: ItemId,
-        /// Item-, root-, or surface-centric destination.
-        placement: crate::model::DockPlacement,
-    },
-    /// Move an exact direct tab without widening to its owner group.
-    DockTab {
-        /// Captured revision.
-        expected: WorkspaceVersion,
-        /// Exact direct child.
-        tab: crate::model::PreparedTab,
-        /// Core placement intent.
-        placement: crate::model::DockPlacement,
-    },
-    /// Float an exact direct tab without widening to its owner group.
-    FloatTab {
-        /// Captured revision.
-        expected: WorkspaceVersion,
-        /// Exact direct child.
-        tab: crate::model::PreparedTab,
-        /// Hosting logical surface.
-        surface: SurfaceId,
-    },
-    /// Move one captured complete tabs group as one atomic payload.
-    DockTabs {
-        /// Exact version retained by the group capture.
-        expected: WorkspaceVersion,
-        /// Opaque, session-bound group source.
-        group: crate::model::PreparedTabsGroup,
-        /// Stable destination for the complete group.
-        placement: crate::model::DockPlacement,
-        /// Center insertion preserves the group or merges its direct children.
-        mode: crate::model::TabGroupDockMode,
-    },
-    /// Move one complete root to a stable product placement.
-    DockRoot {
-        /// Exact workspace version from which this product action was derived.
-        expected: WorkspaceVersion,
-        /// Stable root moved as one payload.
-        root: RootId,
-        /// Item-, root-, or surface-centric destination.
-        placement: crate::model::DockPlacement,
-        /// Center insertion of a complete Tabs root.
-        mode: crate::model::TabGroupDockMode,
-    },
-    /// Dock one complete contained root into the default target selected by core.
-    DockBackRoot {
-        /// Exact workspace version from which this product action was derived.
-        expected: WorkspaceVersion,
-        /// Stable root moved as one payload.
-        root: RootId,
-    },
-    /// Starts one native child-window lifecycle without early source transfer.
-    TearOffNative {
-        /// Exact workspace version from which this product action was derived.
-        expected: WorkspaceVersion,
-        /// Exact item, frozen tabs group, or stable complete root.
-        source: crate::model::DockMoveSource,
-        /// Explicit outer placement, or `None` for the core-derived default.
-        placement: Option<crate::model::NativeWindowPlacement>,
-    },
-    /// Move one complete root into a contained presentation on an existing surface.
-    FloatRoot {
-        /// Exact workspace version from which this product action was derived.
-        expected: WorkspaceVersion,
-        /// Stable complete root moved as one payload.
-        root: RootId,
-        /// Existing target surface.
-        surface: SurfaceId,
-        /// Optional explicit durable bounds; `None` delegates placement to core.
-        rect: Option<crate::geometry::LogicalRect>,
-    },
-    /// Move one open item into a contained presentation on an existing surface.
-    FloatItem {
-        /// Exact workspace version from which this product action was derived.
-        expected: WorkspaceVersion,
-        /// Stable application item.
-        item: ItemId,
-        /// Existing target surface.
-        surface: SurfaceId,
-    },
-    /// Move one captured complete tabs group into contained floating content.
-    FloatTabs {
-        /// Exact version retained by the group capture.
-        expected: WorkspaceVersion,
-        /// Opaque, session-bound group source.
-        group: crate::model::PreparedTabsGroup,
-        /// Existing surface which will own the contained presentation.
-        surface: SurfaceId,
-    },
-    /// Raise the contained presentation owning one item.
-    RaiseContained {
-        /// Exact workspace version from which this product action was derived.
-        expected: WorkspaceVersion,
-        /// Stable application item inside the contained root.
-        item: ItemId,
-    },
-    /// Clamp the contained presentation owning one item into exact current surface bounds.
-    BringContainedIntoView {
-        /// Exact workspace version from which this product action was derived.
-        expected: WorkspaceVersion,
-        /// Stable application item inside the contained root.
-        item: ItemId,
+        action: crate::model::ProductAction,
+        required_surfaces: Vec<SurfaceId>,
     },
     /// Request a core-owned close plan for stable application content.
     RequestContentClose {
@@ -1231,21 +1104,7 @@ impl EngineInput {
             | Self::AttachEmptySurface { .. }
             | Self::RetireEmptySurface { .. }
             | Self::WorkspaceCommand { .. }
-            | Self::SelectItem { .. }
-            | Self::SetItemVisibility { .. }
-            | Self::OpenItem { .. }
-            | Self::DockItem { .. }
-            | Self::DockTabs { .. }
-            | Self::DockTab { .. }
-            | Self::FloatTab { .. }
-            | Self::DockRoot { .. }
-            | Self::DockBackRoot { .. }
-            | Self::TearOffNative { .. }
-            | Self::FloatRoot { .. }
-            | Self::FloatItem { .. }
-            | Self::FloatTabs { .. }
-            | Self::RaiseContained { .. }
-            | Self::BringContainedIntoView { .. }
+            | Self::ProductAction { .. }
             | Self::RequestContentClose { .. }
             | Self::RequestSceneClose { .. }
             | Self::ApplyDeferredSurfaceAction { .. }

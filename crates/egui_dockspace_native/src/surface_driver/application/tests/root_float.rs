@@ -246,3 +246,45 @@ fn native_float_root_command_cannot_remove_the_fixed_host_surface() {
     assert_eq!(state.coordinator.session().version(), version);
     assert!(state.view().surface(SURFACE).unwrap().main_root().is_some());
 }
+
+#[test]
+fn deferred_measurements_must_preserve_the_fixed_host() {
+    let destination = SurfaceId::new(2);
+    let layout = DockspaceLayout::new([
+        DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(ROOT, DockspaceNode::tabs([FIRST, SECOND])),
+        ),
+        DockspaceSurfaceLayout::new(
+            destination,
+            DockspaceRootLayout::new(RootId::new(2), DockspaceNode::tabs([THIRD])),
+        ),
+    ])
+    .unwrap();
+    let mut state = state_with_layout(layout);
+    let version = state.coordinator.session().version();
+    let receipt = state
+        .request_command(NativeCommand::Move {
+            source: dockspace::model::DockMoveSource::Root(ROOT),
+            target: dockspace::model::DockMoveTarget::Contained {
+                surface: destination,
+            },
+        })
+        .unwrap();
+    present_geometry(
+        &mut state,
+        LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
+    );
+    assert_eq!(state.coordinator.session().version(), version);
+    state
+        .service_native_events(&egui::Context::default())
+        .unwrap();
+    assert!(matches!(
+        receipt.try_recv().unwrap().unwrap(),
+        NativeActionStatus::Dock(DockspaceActionStatus::Rejected(
+            DockspaceActionRejection::SurfaceRequired { surface: SURFACE },
+        ))
+    ));
+    assert!(state.view().surface(SURFACE).is_some());
+    assert_eq!(state.coordinator.session().version(), version);
+}

@@ -15,10 +15,13 @@ fn host_focus_facts_reject_hidden_targets_before_recording_focus_or_history() {
     let transition = submit_test_input(
         &mut fixture.engine,
         fact.host(),
-        EngineInput::SetItemVisibility {
+        EngineInput::ProductAction {
             expected,
-            item,
-            visible: false,
+            action: crate::model::ProductAction::SetItemVisibility {
+                item,
+                visible: false,
+            },
+            required_surfaces: Vec::new(),
         },
     )
     .unwrap();

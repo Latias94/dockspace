@@ -103,10 +103,13 @@ fn native_tab_source(
         let hidden = submit_test_input(
             &mut fixture.engine,
             presentation_host,
-            EngineInput::SetItemVisibility {
+            EngineInput::ProductAction {
                 expected,
-                item: HIDDEN,
-                visible: false,
+                action: crate::model::ProductAction::SetItemVisibility {
+                    item: HIDDEN,
+                    visible: false,
+                },
+                required_surfaces: Vec::new(),
             },
         )
         .expect("the outer sibling must hide through the ordinary product input");
@@ -731,10 +734,13 @@ fn check_nonvacant_source(remainder: SourceRemainder) {
                     ),
                     [HIDDEN]
                 );
-                EngineInput::SetItemVisibility {
+                EngineInput::ProductAction {
                     expected,
-                    item: HIDDEN,
-                    visible: true,
+                    action: crate::model::ProductAction::SetItemVisibility {
+                        item: HIDDEN,
+                        visible: true,
+                    },
+                    required_surfaces: Vec::new(),
                 }
             }
             SourceRemainder::CentralAnchor => {
@@ -744,10 +750,13 @@ fn check_nonvacant_source(remainder: SourceRemainder) {
                     fixture.engine.workspace().node(root.node),
                     Some(Node::Tabs { items, .. }) if items.is_empty()
                 ));
-                EngineInput::OpenItem {
+                EngineInput::ProductAction {
                     expected,
-                    item: ItemId::new(5),
-                    placement: DockPlacement::Center(DockAnchor::Central(SOURCE_ROOT)),
+                    action: crate::model::ProductAction::OpenItem {
+                        item: ItemId::new(5),
+                        placement: DockPlacement::Center(DockAnchor::Central(SOURCE_ROOT)),
+                    },
+                    required_surfaces: Vec::new(),
                 }
             }
             SourceRemainder::None => unreachable!("this control must retain a real remainder"),

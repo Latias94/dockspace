@@ -122,9 +122,12 @@ fn closing_a_native_recovery_host_is_cancelled_before_accept() {
     );
 
     let expected = fixture.engine.version();
-    let selected = fixture.submit(EngineInput::SelectItem {
+    let selected = fixture.submit(EngineInput::ProductAction {
         expected,
-        item: ItemId::new(2),
+        action: crate::model::ProductAction::SelectItem {
+            item: ItemId::new(2),
+        },
+        required_surfaces: Vec::new(),
     });
     assert!(matches!(
         only_outcome(&selected),

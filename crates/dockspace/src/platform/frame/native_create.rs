@@ -81,6 +81,7 @@ impl NativeCreateProposal {
 /// Frozen source, mutation, recovery, and focus facts for one native create saga.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PreparedNativeCreate {
+    required_surfaces: Vec<SurfaceId>,
     source_presentation: PresentedSurfaceAuthority,
     payload: MovePayload,
     source_epoch: WorkspaceEpoch,
@@ -101,6 +102,7 @@ impl PreparedNativeCreate {
         focus_causal: FocusCausalStamp,
     ) -> Self {
         Self {
+            required_surfaces: Vec::new(),
             source_presentation,
             payload,
             source_epoch,
@@ -109,6 +111,15 @@ impl PreparedNativeCreate {
             recovery_obligation,
             focus_causal,
         }
+    }
+
+    pub(crate) fn with_required_surfaces(mut self, required: &[SurfaceId]) -> Self {
+        self.required_surfaces = required.to_vec();
+        self
+    }
+
+    pub(crate) fn required_surfaces(&self) -> &[SurfaceId] {
+        &self.required_surfaces
     }
 
     pub(crate) const fn source_surface(&self) -> SurfaceId {

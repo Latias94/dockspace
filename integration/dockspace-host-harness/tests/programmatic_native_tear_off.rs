@@ -850,8 +850,8 @@ fn explicit_placement_can_recover_a_contained_root_without_visible_chrome() {
 }
 
 #[test]
-fn native_dock_back_availability_waits_for_the_current_recovery_scene() {
-    let mut fixture = Fixture::new();
+fn native_tear_off_availability_reports_the_previous_child_surface_retirement() {
+    let mut fixture = Fixture::configured(3, false);
     let action = fixture
         .session
         .prepare_move_to_new_window(DockMoveSource::Item(B), placement());
@@ -866,37 +866,197 @@ fn native_dock_back_availability_waits_for_the_current_recovery_scene() {
     let admitted = native_frame(&mut fixture.session).commit().unwrap();
     assert_eq!(admitted.native_admissions(), [request.binding]);
 
-    let unavailable = fixture
-        .session
-        .presentation_commands(request.root)
-        .dock_back()
-        .unwrap();
-    assert_eq!(
-        unavailable.unavailable_reason(),
-        Some(DockspaceActionRejection::PresentationUnavailable { surface: HOST })
-    );
-
-    let output = paint(&mut fixture.session, fixture.root, root_bounds());
+    let output = paint(&mut fixture.session, request.binding, request.placement);
     fixture
         .session
         .report_surface_presentation(output, SurfacePresentationResult::Presented)
         .unwrap();
-    native_frame(&mut fixture.session).commit().unwrap();
-    let command = fixture
+    idle(&mut fixture.session);
+    let action = fixture
         .session
-        .presentation_commands(request.root)
-        .dock_back()
-        .unwrap();
-    assert!(command.is_ready(), "{:?}", command.unavailable_reason());
+        .prepare_move_to_new_window(DockMoveSource::Root(request.root), placement());
+    assert_eq!(
+        fixture.session.action_availability(&action).unwrap(),
+        dockspace::model::DockspaceActionAvailability::Ready {
+            retired_surfaces: vec![request.binding.surface()],
+            requires_presentation: true,
+        }
+    );
+    let protected_action = fixture
+        .session
+        .prepare_move_to_new_window(DockMoveSource::Root(request.root), placement())
+        .preserving_surfaces([request.binding.surface()]);
+    assert_eq!(
+        fixture
+            .session
+            .action_availability(&protected_action)
+            .unwrap(),
+        dockspace::model::DockspaceActionAvailability::Unavailable(
+            DockspaceActionRejection::SurfaceRequired {
+                surface: request.binding.surface(),
+            },
+        )
+    );
     let mut frame = native_frame(&mut fixture.session);
-    let submitted = frame
-        .submit_prepared_action(command.into_prepared().unwrap())
-        .unwrap();
-    let report = frame.commit().unwrap();
+    let submitted = frame.submit_prepared_action(protected_action).unwrap();
+    let mut report = finish(frame);
+    assert_eq!(
+        report.submitted_action_outcome(submitted),
+        Some(&HostInputOutcome::ProductActionRejected(
+            DockspaceActionRejection::SurfaceRequired {
+                surface: request.binding.surface(),
+            },
+        ))
+    );
+    assert!(report.take_native_effects().is_empty());
+    assert!(
+        fixture
+            .session
+            .view()
+            .surface(request.binding.surface())
+            .is_some()
+    );
+
+    let mut frame = native_frame(&mut fixture.session);
+    let submitted = frame.submit_prepared_action(action).unwrap();
+    let mut report = finish(frame);
     assert!(matches!(
         report.submitted_action_outcome(submitted),
-        Some(HostInputOutcome::ProductPresentationActionRequested { .. })
+        Some(HostInputOutcome::ProductActionApplied(
+            DockspaceActionOutcome::NativeRootTearOffRequested { source_surface, .. }
+        )) if *source_surface == request.binding.surface()
     ));
+    let [effect] = report.take_native_effects().try_into().unwrap();
+    let NativeEffectOperation::CreateWindow {
+        binding, placement, ..
+    } = effect.operation()
+    else {
+        panic!("a second native tear-off must request a new window");
+    };
+    let (successor, bounds) = (*binding, *placement);
+    let Some(NativeEffectAcknowledgement::Create(ack)) = effect.accepted() else {
+        panic!("a second native tear-off must retain its acknowledgement");
+    };
+    fixture
+        .session
+        .report_managed_native_snapshot(
+            [
+                (fixture.root, root_facts()),
+                (request.binding, window_facts(request.placement)),
+                (
+                    successor,
+                    window_facts(bounds)
+                        .with_create_readiness(NativeCreateReadiness::Prepared, Some(ack)),
+                ),
+            ],
+            work_areas(),
+        )
+        .unwrap();
+    idle(&mut fixture.session);
+    let output = paint(&mut fixture.session, successor, bounds);
+    fixture
+        .session
+        .report_surface_presentation(output, SurfacePresentationResult::Presented)
+        .unwrap();
+    let admitted = native_frame(&mut fixture.session).commit().unwrap();
+    assert_eq!(admitted.native_admissions(), [successor]);
+    assert!(
+        fixture
+            .session
+            .view()
+            .surface(request.binding.surface())
+            .is_none()
+    );
+    assert_eq!(
+        fixture.session.view().item(B).unwrap().surface(),
+        successor.surface()
+    );
+}
+
+#[test]
+fn native_dock_back_availability_waits_for_the_current_recovery_scene() {
+    for inventory_unknown in [false, true] {
+        let mut fixture = Fixture::new();
+        let action = fixture
+            .session
+            .prepare_move_to_new_window(DockMoveSource::Item(B), placement());
+        let mut request = fixture.request(action);
+        let ack = request.accept();
+        fixture.observe(&request, NativeCreateReadiness::Prepared, Some(ack));
+        let output = paint(&mut fixture.session, request.binding, request.placement);
+        fixture
+            .session
+            .report_surface_presentation(output, SurfacePresentationResult::Presented)
+            .unwrap();
+        let admitted = native_frame(&mut fixture.session).commit().unwrap();
+        assert_eq!(admitted.native_admissions(), [request.binding]);
+
+        let unavailable = fixture
+            .session
+            .presentation_commands(request.root)
+            .dock_back()
+            .unwrap();
+        assert_eq!(
+            unavailable.unavailable_reason(),
+            Some(DockspaceActionRejection::PresentationUnavailable { surface: HOST })
+        );
+
+        let output = paint(&mut fixture.session, fixture.root, root_bounds());
+        fixture
+            .session
+            .report_surface_presentation(output, SurfacePresentationResult::Presented)
+            .unwrap();
+        native_frame(&mut fixture.session).commit().unwrap();
+        let action = fixture.session.prepare_dock_root_back(request.root);
+        assert!(
+            matches!(fixture.session.action_availability(&action).unwrap(),
+                dockspace::model::DockspaceActionAvailability::Ready { retired_surfaces, requires_presentation: true }
+                if retired_surfaces == [request.binding.surface()]
+            )
+        );
+        if inventory_unknown {
+            let version = fixture.session.version();
+            fixture.session.report_native_inventory_unknown().unwrap();
+            idle(&mut fixture.session);
+            assert_eq!(fixture.session.version(), version);
+            assert_eq!(
+                fixture.session.action_availability(&action).unwrap(),
+                dockspace::model::DockspaceActionAvailability::Unavailable(
+                    DockspaceActionRejection::PresentationUnavailable {
+                        surface: request.binding.surface()
+                    },
+                )
+            );
+            let mut frame = native_frame(&mut fixture.session);
+            let submitted = frame.submit_prepared_action(action).unwrap();
+            let report = frame.commit().unwrap();
+            assert_eq!(
+                report.submitted_action_outcome(submitted),
+                Some(&HostInputOutcome::ProductActionRejected(
+                    DockspaceActionRejection::PresentationUnavailable {
+                        surface: request.binding.surface()
+                    },
+                ))
+            );
+            assert!(!fixture.session.has_pending_presentation());
+            continue;
+        }
+        let command = fixture
+            .session
+            .presentation_commands(request.root)
+            .dock_back()
+            .unwrap();
+        assert!(command.is_ready(), "{:?}", command.unavailable_reason());
+        let mut frame = native_frame(&mut fixture.session);
+        let submitted = frame
+            .submit_prepared_action(command.into_prepared().unwrap())
+            .unwrap();
+        let report = frame.commit().unwrap();
+        assert!(matches!(
+            report.submitted_action_outcome(submitted),
+            Some(HostInputOutcome::ProductPresentationActionRequested { .. })
+        ));
+    }
 }
 
 fn paint_distinct_minima(

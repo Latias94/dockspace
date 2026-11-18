@@ -89,9 +89,10 @@ fn joined_document_restore_preserves_identities_after_a_workspace_mutating_nativ
         .as_mut()
         .expect("the managed native state exists")
         .recorder_mut()
-        .record_semantic_input(EngineInput::SelectItem {
+        .record_semantic_input(EngineInput::ProductAction {
             expected,
-            item: second,
+            action: crate::model::ProductAction::SelectItem { item: second },
+            required_surfaces: Vec::new(),
         })
         .expect("the native semantic prefix records");
 
@@ -169,9 +170,10 @@ fn joined_layout_reset_retries_after_a_workspace_mutating_native_prefix() {
         .as_mut()
         .expect("the managed native state exists")
         .recorder_mut()
-        .record_semantic_input(EngineInput::SelectItem {
+        .record_semantic_input(EngineInput::ProductAction {
             expected,
-            item: SECOND_ITEM,
+            action: crate::model::ProductAction::SelectItem { item: SECOND_ITEM },
+            required_surfaces: Vec::new(),
         })
         .expect("the workspace-mutating native prefix records");
     let recorded = target.native_input_recorded_count();

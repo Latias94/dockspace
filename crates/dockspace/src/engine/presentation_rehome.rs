@@ -15,6 +15,17 @@ struct NativePresentationRehomeSource {
     presentation: PresentedSurfaceAuthority,
 }
 
+struct PreparedNativeProductRehome {
+    source_native: NativePresentationRehomeSource,
+    source: crate::graph::command::NodeSource,
+    target_surface: SurfaceId,
+    target_presentation: PresentedSurfaceAuthority,
+    target_plan: SurfaceSceneStamp,
+    floating: Option<FloatingPresentationId>,
+    visual: PreviewVisual,
+    target_root: RootId,
+}
+
 struct PreparedPresentationRehome {
     command: WorkspaceCommand,
     root: RootId,
@@ -274,18 +285,21 @@ impl DockEngine {
         command: WorkspaceCommand,
         context: ProductCommandContext,
         candidate: &Workspace,
+        required_surfaces: &[SurfaceId],
         policy: &DockPolicySnapshot,
         events: &mut Vec<WorkspaceEvent>,
     ) -> Result<Option<InputOutcome>, EngineError> {
-        let Some((candidate_root, candidate_target_surface)) =
-            self.native_product_rehome_route(&command, candidate)?
-        else {
-            return Ok(None);
-        };
-        let source_native = match self
-            .native_presentation_rehome_source(candidate_root, candidate_target_surface)
-        {
-            Ok(Some(source_native)) => source_native,
+        let PreparedNativeProductRehome {
+            source_native,
+            source,
+            target_surface,
+            target_presentation,
+            target_plan,
+            floating,
+            visual,
+            target_root,
+        } = match self.prepare_native_product_rehome(&command, candidate)? {
+            Ok(Some(prepared)) => prepared,
             Ok(None) => return Ok(None),
             Err(reason) => {
                 return Ok(Some(InputOutcome::ProductActionRejected {
@@ -294,38 +308,7 @@ impl DockEngine {
                 }));
             }
         };
-        let (source, target_surface, floating, visual, target_root) =
-            match self.prepare_native_product_rehome_target(&command, candidate_root) {
-                Ok(Some(prepared)) => prepared,
-                Ok(None) => return Ok(None),
-                Err(reason) => {
-                    return Ok(Some(InputOutcome::ProductActionRejected {
-                        reason,
-                        version: self.version,
-                    }));
-                }
-            };
         let root = source.root();
-        debug_assert_eq!(root, candidate_root);
-        debug_assert_eq!(target_surface, candidate_target_surface);
-        if self.pending_mutation.is_some() || self.interaction.status() != InteractionStatus::Idle {
-            return Ok(Some(InputOutcome::ProductActionRejected {
-                reason: DockspaceActionRejection::Conflict,
-                version: self.version,
-            }));
-        }
-        let projection = match self.interaction_projection(target_surface) {
-            Some(projection) => projection,
-            None => {
-                return Ok(Some(InputOutcome::ProductActionRejected {
-                    reason: DockspaceActionRejection::PresentationUnavailable {
-                        surface: target_surface,
-                    },
-                    version: self.version,
-                }));
-            }
-        };
-        let target_presentation = projection.authority();
         let payload = match &command {
             WorkspaceCommand::Move { payload, .. }
             | WorkspaceCommand::CreateContainedRoot {
@@ -362,7 +345,7 @@ impl DockEngine {
             .interaction
             .prepare_presentation_rehome_preview(
                 self.version.epoch(),
-                projection.plan_stamp(),
+                target_plan,
                 visual,
                 PreviewProof::PresentationRehome {
                     command: command.clone(),
@@ -385,6 +368,7 @@ impl DockEngine {
             },
         };
         self.pending_mutation = Some(PendingMutation::Rehome(PendingPresentationRehome {
+            required_surfaces: required_surfaces.to_vec(),
             source_version: expected,
             policy_revision: policy.revision(),
             cause,
@@ -410,6 +394,56 @@ impl DockEngine {
             outcome,
             version: self.version,
         }))
+    }
+
+    pub(super) fn validate_native_product_rehome(
+        &self,
+        command: &WorkspaceCommand,
+        candidate: &Workspace,
+    ) -> Result<Result<bool, DockspaceActionRejection>, EngineError> {
+        Ok(self
+            .prepare_native_product_rehome(command, candidate)?
+            .map(|prepared| prepared.is_some()))
+    }
+
+    fn prepare_native_product_rehome(
+        &self,
+        command: &WorkspaceCommand,
+        candidate: &Workspace,
+    ) -> Result<Result<Option<PreparedNativeProductRehome>, DockspaceActionRejection>, EngineError>
+    {
+        let Some((root, surface)) = self.native_product_rehome_route(command, candidate)? else {
+            return Ok(Ok(None));
+        };
+        let source_native = match self.native_presentation_rehome_source(root, surface) {
+            Ok(Some(source)) => source,
+            Ok(None) => return Ok(Ok(None)),
+            Err(reason) => return Ok(Err(reason)),
+        };
+        let (source, target_surface, floating, visual, target_root) =
+            match self.prepare_native_product_rehome_target(command, root) {
+                Ok(Some(target)) => target,
+                Ok(None) => return Ok(Ok(None)),
+                Err(reason) => return Ok(Err(reason)),
+            };
+        if self.pending_mutation.is_some() || self.interaction.status() != InteractionStatus::Idle {
+            return Ok(Err(DockspaceActionRejection::Conflict));
+        }
+        let Some(projection) = self.interaction_projection(target_surface) else {
+            return Ok(Err(DockspaceActionRejection::PresentationUnavailable {
+                surface: target_surface,
+            }));
+        };
+        Ok(Ok(Some(PreparedNativeProductRehome {
+            source_native,
+            source,
+            target_surface,
+            target_presentation: projection.authority(),
+            target_plan: projection.plan_stamp(),
+            floating,
+            visual,
+            target_root,
+        })))
     }
 
     fn native_product_rehome_route(
@@ -659,6 +693,7 @@ impl DockEngine {
         root: RootId,
         surface: SurfaceId,
         rect: Option<LogicalRect>,
+        required_surfaces: &[SurfaceId],
         policy: &DockPolicySnapshot,
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
@@ -676,6 +711,7 @@ impl DockEngine {
             root,
             surface,
             rect,
+            required_surfaces,
             policy,
             events,
             interaction_events,
@@ -690,6 +726,7 @@ impl DockEngine {
         focus_causal: FocusCausalStamp,
         expected: WorkspaceVersion,
         root: RootId,
+        required_surfaces: &[SurfaceId],
         policy: &DockPolicySnapshot,
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
@@ -703,6 +740,7 @@ impl DockEngine {
                     focus_causal,
                     expected,
                     ProductAction::DockBackRoot { root },
+                    required_surfaces,
                     policy,
                     events,
                     interaction_events,
@@ -724,6 +762,7 @@ impl DockEngine {
             root,
             target_surface,
             None,
+            required_surfaces,
             policy,
             events,
             interaction_events,
@@ -741,6 +780,7 @@ impl DockEngine {
         root: RootId,
         surface: SurfaceId,
         rect: Option<LogicalRect>,
+        required_surfaces: &[SurfaceId],
         policy: &DockPolicySnapshot,
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
@@ -767,6 +807,7 @@ impl DockEngine {
                     focus_causal,
                     expected,
                     action,
+                    required_surfaces,
                     policy,
                     events,
                     interaction_events,
@@ -929,7 +970,17 @@ impl DockEngine {
             publication_authority,
             JournalDeliveryActivation::None,
         )? {
-            Ok(_) => {}
+            Ok(staged) => {
+                if let Some(surface) = Self::first_missing_required_surface(
+                    &staged.publication.workspace,
+                    required_surfaces,
+                ) {
+                    return Ok(InputOutcome::ProductActionRejected {
+                        reason: DockspaceActionRejection::SurfaceRequired { surface },
+                        version: self.version,
+                    });
+                }
+            }
             Err(error) => {
                 return Ok(InputOutcome::ProductActionRejected {
                     reason: super::product_action::product_command_rejection(action, &error)?,
@@ -947,6 +998,7 @@ impl DockEngine {
             )
             .map_err(|source| EngineError::Interaction { input, source })?;
         self.pending_mutation = Some(PendingMutation::Rehome(PendingPresentationRehome {
+            required_surfaces: required_surfaces.to_vec(),
             source_version: self.version,
             policy_revision: policy.revision(),
             cause,
@@ -1084,17 +1136,24 @@ impl DockEngine {
                 }
             }
         };
-        let (outcome, changed) = match self.apply_journal_workspace_command_with_authority(
+        let staged = self.stage_journal_workspace_command_with_authority(
             pending.cause,
             command,
-            &self.policy.clone(),
+            &self.policy,
             publication_authority,
             JournalDeliveryActivation::None,
-            None,
-            events,
-        )? {
-            Ok(result) => result,
-            Err(_) => {
+        )?;
+        let staged = match staged {
+            Ok(staged)
+                if Self::first_missing_required_surface(
+                    &staged.publication.workspace,
+                    &pending.required_surfaces,
+                )
+                .is_none() =>
+            {
+                staged
+            }
+            _ => {
                 Self::record_presentation_rehome_settlement(
                     &pending,
                     crate::engine::event::PresentationRehomeResult::CommandRejected,
@@ -1105,6 +1164,8 @@ impl DockEngine {
                 return Ok(true);
             }
         };
+        let (outcome, changed) =
+            self.publish_journal_workspace_command(pending.cause, command, staged, events)?;
         let product_outcome = pending
             .context
             .clone()

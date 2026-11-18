@@ -119,7 +119,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
             .ok_or_else(|| NativeLayoutRequestError::new_root_window_unavailable(self.root_surface))
     }
 
-    fn current_root_binding(&self) -> Option<NativeSurfaceBinding> {
+    pub(super) fn current_root_binding(&self) -> Option<NativeSurfaceBinding> {
         let session = self.coordinator.session();
         session.native_window_bindings().find_map(|window| {
             session
@@ -323,11 +323,24 @@ impl<P: PaneView> NativeRuntimeState<P> {
         if let Err(reason) = self.ensure_application_slot_available() {
             return Err(NativeCommandRequestError::new(reason, command));
         }
-        let removes_host = if let NativeCommand::Move { source, target } = &command {
+        let required_surface = self.root_surface;
+        let prepared_move = if let NativeCommand::Move { source, target } = &command {
             let session = self.coordinator.session();
-            let action = session.prepare_move(source.clone(), *target);
-            match session.action_removes_surface(&action, self.root_surface) {
-                Ok(removes) => removes,
+            let action = session
+                .prepare_move(source.clone(), *target)
+                .preserving_surfaces([required_surface]);
+            match session.action_availability(&action) {
+                Ok(dockspace::model::DockspaceActionAvailability::Unavailable(
+                    DockspaceActionRejection::SurfaceRequired { .. },
+                )) => {
+                    return Err(NativeCommandRequestError::new(
+                        NativeActionRequestError::HostSurfaceRequired {
+                            surface: required_surface,
+                        },
+                        command,
+                    ));
+                }
+                Ok(_) => Some(action),
                 Err(error) => {
                     self.stop_current_output(error.into());
                     return Err(NativeCommandRequestError::new(
@@ -337,9 +350,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
                 }
             }
         } else {
-            false
+            None
         };
-        if removes_host || self.content_close_removes_host_surface(&command) {
+        if self.content_close_removes_host_surface(&command) {
             return Err(NativeCommandRequestError::new(
                 NativeActionRequestError::HostSurfaceRequired {
                     surface: self.root_surface,
@@ -350,68 +363,76 @@ impl<P: PaneView> NativeRuntimeState<P> {
         let session = self.coordinator.session();
         let receipt = self
             .application_actions
-            .enqueue(command, |command| match command {
-                NativeCommand::SelectItem { item } => session.prepare_select_item(item).into(),
-                NativeCommand::SetItemVisibility { item, visible } => {
-                    session.prepare_set_item_visibility(item, visible).into()
+            .enqueue(command, |command| {
+                if let Some(action) = prepared_move {
+                    return action.into();
                 }
-                NativeCommand::OpenItem { item, placement } => {
-                    session.prepare_open_item(item, placement).into()
-                }
-                NativeCommand::Move { source, target } => {
-                    session.prepare_move(source, target).into()
-                }
-                NativeCommand::DockRootBack { root } => session.prepare_dock_root_back(root).into(),
-                NativeCommand::RaiseContained { item } => {
-                    session.prepare_raise_contained(item).into()
-                }
-                NativeCommand::BringContainedIntoView { item } => {
-                    session.prepare_bring_contained_into_view(item).into()
-                }
-                NativeCommand::CloseItem { item } => session.prepare_close_item(item).into(),
-                NativeCommand::CloseTab { tab } => session.prepare_close_tab(tab).into(),
-                NativeCommand::CloseRoot { root } => session.prepare_close_root(root).into(),
-                NativeCommand::DecideClose {
-                    request,
-                    token,
-                    decision,
-                } => NativeApplicationAction::new(
-                    session.version(),
-                    NativeApplicationCommand::DecideClose {
+                match command {
+                    NativeCommand::SelectItem { item } => session.prepare_select_item(item).into(),
+                    NativeCommand::SetItemVisibility { item, visible } => {
+                        session.prepare_set_item_visibility(item, visible).into()
+                    }
+                    NativeCommand::OpenItem { item, placement } => {
+                        session.prepare_open_item(item, placement).into()
+                    }
+                    NativeCommand::Move { .. } => {
+                        unreachable!("move requests retain the action validated before enqueue")
+                    }
+                    NativeCommand::DockRootBack { root } => session
+                        .prepare_dock_root_back(root)
+                        .preserving_surfaces([required_surface])
+                        .into(),
+                    NativeCommand::RaiseContained { item } => {
+                        session.prepare_raise_contained(item).into()
+                    }
+                    NativeCommand::BringContainedIntoView { item } => {
+                        session.prepare_bring_contained_into_view(item).into()
+                    }
+                    NativeCommand::CloseItem { item } => session.prepare_close_item(item).into(),
+                    NativeCommand::CloseTab { tab } => session.prepare_close_tab(tab).into(),
+                    NativeCommand::CloseRoot { root } => session.prepare_close_root(root).into(),
+                    NativeCommand::DecideClose {
                         request,
                         token,
                         decision,
-                    },
-                ),
-                NativeCommand::ContinueClose {
-                    request,
-                    token,
-                    decision,
-                } => NativeApplicationAction::new(
-                    session.version(),
-                    NativeApplicationCommand::ContinueClose {
+                    } => NativeApplicationAction::new(
+                        session.version(),
+                        NativeApplicationCommand::DecideClose {
+                            request,
+                            token,
+                            decision,
+                        },
+                    ),
+                    NativeCommand::ContinueClose {
                         request,
                         token,
                         decision,
-                    },
-                ),
-                NativeCommand::SetPolicy { policy } => NativeApplicationAction::new(
-                    session.version(),
-                    NativeApplicationCommand::Policy {
-                        policy,
-                        arrangement_lock: None,
-                    },
-                ),
-                NativeCommand::SetArrangementLocked { locked } => {
-                    let mut policy = session.policy().clone();
-                    policy.set_arrangement_locked(locked);
-                    NativeApplicationAction::new(
+                    } => NativeApplicationAction::new(
+                        session.version(),
+                        NativeApplicationCommand::ContinueClose {
+                            request,
+                            token,
+                            decision,
+                        },
+                    ),
+                    NativeCommand::SetPolicy { policy } => NativeApplicationAction::new(
                         session.version(),
                         NativeApplicationCommand::Policy {
-                            policy: Box::new(policy),
-                            arrangement_lock: Some(locked),
+                            policy,
+                            arrangement_lock: None,
                         },
-                    )
+                    ),
+                    NativeCommand::SetArrangementLocked { locked } => {
+                        let mut policy = session.policy().clone();
+                        policy.set_arrangement_locked(locked);
+                        NativeApplicationAction::new(
+                            session.version(),
+                            NativeApplicationCommand::Policy {
+                                policy: Box::new(policy),
+                                arrangement_lock: Some(locked),
+                            },
+                        )
+                    }
                 }
             })
             .map_err(|command| {

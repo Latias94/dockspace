@@ -25,10 +25,10 @@ fn set_visibility_after(
     support::TestInputStream::resume(engine, VISIBILITY_SOURCE)
         .append(
             &mut frame,
-            EngineInput::SetItemVisibility {
+            EngineInput::ProductAction {
                 expected,
-                item,
-                visible,
+                action: crate::model::ProductAction::SetItemVisibility { item, visible },
+                required_surfaces: Vec::new(),
             },
         )
         .expect("visibility reduces after the exact pointer prefix");

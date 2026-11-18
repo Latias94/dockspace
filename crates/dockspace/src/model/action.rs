@@ -545,6 +545,29 @@ pub enum DockspaceActionRejection {
         /// Source surface lacking exact presentation geometry.
         surface: SurfaceId,
     },
+    /// This action would remove a logical surface required by its caller.
+    #[error("surface {surface} must survive the action")]
+    SurfaceRequired {
+        /// Surface whose removal was refused before publication.
+        surface: SurfaceId,
+    },
+}
+
+/// Read-only availability of a prepared action against current layout and host facts.
+///
+/// This is advisory and reserves nothing. Submission checks the latest facts and
+/// the action's required surfaces again, even when the layout version is unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DockspaceActionAvailability {
+    /// The canonical candidate passes current policy and publication checks.
+    Ready {
+        /// Logical surfaces removed when this action completes.
+        retired_surfaces: Vec<SurfaceId>,
+        /// Content stays at its source until an exact native target presentation.
+        requires_presentation: bool,
+    },
+    /// The action cannot currently execute, including stale or foreign captures.
+    Unavailable(DockspaceActionRejection),
 }
 
 /// Session- and revision-bound product docking action.
@@ -560,6 +583,7 @@ pub struct PreparedDockAction {
     authority_domain: EngineAuthorityDomainId,
     expected: WorkspaceVersion,
     action: ProductAction,
+    required_surfaces: Vec<SurfaceId>,
 }
 
 impl PreparedDockAction {
@@ -572,6 +596,7 @@ impl PreparedDockAction {
             authority_domain,
             expected,
             action,
+            required_surfaces: Vec::new(),
         }
     }
 
@@ -581,14 +606,52 @@ impl PreparedDockAction {
         self.expected
     }
 
-    pub(crate) const fn parts(
-        &self,
-    ) -> (EngineAuthorityDomainId, WorkspaceVersion, &ProductAction) {
-        (self.authority_domain, self.expected, &self.action)
+    /// Requires these logical surfaces to survive this action's candidate publication.
+    ///
+    /// The core checks the real candidate at submission and, for deferred native
+    /// transfers, again at completion. Read-only availability is advisory: later
+    /// measurement or window facts cannot bypass this constraint. Repeated calls
+    /// add requirements without refreshing the captured session or revision.
+    #[must_use]
+    pub fn preserving_surfaces(mut self, surfaces: impl IntoIterator<Item = SurfaceId>) -> Self {
+        for surface in surfaces {
+            if !self.required_surfaces.contains(&surface) {
+                self.required_surfaces.push(surface);
+            }
+        }
+        self
     }
 
-    pub(crate) fn into_parts(self) -> (EngineAuthorityDomainId, WorkspaceVersion, ProductAction) {
-        (self.authority_domain, self.expected, self.action)
+    pub(crate) fn parts(
+        &self,
+    ) -> (
+        EngineAuthorityDomainId,
+        WorkspaceVersion,
+        &ProductAction,
+        &[SurfaceId],
+    ) {
+        (
+            self.authority_domain,
+            self.expected,
+            &self.action,
+            &self.required_surfaces,
+        )
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        EngineAuthorityDomainId,
+        WorkspaceVersion,
+        ProductAction,
+        Vec<SurfaceId>,
+    ) {
+        (
+            self.authority_domain,
+            self.expected,
+            self.action,
+            self.required_surfaces,
+        )
     }
 }
 
