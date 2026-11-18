@@ -60,10 +60,8 @@ impl NativeCoordinator {
 
         let binding = record.binding();
         let modifiers = self
-            .pointer_translator
-            .observed_modifiers()
-            .filter(|(window, _)| *window == binding.window())
-            .map_or_else(Default::default, |(_, modifiers)| modifiers);
+            .bridge
+            .with_viewports(|routes| routes.keyboard_modifiers(binding.window()));
         if record.pressed()
             && self.input.cancel_matches(
                 record.key(),

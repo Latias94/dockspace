@@ -578,15 +578,20 @@ impl eframe::App for DriverApp {
 
 #[test]
 fn real_eframe_actual_passes_publish_the_owned_update_once_after_output_hooks() {
-    run_owned_update(false);
+    run_owned_update(false, false);
 }
 
 #[test]
 fn real_eframe_style_publishes_with_core_geometry_after_the_terminal_pass() {
-    run_owned_update(true);
+    run_owned_update(true, false);
 }
 
-fn run_owned_update(style_change: bool) {
+#[test]
+fn real_eframe_first_root_output_attaches_after_service_and_same_surface_reset() {
+    run_owned_update(false, true);
+}
+
+fn run_owned_update(style_change: bool, service_before_output: bool) {
     if std::env::var_os("DISPLAY").is_none() {
         eprintln!("SKIP real native E3: DISPLAY is unavailable; run the X11 qualification gate");
         return;
@@ -648,6 +653,37 @@ fn run_owned_update(style_change: bool) {
             reports.fetch_add(1, Ordering::SeqCst);
         }
     });
+    if service_before_output {
+        let context = egui::Context::default();
+        let receipt = state
+            .request_command(crate::NativeCommand::SetItemVisibility {
+                item: SECOND,
+                visible: false,
+            })
+            .unwrap();
+        state.service_native_events(&context).unwrap();
+        assert!(receipt.try_recv().unwrap().is_ok());
+        let receipt = state
+            .request_layout_reset(
+                DockspaceLayout::new([DockspaceSurfaceLayout::new(
+                    SURFACE,
+                    DockspaceRootLayout::new(
+                        RootId::new(1),
+                        DockspaceNode::central_tabs([FIRST, SECOND]),
+                    ),
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+        state.service_native_events(&context).unwrap();
+        assert!(receipt.try_recv().unwrap().is_ok());
+        assert!(
+            state
+                .coordinator
+                .viewport_binding(egui::ViewportId::ROOT)
+                .is_none()
+        );
+    }
     let host = state.native_host_handler();
     let state = Arc::new(Mutex::new(state));
     let probe = Arc::new(Mutex::new(Probe {

@@ -153,6 +153,13 @@ presentation. Missing geometry, unavailable destinations and policy restrictions
 arrive through the request's receipt. `DockRootBack` remains a separate command
 whose return destination is derived and revalidated by core.
 
+Application moves retain the fixed Root host through core publication, including
+commands queued before the first surface measurements. A move that would remove
+it is rejected at admission when already known, or through its receipt as
+`SurfaceRequired` when later facts make the command executable. The service hook
+can run before the first Root output; that output attaches the current committed
+Root binding, including a same-surface reset completed before the first paint.
+
 For one direct tab, obtain its `TabKey` through `with_view` and call
 `capture_tab(key)` after the callback returns. Use the captured value as
 `DockMoveSource::Tab` or submit `NativeCommand::CloseTab`. A layout tab carries

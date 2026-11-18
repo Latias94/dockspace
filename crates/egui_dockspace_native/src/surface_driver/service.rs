@@ -44,7 +44,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
         }
         let mut budget = self.coordinator.dispatch_bridge().service_budget();
         Ok(
-            if self.service_pending_prefixes(context, None, self.root_surface, &mut budget)? {
+            if self.service_pending_prefixes(context, None, &mut budget)? {
                 NativeHostWake::Wait
             } else {
                 NativeHostWake::ServiceAfterCurrent
@@ -56,7 +56,6 @@ impl<P: PaneView> NativeRuntimeState<P> {
         &mut self,
         context: &egui::Context,
         token: Option<NativeOutputToken>,
-        surface: SurfaceId,
         budget: &mut NativeInputBudget,
     ) -> Result<bool, NativeRuntimeError> {
         if self.owned_update.is_some() {
@@ -156,7 +155,6 @@ impl<P: PaneView> NativeRuntimeState<P> {
             self.settle_published_report(
                 context,
                 token,
-                surface,
                 application_action,
                 report,
                 budget,

@@ -20,7 +20,7 @@ use crate::application_action::{NativeApplicationActions, NativeSubmittedApplica
 use crate::close_control::NativeWindowClosePolicy;
 #[cfg(test)]
 use crate::coordinator::split_no_frame_invalidations_for_frame;
-use crate::coordinator::{NativeCoordinator, NativeShutdownAdvance, NativeShutdownRegistration};
+use crate::coordinator::{NativeCoordinator, NativeShutdownAdvance};
 use crate::deferred_viewport::DeferredViewportSpec;
 #[cfg(test)]
 use crate::error::NativeRuntimeErrorKind;
@@ -340,7 +340,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
             .output_reservation(token)
             .and_then(|reservation| reservation.binding())
             .map_or(self.root_surface, |binding| binding.surface());
-        if !self.service_pending_prefixes(context, Some(token), surface, &mut budget)? {
+        if !self.service_pending_prefixes(context, Some(token), &mut budget)? {
             return self.defer_output_input(token);
         }
         self.coordinator
@@ -1331,12 +1331,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
                 .finish(token, &self.coordinator.dispatch_bridge());
             return settled;
         };
-        let surface = *publication
-            .surfaces
-            .iter()
-            .find(|surface| **surface == self.root_surface)
-            .or_else(|| publication.surfaces.first())
-            .ok_or(NativeHostProtocolError::MultipassOutputChanged)?;
+        if publication.surfaces.is_empty() {
+            return Err(NativeHostProtocolError::MultipassOutputChanged.into());
+        }
         let mut paints = match final_pass {
             NativeFinalPass::Semantic(paints) => paints,
             NativeFinalPass::RetainPrevious | NativeFinalPass::RetainedOverlay => Vec::new(),
@@ -1427,7 +1424,6 @@ impl<P: PaneView> NativeRuntimeState<P> {
         self.settle_published_report(
             context,
             Some(token),
-            surface,
             publication.application_action,
             report,
             budget,
@@ -1597,7 +1593,6 @@ impl<P: PaneView> NativeRuntimeState<P> {
         &mut self,
         context: &egui::Context,
         token: Option<NativeOutputToken>,
-        surface: SurfaceId,
         submitted_application_action: Option<NativeSubmittedApplicationAction>,
         mut report: HostFrameReport,
         budget: &mut NativeInputBudget,
@@ -1621,15 +1616,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
         let native_admission_settled = self
             .coordinator
             .settle_native_admissions(report.native_admissions())?;
-        if surface == self.root_surface
-            && let Some(token) = token
-        {
-            Self::bind_root_registration(
-                &mut self.coordinator,
-                self.root_surface,
-                token,
-                report.inputs(),
-            )?;
+        self.check_root_registrations(report.inputs())?;
+        if let Some(token) = token {
+            self.bind_root_output(token)?;
         }
         self.root_placements
             .commit(&self.coordinator, self.root_surface, &report);
@@ -1755,30 +1744,57 @@ impl<P: PaneView> NativeRuntimeState<P> {
         Ok(true)
     }
 
-    fn bind_root_registration(
-        coordinator: &mut NativeCoordinator,
-        root_surface: SurfaceId,
-        token: NativeOutputToken,
+    fn check_root_registrations(
+        &self,
         inputs: &[HostInputOutcome],
     ) -> Result<(), NativeRuntimeError> {
-        for input in inputs {
-            match input {
-                HostInputOutcome::NativeSurfaceRegistered { binding }
-                    if binding.surface() == root_surface =>
-                {
-                    coordinator
-                        .bind_viewport(egui::ViewportId::ROOT, token.window_id(), *binding)
-                        .map_err(|_| NativeHostProtocolError::RootViewportBindingFailed)?;
-                }
-                HostInputOutcome::NativeSurfaceRegistrationRejected { surface }
-                    if *surface == root_surface =>
-                {
-                    return Err(NativeHostProtocolError::RootRegistrationRejected(*surface).into());
-                }
-                _ => {}
-            }
+        if inputs.iter().any(|input| matches!(input,
+            HostInputOutcome::NativeSurfaceRegistrationRejected { surface } if *surface == self.root_surface
+        )) {
+            return Err(NativeHostProtocolError::RootRegistrationRejected(self.root_surface).into());
         }
         Ok(())
+    }
+
+    fn bind_root_output(&mut self, token: NativeOutputToken) -> Result<(), NativeRuntimeError> {
+        if token.viewport_id() != ViewportId::ROOT
+            || token.create_attempt().is_some()
+            || self
+                .coordinator
+                .viewport_binding(ViewportId::ROOT)
+                .is_some()
+        {
+            return Ok(());
+        }
+        let Some(reservation) = self.coordinator.dispatch_bridge().output_reservation(token) else {
+            return Ok(());
+        };
+        self.attach_root_window(token.window_id(), reservation.binding())
+    }
+
+    fn attach_root_window(
+        &mut self,
+        window: winit::window::WindowId,
+        observed: Option<dockspace::runtime::NativeSurfaceBinding>,
+    ) -> Result<(), NativeRuntimeError> {
+        if self
+            .coordinator
+            .viewport_binding(ViewportId::ROOT)
+            .is_some()
+        {
+            return Ok(());
+        }
+        // The committed roster survives service turns and same-surface resets.
+        // A token already tied to a predecessor must never acquire its successor.
+        let Some(binding) = self.current_root_binding().filter(|binding| {
+            binding.window_token() == ROOT_WINDOW_TOKEN
+                && observed.is_none_or(|reserved| reserved.window() == binding.window())
+        }) else {
+            return Ok(());
+        };
+        self.coordinator
+            .bind_viewport(ViewportId::ROOT, window, binding)
+            .map_err(|_| NativeHostProtocolError::RootViewportBindingFailed.into())
     }
 
     pub(crate) fn stop_current_output(&mut self, error: NativeRuntimeError) {
@@ -1873,7 +1889,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
             mut progress,
             transition_source_exhausted,
             presentation_transitions,
-            registrations,
+            registration_rejections,
             commands_dispatched: _,
             repaint_viewports,
             pointer_passthrough,
@@ -1911,31 +1927,15 @@ impl<P: PaneView> NativeRuntimeState<P> {
                 context.request_repaint_once_of(egui::ViewportId::ROOT);
             }
         }
-        if let Some(root_window) = root_window {
-            for registration in registrations {
-                match registration {
-                    NativeShutdownRegistration::Registered(binding)
-                        if binding.surface() == self.root_surface =>
-                    {
-                        if self
-                            .coordinator
-                            .bind_viewport(egui::ViewportId::ROOT, root_window, binding)
-                            .is_err()
-                        {
-                            errors.push(NativeHostProtocolError::RootViewportBindingFailed.into());
-                        }
-                    }
-                    NativeShutdownRegistration::Rejected(surface)
-                        if surface == self.root_surface =>
-                    {
-                        errors.push(
-                            NativeHostProtocolError::RootRegistrationRejected(surface).into(),
-                        );
-                    }
-                    NativeShutdownRegistration::Registered(_)
-                    | NativeShutdownRegistration::Rejected(_) => {}
-                }
+        for surface in registration_rejections {
+            if surface == self.root_surface {
+                errors.push(NativeHostProtocolError::RootRegistrationRejected(surface).into());
             }
+        }
+        if let Some(window) = root_window
+            && let Err(error) = self.attach_root_window(window, None)
+        {
+            errors.push(error);
         }
         if transition_source_exhausted {
             progress |= self.application_actions.finish_shutdown_exhausted();

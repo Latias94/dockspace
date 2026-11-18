@@ -52,6 +52,75 @@ fn drain_callbacks_without_painting(
 }
 
 #[test]
+fn peer_modifier_survives_source_pointer_motion() {
+    for (peer_modifiers, source_modifiers, cancels) in [
+        (ModifiersState::CONTROL, ModifiersState::CONTROL, true),
+        (ModifiersState::CONTROL, ModifiersState::empty(), true),
+        (ModifiersState::empty(), ModifiersState::CONTROL, false),
+    ] {
+        let (mut native, peer, source) = presented_routes();
+        native.set_input(egui_dockspace::DockInputConfig {
+            cancel_drag: Some(egui::KeyboardShortcut::new(
+                egui::Modifiers::CTRL,
+                egui::Key::Q,
+            )),
+            ..Default::default()
+        });
+        let (receivers, origin, target) = source_and_target(&mut native);
+        apply_input_callback(
+            &mut native,
+            source,
+            1,
+            mouse_event(origin, Some(ElementState::Pressed), 22, None),
+            &receivers,
+        );
+        apply_input_callback(
+            &mut native,
+            source,
+            2,
+            mouse_event(target, None, 11, None),
+            &receivers,
+        );
+        let controls = [
+            HostRecord::WindowEvent(captured_record(
+                &native,
+                peer,
+                3,
+                WindowEvent::ModifiersChanged(peer_modifiers.into()),
+            )),
+            HostRecord::WindowEvent(captured_record(
+                &native,
+                source,
+                4,
+                mouse_event(target, None, 11, Some(source_modifiers)),
+            )),
+            keyboard_control(&native, peer, 5, egui::Key::Q, true),
+            HostRecord::WindowEvent(captured_record(
+                &native,
+                source,
+                6,
+                mouse_event(target, Some(ElementState::Released), 11, None),
+            )),
+        ];
+        for control in controls {
+            native.bridge.push_record(control);
+        }
+        let reports = drain_callbacks_without_painting(&mut native, &receivers);
+        let outcomes: Vec<_> = reports
+            .iter()
+            .flat_map(|report| report.manipulation_feedback())
+            .map(|feedback| feedback.status())
+            .collect();
+        let expected = if cancels {
+            Status::Cancelled(CancelReason::ExplicitCancellation)
+        } else {
+            Status::Delivered(Delivery::Dock)
+        };
+        assert_eq!(outcomes, [expected]);
+    }
+}
+
+#[test]
 fn configured_cancel_and_mouseup_share_order_without_an_intermediate_ui_pass() {
     for custom_shortcut in [false, true] {
         for keyboard_on_source in [false, true] {

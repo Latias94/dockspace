@@ -8,18 +8,12 @@ use eframe::egui::ViewportId;
 use super::*;
 use crate::close_control::NativeWindowClosePolicy;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NativeShutdownRegistration {
-    Registered(NativeSurfaceBinding),
-    Rejected(SurfaceId),
-}
-
 #[derive(Debug)]
 pub(crate) struct NativeShutdownAdvance {
     pub(crate) progress: bool,
     pub(crate) transition_source_exhausted: bool,
     pub(crate) presentation_transitions: Vec<DockspacePresentationTransition>,
-    pub(crate) registrations: Vec<NativeShutdownRegistration>,
+    pub(crate) registration_rejections: Vec<SurfaceId>,
     pub(crate) commands_dispatched: bool,
     pub(crate) repaint_viewports: Vec<ViewportId>,
     pub(crate) pointer_passthrough: Option<NativePointerPassthroughCommand>,
@@ -37,7 +31,7 @@ impl NativeShutdownAdvance {
             progress,
             transition_source_exhausted: false,
             presentation_transitions,
-            registrations: Vec::new(),
+            registration_rejections: Vec::new(),
             commands_dispatched: false,
             repaint_viewports: Vec::new(),
             pointer_passthrough: None,
@@ -249,16 +243,11 @@ impl NativeCoordinator {
         self.finish_no_frame_invalidations(&accepted_no_frame_invalidations);
         presentation_transitions.extend_from_slice(report.presentation_transitions());
 
-        let registrations = report
+        let registration_rejections = report
             .inputs()
             .iter()
             .filter_map(|input| match input {
-                HostInputOutcome::NativeSurfaceRegistered { binding } => {
-                    Some(NativeShutdownRegistration::Registered(*binding))
-                }
-                HostInputOutcome::NativeSurfaceRegistrationRejected { surface } => {
-                    Some(NativeShutdownRegistration::Rejected(*surface))
-                }
+                HostInputOutcome::NativeSurfaceRegistrationRejected { surface } => Some(*surface),
                 _ => None,
             })
             .collect();
@@ -322,7 +311,7 @@ impl NativeCoordinator {
             progress,
             transition_source_exhausted,
             presentation_transitions,
-            registrations,
+            registration_rejections,
             commands_dispatched,
             repaint_viewports,
             pointer_passthrough,

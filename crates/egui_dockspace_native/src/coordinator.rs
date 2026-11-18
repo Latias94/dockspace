@@ -76,7 +76,7 @@ pub(crate) use storage::{
     NativeCombinedStorageLimit, NativeOwnerStorageLimit, NativeSnapshotStorageLimit,
 };
 
-pub(crate) use shutdown::{NativeShutdownAdvance, NativeShutdownRegistration};
+pub(crate) use shutdown::NativeShutdownAdvance;
 
 /// Sole native coordinator for one renderer-neutral docking session.
 ///
@@ -704,6 +704,14 @@ impl NativeCoordinator {
 
     pub(crate) fn set_input(&mut self, input: DockInputConfig) {
         self.input = input;
+    }
+
+    fn retain_window_modifiers(&self) {
+        if let Some((window, modifiers)) = self.pointer_translator.observed_modifiers() {
+            self.bridge.with_viewports_mut(|routes| {
+                routes.observe_keyboard_modifiers(window, modifiers);
+            });
+        }
     }
 
     pub(crate) fn refresh_group_dock_mode(&mut self) -> Result<(), NativeRuntimeError> {
@@ -1755,6 +1763,7 @@ impl NativeCoordinator {
             if !prefix.retain_translated_prefix(count, &mut self.pointer_translator, candidate) {
                 return Err(NativeHostProtocolError::WindowEventAcknowledgementMismatch.into());
             }
+            self.retain_window_modifiers();
             budget.complete_unsequenced_records(ignored);
             return Ok(Some(count));
         }
@@ -1822,6 +1831,7 @@ impl NativeCoordinator {
         ) {
             return Err(NativeHostProtocolError::WindowEventAcknowledgementMismatch.into());
         }
+        self.retain_window_modifiers();
         Ok(Some(std::num::NonZeroUsize::MIN))
     }
 
@@ -1904,6 +1914,7 @@ impl NativeCoordinator {
                 )?;
                 self.pointer_translator
                     .observe_modifiers(binding.window(), modifiers.state());
+                self.retain_window_modifiers();
             }
             winit::event::WindowEvent::CloseRequested => {
                 if self

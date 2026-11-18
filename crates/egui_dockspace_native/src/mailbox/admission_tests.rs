@@ -579,6 +579,10 @@ fn quarantine_device_terminal_uses_capacity_and_freezes_at_the_original_age_boun
 #[test]
 fn ordinary_record_limit_freezes_before_minting_and_preserves_post_boundary_command_owner() {
     let (bridge, now, binding, window) = bridge_with_clock();
+    bridge.with_viewports_mut(|routes| {
+        routes
+            .observe_keyboard_modifiers(binding.window(), winit::keyboard::ModifiersState::CONTROL);
+    });
     let context = eframe::egui::Context::default();
     let token = eframe::queue_native_viewport_pointer_passthrough(&context, ViewportId::ROOT, true);
     assert!(bridge.reserve_pointer_callback(ViewportId::ROOT, binding, window, token, true));
@@ -666,10 +670,18 @@ fn ordinary_record_limit_freezes_before_minting_and_preserves_post_boundary_comm
     );
     assert!(!bridge.finish_overload_cancellation(4_097));
     assert_eq!(
+        bridge.with_viewports(|routes| routes.keyboard_modifiers(binding.window())),
+        winit::keyboard::ModifiersState::CONTROL
+    );
+    assert_eq!(
         bridge.admission_dispatch(),
         NativeDispatch::Cancel { boundary: 4_096 },
     );
     assert!(bridge.finish_overload_cancellation(4_096));
+    assert_eq!(
+        bridge.with_viewports(|routes| routes.keyboard_modifiers(binding.window())),
+        winit::keyboard::ModifiersState::empty()
+    );
     assert!(!bridge.finish_overload_cancellation(4_096));
     assert_eq!(
         bridge.admission_dispatch(),

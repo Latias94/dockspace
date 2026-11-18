@@ -1165,7 +1165,12 @@ impl NativeHostBridge {
     }
 
     pub(crate) fn finish_overload_cancellation(&self, boundary: u64) -> bool {
-        self.lock().admission.finish_cancellation(boundary)
+        let mut records = self.lock();
+        if !records.admission.finish_cancellation(boundary) {
+            return false;
+        }
+        records.viewports.clear_keyboard_modifiers();
+        true
     }
 
     #[cfg(test)]

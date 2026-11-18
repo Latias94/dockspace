@@ -853,7 +853,7 @@ mod persistence {
         let mut prefix_budget = NativeInputBudget::new(&clock);
         assert!(
             state
-                .service_pending_prefixes(&context, None, SURFACE, &mut prefix_budget)
+                .service_pending_prefixes(&context, None, &mut prefix_budget)
                 .unwrap()
         );
         assert!(prefix_budget.remaining_records() < 256);
@@ -862,7 +862,7 @@ mod persistence {
         let before = state.coordinator.session().version();
         assert!(
             state
-                .service_pending_prefixes(&context, None, SURFACE, &mut waiting_budget)
+                .service_pending_prefixes(&context, None, &mut waiting_budget)
                 .unwrap()
         );
         assert_eq!(waiting_budget.remaining_records(), 256);
@@ -877,7 +877,7 @@ mod persistence {
         budget.complete_unsequenced_records(255);
         assert!(
             !state
-                .service_pending_prefixes(&context, None, SURFACE, &mut budget)
+                .service_pending_prefixes(&context, None, &mut budget)
                 .unwrap(),
             "starting one queued child consumes the final shared record and yields"
         );
@@ -904,7 +904,7 @@ mod persistence {
         let mut retry_budget = NativeInputBudget::new(&clock);
         assert!(
             state
-                .service_pending_prefixes(&context, None, SURFACE, &mut retry_budget)
+                .service_pending_prefixes(&context, None, &mut retry_budget)
                 .unwrap()
         );
         assert_eq!(retry_budget.remaining_records(), 256);
@@ -1006,12 +1006,7 @@ mod persistence {
         assert!(restored.take_native_effects().is_empty());
         assert!(
             state
-                .service_pending_prefixes(
-                    &context,
-                    None,
-                    SURFACE,
-                    &mut NativeInputBudget::new(&clock),
-                )
+                .service_pending_prefixes(&context, None, &mut NativeInputBudget::new(&clock))
                 .unwrap()
         );
         record_fresh_root_facts(&mut state);
@@ -1100,7 +1095,7 @@ mod persistence {
             let accepted = bridge.captured_through_for_test();
             let mut budget = NativeInputBudget::new(&clock);
             let ready = state
-                .service_pending_prefixes(&context, None, SURFACE, &mut budget)
+                .service_pending_prefixes(&context, None, &mut budget)
                 .unwrap();
             assert_eq!(bridge.captured_through_for_test(), accepted);
             assert!(!matches!(
@@ -1126,7 +1121,7 @@ mod persistence {
                 );
                 assert!(
                     !state
-                        .service_pending_prefixes(&context, None, SURFACE, &mut budget)
+                        .service_pending_prefixes(&context, None, &mut budget)
                         .unwrap()
                 );
                 assert_eq!(
@@ -1232,7 +1227,7 @@ mod persistence {
             let mut budget = NativeInputBudget::new(&clock);
             assert!(
                 state
-                    .service_pending_prefixes(&context, None, SURFACE, &mut budget)
+                    .service_pending_prefixes(&context, None, &mut budget)
                     .unwrap()
             );
             assert_eq!(budget.remaining_records(), 256);
@@ -1553,4 +1548,61 @@ mod persistence {
         assert!(state.shutdown.is_none());
         state.save_document_json().unwrap();
     }
+}
+
+#[test]
+fn initial_service_keeps_bootstrap_for_first_root_output() {
+    let mut state = test_state();
+    let context = egui::Context::default();
+    let receipt = state
+        .request_command(NativeCommand::SetItemVisibility {
+            item: SECOND,
+            visible: false,
+        })
+        .unwrap();
+    state.service_native_events(&context).unwrap();
+    let terminal = receipt.try_recv().unwrap().unwrap();
+    assert!(
+        state.view().item(SECOND).unwrap().is_hidden(),
+        "{terminal:?}"
+    );
+    assert_eq!(
+        state.coordinator.session().native_window_bindings().count(),
+        1
+    );
+    let registered = state.current_root_binding().unwrap();
+    assert!(
+        state
+            .coordinator
+            .viewport_binding(egui::ViewportId::ROOT)
+            .is_none()
+    );
+    let receipt = state
+        .request_layout_reset(layout(PRESET_ROOT, &[FIRST, SECOND], FIRST))
+        .unwrap();
+    state.service_native_events(&context).unwrap();
+    assert!(receipt.try_recv().unwrap().is_ok());
+    let successor = state.current_root_binding().unwrap();
+    assert_ne!(successor, registered);
+    let window = winit::window::WindowId::from(321);
+    state.attach_root_window(window, Some(registered)).unwrap();
+    assert!(
+        state
+            .coordinator
+            .viewport_binding(egui::ViewportId::ROOT)
+            .is_none(),
+        "an output bound to the predecessor cannot acquire its successor"
+    );
+    state.attach_root_window(window, None).unwrap();
+    assert_eq!(
+        state.coordinator.viewport_binding(egui::ViewportId::ROOT),
+        Some(successor)
+    );
+    assert_eq!(
+        state
+            .coordinator
+            .dispatch_bridge()
+            .with_viewports(|routes| routes.window(egui::ViewportId::ROOT)),
+        Some(window)
+    );
 }

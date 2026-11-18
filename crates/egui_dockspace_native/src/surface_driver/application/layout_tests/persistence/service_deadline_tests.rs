@@ -526,7 +526,7 @@ fn elapsed_service_refill_preserves_release_close_and_ready_bootstrap_owners() {
     assert!(restored.take_native_effects().is_empty());
     assert!(
         state
-            .service_pending_prefixes(&context, None, SURFACE, &mut NativeInputBudget::new(&clock),)
+            .service_pending_prefixes(&context, None, &mut NativeInputBudget::new(&clock))
             .unwrap()
     );
     record_fresh_root_facts(&mut state);
@@ -666,15 +666,7 @@ fn elapsed_service_refill_preserves_release_close_and_ready_bootstrap_owners() {
                 );
                 assert!(!report.workspace_changed());
                 state
-                    .settle_published_report(
-                        &context,
-                        None,
-                        SURFACE,
-                        None,
-                        report,
-                        &mut budget,
-                        false,
-                    )
+                    .settle_published_report(&context, None, None, report, &mut budget, false)
                     .unwrap();
                 state.settle_internal_application_transitions().unwrap();
                 if settlements == 1 {
@@ -685,7 +677,7 @@ fn elapsed_service_refill_preserves_release_close_and_ready_bootstrap_owners() {
             assert!(!state.coordinator.session().has_pending_presentation());
         }
         let ready = state
-            .service_pending_prefixes(&context, None, SURFACE, &mut budget)
+            .service_pending_prefixes(&context, None, &mut budget)
             .unwrap();
         assert_eq!(bridge.captured_through_for_test(), captured);
         if turn < INPUT_TURNS {
@@ -711,7 +703,7 @@ fn elapsed_service_refill_preserves_release_close_and_ready_bootstrap_owners() {
             );
             assert!(
                 !state
-                    .service_pending_prefixes(&context, None, SURFACE, &mut budget)
+                    .service_pending_prefixes(&context, None, &mut budget)
                     .unwrap()
             );
             assert_eq!(

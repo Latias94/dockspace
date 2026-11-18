@@ -107,7 +107,7 @@ fn a_final_native_record_yields_to_the_queued_command_at_the_budget_boundary() {
     budget.complete_unsequenced_records(255);
     assert!(
         !state
-            .service_pending_prefixes(&context, None, SURFACE, &mut budget)
+            .service_pending_prefixes(&context, None, &mut budget)
             .unwrap(),
         "the accepted command requires another service turn after the last native record"
     );
@@ -119,7 +119,7 @@ fn a_final_native_record_yields_to_the_queued_command_at_the_budget_boundary() {
     let mut budget = NativeInputBudget::new(&clock);
     assert!(
         state
-            .service_pending_prefixes(&context, None, SURFACE, &mut budget)
+            .service_pending_prefixes(&context, None, &mut budget)
             .unwrap()
     );
     assert_eq!(
@@ -155,7 +155,7 @@ fn a_service_deadline_never_leaves_a_ready_command_waiting_without_a_wake() {
         });
         let mut budget = NativeInputBudget::new(&clock);
         let idle = state
-            .service_pending_prefixes(&egui::Context::default(), None, SURFACE, &mut budget)
+            .service_pending_prefixes(&egui::Context::default(), None, &mut budget)
             .unwrap();
         if idle {
             assert_eq!(
@@ -167,9 +167,11 @@ fn a_service_deadline_never_leaves_a_ready_command_waiting_without_a_wake() {
         } else {
             let clock = NativeMonotonicClock::new(|| Duration::ZERO);
             let mut budget = NativeInputBudget::new(&clock);
-            assert!(state.service_pending_prefixes(
-                &egui::Context::default(), None, SURFACE, &mut budget,
-            ).unwrap());
+            assert!(
+                state
+                    .service_pending_prefixes(&egui::Context::default(), None, &mut budget)
+                    .unwrap()
+            );
             assert_eq!(
                 receipt.try_recv().unwrap().unwrap(),
                 visibility_status(SECOND)

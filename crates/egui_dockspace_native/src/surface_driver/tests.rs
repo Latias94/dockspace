@@ -199,7 +199,7 @@ fn standalone_service_commits_overload_cancellation_without_ui_or_an_output_scop
     let mut budget = NativeInputBudget::new(&clock);
     assert!(
         state
-            .service_pending_prefixes(&context, None, SURFACE, &mut budget)
+            .service_pending_prefixes(&context, None, &mut budget)
             .unwrap()
     );
     assert_eq!(bridge.admission_dispatch(), NativeDispatch::Idle);
@@ -214,7 +214,7 @@ fn standalone_service_commits_overload_cancellation_without_ui_or_an_output_scop
     let mut budget = NativeInputBudget::new(&clock);
     assert!(
         state
-            .service_pending_prefixes(&context, None, SURFACE, &mut budget)
+            .service_pending_prefixes(&context, None, &mut budget)
             .unwrap()
     );
     assert_eq!(bridge.admission_dispatch(), NativeDispatch::Idle);
@@ -1007,7 +1007,7 @@ fn fatal_quarantine_recovery_commits_close_before_exit_errors() {
             progress: true,
             transition_source_exhausted: false,
             presentation_transitions: Vec::new(),
-            registrations: vec![NativeShutdownRegistration::Rejected(SURFACE)],
+            registration_rejections: vec![SURFACE],
             commands_dispatched: true,
             repaint_viewports: Vec::new(),
             pointer_passthrough: None,
