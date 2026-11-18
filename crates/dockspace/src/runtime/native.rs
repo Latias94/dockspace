@@ -1100,8 +1100,8 @@ impl NativeProducerState {
         };
         let cleanup_bindings = engine
             .viewport()
-            .binding_retirements()
-            .filter(|&(binding, _)| new_cleanup(binding))
+            .native_cleanup_bindings()
+            .filter(|&binding| new_cleanup(binding))
             .count();
         let binding_count = retained_bindings
             .checked_add(new_bindings)
@@ -1115,19 +1115,17 @@ impl NativeProducerState {
             .count();
         let cleanup_windows = engine
             .viewport()
-            .binding_retirements()
+            .native_cleanup_bindings()
             .enumerate()
-            .filter(|&(index, (binding, _))| {
+            .filter(|&(index, binding)| {
                 new_cleanup(binding)
                     && registry.window(binding.window()).is_none()
                     && previous.is_none_or(|producer| producer.window(binding.window()).is_none())
                     && !engine
                         .viewport()
-                        .binding_retirements()
+                        .native_cleanup_bindings()
                         .take(index)
-                        .any(|(earlier, _)| {
-                            new_cleanup(earlier) && earlier.window() == binding.window()
-                        })
+                        .any(|earlier| new_cleanup(earlier) && earlier.window() == binding.window())
             })
             .count();
         let window_count = previous
@@ -1187,7 +1185,7 @@ impl NativeProducerState {
         // candidate. Real cleanup still needs an exact producer lane, even if
         // that placement never entered the published registry. A previously
         // published retirement whose producer drained must not be recreated.
-        for (binding, _) in engine.viewport().binding_retirements() {
+        for binding in engine.viewport().native_cleanup_bindings() {
             if !new_cleanup(binding) {
                 continue;
             }
@@ -1204,7 +1202,7 @@ impl NativeProducerState {
                     binding: binding.window(),
                     observation_binding: binding,
                     current: false,
-                    cleanup_observation: true,
+                    cleanup_observation: engine.viewport().retains_window_cleanup(binding),
                     window_generation: 0,
                     close_generation: 0,
                 });

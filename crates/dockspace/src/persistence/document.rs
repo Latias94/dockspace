@@ -558,28 +558,37 @@ impl BoundDocumentState {
             let Some(record) = engine.viewport().viewport(surface) else {
                 continue;
             };
-            if record.admission() != ViewportAdmission::Admitted
-                || !record.has_coordinate_authority()
-            {
+            if record.admission() != ViewportAdmission::Admitted {
                 continue;
             }
-            let Some(coordinates) = record.coordinates() else {
+            // Persistence records physical window placement independently of
+            // a surface's render scale and input-coordinate authority.
+            let Some(coordinates) = engine
+                .viewport()
+                .registry()
+                .window(record.binding().window())
+                .and_then(|window| window.persistent_coordinate_observation())
+            else {
                 continue;
             };
-            let Some(outer_rect) = coordinates.outer_bounds() else {
+            let Some(&outer_rect) = coordinates.outer_bounds().known() else {
                 continue;
             };
             let presentation = placements
                 .get(surface)
                 .and_then(|preference| preference.presentation());
-            let Ok(preference) = ViewportPlacementPreference::new(surface, outer_rect) else {
+            let Ok(mut preference) = ViewportPlacementPreference::new(surface, outer_rect) else {
                 continue;
             };
-            let Ok(mut preference) = preference.try_with_inner_size(coordinates.content_size())
-            else {
-                continue;
-            };
-            preference = preference.with_scale_factor(coordinates.native_scale_factor());
+            if let Some(&size) = coordinates.content_size().known() {
+                let Ok(with_size) = preference.try_with_inner_size(size) else {
+                    continue;
+                };
+                preference = with_size;
+            }
+            if let Some(&scale) = coordinates.native_scale_factor().known() {
+                preference = preference.with_scale_factor(scale);
+            }
             if let Some(presentation) = presentation {
                 preference = preference.with_presentation(presentation);
             }

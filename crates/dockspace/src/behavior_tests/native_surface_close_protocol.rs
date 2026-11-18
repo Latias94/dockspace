@@ -7,6 +7,8 @@
 
 use super::support;
 
+mod recovery_targets;
+
 use support::TestPresentationHost;
 
 use dockspace::close::plan::{

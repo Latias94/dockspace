@@ -10,7 +10,7 @@ use dockspace::engine::surface_recovery::{
 };
 use dockspace::engine::transition::{EngineTransition, InputOutcome, SurfaceContributionOutcome};
 use dockspace::engine::{
-    BackendIngressProgress, CoreHostFrame, CoreHostFrameError, DockEngine, EngineError, EngineInput,
+    BackendIngressProgress, CoreHostFrame, DockEngine, EngineError, EngineInput,
 };
 use dockspace::geometry::{
     LogicalPoint, LogicalRect, LogicalSize, PhysicalPoint, PhysicalRect, ScaleFactor,
@@ -136,21 +136,6 @@ fn submit_test_inputs(
     stage_pointer_checkpoint(fixture, &mut frame);
     support::complete_host_frame_with_retained_or_unavailable(&fixture.engine, &mut frame);
     Ok(fixture.presentation_host.finish(frame, &mut fixture.engine))
-}
-
-fn submit_test_input_expect_error(fixture: &mut Fixture, input: EngineInput) -> EngineError {
-    let mut frame = fixture.presentation_host.begin(&fixture.engine);
-    let mut input_stream = support::TestInputStream::resume(&fixture.engine, TEST_INPUT_SOURCE);
-    assert!(
-        matches!(
-            input_stream.append(&mut frame, input),
-            Err(CoreHostFrameError::InputPrefixReductionFailed { .. })
-        ),
-        "rejected test input must poison the host frame at the input prefix"
-    );
-    frame
-        .finish(&mut fixture.engine)
-        .expect_err("test input must fail atomically")
 }
 
 fn retained_native_staging_resource_is_visible(
@@ -609,7 +594,7 @@ fn assert_unobserved_external_binding_quarantines_token_until_exact_destruction(
     );
 
     let expected = fixture.engine.version();
-    let error = submit_test_input_expect_error(
+    let rejected = submit_test_input(
         fixture,
         EngineInput::RegisterViewport {
             provider,
@@ -619,15 +604,13 @@ fn assert_unobserved_external_binding_quarantines_token_until_exact_destruction(
             role: ViewportRole::Root,
             recovery_target: None,
         },
-    );
+    )
+    .expect("a reserved token rejects this registration without poisoning the FIFO");
     assert!(matches!(
-        error,
-        EngineError::Viewport {
-            source: dockspace::platform::frame::ViewportCoordinatorError::RetiredTokenReserved {
-                token,
-            },
-            ..
-        } if token == HOST_TOKEN
+        rejected.reduced_inputs()[0].outcome(),
+        InputOutcome::ViewportRegistrationRejected {
+            surface: SURFACE_NATIVE
+        }
     ));
     assert!(fixture.engine.viewport().viewport(SURFACE_NATIVE).is_none());
 
@@ -4938,7 +4921,7 @@ fn retired_tombstone_reserves_its_token_until_exact_destroyed_observation() {
 
     let provider = fixture.presentation_host.platform_provider();
     let expected = fixture.engine.version();
-    let error = submit_test_input_expect_error(
+    let rejected = submit_test_input(
         &mut fixture,
         EngineInput::RegisterViewport {
             provider,
@@ -4948,15 +4931,13 @@ fn retired_tombstone_reserves_its_token_until_exact_destroyed_observation() {
             role: ViewportRole::Root,
             recovery_target: None,
         },
-    );
+    )
+    .expect("a reserved token rejects this registration without poisoning the FIFO");
     assert!(matches!(
-        error,
-        EngineError::Viewport {
-            source: dockspace::platform::frame::ViewportCoordinatorError::RetiredTokenReserved {
-                token,
-            },
-            ..
-        } if token == HOST_TOKEN
+        rejected.reduced_inputs()[0].outcome(),
+        InputOutcome::ViewportRegistrationRejected {
+            surface: SURFACE_NATIVE
+        }
     ));
     assert!(fixture.engine.viewport().viewport(SURFACE_NATIVE).is_none());
 

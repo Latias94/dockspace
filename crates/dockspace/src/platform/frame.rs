@@ -1553,6 +1553,17 @@ impl ViewportCoordinator {
             .map(|(binding, retirement)| (*binding, retirement))
     }
 
+    /// Exact cleanup and terminal guards still requiring their producer lane.
+    pub(crate) fn native_cleanup_bindings(&self) -> impl Iterator<Item = ViewportBinding> + '_ {
+        self.binding_cleanup.keys().copied().chain(
+            self.binding_cleanup
+                .terminal_bindings()
+                .iter()
+                .copied()
+                .filter(|binding| !self.binding_cleanup.contains_key(binding)),
+        )
+    }
+
     #[must_use]
     pub fn recovery_pending(&self, surface: SurfaceId) -> Option<&RecoveryPending> {
         self.recovery_replacements.pending(surface)

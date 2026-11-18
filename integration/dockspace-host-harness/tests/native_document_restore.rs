@@ -2,6 +2,9 @@
 
 #![cfg(feature = "serde")]
 
+#[path = "native_document_restore/frame_lifetimes.rs"]
+mod frame_lifetimes;
+
 use std::num::NonZeroUsize;
 use std::time::Duration;
 

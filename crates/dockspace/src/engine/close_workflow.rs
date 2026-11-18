@@ -549,10 +549,10 @@ impl DockEngine {
         request: CloseRequestId,
         _input: InputSequence,
     ) -> Result<bool, EngineError> {
-        let Some(prepared) = self.close.prepared(request) else {
+        let Some(operation) = self.close.prepared(request) else {
             return Ok(false);
         };
-        match prepared {
+        match operation {
             PreparedCloseOperation::Content(_) => Ok(false),
             PreparedCloseOperation::Window {
                 bindings,
@@ -616,23 +616,33 @@ impl DockEngine {
                 {
                     return Ok(false);
                 }
-                if !content.is_empty()
-                    && crate::graph::operation::prepare_surface_content_closes(
-                        &self.workspace,
-                        &self.policy,
-                        &content,
-                    )
-                    .is_err()
-                {
-                    return Ok(false);
-                }
-                Ok(commands.is_empty()
-                    || crate::graph::operation::prepare_transaction(
+                let candidate = if !content.is_empty() {
+                    if content.len() != operations.len() || !commands.is_empty() {
+                        return Ok(false);
+                    }
+                    let Ok((candidate, _)) =
+                        crate::graph::operation::prepare_surface_content_closes(
+                            &self.workspace,
+                            &self.policy,
+                            &content,
+                        )
+                    else {
+                        return Ok(false);
+                    };
+                    candidate
+                } else if !commands.is_empty() {
+                    let Ok(prepared) = crate::graph::operation::prepare_transaction(
                         &self.workspace,
                         &self.policy,
                         &commands,
-                    )
-                    .is_ok())
+                    ) else {
+                        return Ok(false);
+                    };
+                    prepared.into_parts().0
+                } else {
+                    self.clone_workspace_candidate()
+                };
+                Ok(self.surface_close_candidate_is_publishable(operation, candidate))
             }
             PreparedCloseOperation::SurfaceRetain { roster, .. } => Ok(roster
                 .matches_workspace(&self.workspace)
@@ -645,12 +655,15 @@ impl DockEngine {
                 if !roster.matches_workspace(&self.workspace) {
                     return Ok(false);
                 }
-                Ok(crate::graph::operation::prepare_transaction(
+                let Ok(transaction) = crate::graph::operation::prepare_transaction(
                     &self.workspace,
                     &self.policy,
                     transaction.commands(),
-                )
-                .is_ok())
+                ) else {
+                    return Ok(false);
+                };
+                Ok(self
+                    .surface_close_candidate_is_publishable(operation, transaction.into_parts().0))
             }
             PreparedCloseOperation::SurfaceContent {
                 roster, prepared, ..
@@ -658,9 +671,40 @@ impl DockEngine {
                 if !roster.matches_workspace(&self.workspace) {
                     return Ok(false);
                 }
-                Ok(prepare_surface_content_close(&self.workspace, &self.policy, prepared).is_ok())
+                let Ok(commit) =
+                    prepare_surface_content_close(&self.workspace, &self.policy, prepared)
+                else {
+                    return Ok(false);
+                };
+                Ok(self.surface_close_candidate_is_publishable(operation, commit.candidate))
             }
         }
+    }
+
+    fn surface_close_candidate_is_publishable(
+        &self,
+        prepared: &PreparedCloseOperation,
+        candidate: Workspace,
+    ) -> bool {
+        // Use the final publication gate before accepting native destruction.
+        // A graph-valid close may still remove a surviving child's recovery host.
+        let authority = match prepared {
+            PreparedCloseOperation::Window { bindings, .. }
+                if bindings
+                    .iter()
+                    .all(|binding| candidate.surface(binding.surface()).is_none()) =>
+            {
+                let Some(binding) = bindings.first() else {
+                    return false;
+                };
+                WorkspacePublicationAuthority::WindowRecoveryCommit {
+                    window: binding.window(),
+                }
+            }
+            _ => WorkspacePublicationAuthority::Ordinary,
+        };
+        self.stage_workspace_publication_with_authority(candidate, &self.policy, authority)
+            .is_ok()
     }
 
     fn retain_close_requirements_match_plan(

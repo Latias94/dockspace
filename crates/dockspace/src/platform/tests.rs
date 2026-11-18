@@ -546,6 +546,7 @@ fn coordinate_observation_stream_requires_causal_tombstones() {
     let initial = known(current_binding, 4, Authority::Known(outer));
     stream.observe(current_binding, Some(initial));
     assert_eq!(stream.current(), Some(initial));
+    assert_eq!(stream.physical_observation(), Some(initial));
 
     stream.observe(
         current_binding,
@@ -580,6 +581,7 @@ fn coordinate_observation_stream_requires_causal_tombstones() {
         None,
         "same-generation conflict revokes authority"
     );
+    assert_eq!(stream.physical_observation(), None);
     stream.observe(
         current_binding,
         Some(known(current_binding, 6, Authority::Known(outer))),
@@ -594,12 +596,14 @@ fn coordinate_observation_stream_requires_causal_tombstones() {
     let restored = known(current_binding, 8, Authority::Known(outer));
     stream.observe(current_binding, Some(restored));
     assert_eq!(stream.current(), Some(restored));
+    assert_eq!(stream.physical_observation(), Some(restored));
 
     stream.observe(
         current_binding,
         Some(known(other_binding, 9, Authority::Known(outer))),
     );
     assert_eq!(stream.current(), None, "wrong binding revokes authority");
+    assert_eq!(stream.physical_observation(), None);
     stream.observe(
         current_binding,
         Some(known(current_binding, 10, Authority::Known(outer))),
@@ -625,6 +629,7 @@ fn coordinate_observation_stream_requires_causal_tombstones() {
         None,
         "a skipped generation revokes authority"
     );
+    assert_eq!(stream.physical_observation(), None);
     stream.observe(
         current_binding,
         Some(known(current_binding, 15, Authority::Known(outer))),

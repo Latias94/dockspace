@@ -4,6 +4,7 @@ mod budget;
 mod capacity;
 mod deferred_close;
 mod first_live_ownership;
+mod lifecycle_ingress;
 mod multiple_first_live;
 mod overload;
 mod report_backpressure;

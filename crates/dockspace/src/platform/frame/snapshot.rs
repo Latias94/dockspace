@@ -222,6 +222,25 @@ impl ViewportCoordinator {
     ) -> Result<ViewportFrameTransition, ViewportCoordinatorError> {
         let mut candidate = self.clone();
         candidate.active_platform_provider()?;
+        let binding = observation.binding();
+        // A preceding accepted record may already have retired this exact
+        // window. Its narrow close tail is inert; it cannot acquire a new
+        // placement or obstruct unrelated records behind it in the FIFO.
+        if observation.known_state() != Some(WindowCloseState::Destroyed)
+            && candidate.registry.window(binding.window()).is_none()
+            && candidate.recognizes_retired_native_binding(binding)
+        {
+            return Ok(ViewportFrameTransition {
+                capability_generation: candidate.capability_generation,
+                work_area_generation: candidate.work_area_generation,
+                capabilities_changed: false,
+                work_areas_changed: false,
+                native_window_placement_changed: false,
+                registry_events: Vec::new(),
+                consumed_pre_admission_close_requests: Vec::new(),
+                actions: Vec::new(),
+            });
+        }
         let recovery_coordinates = candidate
             .registry
             .records()

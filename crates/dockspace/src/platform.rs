@@ -1254,6 +1254,14 @@ pub(crate) struct WindowCoordinateObservationStream {
 }
 
 impl WindowCoordinateObservationStream {
+    /// Physical persistence facts do not require a complete render-coordinate
+    /// tuple. They still obey this exact stream's generation and revocation.
+    pub(crate) fn physical_observation(self) -> Option<WindowCoordinateObservation> {
+        (!self.requires_tombstone)
+            .then_some(self.last_envelope)
+            .flatten()
+    }
+
     pub(crate) fn observe(
         &mut self,
         binding: impl Into<WindowBinding>,

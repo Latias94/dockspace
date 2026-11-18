@@ -48,6 +48,7 @@ pub(super) struct PendingPresentationRehome {
     pub(super) source_presentation: PresentedSurfaceAuthority,
     pub(super) commit_authority: PresentationRehomeCommitAuthority,
     pub(super) target_surface: SurfaceId,
+    pub(super) target_presentation: PresentedSurfaceAuthority,
     pub(super) floating: Option<FloatingPresentationId>,
     pub(super) context: product_action::ProductCommandContext,
     pub(super) pane_focus: PaneFocusDisposition,

@@ -351,6 +351,9 @@ impl DockEngine {
         let Some(presentation) = self.workspace.surface(surface) else {
             return Ok(InputOutcome::ViewportRegistrationRejected { surface });
         };
+        if self.viewport.registry().record(surface).is_some() {
+            return Ok(InputOutcome::ViewportRegistrationRejected { surface });
+        }
         if (role == ViewportRole::Child) != recovery_target.is_some() {
             return Ok(InputOutcome::ViewportRegistrationRejected { surface });
         }
@@ -491,8 +494,15 @@ impl DockEngine {
             Ok(binding) => binding,
             Err(
                 ViewportCoordinatorError::PendingRecoveryRegistrationMismatch { .. }
+                | ViewportCoordinatorError::RetiredTokenReserved { .. }
                 | ViewportCoordinatorError::Registry(
-                    crate::platform::registry::ViewportRegistryError::NativeBindingCapacity,
+                    crate::platform::registry::ViewportRegistryError::NativeBindingCapacity
+                    | crate::platform::registry::ViewportRegistryError::SurfaceAlreadyRegistered {
+                        ..
+                    }
+                    | crate::platform::registry::ViewportRegistryError::TokenAlreadyRegistered {
+                        ..
+                    },
                 ),
             ) => {
                 return Ok(InputOutcome::ViewportRegistrationRejected { surface });
@@ -598,7 +608,12 @@ impl DockEngine {
                     requested,
                     observation,
                 } if !destroyed_bindings.contains(&observation.binding()) => {
-                    self.settle_cleared_native_surface_close(provider, *requested, *observation);
+                    self.settle_cleared_native_surface_close(
+                        input,
+                        provider,
+                        *requested,
+                        *observation,
+                    )?;
                 }
                 crate::platform::registry::RegistryEvent::Destroyed { .. } => {}
                 crate::platform::registry::RegistryEvent::Ready { .. }
@@ -739,7 +754,12 @@ impl DockEngine {
                     requested,
                     observation,
                 } => {
-                    self.settle_cleared_native_surface_close(provider, *requested, *observation);
+                    self.settle_cleared_native_surface_close(
+                        input,
+                        provider,
+                        *requested,
+                        *observation,
+                    )?;
                 }
                 crate::platform::registry::RegistryEvent::Ready { .. }
                 | crate::platform::registry::RegistryEvent::PresentationChanged { .. }
@@ -837,10 +857,11 @@ impl DockEngine {
 
     fn settle_cleared_native_surface_close(
         &mut self,
+        input: InputSequence,
         provider: PlatformObservationLease,
         requested: WindowCloseObservation,
         observation: WindowCloseObservation,
-    ) {
+    ) -> Result<(), EngineError> {
         let edge = NativeCloseEdge::from_authoritative_requested(
             self.authority_domain,
             requested.binding(),
@@ -849,7 +870,7 @@ impl DockEngine {
         );
         let binding = edge.binding();
         let Some(request) = self.close.surface_request_for_edge(edge) else {
-            return;
+            return Ok(());
         };
         let authority = self.close_authority();
         let _ = self.close.request_cancel(request, authority);
@@ -869,7 +890,7 @@ impl DockEngine {
                         let _ = self
                             .close
                             .mark_native_edge_indeterminate(request, authority);
-                        return;
+                        return Ok(());
                     }
                 }
                 let proof = CloseCancellationProof::from_authoritative_live_close_cleared(
@@ -895,7 +916,12 @@ impl DockEngine {
             let _ = self
                 .close
                 .mark_native_edge_indeterminate(request, authority);
+        } else {
+            self.viewport
+                .resume_after_failed_native_close(binding)
+                .map_err(|source| EngineError::Viewport { input, source })?;
         }
+        Ok(())
     }
 
     pub(super) fn capture_surface_item_source(
@@ -1818,6 +1844,16 @@ impl DockEngine {
         for &binding in bindings {
             self.complete_destroyed_surface(input, binding)?;
             self.surface_recovery.complete_pending(binding.surface());
+            // An exactly fulfilled close no longer owes content recovery.
+            // RetainLayout keeps the surface, so publication alone cannot
+            // remove this old window's obligation before a fresh registration.
+            if self
+                .bound_surface_recoveries
+                .get(&binding.surface())
+                .is_some_and(|bound| bound.binding == binding)
+            {
+                self.bound_surface_recoveries.remove(&binding.surface());
+            }
         }
 
         if let Some(surface) = commit.focus_target

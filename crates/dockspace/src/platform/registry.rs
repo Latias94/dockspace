@@ -28,9 +28,10 @@ use crate::platform::viewport::{
 };
 use crate::platform::{
     ObservedWindow, PlatformSnapshot, WindowCloseObservation, WindowCloseObservationStream,
-    WindowCloseState, WindowCoordinateObservationStream, WindowCreatePreparationObservation,
-    WindowCreatePreparationObservationStream, WindowInputObservation, WindowInputObservationStream,
-    WindowPresentationObservation, WindowPresentationObservationStream, WindowPresentationState,
+    WindowCloseState, WindowCoordinateObservation, WindowCoordinateObservationStream,
+    WindowCreatePreparationObservation, WindowCreatePreparationObservationStream,
+    WindowInputObservation, WindowInputObservationStream, WindowPresentationObservation,
+    WindowPresentationObservationStream, WindowPresentationState,
 };
 
 /// Lifecycle state derived from authoritative inventory, never from callback timing.
@@ -145,6 +146,10 @@ impl WindowRecordView<'_> {
     }
     pub(crate) const fn coordinates(self) -> Option<WindowCoordinateSnapshot> {
         self.record.coordinates
+    }
+    #[cfg(any(test, feature = "serde"))]
+    pub(crate) fn persistent_coordinate_observation(self) -> Option<WindowCoordinateObservation> {
+        window_persistent_coordinates(self.record)
     }
     pub(crate) const fn ever_observed(self) -> bool {
         self.record.ever_observed
@@ -1088,6 +1093,15 @@ impl ViewportRegistry {
             }
             let presentation_changed = previous.presentation_observations.current()
                 != window.presentation_observations.current();
+            let persistent_placement_changed =
+                window_persistent_coordinates(window).is_some_and(|after| {
+                    window_persistent_coordinates(&previous).is_none_or(|before| {
+                        before.outer_bounds().known() != after.outer_bounds().known()
+                            || before.content_size().known() != after.content_size().known()
+                            || before.native_scale_factor().known()
+                                != after.native_scale_factor().known()
+                    })
+                });
             for (surface, record) in self
                 .records
                 .iter_mut()
@@ -1148,20 +1162,8 @@ impl ViewportRegistry {
                     window,
                 }
                 .has_local_coordinate_authority();
-                if (changed || !before_authority)
-                    && has_authority
-                    && record.admission == ViewportAdmission::Admitted
-                    && let Some(after) = record.coordinates
-                    && after.outer_bounds().is_some()
-                {
-                    // A newly authoritative placement can enter document capture
-                    // even when its geometry arrived during an earlier hidden pass.
-                    native_window_placement_changed |= !before_authority
-                        || before.is_none_or(|before| {
-                            before.outer_bounds() != after.outer_bounds()
-                                || before.content_size() != after.content_size()
-                                || before.native_scale_factor() != after.native_scale_factor()
-                        });
+                if record.admission == ViewportAdmission::Admitted {
+                    native_window_placement_changed |= persistent_placement_changed;
                 }
                 if changed
                     || before_authority != has_authority
@@ -2055,6 +2057,30 @@ fn window_has_coordinate_authority(window: &WindowRecord) -> bool {
             .current()
             .and_then(WindowPresentationObservation::known_state)
             == Some(WindowPresentationState::Visible)
+}
+
+/// Physical placement eligible for both document capture and its change signal.
+/// Render scale and input authority do not participate in this decision.
+fn window_persistent_coordinates(window: &WindowRecord) -> Option<WindowCoordinateObservation> {
+    if !window.ever_observed
+        || !matches!(
+            window.lifecycle,
+            ViewportLifecycle::AwaitingObservation
+                | ViewportLifecycle::Ready
+                | ViewportLifecycle::CloseRequested
+        )
+        || window
+            .presentation_observations
+            .current()
+            .and_then(WindowPresentationObservation::known_state)
+            != Some(WindowPresentationState::Visible)
+    {
+        return None;
+    }
+    window
+        .coordinate_observations
+        .physical_observation()
+        .filter(|observation| observation.outer_bounds().known().is_some())
 }
 
 const fn window_has_local_coordinate_authority(window: &WindowRecord) -> bool {

@@ -181,7 +181,9 @@ contained bounds can change without a detailed event. For debounced document
 persistence, use `notification.document_changed()`: it also covers committed
 native-window placement without advancing the docking-layout version.
 `native_window_placement_changed()` reports known outer bounds, client size,
-native scale, first-live admission and geometry becoming authoritative again.
+native scale, first-live admission and physical placement becoming observable
+again. Known physical placement is saved and reported even if presentation
+scale is unavailable; this does not grant input or render-coordinate authority.
 Renderer zoom and focus do not independently trigger a save. Rejected/no-op
 actions, pending close decisions, pure rendering and unpublished frames do not
 dirty the layout. Hosts own notification delivery and storage; core retains no
@@ -970,6 +972,13 @@ exact neutral close holds. Its isolated workspace pins the required Git
 dependencies. See [platform support](../../../docs/PLATFORM_SUPPORT.md) for
 backend capabilities and the distinction between host-contract tests and
 real-window qualification.
+
+Registration conflicts produce an individual `NativeSurfaceRegistrationRejected`
+result without preventing later accepted records from committing. A retired
+token remains reserved until its exact destruction is observed. Likewise, an
+already accepted non-destruction close tail for a known retired binding is inert;
+it cannot acquire a newer window lifetime. Unknown bindings and contradictory
+protocol facts still follow the failure contract below.
 
 When a buffered managed host exhausts its own ingress capacity, it must freeze
 ordinary admission and commit all previously accepted input before invoking

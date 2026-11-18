@@ -1,6 +1,7 @@
 use super::*;
 
 mod local_readiness;
+mod persistent_placement;
 
 fn shared_placements() -> [NativeSurfacePlacement; 2] {
     [

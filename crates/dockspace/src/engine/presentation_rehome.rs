@@ -314,6 +314,7 @@ impl DockEngine {
                 }));
             }
         };
+        let target_presentation = projection.authority();
         let payload = match &command {
             WorkspaceCommand::Move { payload, .. }
             | WorkspaceCommand::CreateContainedRoot {
@@ -386,6 +387,7 @@ impl DockEngine {
             source_presentation: source_native.presentation,
             commit_authority: PresentationRehomeCommitAuthority::Ordinary,
             target_surface,
+            target_presentation,
             floating,
             context,
             pane_focus,
@@ -781,6 +783,7 @@ impl DockEngine {
                 });
             }
         };
+        let target_presentation = projection.authority();
         let (root_source, payload, root_items) =
             self.capture_product_root_payload(root).map_err(|_| {
                 EngineError::ReductionCauseInvariant {
@@ -946,6 +949,7 @@ impl DockEngine {
             source_presentation: source.presentation,
             commit_authority,
             target_surface,
+            target_presentation,
             floating,
             context,
             pane_focus,
@@ -996,6 +1000,26 @@ impl DockEngine {
                 .is_some_and(|authority| {
                     authority.same_interaction_semantics(pending.source_presentation)
                 });
+        // The logical surface can outlive its physical window or placement.
+        // Revoke the transfer without requiring an output to have been emitted.
+        // New presentation provenance alone does not change its target lifetime.
+        let target_is_current = self
+            .interaction_authority(pending.target_surface)
+            .is_some_and(|authority| {
+                authority.endpoint() == pending.target_presentation.endpoint()
+                    && authority.coordinate_generation()
+                        == pending.target_presentation.coordinate_generation()
+            })
+            && pending.target_presentation.binding().is_none_or(|binding| {
+                self.viewport.authoritative_inventory_contains(binding)
+                    && self
+                        .viewport
+                        .viewport(pending.target_surface)
+                        .is_some_and(|record| {
+                            record.binding() == binding
+                                && record.admission() == ViewportAdmission::Admitted
+                        })
+            });
         let rejection = if self.version != pending.source_version {
             Some(crate::engine::event::PresentationRehomeResult::WorkspaceChanged)
         } else if self.policy.revision() != pending.policy_revision {
@@ -1006,6 +1030,8 @@ impl DockEngine {
             || self.workspace.presentation_for_root(pending.root) != Some(pending.source_owner)
         {
             Some(crate::engine::event::PresentationRehomeResult::SourceUnavailable)
+        } else if !target_is_current {
+            Some(crate::engine::event::PresentationRehomeResult::TargetNotPresented)
         } else {
             None
         };

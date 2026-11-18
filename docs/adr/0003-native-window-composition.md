@@ -13,6 +13,28 @@ required fresh first-live outputs are presented. Preparation or visibility alone
 cannot commit that transfer. Root continuation preserves the external resource
 while replacing logical bindings, with fresh presentation required afterward.
 
+An operation captures every physical lifetime needed for completion, including
+the destination of a presentation rehome. Destruction or replacement of that
+destination cancels the transfer even before any preview output exists. Normal
+presentation refresh does not replace the captured window lifetime. Source
+content stays owned until the existing exact first-live protocol completes.
+
+Native close preflight and final publication use the same candidate-workspace
+validation, including surviving children whose recovery targets must remain.
+A successful cancellation resumes the existing physical placements; it must
+also restore input after fresh geometry and presentation. An exactly completed
+planned close releases its old recovery obligation, while unplanned destruction
+still requires recovery. A surface retained by close policy can subsequently be
+registered with a fresh physical lifetime.
+
+Accepted ingress can become stale because an earlier record retires its exact
+binding. A known retired window's narrow, non-destruction close tail is consumed
+without changing ownership. Duplicate or conflicting registrations produce an
+individual rejection and allow the FIFO to continue. Unknown bindings and
+contradictory protocol facts remain errors. A binding registered and replaced
+within one frame must still be listed for exact producer cleanup; never require
+a host acknowledgment for an identity the committed report cannot expose.
+
 Native placement intent is separate from the actual pointer hover. Foreign
 windows block covered docking targets even when an explicit edge-local intent
 authorizes native creation. A core-issued drag identity correlates a host's
