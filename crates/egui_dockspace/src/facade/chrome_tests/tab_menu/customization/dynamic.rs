@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod focus_loss;
+
 fn tool_id(index: u8) -> egui::Id {
     egui::Id::unique(("dynamic-menu-tool", index))
 }

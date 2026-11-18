@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod page_focus;
+
 const WIDTH: f32 = 900.0;
 const TOOLS_DESTINATION: &str = "Tools\nInspector, Console · Selected: Inspector";
 

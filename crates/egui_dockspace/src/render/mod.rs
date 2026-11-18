@@ -383,6 +383,7 @@ pub(crate) fn paint_surface(
         &mut dyn FnMut(&Ui, egui::Rect, Id) -> (Id, egui::LayerId),
     >,
 ) -> Result<ProductPaintOutput, DockspaceRuntimeError> {
+    actions::observe_pointer_focus(ui);
     presentation_menu::invalidate_stale(ui, instance_id, plan);
     prepare_menu_layer(ui, instance_id, plan.surface());
     let visuals = style.resolved_visuals(ui.visuals());

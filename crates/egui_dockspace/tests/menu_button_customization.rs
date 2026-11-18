@@ -136,11 +136,16 @@ impl Harness {
     }
 
     fn run(&mut self, events: Vec<Event>) -> FullOutput {
+        self.run_focused(true, events)
+    }
+
+    fn run_focused(&mut self, focused: bool, events: Vec<Event>) -> FullOutput {
         self.panes.snapshots.clear();
         self.frame += 1;
         let raw = RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(WIDTH, 600.0))),
             time: Some(f64::from(self.frame) * 0.1),
+            focused,
             events,
             ..Default::default()
         };
@@ -448,6 +453,113 @@ fn switching_button_paint_during_an_open_menu_preserves_its_identity_across_repe
             assert_expanded(&output, &closed, false);
             assert!(closed.focused);
             harness.run(vec![action(original.id, Action::Click)]);
+            let output = harness.settle();
+            assert_expanded(&output, &harness.button(kind, MAIN), true);
+        }
+    }
+}
+
+#[test]
+fn a_menu_button_press_cannot_survive_window_deactivation() {
+    for callback in [false, true] {
+        for kind in [
+            DockMenuButtonKind::Layout,
+            DockMenuButtonKind::TabGroup,
+            DockMenuButtonKind::TabList,
+        ] {
+            let mut harness = Harness::new(callback);
+            harness.settle();
+            let source = harness.button(kind, MAIN);
+            let pos = source.hit.center();
+            let button = |pressed| Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            harness.run(vec![Event::PointerMoved(pos)]);
+            harness.run(vec![button(true)]);
+            assert!(harness.button(kind, MAIN).pressed);
+            harness.run(vec![
+                Event::WindowFocused(false),
+                Event::WindowFocused(true),
+                button(false),
+            ]);
+            let output = harness.settle();
+            assert_expanded(&output, &harness.button(kind, MAIN), false);
+            harness.run(vec![Event::PointerMoved(pos)]);
+            harness.run(vec![button(true)]);
+            harness.run(vec![button(false)]);
+            let output = harness.settle();
+            assert_expanded(&output, &harness.button(kind, MAIN), true);
+        }
+    }
+}
+
+#[test]
+fn the_first_menu_click_can_restore_window_focus_and_open_the_menu() {
+    for callback in [false, true] {
+        for kind in [
+            DockMenuButtonKind::Layout,
+            DockMenuButtonKind::TabGroup,
+            DockMenuButtonKind::TabList,
+        ] {
+            let mut harness = Harness::new(callback);
+            harness.settle();
+            let source = harness.button(kind, MAIN);
+            let pos = source.hit.center();
+            let button = |pressed| Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            harness.run_focused(false, vec![Event::WindowFocused(false)]);
+            harness.run_focused(false, Vec::new());
+            // A browser focuses its canvas during pointerdown. There is no
+            // intervening focused paint pass before that first press.
+            harness.run(vec![
+                Event::WindowFocused(true),
+                Event::PointerMoved(pos),
+                button(true),
+            ]);
+            assert!(
+                harness.button(kind, MAIN).pressed,
+                "{callback}/{kind:?}: the first focused press must reach its button"
+            );
+            harness.run(vec![button(false)]);
+            let output = harness.settle();
+            assert_expanded(&output, &harness.button(kind, MAIN), true);
+        }
+    }
+}
+
+#[test]
+fn a_late_menu_button_release_cannot_reopen_after_focus_returns() {
+    for callback in [false, true] {
+        for kind in [
+            DockMenuButtonKind::Layout,
+            DockMenuButtonKind::TabGroup,
+            DockMenuButtonKind::TabList,
+        ] {
+            let mut harness = Harness::new(callback);
+            harness.settle();
+            let source = harness.button(kind, MAIN);
+            let pos = source.hit.center();
+            let button = |pressed| Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            harness.run(vec![Event::PointerMoved(pos), button(true)]);
+            harness.run_focused(false, vec![Event::WindowFocused(false)]);
+            harness.run(vec![Event::WindowFocused(true), button(false)]);
+            let output = harness.settle();
+            assert_expanded(&output, &harness.button(kind, MAIN), false);
+
+            harness.run(vec![button(true)]);
+            harness.run(vec![button(false)]);
             let output = harness.settle();
             assert_expanded(&output, &harness.button(kind, MAIN), true);
         }

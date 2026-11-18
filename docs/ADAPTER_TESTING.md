@@ -250,6 +250,19 @@ so Escape and navigation remain usable, while preserving a newer application
 focus owner. Repeat the edit across discarded passes. Switching button paint
 must preserve the same anchor, expanded state and dismissal behavior.
 
+Entering a menu page defers its initial focus until a real interactive pass.
+That request must yield to newer application focus and be consumed even when
+superseded. Window deactivation dismisses product menus and revokes held
+auxiliary clicks. Exercise blur/regain in one packet and across frames; a new
+press after an old release cannot retroactively validate that release. Check
+delayed close requests as well as the immediate response, then require a fresh
+click to work. Keep structurally available entry buttons registered for clicks
+while unfocused; restoring host focus and starting a new press can occur in the
+same packet, before another paint pass. A closed menu must still reject a
+cancelled press's late release. Browser coverage also transfers DOM focus away
+from the canvas while a real menu command is held and requires its first new
+entry click to open the menu.
+
 The workbench's seeded journeys interleave mixed resize packets with docking,
 floating, cancellation and layout restoration. They select currently registered
 controls and require actual event consumption. Precise batched-versus-separate

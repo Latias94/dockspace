@@ -16,7 +16,7 @@ use crate::{
 };
 
 use super::RenderContext;
-use super::actions::{effective_enabled, unambiguous_pointer_click};
+use super::actions::{effective_enabled, focus_uninterrupted, unambiguous_pointer_click};
 use super::geometry::{accesskit_bounds, egui_rect};
 
 mod entries;
@@ -144,6 +144,7 @@ pub(super) fn paint_tab(
 ) -> Result<(), DockspaceRuntimeError> {
     let popup_id = response.id.with("popup");
     let enabled = effective_enabled(context.ui, tab.operable() && response.enabled())
+        && focus_uninterrupted(context.ui)
         && !disposition.is_source_gap()
         && context.plan.prepare_gesture_cancel().is_none()
         && popup::source_available(context.ui, context.instance_id, popup_id);
@@ -258,12 +259,12 @@ fn paint_scoped(
             },
         )
         .on_hover_text(scope.description());
-    if ui_enabled && touch_requested {
+    // Keep the button registered while unfocused: the first new press can
+    // focus the host and hit its previously presented widget in one batch.
+    let can_activate = ui_enabled && focus_uninterrupted(context.ui);
+    if can_activate && touch_requested {
         response.request_focus();
         Popup::open_id(context.ui.ctx(), popup_id);
-    }
-    if ui_enabled && response.clicked() {
-        response.request_focus();
     }
     if !ui_enabled && Popup::is_id_open(context.ui.ctx(), popup_id) {
         Popup::close_id(context.ui.ctx(), popup_id);
@@ -274,7 +275,7 @@ fn paint_scoped(
             data.remove::<MenuPage>(popup_id.with("page"));
         });
     }
-    if menu_open || (ui_enabled && response.clicked()) {
+    if menu_open || (can_activate && response.clicked()) {
         paint_menu(context, scope, &response, !touch_requested)?;
     }
     let menu_open = Popup::is_id_open(context.ui.ctx(), popup_id);
@@ -365,7 +366,7 @@ fn paint_menu(
     };
     let menu_context = prepared.menu.context();
     let mut entries = Vec::with_capacity(prepared.menu.items.len());
-    let mut focused_entry = false;
+    let mut page_focus_handled = false;
     let popup = popup::show(
         context.ui,
         context.instance_id,
@@ -384,13 +385,21 @@ fn paint_menu(
                 ui_enabled,
                 &mut entries,
             );
-            if page.is_some_and(|page| page.focus_first)
-                && !ui.is_sizing_pass()
-                && ui.is_enabled()
-                && let Some((response, _)) = entries.first()
+            if page.is_some_and(|page| page.focus_first) && !ui.is_sizing_pass() && ui.is_enabled()
             {
-                response.request_focus();
-                focused_entry = true;
+                // Page entry is deferred to its first visible pass. A newer
+                // application or accessibility focus choice supersedes it.
+                page_focus_handled = true;
+                if ui.input(|input| input.focused)
+                    && ui.memory(|memory| {
+                        memory.focused() == Some(response.id)
+                            || (memory.focused().is_none()
+                                && memory.had_focus_last_frame(response.id))
+                    })
+                    && let Some((first, _)) = entries.first()
+                {
+                    first.request_focus();
+                }
             }
             (
                 entries.iter().map(|(response, _)| response.id).collect(),
@@ -403,7 +412,7 @@ fn paint_menu(
             )
         },
     );
-    if focused_entry && let Some(mut page) = page {
+    if page_focus_handled && let Some(mut page) = page {
         page.focus_first = false;
         context
             .ui

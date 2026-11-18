@@ -212,6 +212,40 @@ test('blur cancels a held drag, and fresh input can float and dock again', async
   await mergeLeft(page, 'Preview', [3, 2]);
 });
 
+test('blur cancels a held menu command and permits a fresh menu click', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await open(page);
+  const initial = await state(page);
+  const titles = snapshot => snapshot.controls
+    .filter(node => node.role === 'TitleBar').map(node => node.label).sort();
+  await clickControl(page, 'Layout actions');
+  await expect.poll(async () => (await state(page)).controls.some(node =>
+    node.role === 'MenuItem' && node.label === 'Float Layout')).toBe(true);
+  const command = (await state(page)).controls.find(node =>
+    node.role === 'MenuItem' && node.label === 'Float Layout');
+  const position = await point(page, command.rect);
+  await page.mouse.move(position.x, position.y);
+  await page.mouse.down();
+  await presentedPointer(page, position, true);
+  await page.locator('#demo-fullscreen').focus();
+  await expect.poll(async () => (await state(page)).controls.some(node =>
+    node.role === 'MenuItem')).toBe(false);
+  const blurred = await state(page);
+  await page.mouse.up();
+  await expect.poll(async () => (await state(page)).frames).toBeGreaterThan(blurred.frames);
+  expect(topology(await state(page))).toEqual(topology(initial));
+  expect(titles(await state(page))).toEqual(titles(initial));
+
+  await clickControl(page, 'Layout actions');
+  await expect.poll(async () => (await state(page)).controls.some(node =>
+    node.role === 'MenuItem' && node.label === 'Float Layout')).toBe(true);
+  await clickControl(page, 'Float Layout');
+  await expect.poll(async () => titles(await state(page))).toEqual([...titles(initial), 'Split'].sort());
+  expect(topology(await state(page))).toEqual(topology(initial));
+  expect(errors).toEqual([]);
+});
+
 test('browser touch cancellation discards a two-contact drag and allows a fresh dock', async ({ page }) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));

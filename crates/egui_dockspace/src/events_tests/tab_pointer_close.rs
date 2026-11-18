@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod focus_loss;
+
 fn middle(position: Pos2, pressed: bool) -> Event {
     pointer_button(position, PointerButton::Middle, pressed)
 }

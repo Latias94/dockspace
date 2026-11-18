@@ -69,6 +69,7 @@ pub(crate) fn invalidate_stale(ui: &Ui, instance: Id, plan: SurfacePaintPlan<'_>
     };
     if run.workspace != plan.workspace_stamp()
         || !super::effective_enabled(ui, true)
+        || !super::super::actions::focus_uninterrupted(ui)
         || !source_available(ui, instance, run.popup)
     {
         Popup::close_id(ui.ctx(), run.popup);
@@ -117,6 +118,7 @@ pub(super) fn show(
 ) -> Option<InnerResponse<Option<keyboard::Outcome>>> {
     let context = source.ctx();
     if !super::effective_enabled(source, anchor.enabled())
+        || !super::super::actions::focus_uninterrupted(source)
         || !source_available(source, instance, popup)
     {
         Popup::close_id(context, popup);
@@ -148,12 +150,18 @@ pub(super) fn show(
     }
     // While open, Enter/Space belong to the ordered menu keyboard handler.
     // egui also marks the focused anchor as clicked for those same keys.
-    let anchor_toggle = !Popup::is_id_open(context, popup)
+    let keyboard_open = !Popup::is_id_open(context, popup)
+        && anchor.has_focus()
+        && source.input(|input| {
+            input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
+        });
+    let anchor_toggle = keyboard_open
         || source.input(|input| {
             input.has_accesskit_action_request(anchor.id, egui::accesskit::Action::Click)
         })
         || super::unambiguous_pointer_click(source, anchor, egui::PointerButton::Primary);
     if toggle_on_click && anchor.clicked() && anchor_toggle && run.toggled_in != Some(frame) {
+        anchor.request_focus();
         Popup::toggle_id(context, popup);
         run.toggled_in = Some(frame);
     }
