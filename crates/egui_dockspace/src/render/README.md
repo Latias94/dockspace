@@ -10,6 +10,11 @@ visuals. This document describes the contracts required by the host adapter.
 Core input reduction owns gesture state, drag thresholds and release. The
 renderer executes the resulting paint plan and registers egui widget facts.
 Semantic button, keyboard and accessibility actions remain separate commands.
+For `ExternalJournal`, the native host also orders the configured gesture-cancel
+shortcut with pointer callbacks. The renderer must not consume or replay that
+raw key in a later pass: the same batch may already have started a new gesture.
+Other authorities retain their ordinary egui shortcut path. Text and IME input
+continue to belong to application controls.
 `ctx().dragged_id()` is consulted only to release egui drag ownership for
 journal-owned docking widgets.
 

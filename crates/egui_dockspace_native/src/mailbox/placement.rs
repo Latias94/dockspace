@@ -133,10 +133,15 @@ impl NativeHostState {
             }
             // The physical receipt moves once; every exact predecessor keeps
             // its own independently drainable core terminal guard.
-            self.retirements.commit_detachment(predecessor);
+            self.retirements
+                .commit_detachment(Some(viewport), predecessor);
         }
         for &binding in report.native_placement_detachments() {
-            self.retirements.commit_detachment(binding);
+            let viewport = self
+                .viewports
+                .viewport_for_window(binding.window())
+                .or_else(|| self.retirements.viewport_for_binding(binding));
+            self.retirements.commit_detachment(viewport, binding);
             for (_, resource) in self.output_resources.iter_mut() {
                 if resource
                     .reservation

@@ -52,8 +52,6 @@ fn child_window_appearance_preserves_hidden_preparation_and_visible_redeclaratio
     let viewport = viewport_id_for(binding);
     let mut driver = DeferredViewportDriver::default();
     assert!(driver.insert(viewport, binding, bounds(), NativeSurfaceRole::Child));
-    let context = egui::Context::default();
-    context.set_embed_viewports(false);
     let icon = Arc::new(egui::IconData {
         rgba: vec![255; 4 * 4 * 4],
         width: 4,
@@ -65,8 +63,10 @@ fn child_window_appearance_preserves_hidden_preparation_and_visible_redeclaratio
         window_level: Some(egui::WindowLevel::AlwaysOnTop),
         icon: Some(Arc::clone(&icon)),
     };
-    let mut declared_icons = DeclaredWindowIcons::new();
     for configured in [false, true] {
+        let context = egui::Context::default();
+        context.set_embed_viewports(false);
+        let mut declared_icons = DeclaredWindowIcons::new();
         let options = if configured {
             options.clone()
         } else {
@@ -177,11 +177,14 @@ fn surface_appearance_survives_replacement_and_clear_restores_unset_global_defau
         });
         output.textures_delta.clear();
         let child = &output.viewport_output[&viewport];
-        let options = if step >= 2 {
+        let mut options = if step >= 2 {
             defaults.clone()
         } else {
             defaults.with_overrides(&tools)
         };
+        // Clearing an override updates live properties, but taskbar presence
+        // changes only when a new binding creates the next physical lifetime.
+        options.taskbar = Some(step >= 4);
         assert_eq!(
             child.builder,
             options
@@ -199,14 +202,14 @@ fn surface_appearance_survives_replacement_and_clear_restores_unset_global_defau
             assert!(commands.contains(&egui::ViewportCommand::WindowLevel(
                 egui::WindowLevel::Normal
             )));
-            assert_eq!(previous_builder.as_ref().unwrap().taskbar, Some(true));
+            assert_eq!(previous_builder.as_ref().unwrap().taskbar, Some(false));
             assert_eq!(icon_clear_count(&child.commands), 1);
         } else if step == 3 {
             assert_eq!(icon_clear_count(&child.commands), 0);
         } else if step == 4 {
             let before = previous_builder.as_ref().unwrap();
             assert_eq!(child.builder.decorations, before.decorations);
-            assert_eq!(child.builder.taskbar, before.taskbar);
+            assert_eq!(child.builder.taskbar, Some(true));
             assert_eq!(child.builder.window_level, before.window_level);
             assert_eq!(child.builder.icon, before.icon);
             assert_eq!(icon_clear_count(&child.commands), 1);
@@ -222,6 +225,139 @@ fn icon_clear_count(commands: &[egui::ViewportCommand]) -> usize {
         .iter()
         .filter(|command| matches!(command, egui::ViewportCommand::Icon(None)))
         .count()
+}
+
+fn reproject_surface(
+    owner: &mut DockspaceSession,
+    binding: NativeSurfaceBinding,
+) -> NativeSurfaceBinding {
+    use dockspace::geometry::{LogicalSize, PhysicalPoint, PhysicalSize, ScaleFactor};
+    use dockspace::runtime::{
+        NativeSurfacePlacement, NativeWindowFacts, NativeWindowInputState,
+        NativeWindowPresentationState, NativeWorkAreaRoster,
+    };
+
+    owner
+        .configure_managed_native_capabilities(crate::capabilities::capabilities_for_backend(
+            eframe::NativeWindowingBackend::Windows,
+        ))
+        .unwrap();
+    let scale = ScaleFactor::new(1.0).unwrap();
+    owner
+        .report_managed_native_snapshot(
+            [(
+                binding.window(),
+                NativeWindowFacts::live()
+                    .with_content_size(PhysicalSize::new(800.0, 600.0).unwrap())
+                    .with_native_scale_factor(scale)
+                    .with_presentation_scale_factor(scale)
+                    .with_input(NativeWindowInputState::ReceivesInput, None)
+                    .with_presentation(NativeWindowPresentationState::Visible),
+            )],
+            NativeWorkAreaRoster::Unknown,
+        )
+        .unwrap();
+    let mut frame = owner
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame
+        .set_native_surface_placements(
+            binding.window(),
+            &[NativeSurfacePlacement::new(
+                SURFACE,
+                LogicalSize::new(400.0, 600.0).unwrap(),
+                PhysicalPoint::new(0.0, 0.0).unwrap(),
+                scale,
+                PhysicalRect::new(0.0, 0.0, 400.0, 600.0).unwrap(),
+            )],
+        )
+        .unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    frame.commit().unwrap();
+    owner
+        .native_surface_bindings_for_window(binding.window())
+        .next()
+        .unwrap()
+}
+
+#[test]
+fn taskbar_follows_the_physical_window_when_replacement_reuses_a_viewport() {
+    for initial_taskbar in [false, true] {
+        let (mut owner, mut binding) = session();
+        let original = binding;
+        let viewport = viewport_id_for(binding);
+        let context = egui::Context::default();
+        context.set_embed_viewports(false);
+        let mut driver = DeferredViewportDriver::default();
+        let mut declared_icons = DeclaredWindowIcons::new();
+        let mut retained = ViewportBuilder::default();
+        for step in 0..5 {
+            if step == 2 {
+                binding = reproject_surface(&mut owner, binding);
+                assert_ne!(binding, original);
+                assert!(binding.same_window_lifetime(original));
+                assert_eq!(driver.remove(original), Some(viewport));
+            } else if step == 3 {
+                assert_eq!(driver.remove(binding), Some(viewport));
+                let reset = owner.prepare_layout_reset(layout()).unwrap();
+                let mut frame = owner
+                    .begin_native_layout_reset_frame(&reset, |_| NativeReceiverAnswer::Unknown)
+                    .unwrap();
+                frame
+                    .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+                    .unwrap();
+                binding = frame.commit().unwrap().native_bindings()[0];
+                assert!(!binding.same_window_lifetime(original));
+                assert_ne!(viewport_id_for(binding), viewport);
+            }
+            assert!(driver.insert(viewport, binding, bounds(), NativeSurfaceRole::Child));
+            let requested_taskbar = if matches!(step, 0 | 4) {
+                initial_taskbar
+            } else {
+                !initial_taskbar
+            };
+            let specs = driver.retained_specs();
+            let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+                declare_deferred_viewports(
+                    ui.ctx(),
+                    &specs,
+                    &mut declared_icons,
+                    |_| NativeChildWindowOptions {
+                        taskbar: Some(requested_taskbar),
+                        ..Default::default()
+                    },
+                    |_| "Inspector".into(),
+                    |_, _, _| panic!("a deferred declaration must not render in the Root pass"),
+                );
+            });
+            output.textures_delta.clear();
+            let child = &output.viewport_output[&viewport];
+            assert_eq!(
+                child.builder.taskbar,
+                Some(if step < 3 {
+                    initial_taskbar
+                } else {
+                    !initial_taskbar
+                }),
+                "creation-only appearance follows the physical lifetime, step={step}"
+            );
+            let (_, recreate) = retained.patch(child.builder.clone());
+            if step > 0 {
+                assert_eq!(recreate, step == 3, "step={step}");
+            }
+            if step == 3 {
+                assert_eq!(
+                    icon_clear_count(&child.commands),
+                    1,
+                    "a replacement also starts a fresh physical icon history"
+                );
+            }
+            assert_eq!(declared_icons.len(), 1);
+            output.drop_without_applying_deltas();
+        }
+    }
 }
 
 #[test]
@@ -281,6 +417,12 @@ fn global_and_surface_icon_changes_clear_once_and_can_reapply_the_same_arc() {
                     builder.icon = Some(Arc::clone(&parent_icon));
                 }
                 let (commands, recreate) = retained.patch(builder);
+                if step > 0 {
+                    assert!(
+                        !recreate,
+                        "live appearance must not replace the managed physical window, step={step}"
+                    );
+                }
                 if recreate {
                     window_icon = retained.icon.clone();
                 }
@@ -302,7 +444,7 @@ fn global_and_surface_icon_changes_clear_once_and_can_reapply_the_same_arc() {
                 );
                 assert_eq!(
                     icon_clear_count(&child.commands),
-                    usize::from(matches!(step, 0 | 2 | 5 | 6))
+                    usize::from(matches!(step, 0 | 2 | 5))
                 );
                 output.drop_without_applying_deltas();
             }

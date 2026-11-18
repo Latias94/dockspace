@@ -362,7 +362,7 @@ impl NativeHostBridge {
             }
             records
                 .retirements
-                .begin_unmaterialized_quiescence(expected.binding(), receipt)
+                .begin_unmaterialized_quiescence(expected.viewport(), expected.binding(), receipt)
                 .expect("preflighted failed create transfers its sole receipt");
             records.transfer_front_record();
             records.event_boundary_pending = true;
@@ -529,7 +529,7 @@ impl NativeHostBridge {
         let viewport = attempt.viewport_id();
         let mut records = self.lock();
         let Some(reservation) = records.window_resources.create(viewport) else {
-            return NativeViewportCreateAdmission::Defer;
+            return records.unreserved_viewport_create_admission(viewport);
         };
         if !records.admit_ordinary()
             || records.window_resources.hidden_binding(viewport) != Some(reservation.binding)
@@ -655,5 +655,35 @@ impl NativeHostBridge {
     #[cfg(test)]
     pub(crate) fn push_terminal_viewport_roster(&self, roster: NativeViewportRosterRecord) {
         assert!(self.lock().record_terminal_viewport_roster(roster));
+    }
+}
+
+impl NativeHostState {
+    pub(super) fn manages_viewport(&self, viewport: ViewportId) -> bool {
+        viewport == ViewportId::ROOT
+            || self.viewports.binding(viewport).is_some()
+            || self.window_resources.references_viewport(viewport)
+            || self.retirements.references_viewport(viewport)
+    }
+
+    pub(super) fn unreserved_viewport_create_admission(
+        &self,
+        viewport: ViewportId,
+    ) -> NativeViewportCreateAdmission {
+        if self.manages_viewport(viewport) {
+            NativeViewportCreateAdmission::Defer
+        } else {
+            // The application may declare independent deferred viewports. They
+            // have no Dockspace placement, reservation or first-live protocol.
+            NativeViewportCreateAdmission::Proceed {
+                requested_outer_rect: None,
+            }
+        }
+    }
+}
+
+impl NativeHostBridge {
+    pub(crate) fn manages_viewport(&self, viewport: ViewportId) -> bool {
+        self.lock().manages_viewport(viewport)
     }
 }

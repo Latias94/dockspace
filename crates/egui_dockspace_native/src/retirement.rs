@@ -125,9 +125,15 @@ struct PendingRetirement {
 )]
 enum RetirementKind {
     Window(PendingRetirement),
-    Unmaterialized(NativeCreateReceipt),
+    Unmaterialized {
+        viewport: ViewportId,
+        receipt: NativeCreateReceipt,
+    },
     /// This detached host incarnation has no physical destruction obligation.
-    Quiescing,
+    /// Unmapped core placements have no adapter viewport to retain.
+    Quiescing {
+        viewport: Option<ViewportId>,
+    },
 }
 
 #[derive(Debug)]
@@ -137,17 +143,25 @@ struct RetirementEntry {
 }
 
 impl RetirementEntry {
+    fn viewport(&self) -> Option<ViewportId> {
+        match &self.kind {
+            RetirementKind::Window(pending) => Some(pending.viewport),
+            RetirementKind::Unmaterialized { viewport, .. } => Some(*viewport),
+            RetirementKind::Quiescing { viewport } => *viewport,
+        }
+    }
+
     fn pending(&self) -> Option<&PendingRetirement> {
         match &self.kind {
             RetirementKind::Window(pending) => Some(pending),
-            RetirementKind::Unmaterialized(_) | RetirementKind::Quiescing => None,
+            RetirementKind::Unmaterialized { .. } | RetirementKind::Quiescing { .. } => None,
         }
     }
 
     fn pending_mut(&mut self) -> Option<&mut PendingRetirement> {
         match &mut self.kind {
             RetirementKind::Window(pending) => Some(pending),
-            RetirementKind::Unmaterialized(_) | RetirementKind::Quiescing => None,
+            RetirementKind::Unmaterialized { .. } | RetirementKind::Quiescing { .. } => None,
         }
     }
 
@@ -157,8 +171,8 @@ impl RetirementEntry {
                 pending.phase == RetirementPhase::RouteRetired
                     && pending.window.destroyed_committed()
             }
-            RetirementKind::Unmaterialized(receipt) => receipt.is_committed(),
-            RetirementKind::Quiescing => true,
+            RetirementKind::Unmaterialized { receipt, .. } => receipt.is_committed(),
+            RetirementKind::Quiescing { .. } => true,
         }
     }
 }
@@ -255,6 +269,22 @@ impl NativeRetirementState {
         self.entries.iter().map(|entry| entry.binding)
     }
 
+    pub(crate) fn references_viewport(&self, viewport: ViewportId) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.viewport() == Some(viewport))
+    }
+
+    pub(crate) fn viewport_for_binding(&self, binding: NativeSurfaceBinding) -> Option<ViewportId> {
+        self.entries.iter().find_map(|entry| {
+            if entry.binding.same_window_lifetime(binding) {
+                entry.viewport()
+            } else {
+                None
+            }
+        })
+    }
+
     pub(crate) fn has_pending_work(&self) -> bool {
         !self.entries.is_empty()
     }
@@ -264,6 +294,7 @@ impl NativeRetirementState {
     /// adapter quiescence is the only remaining terminal boundary.
     pub(crate) fn begin_unmaterialized_quiescence(
         &mut self,
+        viewport: ViewportId,
         binding: NativeSurfaceBinding,
         receipt: NativeCreateReceipt,
     ) -> Result<(), NativeCreateReceipt> {
@@ -282,7 +313,7 @@ impl NativeRetirementState {
             index,
             RetirementEntry {
                 binding,
-                kind: RetirementKind::Unmaterialized(receipt),
+                kind: RetirementKind::Unmaterialized { viewport, receipt },
             },
         );
         Ok(())
@@ -301,8 +332,8 @@ impl NativeRetirementState {
             !entry.binding.same_window_lifetime(binding)
                 || match entry.kind {
                     RetirementKind::Window(_) => true,
-                    RetirementKind::Quiescing => entry.binding != binding,
-                    RetirementKind::Unmaterialized(_) => false,
+                    RetirementKind::Quiescing { .. } => entry.binding != binding,
+                    RetirementKind::Unmaterialized { .. } => false,
                 }
         })
     }
@@ -315,7 +346,11 @@ impl NativeRetirementState {
     /// Retains one exact detached lane using prepaid backing. A physical owner
     /// already at this key preserves its stricter destruction obligation;
     /// otherwise old outputs, callbacks, sidecars and core commit gate quiescence.
-    pub(crate) fn commit_detachment(&mut self, binding: NativeSurfaceBinding) {
+    pub(crate) fn commit_detachment(
+        &mut self,
+        viewport: Option<ViewportId>,
+        binding: NativeSurfaceBinding,
+    ) {
         assert!(
             self.can_detach_binding(binding),
             "a detached placement cannot duplicate an exact quiescence or failed-create owner"
@@ -340,7 +375,7 @@ impl NativeRetirementState {
             index,
             RetirementEntry {
                 binding,
-                kind: RetirementKind::Quiescing,
+                kind: RetirementKind::Quiescing { viewport },
             },
         );
     }
@@ -356,14 +391,16 @@ impl NativeRetirementState {
         self.entries
             .binary_search_by_key(&binding, |entry| entry.binding)
             .ok()
-            .is_some_and(|index| matches!(self.entries[index].kind, RetirementKind::Quiescing))
+            .is_some_and(|index| {
+                matches!(self.entries[index].kind, RetirementKind::Quiescing { .. })
+            })
     }
 
     pub(crate) fn mark_create_failure_recorded(&mut self, binding: NativeSurfaceBinding) {
         if let Ok(index) = self
             .entries
             .binary_search_by_key(&binding, |entry| entry.binding)
-            && let RetirementKind::Unmaterialized(receipt) = &mut self.entries[index].kind
+            && let RetirementKind::Unmaterialized { receipt, .. } = &mut self.entries[index].kind
         {
             receipt.mark_failure_recorded();
         }
@@ -371,7 +408,7 @@ impl NativeRetirementState {
 
     pub(crate) fn commit_create_failures(&mut self) {
         for entry in &mut self.entries {
-            if let RetirementKind::Unmaterialized(receipt) = &mut entry.kind {
+            if let RetirementKind::Unmaterialized { receipt, .. } = &mut entry.kind {
                 receipt.commit_failure();
             }
         }
@@ -379,8 +416,8 @@ impl NativeRetirementState {
 
     pub(crate) fn create_ingress(&self) -> impl Iterator<Item = &ReservedHostRecord> {
         self.entries.iter().filter_map(|entry| match &entry.kind {
-            RetirementKind::Unmaterialized(receipt) => receipt.ingress(),
-            RetirementKind::Window(_) | RetirementKind::Quiescing => None,
+            RetirementKind::Unmaterialized { receipt, .. } => receipt.ingress(),
+            RetirementKind::Window(_) | RetirementKind::Quiescing { .. } => None,
         })
     }
 
@@ -391,8 +428,10 @@ impl NativeRetirementState {
         self.entries
             .iter_mut()
             .find_map(|entry| match &mut entry.kind {
-                RetirementKind::Unmaterialized(receipt) => receipt.take_ingress(capture_ordinal),
-                RetirementKind::Window(_) | RetirementKind::Quiescing => None,
+                RetirementKind::Unmaterialized { receipt, .. } => {
+                    receipt.take_ingress(capture_ordinal)
+                }
+                RetirementKind::Window(_) | RetirementKind::Quiescing { .. } => None,
             })
     }
 
@@ -410,8 +449,8 @@ impl NativeRetirementState {
     pub(crate) fn all_window_lifetimes_destroyed(&self) -> bool {
         self.entries.iter().all(|entry| match &entry.kind {
             RetirementKind::Window(pending) => pending.window.destroyed_committed(),
-            RetirementKind::Unmaterialized(receipt) => receipt.is_committed(),
-            RetirementKind::Quiescing => true,
+            RetirementKind::Unmaterialized { receipt, .. } => receipt.is_committed(),
+            RetirementKind::Quiescing { .. } => true,
         })
     }
 
@@ -437,7 +476,7 @@ impl NativeRetirementState {
     ) -> bool {
         match self.entries.iter().find(|entry| {
             entry.binding.same_window_lifetime(binding)
-                && !matches!(entry.kind, RetirementKind::Quiescing)
+                && !matches!(entry.kind, RetirementKind::Quiescing { .. })
         }) {
             Some(entry) => {
                 entry.binding == binding
@@ -547,7 +586,7 @@ impl NativeRetirementState {
     ) -> bool {
         self.entries.iter().all(|entry| {
             !entry.binding.same_window_lifetime(binding)
-                || matches!(entry.kind, RetirementKind::Quiescing)
+                || matches!(entry.kind, RetirementKind::Quiescing { .. })
         }) && !self.owns_window(window, None)
             && (self.is_detached_placement(binding)
                 || self
@@ -587,7 +626,7 @@ impl NativeRetirementState {
             Ok(index) => {
                 debug_assert!(matches!(
                     self.entries[index].kind,
-                    RetirementKind::Quiescing
+                    RetirementKind::Quiescing { .. }
                 ));
                 self.entries[index].kind = RetirementKind::Window(pending);
             }
@@ -1229,7 +1268,7 @@ mod tests {
         let ordinal = receipt.ingress().unwrap().ordinal();
         assert!(receipt.transfer(None, failed));
         state
-            .begin_unmaterialized_quiescence(failed_binding, receipt)
+            .begin_unmaterialized_quiescence(viewport, failed_binding, receipt)
             .unwrap();
         let retained = state.owned_data_capacity_bytes();
         assert!(retained > pending);

@@ -3,16 +3,18 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use dockspace::runtime::NativeWindowBinding;
 use eframe::egui::{IconData, ViewportBuilder, ViewportId, WindowLevel};
 
-/// Last declared icons for the current managed viewport roster.
+/// Last declared icons and creation-only taskbar state for managed viewports.
 ///
 /// egui's builder patch cannot clear an icon or remember an explicit clear.
 pub(crate) type DeclaredWindowIcons = BTreeMap<ViewportId, DeclaredWindowIcon>;
 
 pub(crate) struct DeclaredWindowIcon {
+    pub(crate) window: NativeWindowBinding,
     pub(crate) icon: Option<Arc<IconData>>,
-    // Changing taskbar presence recreates the OS window under the same viewport.
+    // Creation-only state remains fixed for this viewport's native lifetime.
     pub(crate) taskbar: bool,
 }
 
@@ -22,8 +24,9 @@ pub(crate) struct DeclaredWindowIcon {
 /// In a surface override, `None` inherits the corresponding global option. A
 /// field left unset after inheritance uses Dockspace's defaults: decorations and
 /// Windows taskbar presence are enabled, the window level is normal, and there
-/// is no window icon. These defaults also apply when removing an override from
-/// a live window. The all-`None` [`Default`] remains suitable for an override
+/// is no window icon. Live properties return to these defaults when an override
+/// is removed; taskbar presence remains fixed for the current window lifetime.
+/// The all-`None` [`Default`] remains suitable for an override
 /// that inherits every global field. Platform support for decorations, taskbar
 /// presence, icons and stacking may differ.
 /// Initial and recovery placement, visibility, activation and pointer passthrough
@@ -35,7 +38,12 @@ pub(crate) struct DeclaredWindowIcon {
 pub struct NativeChildWindowOptions {
     /// Whether the platform should draw window decorations; defaults to `true`.
     pub decorations: Option<bool>,
-    /// Whether the child should appear in the Windows taskbar; defaults to `true`.
+    /// Whether a new child should appear in the Windows taskbar; defaults to `true`.
+    ///
+    /// This is fixed at the first declaration of each native window lifetime.
+    /// Changes apply to subsequently created or replaced windows. Egui can only
+    /// change it by recreating the OS window, which must not bypass Dockspace's
+    /// native retirement and first-live protocol.
     pub taskbar: Option<bool>,
     /// Requested stacking level, such as [`WindowLevel::AlwaysOnTop`].
     /// Defaults to [`WindowLevel::Normal`] after inheritance.

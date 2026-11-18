@@ -1685,6 +1685,14 @@ impl NativeCoordinator {
         match self.bridge.next_callback() {
             Some(crate::mailbox::NativeCallbackHead::WindowEvent) => {}
             Some(crate::mailbox::NativeCallbackHead::Output) | None => return Ok(None),
+            Some(crate::mailbox::NativeCallbackHead::KeyboardControl(_, _))
+                if self.session.has_pending_native_input() =>
+            {
+                // The shortcut must select the owner after earlier accepted
+                // facts commit, without skipping ahead of this raw callback.
+                self.bridge.hold_native_boundary();
+                return Ok(None);
+            }
             Some(callback) => {
                 self.reduce_callback(callback)?;
                 return Ok(Some(std::num::NonZeroUsize::MIN));

@@ -35,12 +35,14 @@ mod composition;
 mod motion;
 #[path = "native_owned_update.rs"]
 mod native_owned_update;
+mod paint_scope;
 mod root_placements;
 
 use composition::NativePaintMapping;
 #[cfg(feature = "motion")]
 pub(crate) use motion::NativeMotionConfiguration;
 use native_owned_update::{NativeOwnedUpdate, NativeUpdatePublication, NativeUpdateRun};
+use paint_scope::NativePaintScope;
 #[cfg(test)]
 use root_placements::root_placements_match_frame;
 use root_placements::{NativeRootPlacementUpdate, RootPlacements, apply_root_placements};
@@ -240,7 +242,7 @@ fn require_durable_root_cycle(
 pub(crate) struct NativeRuntimeState<P> {
     coordinator: NativeCoordinator,
     root_surface: SurfaceId,
-    instance_id: Id,
+    paint_scope: NativePaintScope,
     style: DockStyle,
     panes: P,
     application_actions: NativeApplicationActions,
@@ -301,6 +303,15 @@ impl<P: PaneView> NativeRuntimeState<P> {
         token: NativeOutputToken,
         has_input: bool,
     ) -> Result<eframe::NativeOutputInputAdmission, NativeRuntimeError> {
+        if !self
+            .coordinator
+            .dispatch_bridge()
+            .manages_viewport(token.viewport_id())
+        {
+            // An application-owned viewport cannot consume Dockspace input or
+            // borrow its Root's output capacity and deferred input admission.
+            return Ok(eframe::NativeOutputInputAdmission::Proceed);
+        }
         self.abandon_unfinalized_output_passes(context)?;
         if let Some(update) = &self.owned_update {
             self.pending_service = true;
@@ -664,7 +675,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
         Ok(Self {
             coordinator,
             root_surface,
-            instance_id,
+            paint_scope: NativePaintScope::new(instance_id),
             style,
             panes,
             application_actions: NativeApplicationActions::default(),
@@ -978,7 +989,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
                             context.pixels_per_point(),
                             parent_clip,
                         )?;
-                        Ok(mapping.child_ui(ui, self.instance_id, placement.surface()))
+                        Ok(self.paint_scope.child_ui(mapping, ui, placement.surface()))
                     })
                     .collect::<Result<Vec<_>, NativeHostProtocolError>>()
             })
@@ -1079,11 +1090,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
                                 &context,
                                 view,
                                 &self.panes,
-                                surface_ui.make_persistent_id((
-                                    self.instance_id.with(surface.get()),
-                                    "workspace-focus",
-                                    surface,
-                                )),
+                                self.paint_scope.workspace_focus_id(surface_ui, surface),
                                 context
                                     .layer_transform_to_global(surface_ui.layer_id())
                                     .map_or(dock_rect, |transform| transform * dock_rect),
@@ -1302,16 +1309,16 @@ impl<P: PaneView> NativeRuntimeState<P> {
                             .native_surface_bindings_for_window(binding.window())
                             .find(|binding| binding.surface() == surface)
                     });
-                self.pass_actions.stage_touch_menu(
+                self.paint_scope.stage_touch_menu(
+                    &mut self.pass_actions,
                     token,
                     menu_owner,
                     host_frame.frame.version(),
                     surface_ui,
-                    self.instance_id.with(surface.get()),
                     surface,
                 );
-                let mut paint = host_frame.paint_surface(
-                    self.instance_id.with(surface.get()),
+                let mut paint = self.paint_scope.paint_surface(
+                    &mut host_frame,
                     surface,
                     surface_ui,
                     &mut self.panes,
@@ -1399,6 +1406,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
         discarded: bool,
     ) -> Result<(), NativeRuntimeError> {
         let bridge = self.coordinator.dispatch_bridge();
+        if !bridge.manages_viewport(token.viewport_id()) {
+            return Ok(());
+        }
         let mut budget = bridge
             .dispatch_budget(token)
             .ok_or(NativeHostProtocolError::OutputBudgetUnavailable)?;

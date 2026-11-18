@@ -114,6 +114,10 @@ impl PointerActionAuthority {
     const fn supports_preview_gestures(self) -> bool {
         !matches!(self, Self::LocalResponses)
     }
+
+    const fn accepts_raw_keyboard_cancellation(self) -> bool {
+        matches!(self, Self::HostJournal | Self::LocalResponses)
+    }
 }
 
 struct RenderContext<'ui, 'plan, 'scroll> {
@@ -564,7 +568,13 @@ pub(crate) fn paint_surface(
                         drag_feedback::paint(&mut context, decoration);
                     }
                     SurfacePaintProgramStep::InteractionFeedback => {
-                        if actions::effective_enabled(context.ui, true)
+                        // Native controls have already consumed their ordered
+                        // callback boundary. Replaying an old raw key here could
+                        // cancel a later gesture from the same UI input batch.
+                        if context
+                            .pointer_authority
+                            .accepts_raw_keyboard_cancellation()
+                            && actions::effective_enabled(context.ui, true)
                             && let Some(action) = context.plan.prepare_gesture_cancel()
                             && let Some(key) = context.ui.input_mut(|state| {
                                 let index = state.events.iter().position(|event| {

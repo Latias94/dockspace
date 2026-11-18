@@ -11,9 +11,11 @@ use egui::{Id, PointerButton, Rect, Sense, Stroke, pos2, vec2};
 use crate::{DockMenuButton, DockMenuButtonKind, DockMenuContext, DockMenuTarget, TabBarId};
 
 mod keyboard;
+#[cfg(test)]
+mod local_pointer_tests;
 
 use super::RenderContext;
-use super::actions::{button_activation_origin, effective_enabled};
+use super::actions::{button_activation_origin, effective_enabled, unambiguous_pointer_click};
 use super::geometry::{accesskit_bounds, egui_rect};
 
 pub(crate) fn paint_control_record(
@@ -255,7 +257,7 @@ pub(crate) fn paint_backdrop(
     );
     if enabled
         && context.pointer_authority.accepts_local_pointer_actions()
-        && response.clicked_by(PointerButton::Primary)
+        && unambiguous_pointer_click(context.ui, &response, PointerButton::Primary)
         && let Some(action) = context.plan.prepare_tab_list_menu_dismiss(backdrop)
     {
         context.push_local_action(id.with("pointer-click"), action);
@@ -495,9 +497,9 @@ fn paint_menu_row(
     });
     let pointer = pointer_operable
         && context.pointer_authority.accepts_local_pointer_actions()
-        && response
-            .as_ref()
-            .is_some_and(|response| response.clicked_by(PointerButton::Primary));
+        && response.as_ref().is_some_and(|response| {
+            unambiguous_pointer_click(context.ui, response, PointerButton::Primary)
+        });
     if pointer || click {
         if let Some(action) = context.plan.prepare_tab_list_menu_row_activation(row) {
             let origin = id.with(if click {

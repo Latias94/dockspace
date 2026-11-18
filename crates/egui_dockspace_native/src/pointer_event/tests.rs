@@ -110,6 +110,59 @@ fn mouse_device_lookup_is_read_only_and_requires_active_primary() {
 }
 
 #[test]
+fn keyboard_cancellation_suppresses_only_the_exact_pointer_release_and_preserves_other_inputs() {
+    let mut translator = NativePointerTranslator::default();
+    let routes = NativePointerRoutes::from_binding(None);
+    let keys = [
+        NativeInputDeviceKey::Mouse(NativePhysicalDeviceKey::Test(1)),
+        NativeInputDeviceKey::Mouse(NativePhysicalDeviceKey::Test(2)),
+    ];
+    let pointers = keys.map(|key| {
+        let device = translator.device_mut(key).unwrap();
+        device.mouse.observe(
+            NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+            routes,
+        );
+        device.pointer
+    });
+    let scroll_key = NativeInputDeviceKey::Scroll(NativePhysicalDeviceKey::Test(3));
+    translator.device_mut(scroll_key).unwrap().scroll = NativeScrollState::Live {
+        sequence: NativeScrollSequenceId::new(7),
+        delivery: None,
+    };
+    let before = translator.owned_data_capacity_bytes();
+    let next_identity = translator.next_device_identity;
+    translator.finish_pointer_cancellation(pointers[0]);
+    assert_eq!(translator.owned_data_capacity_bytes(), before);
+    assert_eq!(translator.next_device_identity, next_identity);
+    assert_eq!(
+        translator.device_mut(keys[0]).unwrap().mouse.observe(
+            NativePointerEvent::ButtonReleased(NativePointerButton::Primary),
+            routes,
+        ),
+        MouseTransition::Ignore,
+    );
+    assert!(
+        translator
+            .device_mut(keys[1])
+            .unwrap()
+            .mouse
+            .is_pressed(NativePointerButton::Primary)
+    );
+    assert!(matches!(translator.device_mut(scroll_key).unwrap().scroll,
+        NativeScrollState::Live { sequence, delivery: None } if sequence == NativeScrollSequenceId::new(7)));
+    assert_eq!(
+        translator.device_mut(keys[0]).unwrap().mouse.press(
+            NativePointerButton::Primary,
+            routes,
+            None
+        ),
+        MouseTransition::Forward,
+        "the exact pointer can start another stream after cancellation",
+    );
+}
+
+#[test]
 fn mouse_device_lookup_does_not_borrow_touch_scroll_or_test_devices() {
     let mut translator = NativePointerTranslator::default();
     let device = DeviceId::dummy();

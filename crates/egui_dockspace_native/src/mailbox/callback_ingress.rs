@@ -4,6 +4,7 @@ use super::*;
 
 pub(crate) enum NativeCallbackHead {
     WindowEvent,
+    KeyboardControl(NativeKeyboardControlRecord, std::time::Duration),
     DeviceRemoval(NativeDeviceRemovalRecord),
     GlobalFocus(NativeGlobalFocusRecord),
     ViewportFocus(NativeViewportFocusRecord),
@@ -29,6 +30,9 @@ impl NativeHostBridge {
             // The pointer lane may claim/coalesce a complete raw prefix. Avoid
             // cloning its payload until that lane chooses the exact records.
             HostRecord::WindowEvent(_) => NativeCallbackHead::WindowEvent,
+            HostRecord::KeyboardControl(record) => {
+                NativeCallbackHead::KeyboardControl(*record, ingress.captured_at())
+            }
             HostRecord::DeviceRemoval(record) => NativeCallbackHead::DeviceRemoval(*record),
             HostRecord::GlobalFocus(record) => NativeCallbackHead::GlobalFocus(*record),
             HostRecord::ViewportFocus(record) => NativeCallbackHead::ViewportFocus(*record),

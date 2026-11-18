@@ -1,9 +1,10 @@
-//! Native Escape delivery crosses real egui painting and deferred core input.
+//! Native Escape is reduced before painting and is not replayed as a UI action.
 
 use dockspace::runtime::{DockspaceManipulationCancelReason, NativeGlobalFocus};
 use egui_dockspace::{DockStyle, PaneResponse, PaneView};
 
 use super::*;
+use crate::event::NativeKeyboardControlRecord;
 
 struct Panes;
 
@@ -70,11 +71,38 @@ fn assert_native_escape_cancels_drag(keyboard_surface: SurfaceId) {
         Some(capture)
     );
 
+    let viewport = native.surface_viewport(keyboard_surface).unwrap();
+    let window = native
+        .bridge
+        .with_viewports(|routes| routes.window(viewport).unwrap());
+    native.bridge.push_record(HostRecord::KeyboardControl(
+        NativeKeyboardControlRecord::for_test(
+            3,
+            window,
+            Some(viewport),
+            keyboard_binding,
+            egui::Key::Escape,
+            true,
+        ),
+    ));
+    assert!(
+        native
+            .reduce_callback_prefix(&egui::Context::default(), &mut test_budget())
+            .unwrap()
+            .is_some()
+    );
+    let cancelled = commit_boundary(&mut native);
+    assert!(cancelled.repaint_surfaces().contains(&FIRST_SURFACE));
+    assert!(cancelled.repaint_surfaces().contains(&SECOND_SURFACE));
+    assert!(
+        matches!(cancelled.manipulation_feedback(), [feedback] if feedback.status() == Status::Cancelled(DockspaceManipulationCancelReason::ExplicitCancellation))
+    );
+    assert!(!native.session.has_active_gesture());
+
     let context = egui::Context::default();
     context.options_mut(|options| {
         options.max_passes = 1.try_into().unwrap();
     });
-    let viewport = native.surface_viewport(keyboard_surface).unwrap();
     let mut input = egui::RawInput {
         viewport_id: viewport,
         screen_rect: Some(egui::Rect::from_min_size(
@@ -113,33 +141,15 @@ fn assert_native_escape_cancels_drag(keyboard_surface: SurfaceId) {
     let mut paint = paint.unwrap();
     assert!(paint.validate_final_output(&mut output));
     assert!(paint.confirm_into(&mut frame.frame).unwrap());
-    let actions = paint.take_local_actions();
-    let _painted = finish(frame);
+    assert!(paint.take_local_actions().is_empty());
+    let painted = finish(frame);
     output.drop_without_applying_deltas();
-    assert!(native.session.has_active_gesture());
-
-    let mut apply = native
-        .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
-        .unwrap();
-    for action in actions {
-        apply
-            .frame
-            .submit_deferred_surface_action(action.into_deferred())
-            .unwrap();
-    }
-    let cancelled = finish(apply);
-    assert!(cancelled.repaint_surfaces().contains(&FIRST_SURFACE));
-    assert!(cancelled.repaint_surfaces().contains(&SECOND_SURFACE));
+    assert!(painted.manipulation_feedback().is_empty());
     assert!(
         !native.session.has_active_gesture(),
         "Escape delivered to native surface {keyboard_surface:?} must cancel the source drag"
     );
     assert_eq!(native.session.version(), version);
-    assert!(matches!(
-        cancelled.manipulation_feedback(),
-        [feedback]
-            if feedback.status() == Status::Cancelled(DockspaceManipulationCancelReason::ExplicitCancellation)
-    ));
     assert!(native.session.native_pointer_capture_request().is_none());
     assert_eq!(
         native

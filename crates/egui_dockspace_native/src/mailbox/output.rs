@@ -421,6 +421,16 @@ impl NativeHostBridge {
             }
             return false;
         }
+        if !records.manages_viewport(token.viewport_id()) {
+            // Keep the framework's global terminal ordering, but this output
+            // has no Dockspace paint attachment or presentation obligation.
+            records
+                .output_resources
+                .get_mut(&token)
+                .expect("the unrelated output was reserved above")
+                .reservation
+                .abandon_silently();
+        }
         if let Some(binding) = binding {
             records
                 .window_resources

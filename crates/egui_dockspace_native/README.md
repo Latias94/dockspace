@@ -146,6 +146,12 @@ as the official adapter. It controls hold-to-enable/disable docking and the
 gesture-cancel shortcut; default bindings are Shift and Escape. Queue runtime
 changes through `request_input` and consume their result through
 `take_action_status`, like other application commands.
+Native cancellation follows callback order with pointer release, including when
+no UI pass occurs between them. Cancellation reports `ExplicitCancellation`;
+later rendering does not apply the same key to a new gesture. The native journal
+stores only a bounded key control, while text and IME remain egui application
+input. If a managed close cannot enter the bounded queue, the host synchronously
+vetoes that exact request so ordinary eframe shutdown cannot bypass its policy.
 
 Use `with_motion(settings, preference)` before host attachment, or
 `request_motion(settings, preference)` at runtime. Both use the core's
@@ -286,8 +292,10 @@ live windows and replacements: decorations and Windows taskbar presence are
 enabled, the stacking level is `Normal`, and no window icon is set. Removing a
 custom icon explicitly clears it; an unset icon does not inherit the Root icon.
 `NativeChildWindowOptions::default()` keeps all fields unset so surface overrides
-can inherit every global field. Changes apply on the next Root UI update, so
-request a Root repaint when changing them outside an update. Creation and recovery
+can inherit every global field. Windows taskbar presence is creation-only:
+changing it does not rebuild a live window and applies at its next creation or
+replacement. Other changes apply on the next Root UI update, so request a Root
+repaint when changing them outside an update. Creation and recovery
 placement, visibility and ownership remain coordinated by the native lifecycle.
 Applications may request ordinary movement of a live window through the host;
 fresh OS observations determine its actual geometry. Configure the external
@@ -295,6 +303,13 @@ Root window through eframe's `NativeOptions::viewport`. Child titles combine the
 active real content in visual order, following every ancestor Tabs choice and
 including bare Panes. Hidden and inactive content is omitted; an empty window
 uses a surface caption. Titles have no library-brand suffix.
+
+Pane controls use one runtime content namespace across surfaces. Their egui IDs
+and stored widget state follow the pane during native docking. Use stable pane
+IDs for application controls and avoid adding the current SurfaceId or
+ViewportId to those content IDs. Surface chrome still uses placement-specific
+identities. Application-owned deferred viewports can coexist with the installed
+native handler and keep their ordinary eframe lifecycle.
 
 Window ordering has two scopes:
 

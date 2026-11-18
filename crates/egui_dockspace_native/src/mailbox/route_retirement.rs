@@ -46,6 +46,7 @@ impl NativeHostState {
             .chain(self.owner_ingress().map(ReservedHostRecord::record))
             .any(|record| match record {
                 HostRecord::WindowEvent(event) => event.references_binding(binding),
+                HostRecord::KeyboardControl(record) => record.binding() == binding,
                 HostRecord::DeviceRemoval(_) => false,
                 HostRecord::GlobalFocus(focus) => focus.references_binding(binding),
                 HostRecord::ViewportFocus(focus) => focus.references_binding(binding),
@@ -79,6 +80,7 @@ impl NativeHostState {
             .chain(self.owner_ingress().map(ReservedHostRecord::record))
             .any(|record| match record {
                 HostRecord::WindowEvent(event) => event.binding() == Some(binding),
+                HostRecord::KeyboardControl(record) => record.binding() == binding,
                 HostRecord::ViewportPointerPassthrough(input) => input.binding() == Some(binding),
                 HostRecord::ViewportRoster(roster) => roster
                     .roster()

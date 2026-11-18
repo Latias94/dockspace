@@ -214,6 +214,7 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
     ///
     /// Request a Root repaint when calling this outside an egui update. Fields
     /// left unset use the deterministic defaults in [`NativeChildWindowOptions`].
+    /// Creation-only taskbar presence changes apply to the next window lifetime.
     pub fn set_child_window_options(&mut self, options: NativeChildWindowOptions) {
         self.child_window_options = options;
     }
@@ -242,9 +243,11 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
 
     /// Replaces one surface's overrides, returning its previous overrides.
     ///
-    /// Changes apply on the next Root UI update. Request a Root repaint when
-    /// calling this outside an egui update. Unset fields inherit the current
-    /// global options, then the defaults in [`NativeChildWindowOptions`].
+    /// Live appearance changes apply on the next Root UI update. Creation-only
+    /// options such as taskbar presence apply to the next native window lifetime.
+    /// Request a Root repaint when calling this outside an egui update. Unset
+    /// fields inherit the current global options, then the defaults in
+    /// [`NativeChildWindowOptions`].
     pub fn set_child_window_options_for(
         &mut self,
         surface: SurfaceId,
@@ -844,12 +847,16 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
             context.request_repaint_once_of(ViewportId::ROOT);
         }
 
-        let state = Arc::clone(&self.state);
+        self.declare_child_viewports(&context, &specs);
+    }
+
+    fn declare_child_viewports(&mut self, context: &egui::Context, specs: &[DeferredViewportSpec]) {
+        let state = Arc::downgrade(&self.state);
         let defaults = &self.child_window_options;
         let overrides = &self.child_window_overrides;
         declare_deferred_viewports(
-            &context,
-            &specs,
+            context,
+            specs,
             &mut self.declared_child_icons,
             |surface| {
                 overrides.get(&surface).map_or_else(
@@ -877,12 +884,15 @@ impl<P: PaneView + Send + 'static> eframe::App for NativeDockspaceApp<P> {
 }
 
 fn render_deferred_viewport<P: PaneView + Send + 'static>(
-    shared: &Arc<Mutex<NativeRuntimeState<P>>>,
+    shared: &Weak<Mutex<NativeRuntimeState<P>>>,
     spec: DeferredViewportSpec,
     ui: &mut egui::Ui,
     class: ViewportClass,
 ) {
-    with_state(shared, |state| {
+    let Some(shared) = shared.upgrade() else {
+        return;
+    };
+    with_state(&shared, |state| {
         render_deferred_viewport_locked(state, spec, ui, class)
     });
 }
@@ -1077,6 +1087,9 @@ mod notification_tests;
 
 #[cfg(test)]
 mod recovery_tests;
+
+#[cfg(test)]
+mod viewport_lifetime_tests;
 
 #[cfg(test)]
 mod tests {

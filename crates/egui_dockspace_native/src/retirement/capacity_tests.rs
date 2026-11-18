@@ -556,7 +556,12 @@ fn physical_receipt_and_detachment_keep_the_destroyed_gate_in_both_orders() {
                 state.detachment_needs_entry(bindings[1]),
                 !physical_first || !receipt_owner_is_detached
             );
-            state.commit_detachment(bindings[1]);
+            state.commit_detachment(Some(ViewportId::ROOT), bindings[1]);
+            assert!(state.references_viewport(ViewportId::ROOT));
+            assert_eq!(
+                state.viewport_for_binding(bindings[1]),
+                Some(ViewportId::ROOT)
+            );
             if !physical_first {
                 assert!(state.can_retain_window_receipt(owner, window));
                 state
@@ -602,28 +607,30 @@ fn physical_receipt_and_detachment_keep_the_destroyed_gate_in_both_orders() {
                 assert!(state.finish_quiescence(bindings[1]));
             }
             assert!(!state.has_pending_work());
+            assert!(!state.references_viewport(ViewportId::ROOT));
         }
     }
 }
 
 #[test]
 fn shared_placement_detachment_keeps_exact_quiescence_and_physical_owner_exclusion() {
+    let viewport = ViewportId::ROOT;
     let (_session, _, bindings) = shared_placements();
     let mut state = NativeRetirementState::with_capacity_limit(2).unwrap();
     let backing = state.entries.as_ptr();
     let bytes = state.owned_data_capacity_bytes();
     assert!(state.can_detach_binding(bindings[0]));
-    state.commit_detachment(bindings[0]);
+    state.commit_detachment(Some(ViewportId::ROOT), bindings[0]);
     assert!(!state.can_detach_binding(bindings[0]));
     assert!(state.can_detach_binding(bindings[1]));
     assert!(state.has_quiescence_owner(bindings[1]));
     assert!(
         state
-            .begin_unmaterialized_quiescence(bindings[1], NativeCreateReceipt::new(None))
+            .begin_unmaterialized_quiescence(viewport, bindings[1], NativeCreateReceipt::new(None))
             .is_err()
     );
     assert!(!state.can_retain_window(bindings[1], WindowId::from(91)));
-    state.commit_detachment(bindings[1]);
+    state.commit_detachment(Some(ViewportId::ROOT), bindings[1]);
     assert_eq!(state.bindings().collect::<Vec<_>>(), bindings);
     assert!(state.finish_quiescence(bindings[0]));
     assert!(!state.finish_quiescence(bindings[0]));
@@ -647,7 +654,7 @@ fn shared_placement_detachment_keeps_exact_quiescence_and_physical_owner_exclusi
     assert!(physical.detachment_needs_entry(bindings[1]));
     let mut unmaterialized = NativeRetirementState::with_capacity_limit(2).unwrap();
     unmaterialized
-        .begin_unmaterialized_quiescence(bindings[0], NativeCreateReceipt::new(None))
+        .begin_unmaterialized_quiescence(viewport, bindings[0], NativeCreateReceipt::new(None))
         .unwrap();
     assert!(!unmaterialized.can_detach_binding(bindings[1]));
 }
@@ -772,7 +779,7 @@ fn one_shared_slot_keeps_the_failed_create_until_quiescence_then_retries_the_ori
     let backing = state.entries.as_ptr();
     let (receipt, ordinal) = failed_create(viewport, failed);
     state
-        .begin_unmaterialized_quiescence(failed, receipt)
+        .begin_unmaterialized_quiescence(viewport, failed, receipt)
         .unwrap();
     let receipt = state
         .retain_window(window_receipt(viewport, window, live))
@@ -818,7 +825,7 @@ fn release_preserves_its_acknowledgement_through_full_commit_and_rejected_snapsh
         .unwrap();
     let (receipt, ordinal) = failed_create(viewport, other);
     let receipt = state
-        .begin_unmaterialized_quiescence(other, receipt)
+        .begin_unmaterialized_quiescence(viewport, other, receipt)
         .unwrap_err();
     assert_eq!(receipt.ingress().unwrap().ordinal(), ordinal);
     assert_eq!(
@@ -864,11 +871,11 @@ fn release_preserves_its_acknowledgement_through_full_commit_and_rejected_snapsh
     state.commit_routes(&[committed]);
     assert_eq!(state.next_quiescence_candidate(None), Some(binding));
     let receipt = state
-        .begin_unmaterialized_quiescence(other, receipt)
+        .begin_unmaterialized_quiescence(viewport, other, receipt)
         .unwrap_err();
     assert!(state.finish_quiescence(binding));
     state
-        .begin_unmaterialized_quiescence(other, receipt)
+        .begin_unmaterialized_quiescence(viewport, other, receipt)
         .unwrap();
     assert_eq!(state.create_ingress().next().unwrap().ordinal(), ordinal);
     assert_eq!(state.entries.as_ptr(), backing);
@@ -885,7 +892,7 @@ fn capacity_and_identity_refusals_return_the_original_release_capabilities() {
     let baseline = state.owned_data_capacity_bytes();
     let (failed_receipt, ordinal) = failed_create(viewport, failed);
     state
-        .begin_unmaterialized_quiescence(failed, failed_receipt)
+        .begin_unmaterialized_quiescence(viewport, failed, failed_receipt)
         .unwrap();
     assert!(!state.can_begin_release(viewport, binding));
     let (retry_ack, retry_window) = state
@@ -952,13 +959,13 @@ fn lifetime_exclusivity_rejects_viewport_aliases_and_both_terminal_kinds() {
     let failed = NativeCreateReceipt::new(None);
     assert!(
         state
-            .begin_unmaterialized_quiescence(binding, failed)
+            .begin_unmaterialized_quiescence(viewport, binding, failed)
             .is_err()
     );
     assert!(!state.adopt_successor_binding(binding, foreign));
     assert!(state.has_window(viewport, binding));
     state
-        .begin_unmaterialized_quiescence(foreign, NativeCreateReceipt::new(None))
+        .begin_unmaterialized_quiescence(viewport, foreign, NativeCreateReceipt::new(None))
         .unwrap();
     assert!(!state.can_begin_release(alias, foreign));
     assert!(!state.can_retain_window(foreign, WindowId::from(63)));
@@ -986,7 +993,7 @@ fn quiescence_cursor_orders_mixed_owners_and_keeps_a_blocked_candidate() {
     let mut journal = HostIngressJournal::new(dockspace::runtime::NativeMonotonicClock::system());
     let (last, last_ordinal) = failed_create_in(&mut journal, viewport, bindings[2]);
     state
-        .begin_unmaterialized_quiescence(bindings[2], last)
+        .begin_unmaterialized_quiescence(viewport, bindings[2], last)
         .unwrap();
     state
         .retain_window(window_receipt(viewport, window, bindings[1]))
@@ -994,7 +1001,7 @@ fn quiescence_cursor_orders_mixed_owners_and_keeps_a_blocked_candidate() {
     let (first, first_ordinal) = failed_create_in(&mut journal, viewport, bindings[0]);
     assert_ne!(first_ordinal, last_ordinal);
     state
-        .begin_unmaterialized_quiescence(bindings[0], first)
+        .begin_unmaterialized_quiescence(viewport, bindings[0], first)
         .unwrap();
     commit_failed_create(&mut state, bindings[0], first_ordinal);
     commit_failed_create(&mut state, bindings[2], last_ordinal);
@@ -1063,6 +1070,7 @@ fn reservation_and_unlimited_preparation_preserve_existing_backing_on_overflow()
 
 #[test]
 fn default_unlimited_accepts_more_lifetimes_than_the_selected_finite_bound() {
+    let viewport = ViewportId::ROOT;
     let bindings = [super::tests::binding(), super::tests::binding()];
     let mut finite = NativeRetirementState::with_capacity_limit(1).unwrap();
     let mut unlimited = NativeRetirementState::default();
@@ -1073,15 +1081,15 @@ fn default_unlimited_accepts_more_lifetimes_than_the_selected_finite_bound() {
     let backing = unlimited.entries.as_ptr();
     for binding in bindings {
         unlimited
-            .begin_unmaterialized_quiescence(binding, NativeCreateReceipt::new(None))
+            .begin_unmaterialized_quiescence(viewport, binding, NativeCreateReceipt::new(None))
             .unwrap();
     }
     finite
-        .begin_unmaterialized_quiescence(bindings[0], NativeCreateReceipt::new(None))
+        .begin_unmaterialized_quiescence(viewport, bindings[0], NativeCreateReceipt::new(None))
         .unwrap();
     assert!(
         finite
-            .begin_unmaterialized_quiescence(bindings[1], NativeCreateReceipt::new(None))
+            .begin_unmaterialized_quiescence(viewport, bindings[1], NativeCreateReceipt::new(None))
             .is_err()
     );
     assert_eq!(unlimited.bindings().count(), 2);

@@ -483,7 +483,9 @@ fn elapsed_service_refill_preserves_release_close_and_ready_bootstrap_owners() {
     let mut state = NativeRuntimeState {
         coordinator,
         root_surface: SURFACE,
-        instance_id: egui::Id::unique("elapsed-service-three-owners"),
+        paint_scope: crate::surface_driver::NativePaintScope::new(egui::Id::unique(
+            "elapsed-service-three-owners",
+        )),
         owned_update: None,
         root_placements: Default::default(),
         pending_service: false,

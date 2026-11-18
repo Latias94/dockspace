@@ -317,6 +317,13 @@ impl NativeHostState {
 }
 
 impl NativeHostState {
+    pub(super) fn capture_keyboard_control(&mut self, record: NativeKeyboardControlRecord) -> bool {
+        self.mode.accepts_new_work()
+            && record.is_current(&self.viewports)
+            && self.admit_ordinary()
+            && self.journal.push_back(HostRecord::KeyboardControl(record))
+    }
+
     pub(super) fn record_window_event(&mut self, record: NativeWindowEventRecord) -> bool {
         if matches!(
             (self.mode, record.event()),
@@ -422,6 +429,7 @@ impl NativeHostState {
                     }
                     HostRecord::Output { .. } => IdleCursorPrefixEntry::Output,
                     HostRecord::WindowEvent(_)
+                    | HostRecord::KeyboardControl(_)
                     | HostRecord::DeviceRemoval(_)
                     | HostRecord::GlobalFocus(_)
                     | HostRecord::ViewportFocus(_)
@@ -653,6 +661,22 @@ impl NativeHostBridge {
         let matches = matches!(
             records.front_dispatch_record(),
             Some(HostRecord::DeviceRemoval(removal)) if *removal == expected
+        );
+        if matches {
+            records.transfer_front_record();
+            records.event_boundary_pending = true;
+        }
+        matches
+    }
+
+    pub(crate) fn acknowledge_keyboard_control(
+        &self,
+        expected: NativeKeyboardControlRecord,
+    ) -> bool {
+        let mut records = self.lock();
+        let matches = matches!(
+            records.front_dispatch_record(),
+            Some(HostRecord::KeyboardControl(record)) if *record == expected
         );
         if matches {
             records.transfer_front_record();

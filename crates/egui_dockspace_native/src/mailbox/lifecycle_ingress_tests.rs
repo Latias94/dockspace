@@ -16,6 +16,7 @@ use winit::event::{DeviceId, PointerEventFacts, WindowEvent};
 use super::*;
 
 mod shutdown_roster;
+mod unrelated_viewports;
 
 fn binding() -> NativeSurfaceBinding {
     let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(

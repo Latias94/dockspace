@@ -287,9 +287,10 @@ impl Harness {
                     motion: plan.motion_frame().unwrap(),
                 });
                 paint = Some(
-                    frame
+                    self.state
+                        .paint_scope
                         .paint_surface(
-                            self.state.instance_id,
+                            &mut frame,
                             SURFACE,
                             ui,
                             &mut self.state.panes,

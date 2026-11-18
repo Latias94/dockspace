@@ -49,7 +49,7 @@ impl NativeWindowEventClass {
             | WindowEvent::PointerCaptureChanged { .. }
             | WindowEvent::PanGesture { .. }
             | WindowEvent::Touch(_) => Self::Pointer,
-            WindowEvent::ModifiersChanged(_) => Self::Control,
+            WindowEvent::ModifiersChanged(_) | WindowEvent::KeyboardInput { .. } => Self::Control,
             WindowEvent::CloseRequested | WindowEvent::Destroyed => Self::Lifecycle,
             _ => Self::Other,
         }
@@ -57,6 +57,85 @@ impl NativeWindowEventClass {
 
     pub(crate) const fn is_dockspace_ingress(self) -> bool {
         !matches!(self, Self::Other)
+    }
+}
+
+/// A bounded keyboard control, without the native event's text or platform payload.
+///
+/// Modifier changes retain their existing ordered records. Matching happens at
+/// this record's reduction boundary, after all earlier observations commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NativeKeyboardControlRecord {
+    ordinal: u64,
+    window_id: WindowId,
+    viewport_id: Option<ViewportId>,
+    binding: NativeSurfaceBinding,
+    key: eframe::egui::Key,
+    pressed: bool,
+}
+
+impl NativeKeyboardControlRecord {
+    pub(crate) fn from_eframe(
+        callback: eframe::NativeWindowEvent<'_>,
+        viewports: &NativeViewportMap,
+    ) -> Option<Self> {
+        let WindowEvent::KeyboardInput {
+            event,
+            is_synthetic: false,
+            ..
+        } = callback.event()
+        else {
+            return None;
+        };
+        Some(Self {
+            ordinal: callback.ordinal().get(),
+            window_id: callback.window_id(),
+            viewport_id: callback.viewport_id(),
+            binding: viewports.binding_for_event(callback.window_id(), callback.viewport_id())?,
+            key: egui_winit::key_from_winit_key_event(event)?,
+            pressed: event.state == winit::event::ElementState::Pressed,
+        })
+    }
+
+    pub(crate) const fn ordinal(self) -> u64 {
+        self.ordinal
+    }
+
+    pub(crate) const fn binding(self) -> NativeSurfaceBinding {
+        self.binding
+    }
+
+    pub(crate) fn is_current(self, viewports: &NativeViewportMap) -> bool {
+        viewports.binding_for_event(self.window_id, self.viewport_id) == Some(self.binding)
+            && viewports.pointer_binding_for_event(self.window_id, self.viewport_id)
+                == Some(self.binding.window())
+    }
+
+    pub(crate) const fn pressed(self) -> bool {
+        self.pressed
+    }
+
+    pub(crate) const fn key(self) -> eframe::egui::Key {
+        self.key
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn for_test(
+        ordinal: u64,
+        window_id: WindowId,
+        viewport_id: Option<ViewportId>,
+        binding: NativeSurfaceBinding,
+        key: eframe::egui::Key,
+        pressed: bool,
+    ) -> Self {
+        Self {
+            ordinal,
+            window_id,
+            viewport_id,
+            binding,
+            key,
+            pressed,
+        }
     }
 }
 

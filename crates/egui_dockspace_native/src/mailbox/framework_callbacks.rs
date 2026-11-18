@@ -2,6 +2,44 @@
 
 use super::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum WindowEventAdmission {
+    Continue,
+    HoldClose,
+    VetoClose,
+}
+
+impl NativeHostState {
+    pub(super) fn capture_framework_window_event(
+        &mut self,
+        record: NativeWindowEventRecord,
+    ) -> WindowEventAdmission {
+        let close_requested = matches!(record.event(), winit::event::WindowEvent::CloseRequested);
+        let managed_close = close_requested
+            && record.binding().is_some()
+            && self
+                .viewports
+                .binding_for_event(record.window_id(), record.viewport_id())
+                == record.binding();
+        if close_requested && !managed_close {
+            return WindowEventAdmission::Continue;
+        }
+        // Fatal/shutdown admission cannot return ownership of a managed close
+        // to eframe. A synchronous veto creates no new cleanup obligation.
+        if managed_close && !self.mode.accepts_new_work() {
+            return WindowEventAdmission::VetoClose;
+        }
+        if !self.accepts_window_event(record.event()) {
+            return WindowEventAdmission::Continue;
+        }
+        match (managed_close, self.capture_window_event(record)) {
+            (true, true) => WindowEventAdmission::HoldClose,
+            (true, false) => WindowEventAdmission::VetoClose,
+            (false, _) => WindowEventAdmission::Continue,
+        }
+    }
+}
+
 impl NativeHostHandler for NativeHostBridge {
     fn on_service(&self, context: &eframe::egui::Context) -> NativeHostWake {
         self.output_pass_finalizer
@@ -123,6 +161,26 @@ impl NativeHostHandler for NativeHostBridge {
         // after route lookup but before this event became visible.
         let mut records = self.lock();
         if !records.accepts_window_event(event.event()) {
+            if matches!(event.event(), winit::event::WindowEvent::CloseRequested)
+                && records
+                    .viewports
+                    .binding_for_event(event.window_id(), event.viewport_id())
+                    .is_some()
+                && let Some(request) = event.close_request()
+            {
+                return NativeWindowEventDisposition::VetoClose(request);
+            }
+            return NativeWindowEventDisposition::Continue;
+        }
+        if matches!(
+            event.event(),
+            winit::event::WindowEvent::KeyboardInput { .. }
+        ) {
+            if let Some(record) =
+                NativeKeyboardControlRecord::from_eframe(event, &records.viewports)
+            {
+                records.capture_keyboard_control(record);
+            }
             return NativeWindowEventDisposition::Continue;
         }
         if NativeWindowEventClass::classify(event.event()) == NativeWindowEventClass::Pointer {
@@ -142,14 +200,15 @@ impl NativeHostHandler for NativeHostBridge {
             return NativeWindowEventDisposition::Continue;
         }
         let record = NativeWindowEventRecord::from_eframe(event, &mut records.viewports);
-        let disposition = match (record.binding(), record.close_request()) {
-            (Some(_), Some(request)) => NativeWindowEventDisposition::HoldClose(request),
+        let request = record.close_request();
+        match (records.capture_framework_window_event(record), request) {
+            (WindowEventAdmission::HoldClose, Some(request)) => {
+                NativeWindowEventDisposition::HoldClose(request)
+            }
+            (WindowEventAdmission::VetoClose, Some(request)) => {
+                NativeWindowEventDisposition::VetoClose(request)
+            }
             _ => NativeWindowEventDisposition::Continue,
-        };
-        if records.capture_window_event(record) {
-            disposition
-        } else {
-            NativeWindowEventDisposition::Continue
         }
     }
 

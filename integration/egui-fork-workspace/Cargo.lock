@@ -445,7 +445,7 @@ source = "git+https://github.com/Latias94/winit.git?rev=e972e49ea599eeb1a4ac8c97
 [[package]]
 name = "ecolor"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=bec3070495813dd35fb913f4966008b706409092#bec3070495813dd35fb913f4966008b706409092"
+source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
 dependencies = [
  "bytemuck",
  "emath",
@@ -455,7 +455,7 @@ dependencies = [
 [[package]]
 name = "eframe"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=bec3070495813dd35fb913f4966008b706409092#bec3070495813dd35fb913f4966008b706409092"
+source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -489,7 +489,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=bec3070495813dd35fb913f4966008b706409092#bec3070495813dd35fb913f4966008b706409092"
+source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
 dependencies = [
  "accesskit",
  "ahash",
@@ -533,7 +533,7 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=bec3070495813dd35fb913f4966008b706409092#bec3070495813dd35fb913f4966008b706409092"
+source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -552,7 +552,7 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=bec3070495813dd35fb913f4966008b706409092#bec3070495813dd35fb913f4966008b706409092"
+source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
 dependencies = [
  "arboard",
  "block2 0.6.2",
@@ -585,6 +585,7 @@ version = "0.1.0"
 dependencies = [
  "dockspace",
  "eframe",
+ "egui-winit",
  "egui_dockspace",
  "thiserror 2.0.20",
  "winit",
@@ -593,7 +594,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=bec3070495813dd35fb913f4966008b706409092#bec3070495813dd35fb913f4966008b706409092"
+source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
 dependencies = [
  "bytemuck",
  "egui",
@@ -606,7 +607,7 @@ dependencies = [
 [[package]]
 name = "egui_inspection"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=bec3070495813dd35fb913f4966008b706409092#bec3070495813dd35fb913f4966008b706409092"
+source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
 dependencies = [
  "egui",
  "image",
@@ -625,7 +626,7 @@ checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 [[package]]
 name = "emath"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=bec3070495813dd35fb913f4966008b706409092#bec3070495813dd35fb913f4966008b706409092"
+source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
 dependencies = [
  "bytemuck",
  "serde",
@@ -645,7 +646,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=bec3070495813dd35fb913f4966008b706409092#bec3070495813dd35fb913f4966008b706409092"
+source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -671,7 +672,7 @@ dependencies = [
 [[package]]
 name = "epaint_default_fonts"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=bec3070495813dd35fb913f4966008b706409092#bec3070495813dd35fb913f4966008b706409092"
+source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
 
 [[package]]
 name = "equivalent"
@@ -686,7 +687,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1681,7 +1682,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2005,7 +2006,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2756,7 +2757,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

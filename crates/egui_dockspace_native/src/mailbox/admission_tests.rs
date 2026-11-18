@@ -390,11 +390,13 @@ fn admitted_window_retains_prepaid_retirement_backing_through_terminal_retry() {
 
 #[test]
 fn full_close_owner_refuses_new_capture_before_journal_identity_and_keeps_duplicates() {
+    use super::framework_callbacks::WindowEventAdmission;
+
     let [first, second, _] = three_bindings();
     let bridge = NativeHostBridge::new(NativeViewportMap::default());
     bridge.configure_lifecycle_storage(2, 1).unwrap();
-    let first_viewport = ViewportId::ROOT;
-    let second_viewport = ViewportId::from_hash_of(2);
+    let first_viewport = ViewportId::from_hash_of(2);
+    let second_viewport = ViewportId::ROOT;
     bridge
         .bind_viewport_route(first_viewport, WindowId::from(11), first)
         .unwrap();
@@ -412,17 +414,98 @@ fn full_close_owner_refuses_new_capture_before_journal_identity_and_keeps_duplic
     };
     let mut state = bridge.lock();
     let backing = state.close_control.owned_data_capacity_bytes();
-    assert!(state.capture_window_event(close(first, first_viewport, WindowId::from(11), 1)));
+    assert_eq!(
+        state.capture_framework_window_event(close(first, first_viewport, WindowId::from(11), 1)),
+        WindowEventAdmission::HoldClose,
+    );
     let captured = state.journal.captured_through();
     let progress = state.close_control.progress();
-    assert!(!state.capture_window_event(close(second, second_viewport, WindowId::from(22), 2)));
+    assert_eq!(
+        state.capture_framework_window_event(close(second, second_viewport, WindowId::from(22), 2)),
+        WindowEventAdmission::VetoClose,
+        "a full child close owner cannot release Root to eframe's ordinary close path",
+    );
     assert_eq!(state.journal.captured_through(), captured);
     assert_eq!(state.close_control.progress(), progress);
     assert!(!state.close_control.references_binding(second));
-    assert!(state.capture_window_event(close(first, first_viewport, WindowId::from(11), 1)));
+    assert_eq!(
+        state.capture_framework_window_event(close(first, first_viewport, WindowId::from(11), 1)),
+        WindowEventAdmission::HoldClose,
+    );
     assert_eq!(state.journal.captured_through(), captured);
     assert_eq!(state.close_control.progress(), progress);
     assert_eq!(state.close_control.owned_data_capacity_bytes(), backing);
+}
+
+#[test]
+fn inactive_ingress_vetoes_managed_close_without_owning_unrelated_windows() {
+    use super::framework_callbacks::WindowEventAdmission;
+
+    for mode in [HostIngressMode::Quarantined, HostIngressMode::Frozen] {
+        let (bridge, _, binding, window) = bridge_with_clock();
+        let mut state = bridge.lock();
+        state.mode = mode;
+        let captured = state.journal.captured_through();
+        for ordinal in 1..=2 {
+            let managed = NativeWindowEventRecord::for_test(
+                ordinal,
+                window,
+                Some(ViewportId::ROOT),
+                Some(binding),
+                WindowEvent::CloseRequested,
+            );
+            assert_eq!(
+                state.capture_framework_window_event(managed),
+                WindowEventAdmission::VetoClose,
+                "{mode:?} must retain the managed window's close policy",
+            );
+            let unrelated = NativeWindowEventRecord::for_test(
+                ordinal,
+                WindowId::from(99),
+                Some(ViewportId::from_hash_of("application settings")),
+                None,
+                WindowEvent::CloseRequested,
+            );
+            assert_eq!(
+                state.capture_framework_window_event(unrelated),
+                WindowEventAdmission::Continue,
+            );
+        }
+        assert!(!state.close_control.has_pending_work());
+        assert_eq!(state.close_control.progress().requests_retained(), 0);
+        assert_eq!(state.journal.captured_through(), captured);
+    }
+}
+
+#[test]
+fn keyboard_controls_share_raw_capacity_identity_and_fixed_storage_with_pointer_callbacks() {
+    let (bridge, _, binding, window) = bridge_with_clock();
+    let mut state = bridge.lock();
+    let bytes = state.journal.owned_buffer_capacity_bytes();
+    let keyboard = |ordinal| {
+        NativeKeyboardControlRecord::for_test(
+            ordinal,
+            window,
+            Some(ViewportId::ROOT),
+            binding,
+            eframe::egui::Key::Escape,
+            true,
+        )
+    };
+    for ordinal in 1..=admission::RECORD_LIMIT as u64 {
+        assert!(state.capture_keyboard_control(keyboard(ordinal)));
+    }
+    assert_eq!(state.journal.len(), admission::RECORD_LIMIT);
+    assert_eq!(state.journal.raw_pointer_payload_bytes(), 0);
+    assert_eq!(state.journal.owned_buffer_capacity_bytes(), bytes);
+    let captured = state.journal.captured_through();
+    assert!(!state.capture_keyboard_control(keyboard(captured + 1)));
+    assert_eq!(state.journal.captured_through(), captured);
+    assert_eq!(
+        state.admission,
+        NativeAdmission::Draining { boundary: captured }
+    );
+    assert_eq!(state.journal.owned_buffer_capacity_bytes(), bytes);
 }
 
 #[test]

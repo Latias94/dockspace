@@ -125,6 +125,15 @@ controls without synthesizing clicks or releases, preserve another viewport's dr
 payload, and reject an old button's release during a new button's interaction.
 Cursor exit and a same-application focus transfer alone do not prove capture loss.
 
+For native shortcut cancellation, enqueue the configured key and mouse release
+without an intervening UI pass, then test both orders. Cancel-first preserves
+the source; release-first retains the committed drop. Cover custom shortcuts,
+pressed and resize states, local and desktop input, and an accepted prefix
+waiting to commit. A subsequent gesture must survive painting the old raw key;
+the application must still receive its keyboard input. Close-admission overflow
+must synchronously reject the exact unaccepted request instead of falling back
+to ordinary framework shutdown or retaining an owner that cannot settle.
+
 For pointer resizing, check pane and handle geometry in the move frame before
 release, while the durable workspace version remains unchanged. Also send a
 release at a new position without a preceding move, and a complete gesture in
@@ -421,6 +430,33 @@ Use different tools for different failure seams:
   before source retirement, and keep same-surface moves immediate. Native tear-off
   availability and submission must check the same surviving recovery host; hidden
   siblings and empty central anchors must remain valid controls.
+
+- Native lifecycle regressions must reach the next usable operation. Revoke a
+  rehome destination before its first preview and after output emission, settle
+  late Presented/Dropped results, then start a real gesture in a surviving
+  window. After exact close cancellation, require fresh coordinates, Presented
+  output and an actionable receiver. After same-frame Root registration and
+  document restore, acknowledge the exact predecessor and require the first
+  Child create request to be emitted. A plan state or successful restore alone
+  is not the completion condition.
+- Keep harmless ingress conflicts separate from fatal protocol violations.
+  Repeated registration and already accepted close tails for a retired binding
+  must not obstruct an unrelated window's next record. Quarantined tokens still
+  require exact destruction before reuse. Planned RetainLayout close permits a
+  new registration after its terminal barriers; unplanned destruction retains
+  the existing recovery obligation.
+- Native adapter tests distinguish content, viewport and physical-window
+  identity. Move a real editor Root→Child→Root and require its control IDs,
+  scroll offset and text to survive. Also keep a viewport ID fixed while
+  replacing its physical window: creation-only options must use the new
+  lifetime's configuration, and a failed replacement must retain its actual
+  viewport in retirement. An unrelated application-owned deferred viewport
+  remains outside Dockspace creation admission.
+- Physical placement persistence does not require render-coordinate authority.
+  Change a known outer rectangle or native DPI while presentation scale is
+  unavailable, require a document-change notification and the saved new facts,
+  then repeat the facts and require no further notification. Input authority
+  must remain unavailable throughout that check.
 
 At each failure, name the violated invariant and its checkpoint. Candidate
 rollback must preserve committed semantics; a presented output authorizes only

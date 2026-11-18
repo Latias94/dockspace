@@ -3,6 +3,7 @@
 use super::*;
 use dockspace::model::{DockspaceAxis, DockspaceContainedLayout, FloatingPresentationId};
 
+mod keyboard_cancel;
 mod real_hits;
 
 const INSPECTOR: ItemId = ItemId::new(4);
@@ -15,12 +16,22 @@ const INSPECTOR_ROOT: RootId = RootId::new(2);
 struct EditorScene {
     scene: Scene,
     outline: LogicalPoint,
+    panes: Vec<(ItemId, LogicalRect)>,
     splitters: Vec<(
         DockspaceAxis,
         dockspace::runtime::DockspaceVisualId,
         DockspaceReceiverDescriptor,
     )>,
     junctions: Vec<LogicalRect>,
+}
+
+fn editor_metrics() -> UniformSurfaceMetrics {
+    UniformSurfaceMetrics::new(
+        LogicalRect::new(0.0, 94.0, 800.0, 506.0).unwrap(),
+        LogicalSize::new(32.0, 24.0).unwrap(),
+        80.0,
+    )
+    .unwrap()
 }
 
 fn editor_fixture(desktop: bool) -> (NativeCoordinator, NativeSurfaceBinding, Arc<AtomicU64>) {
@@ -117,15 +128,7 @@ fn editor_fixture(desktop: bool) -> (NativeCoordinator, NativeSurfaceBinding, Ar
         .unwrap();
     frame
         .frame
-        .measure_surface(
-            FIRST_SURFACE,
-            UniformSurfaceMetrics::new(
-                LogicalRect::new(0.0, 94.0, 800.0, 506.0).unwrap(),
-                LogicalSize::new(32.0, 24.0).unwrap(),
-                80.0,
-            )
-            .unwrap(),
-        )
+        .measure_surface(FIRST_SURFACE, editor_metrics())
         .unwrap();
     let report = finish(frame);
     native.settle_host_frame_report(&report).unwrap();
@@ -145,25 +148,35 @@ fn encode(native: &mut NativeCoordinator) -> (EditorScene, HostFrameReport) {
     let mut frame = native
         .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
         .unwrap();
+    // A revoked measurement must use the editor's toolbar inset again; the
+    // generic tab fixture's zero-inset fallback describes a different surface.
+    if frame.frame.paint_plan(FIRST_SURFACE).unwrap().is_none() {
+        frame
+            .frame
+            .measure_surface(FIRST_SURFACE, editor_metrics())
+            .unwrap();
+    }
     let scene = render(&mut frame);
     let plan = frame.frame.paint_plan(FIRST_SURFACE).unwrap().unwrap();
     let mut outline = None;
+    let mut panes = Vec::new();
     let mut splitters = Vec::new();
     let mut junctions = Vec::new();
     plan.visit_surface_program(|step| {
         if let SurfacePaintProgramStep::Operation { operation, .. } = step {
             match operation {
-                SurfacePaintProgramOperation::Pane(pane)
-                    if Some(pane.item()) == outline_selected =>
-                {
+                SurfacePaintProgramOperation::Pane(pane) => {
                     let bounds = pane.content_bounds();
-                    outline = Some(
-                        LogicalPoint::new(
-                            bounds.x() + bounds.width() * 0.5,
-                            bounds.y() + bounds.height() * 0.75,
-                        )
-                        .unwrap(),
-                    );
+                    panes.push((pane.item(), bounds));
+                    if Some(pane.item()) == outline_selected {
+                        outline = Some(
+                            LogicalPoint::new(
+                                bounds.x() + bounds.width() * 0.5,
+                                bounds.y() + bounds.height() * 0.75,
+                            )
+                            .unwrap(),
+                        );
+                    }
                 }
                 SurfacePaintProgramOperation::Splitter(splitter) => {
                     splitters.push((
@@ -187,6 +200,7 @@ fn encode(native: &mut NativeCoordinator) -> (EditorScene, HostFrameReport) {
         EditorScene {
             scene,
             outline: outline.unwrap(),
+            panes,
             splitters,
             junctions,
         },

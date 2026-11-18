@@ -9,6 +9,9 @@ impl NativeCoordinator {
         callback: NativeCallbackHead,
     ) -> Result<(), NativeRuntimeError> {
         match callback {
+            NativeCallbackHead::KeyboardControl(record, captured_at) => {
+                self.reduce_keyboard_control(record, captured_at)
+            }
             NativeCallbackHead::ViewportCloseCancelled(record) => {
                 self.reduce_viewport_close_cancelled(record)
             }
@@ -42,6 +45,66 @@ impl NativeCoordinator {
                 unreachable!("raw and output boundaries stay in their existing lanes")
             }
         }
+    }
+
+    fn reduce_keyboard_control(
+        &mut self,
+        record: crate::event::NativeKeyboardControlRecord,
+        captured_at: std::time::Duration,
+    ) -> Result<(), NativeRuntimeError> {
+        use dockspace::runtime::{
+            NativeDesktopPointerLocation, NativeDesktopPosition, NativePointerCancelReason,
+            NativePointerEvent, NativePointerHover, NativePointerOwner, PointerDeviceKind,
+            PointerEventMetadata,
+        };
+
+        let binding = record.binding();
+        let modifiers = self
+            .pointer_translator
+            .observed_modifiers()
+            .filter(|(window, _)| *window == binding.window())
+            .map_or_else(Default::default, |(_, modifiers)| modifiers);
+        if record.pressed()
+            && self.input.cancel_matches(
+                record.key(),
+                crate::pointer_event::egui_modifiers(modifiers),
+            )
+            && self.session.is_current_native_binding(binding)
+            && self
+                .bridge
+                .with_viewports(|routes| record.is_current(routes))
+            && let Some((pointer, _)) = self.session.native_pointer_gesture_source()
+        {
+            // Keyboard delivery is not a pointer position or capture fact.
+            // The exact committed owner selects the existing stream; no
+            // native position, receiver, or release is manufactured.
+            let input = NativePointerInput::new(
+                pointer,
+                NativePointerEvent::StreamCancelled(
+                    NativePointerCancelReason::ExplicitCancellation,
+                ),
+                NativeDesktopPointerLocation::new(
+                    NativeDesktopPosition::Unknown,
+                    NativePointerHover::Unknown,
+                    None,
+                ),
+                NativePointerOwner::Unknown,
+                NativePointerOwner::Unknown,
+            )
+            .with_metadata(PointerEventMetadata::new(
+                PointerDeviceKind::Unknown,
+                captured_at,
+            ));
+            self.record_pointer(input)?;
+            self.pointer_translator.finish_pointer_cancellation(pointer);
+            self.bridge
+                .release_pointer_translation_capacity(&self.pointer_translator);
+        }
+        debug_assert_ne!(record.ordinal(), 0, "native control ordinals are non-zero");
+        if !self.bridge.acknowledge_keyboard_control(record) {
+            return Err(NativeHostProtocolError::WindowEventAcknowledgementMismatch.into());
+        }
+        Ok(())
     }
 
     fn reduce_viewport_create_failure(

@@ -169,7 +169,7 @@ impl NativeMouseState {
         }
     }
 
-    fn end_buttons(&mut self) {
+    pub(super) fn end_buttons(&mut self) {
         for state in self.buttons.values_mut() {
             *state = ButtonState::Ended;
         }

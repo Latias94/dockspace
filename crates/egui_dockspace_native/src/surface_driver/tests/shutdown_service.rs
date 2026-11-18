@@ -13,7 +13,7 @@ fn shutdown_state(clock: NativeMonotonicClock) -> NativeRuntimeState<TestPanes> 
     NativeRuntimeState {
         coordinator,
         root_surface: SURFACE,
-        instance_id: Id::unique("controlled-shutdown-service"),
+        paint_scope: NativePaintScope::new(Id::unique("controlled-shutdown-service")),
         style: DockStyle::default(),
         panes: TestPanes,
         application_actions: Default::default(),

@@ -1,3 +1,4 @@
+mod content_identity;
 mod focus_idle;
 mod output_backpressure;
 mod owned_update;

@@ -210,7 +210,16 @@ pub(crate) fn declare_deferred_viewports(
     declared_icons.retain(|viewport, _| specs.iter().any(|spec| spec.viewport() == *viewport));
     for spec in specs {
         let spec = *spec;
-        let options = options(spec.binding().surface());
+        let window = spec.binding().window();
+        let mut options = options(spec.binding().surface());
+        if let Some(previous) = declared_icons
+            .get(&spec.viewport())
+            .filter(|previous| previous.window.same_window_lifetime(window))
+        {
+            // A builder-only recreation would replace the physical window
+            // without the core's retirement and first-live protocol.
+            options.taskbar = Some(previous.taskbar);
+        }
         let callback = callback.clone();
         context.show_viewport_deferred(
             spec.viewport(),
@@ -220,16 +229,19 @@ pub(crate) fn declare_deferred_viewports(
             },
         );
         let taskbar = options.taskbar.unwrap_or(true);
-        let previous = declared_icons.insert(
-            spec.viewport(),
-            DeclaredWindowIcon {
-                icon: options.icon.clone(),
-                taskbar,
-            },
-        );
+        let previous = declared_icons
+            .insert(
+                spec.viewport(),
+                DeclaredWindowIcon {
+                    window,
+                    icon: options.icon.clone(),
+                    taskbar,
+                },
+            )
+            .filter(|previous| previous.window.same_window_lifetime(window));
         let clear_icon = previous
             .as_ref()
-            .is_none_or(|previous| previous.icon.is_some() || previous.taskbar != taskbar);
+            .is_none_or(|previous| previous.icon.is_some());
         let restore_icon = previous
             .as_ref()
             .is_some_and(|previous| previous.icon.is_none());

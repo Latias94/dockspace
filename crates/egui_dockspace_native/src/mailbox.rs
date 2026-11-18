@@ -32,7 +32,10 @@ use crate::close_control::{
     NativeViewportCloseCancellationRecord,
 };
 use crate::error::{NativeHostProtocolError, NativeRuntimeError, NativeViewportBindingError};
-use crate::event::{NativeDeviceRemovalRecord, NativeWindowEventClass, NativeWindowEventRecord};
+use crate::event::{
+    NativeDeviceRemovalRecord, NativeKeyboardControlRecord, NativeWindowEventClass,
+    NativeWindowEventRecord,
+};
 use crate::focus_control::{NativeGlobalFocusRecord, NativeViewportFocusRecord};
 use crate::input_control::NativePointerPassthroughRecord;
 use crate::lifecycle_progress::NativeOutputBacklog;
@@ -96,6 +99,7 @@ pub(crate) use window_resource::{
 #[derive(Debug, Clone)]
 pub(crate) enum HostRecord {
     WindowEvent(NativeWindowEventRecord),
+    KeyboardControl(NativeKeyboardControlRecord),
     DeviceRemoval(NativeDeviceRemovalRecord),
     GlobalFocus(NativeGlobalFocusRecord),
     ViewportFocus(NativeViewportFocusRecord),
@@ -119,7 +123,8 @@ impl HostRecord {
             Self::WindowEvent(event) => {
                 matches!(event.event(), winit::event::WindowEvent::Destroyed)
             }
-            Self::DeviceRemoval(_)
+            Self::KeyboardControl(_)
+            | Self::DeviceRemoval(_)
             | Self::PointerObservation(_)
             | Self::PointerCapture(_)
             | Self::GlobalFocus(_)
@@ -1232,7 +1237,9 @@ impl NativeHostBridge {
             receipt.is_none(),
             "an unstarted route owns no physical receipt"
         );
-        records.retirements.commit_detachment(binding);
+        records
+            .retirements
+            .commit_detachment(Some(viewport), binding);
         records.refresh_window_resource_references();
         true
     }

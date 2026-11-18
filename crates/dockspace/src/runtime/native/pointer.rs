@@ -77,7 +77,7 @@ pub enum NativePointerEvent {
     StreamEnded,
     /// The provider observed a capture transition.
     CaptureChanged,
-    /// The host terminated the stream abnormally.
+    /// The host cancelled the stream for the supplied reason.
     StreamCancelled(NativePointerCancelReason),
     /// One lossless wheel or trackpad sample.
     Scrolled(NativeScrollEvent),
@@ -86,6 +86,8 @@ pub enum NativePointerEvent {
 /// Typed reason why a native host ended one pointer stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativePointerCancelReason {
+    /// The application or its configured control explicitly cancelled the gesture.
+    ExplicitCancellation,
     /// The host observed a device-removal boundary and invalidated this stream.
     DeviceRemoved,
     /// The platform explicitly cancelled this stream.
@@ -1243,6 +1245,9 @@ const fn native_pointer_cancel_reason(
     reason: NativePointerCancelReason,
 ) -> PointerStreamCancelReason {
     match reason {
+        NativePointerCancelReason::ExplicitCancellation => {
+            PointerStreamCancelReason::ExplicitCancellation
+        }
         NativePointerCancelReason::DeviceRemoved => PointerStreamCancelReason::DeviceRemoved,
         NativePointerCancelReason::ExplicitPlatformCancellation => {
             PointerStreamCancelReason::ExplicitPlatformCancellation

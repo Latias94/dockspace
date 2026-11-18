@@ -117,6 +117,23 @@ impl NativePointerTranslator {
             .map(|(device, _)| device)
     }
 
+    /// Ends only the exact gesture's already enrolled pointer after cancellation.
+    ///
+    /// Other pointers and phaseful scroll retain their own input histories.
+    pub(crate) fn finish_pointer_cancellation(&mut self, pointer: NativePointerId) {
+        for (key, entry) in &mut self.devices {
+            if let NativePointerDeviceEntry::Live(device) = entry
+                && device.pointer == pointer
+            {
+                device.mouse.end_buttons();
+                if matches!(key, NativeInputDeviceKey::Touch { .. }) {
+                    *entry = NativePointerDeviceEntry::Removed;
+                }
+                return;
+            }
+        }
+    }
+
     /// Forgets adapter state after core overload cancellation commits.
     ///
     /// Core already terminated the semantic streams. Only phaseful scroll

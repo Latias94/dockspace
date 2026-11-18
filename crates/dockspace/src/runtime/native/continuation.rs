@@ -151,6 +151,19 @@ impl NativePointerContinuation {
 }
 
 impl DockspaceSession {
+    /// Returns the pointer and exact source binding of the committed native gesture.
+    ///
+    /// Includes pressed, dragging, resizing, and contained-transform gestures.
+    /// Pending native input, an ended gesture, or revoked source returns `None`.
+    /// Drain earlier callbacks and commit their input before using this read-only
+    /// projection to target an ordered control. It grants no pointer position,
+    /// capture observation, receiver receipt, or authority for a new gesture.
+    #[must_use]
+    pub fn native_pointer_gesture_source(&self) -> Option<(NativePointerId, NativeSurfaceBinding)> {
+        let (owner, binding, _) = self.native_pointer_continuation_source()?;
+        Some((NativePointerId::new(owner.pointer().get()), binding))
+    }
+
     /// Returns the committed desktop drag's provisional-resource identity.
     ///
     /// Pending input must commit before this projection is available. An ended

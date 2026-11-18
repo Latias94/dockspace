@@ -15,6 +15,8 @@ use super::*;
 
 #[path = "escape_cancel.rs"]
 mod escape_cancel;
+#[path = "keyboard_cancel.rs"]
+mod keyboard_cancel;
 
 mod capture_continuity;
 mod randomized;
@@ -380,7 +382,10 @@ fn presented_routes() -> (
     NativeSurfaceBinding,
     NativeSurfaceBinding,
 ) {
-    let mut native = coordinator();
+    // Direct input helpers and raw callback admission share one monotonic clock.
+    let mut native = coordinator_with_clock(dockspace::runtime::NativeMonotonicClock::new(|| {
+        Duration::from_millis(40)
+    }));
     let (first, second) = register_roots(&mut native);
     for (viewport, window, binding) in [
         (ViewportId::ROOT, WindowId::from(11), first),

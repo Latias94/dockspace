@@ -18,7 +18,7 @@ use eframe::egui::{self, ViewportId};
 use egui_dockspace::DockStyle;
 use winit::window::WindowId;
 
-use super::super::{NativeCoordinator, NativeRuntimeState, ROOT_WINDOW_TOKEN};
+use super::super::{NativeCoordinator, NativePaintScope, NativeRuntimeState, ROOT_WINDOW_TOKEN};
 use super::{SURFACE, TestPanes};
 use crate::mailbox::HostRecord;
 use crate::{NativeStorageLimit, NativeWindowClosePolicy};
@@ -78,7 +78,9 @@ fn state() -> NativeRuntimeState<TestPanes> {
     NativeRuntimeState {
         coordinator,
         root_surface: SURFACE,
-        instance_id: egui::Id::unique("retirement-service-input-backpressure"),
+        paint_scope: NativePaintScope::new(egui::Id::unique(
+            "retirement-service-input-backpressure",
+        )),
         style: DockStyle::default(),
         panes: TestPanes,
         application_actions: Default::default(),

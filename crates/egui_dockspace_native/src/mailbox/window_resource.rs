@@ -148,6 +148,12 @@ impl NativeWindowResources {
         self.entries.iter().map(|resource| resource.binding)
     }
 
+    pub(super) fn references_viewport(&self, viewport: ViewportId) -> bool {
+        self.entries
+            .iter()
+            .any(|resource| resource.viewport == viewport)
+    }
+
     pub(super) fn has_pending_work(&self) -> bool {
         self.entries
             .iter()

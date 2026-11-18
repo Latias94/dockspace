@@ -28,6 +28,7 @@ const WINDOW: u64 = 11;
 const CAPTURED_AT: Duration = Duration::from_millis(40);
 
 mod drain_resize;
+mod keyboard_cancel;
 mod local_readiness;
 mod random_journey;
 mod reentry;

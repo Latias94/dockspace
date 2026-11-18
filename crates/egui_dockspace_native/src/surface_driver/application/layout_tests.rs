@@ -976,7 +976,9 @@ mod persistence {
         let mut state = NativeRuntimeState {
             coordinator,
             root_surface: SURFACE,
-            instance_id: egui::Id::unique("service-refill-close-create"),
+            paint_scope: crate::surface_driver::NativePaintScope::new(egui::Id::unique(
+                "service-refill-close-create",
+            )),
             owned_update: None,
             root_placements: Default::default(),
             pending_service: false,

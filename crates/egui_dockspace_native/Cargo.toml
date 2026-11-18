@@ -19,6 +19,7 @@ serde = ["dockspace/serde", "egui_dockspace/serde"]
 dockspace = { path = "../dockspace", default-features = false }
 egui_dockspace = { path = "../egui_dockspace", default-features = false, features = ["native-render-support"] }
 eframe = { version = "=0.37.0", default-features = false, features = ["default_fonts", "glow", "native-host-seam", "wayland", "x11"] }
+egui-winit = { version = "=0.37.0", default-features = false }
 thiserror = "2.0.18"
 winit = { version = "=0.30.13", default-features = false }
 
