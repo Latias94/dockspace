@@ -85,11 +85,11 @@ fn physical_placement_changes_notify_without_granting_render_authority() {
         let observation = registry
             .window(binding.window())
             .unwrap()
-            .persistent_coordinate_observation()
+            .last_visible_placement()
             .unwrap();
-        assert_eq!(observation.outer_bounds().known(), Some(&outer));
-        assert_eq!(observation.content_size().known(), Some(&size));
-        assert_eq!(observation.native_scale_factor().known(), Some(&scale));
+        assert_eq!(observation.outer_rect, outer);
+        assert_eq!(observation.inner_size, Some(size));
+        assert_eq!(observation.scale_factor, Some(scale));
         let record = registry.record(binding.surface()).unwrap();
         assert!(record.coordinates().is_none());
         assert!(!record.has_coordinate_authority());
@@ -98,7 +98,7 @@ fn physical_placement_changes_notify_without_granting_render_authority() {
 }
 
 #[test]
-fn physical_placement_capture_and_notifications_wait_for_visible_live_windows() {
+fn physical_placement_retains_the_last_visible_bounds_without_notifying_again() {
     let (mut registry, binding) = fixture();
     let initial = PhysicalRect::new(10.0, 20.0, 820.0, 640.0).unwrap();
     let moved = PhysicalRect::new(30.0, 40.0, 820.0, 640.0).unwrap();
@@ -113,9 +113,17 @@ fn physical_placement_capture_and_notifications_wait_for_visible_live_windows() 
         Some((5, WindowPresentationState::Visible, moved)),
         Some((6, WindowPresentationState::Visible, moved)),
     ];
-    for (index, (window, changed)) in windows
+    for (index, (window, (changed, bounds))) in windows
         .into_iter()
-        .zip([true, false, false, true, false, true, false])
+        .zip([
+            (true, initial),
+            (false, initial),
+            (false, initial),
+            (true, moved),
+            (false, moved),
+            (false, moved),
+            (false, moved),
+        ])
         .enumerate()
     {
         let observation = window.map(|(generation, state, outer)| {
@@ -132,9 +140,9 @@ fn physical_placement_capture_and_notifications_wait_for_visible_live_windows() 
             registry
                 .window(binding.window())
                 .unwrap()
-                .persistent_coordinate_observation()
-                .is_some(),
-            window.is_some_and(|(_, state, _)| state == WindowPresentationState::Visible)
+                .last_visible_placement()
+                .map(|placement| placement.outer_rect),
+            Some(bounds)
         );
     }
 
@@ -157,7 +165,7 @@ fn physical_placement_capture_and_notifications_wait_for_visible_live_windows() 
         registry
             .window(binding.window())
             .unwrap()
-            .persistent_coordinate_observation()
+            .last_visible_placement()
             .is_none()
     );
 }

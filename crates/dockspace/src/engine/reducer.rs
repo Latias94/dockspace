@@ -918,7 +918,7 @@ impl DockEngine {
             || before_viewport != candidate.viewport
             || !focus_delta.is_empty();
         let surface_scene_deltas = Self::surface_scene_deltas(self, &candidate);
-        candidate.record_native_create_settlements(&mut events);
+        candidate.record_native_create_settlements(&mut events, &mut interaction_events);
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,

@@ -4,6 +4,8 @@
 
 #[path = "native_document_restore/frame_lifetimes.rs"]
 mod frame_lifetimes;
+#[path = "native_document_restore/placements.rs"]
+mod placements;
 
 use std::num::NonZeroUsize;
 use std::time::Duration;

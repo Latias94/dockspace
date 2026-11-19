@@ -353,7 +353,7 @@ impl DockEngine {
         // The durable host tombstone always changes published core state, even
         // when the host never emitted a stream and no scene delta is visible.
         let published_state_changed = true;
-        candidate.record_native_create_settlements(&mut events);
+        candidate.record_native_create_settlements(&mut events, &mut interaction_events);
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,

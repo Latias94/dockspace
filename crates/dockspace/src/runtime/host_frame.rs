@@ -333,8 +333,8 @@ impl<'session> DockspaceHostFrame<'session> {
     ///
     /// # Errors
     ///
-    /// Returns a frame-phase or submission error. A nonempty surface or lifecycle
-    /// conflict is a typed outcome associated with the returned action token.
+    /// Returns a frame-phase or submission error. A nonempty surface, required
+    /// host surface or lifecycle conflict is a typed outcome for the returned action token.
     pub fn retire_empty_surface_current(
         &mut self,
         surface: SurfaceId,

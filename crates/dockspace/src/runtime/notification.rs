@@ -72,10 +72,9 @@ impl DockspaceNotification {
 
     /// Returns whether committed native-window placement can affect document capture.
     ///
-    /// This covers known outer bounds, content size, native DPI scale, first-live
-    /// admission and placement becoming authoritative after an observation gap or
-    /// hidden interval. It does not advance the docking-layout version. Renderer
-    /// zoom, clipping, focus and unavailable geometry do not independently trigger it.
+    /// This covers changes to the last visible outer bounds, physical client size,
+    /// native DPI scale, and first-live admission. A window returning to the same
+    /// bounds after minimizing does not trigger another save.
     #[must_use]
     pub const fn native_window_placement_changed(&self) -> bool {
         self.native_window_placement_changed

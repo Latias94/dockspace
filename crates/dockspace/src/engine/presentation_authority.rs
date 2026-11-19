@@ -1979,6 +1979,7 @@ impl DockEngine {
         presentation_host: PresentationHostLease,
         presentation_scope: &BTreeSet<HostPresentationStreamId>,
         observation: HostPresentationObservation,
+        interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<
         (
             Vec<HostPresentationObservationOutcome>,
@@ -1992,7 +1993,7 @@ impl DockEngine {
             .presentation
             .reduce_observation(presentation_host, presentation_scope, observation)
             .map_err(presentation_ledger_error)?;
-        self.apply_presentation_observation_reduction(cause, reduction)
+        self.apply_presentation_observation_reduction(cause, reduction, interaction_events)
     }
 
     pub(super) fn reduce_presentation_observation_entry(
@@ -2000,6 +2001,7 @@ impl DockEngine {
         cause: ReductionCause,
         presentation_host: PresentationHostLease,
         entry: HostPresentationObservationEntry,
+        interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<
         (
             Vec<HostPresentationObservationOutcome>,
@@ -2013,13 +2015,14 @@ impl DockEngine {
             .presentation
             .reduce_observation_entry(presentation_host, entry)
             .map_err(presentation_ledger_error)?;
-        self.apply_presentation_observation_reduction(cause, reduction)
+        self.apply_presentation_observation_reduction(cause, reduction, interaction_events)
     }
 
     fn apply_presentation_observation_reduction(
         &mut self,
         cause: ReductionCause,
         reduction: PresentationObservationReduction,
+        interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<
         (
             Vec<HostPresentationObservationOutcome>,
@@ -2207,6 +2210,7 @@ impl DockEngine {
                             authority,
                             cause,
                             &mut lifecycle_events,
+                            interaction_events,
                             &mut changed_surfaces,
                         )?
                     {

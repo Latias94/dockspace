@@ -1637,6 +1637,11 @@ pub enum InteractionEventKind {
     },
     /// A native create saga entered the effect ledger without moving source content.
     NativePresentationRequested(NativeCreateRequest),
+    /// The native create saga ended the originating drag's semantic transfer.
+    NativePresentationSettled {
+        session: DragSessionId,
+        result: crate::engine::event::PresentationRehomeResult,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

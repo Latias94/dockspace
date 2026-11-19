@@ -28,12 +28,22 @@ impl DockEngine {
                 reason: crate::model::DockspaceActionRejection::NativeUnavailable,
             });
         }
+        let saved_placement = initial.request.placement;
+        let placement = crate::platform::coordinates::select_native_work_area(
+            saved_placement,
+            self.viewport.work_areas().map(|(_, area)| area),
+        )
+        .filter(|(_, intersects)| !intersects)
+        .and_then(|(area, _)| {
+            crate::platform::coordinates::clamp_physical_rect(saved_placement, area.bounds()).ok()
+        })
+        .unwrap_or(saved_placement);
         let outcome = self.reduce_native_surface_create(
             input,
             expected,
             surface,
             initial.request.recovery_host,
-            initial.request.placement,
+            placement,
         )?;
         if let InputOutcome::NativeSurfaceCreateRejected { reason, .. } = outcome {
             self.viewport

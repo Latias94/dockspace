@@ -394,3 +394,41 @@ fn native_tab_commands_preserve_stale_and_foreign_captures_without_refreshing_th
         }
     }
 }
+
+#[test]
+fn stale_close_of_the_only_host_tab_reports_stale_before_retention() {
+    let target = SurfaceId::new(2);
+    let layout = DockspaceLayout::new([
+        DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(ROOT, DockspaceNode::tabs([FIRST])),
+        ),
+        DockspaceSurfaceLayout::new(
+            target,
+            DockspaceRootLayout::new(RootId::new(2), DockspaceNode::central_tabs([SECOND, THIRD])),
+        ),
+    ])
+    .unwrap();
+    let mut state = state_with_layout(layout);
+    let tab = state.capture_tab(TabKey::for_item(FIRST)).unwrap();
+    let expected = tab.expected_version();
+    let selection = state
+        .request_command(NativeCommand::SelectItem { item: THIRD })
+        .unwrap();
+    commit_queued(&mut state);
+    take(&selection);
+    assert!(state.view().item(THIRD).unwrap().is_active());
+    let accepted = state.coordinator.session().version();
+    assert_ne!(expected, accepted);
+
+    let close = state
+        .request_command(NativeCommand::CloseTab { tab })
+        .unwrap();
+    let report = commit_queued_report(&mut state);
+    assert_eq!(
+        take(&close),
+        NativeActionStatus::Stale { expected, accepted }
+    );
+    assert!(!report.workspace_changed());
+    assert!(state.view().item(FIRST).is_some());
+}

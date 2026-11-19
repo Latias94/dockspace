@@ -1,8 +1,8 @@
 //! Geometry edge cases for selection from an already authoritative work-area roster.
 
-use super::select_native_work_area;
 use crate::geometry::{PhysicalRect, ScaleFactor};
 use crate::platform::ObservedWorkArea;
+use crate::platform::coordinates::select_native_work_area;
 use crate::platform::viewport::WorkAreaToken;
 
 fn rect(x: f64, y: f64, width: f64, height: f64) -> PhysicalRect {
@@ -33,7 +33,10 @@ fn nearest_area_uses_euclidean_distance_between_rectangles() {
     let diagonal = area(9, rect(106.0, 108.0, 1_000.0, 1_000.0));
     let horizontal = area(1, rect(111.0, 0.0, 100.0, 100.0));
     for roster in [[horizontal, diagonal], [diagonal, horizontal]] {
-        assert_eq!(select_native_work_area(requested, roster), Some(diagonal));
+        assert_eq!(
+            select_native_work_area(requested, roster),
+            Some((diagonal, false))
+        );
     }
 }
 
@@ -44,7 +47,7 @@ fn any_positive_intersection_beats_a_touching_edge() {
     let intersecting = area(9, rect(0.75, 0.0, 1.0, 1.0));
     assert_eq!(
         select_native_work_area(requested, [touching, intersecting]),
-        Some(intersecting),
+        Some((intersecting, true)),
         "positive intersections below ImGui's threshold must still participate",
     );
 }
@@ -56,6 +59,6 @@ fn corner_contact_has_zero_distance_without_positive_intersection() {
     let separated = area(1, rect(1.0, -100.0, 100.0, 100.0));
     assert_eq!(
         select_native_work_area(requested, [separated, touching]),
-        Some(touching),
+        Some((touching, false)),
     );
 }

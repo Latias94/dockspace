@@ -563,29 +563,28 @@ impl BoundDocumentState {
             }
             // Persistence records physical window placement independently of
             // a surface's render scale and input-coordinate authority.
-            let Some(coordinates) = engine
+            let Some(placement) = engine
                 .viewport()
                 .registry()
                 .window(record.binding().window())
-                .and_then(|window| window.persistent_coordinate_observation())
+                .and_then(|window| window.last_visible_placement())
             else {
-                continue;
-            };
-            let Some(&outer_rect) = coordinates.outer_bounds().known() else {
                 continue;
             };
             let presentation = placements
                 .get(surface)
                 .and_then(|preference| preference.presentation());
-            let Ok(mut preference) = ViewportPlacementPreference::new(surface, outer_rect) else {
+            let Ok(mut preference) =
+                ViewportPlacementPreference::new(surface, placement.outer_rect)
+            else {
                 continue;
             };
-            if let Some(&size) = coordinates.content_size().known()
+            if let Some(size) = placement.inner_size
                 && let Ok(with_size) = preference.try_with_inner_size(size)
             {
                 preference = with_size;
             }
-            if let Some(&scale) = coordinates.native_scale_factor().known() {
+            if let Some(scale) = placement.scale_factor {
                 preference = preference.with_scale_factor(scale);
             }
             if let Some(presentation) = presentation {

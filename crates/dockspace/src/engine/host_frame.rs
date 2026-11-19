@@ -428,6 +428,7 @@ impl DockEngine {
                     host,
                     &scope,
                     observation,
+                    &mut observation_interaction_events,
                 )?;
             presentation_observation_outcomes.append(&mut outcomes);
             changed_surfaces.extend(changed);
@@ -1901,9 +1902,12 @@ impl CoreHostFrame {
             stream: entry.stream(),
         };
 
-        let reduction = self
-            .candidate
-            .reduce_presentation_observation_entry(cause, host, entry);
+        let reduction = self.candidate.reduce_presentation_observation_entry(
+            cause,
+            host,
+            entry,
+            &mut self.interaction_events,
+        );
         let (mut outcomes, changed_surfaces, mut lifecycle_events) = match reduction {
             Ok(reduction) => reduction,
             Err(error) => {

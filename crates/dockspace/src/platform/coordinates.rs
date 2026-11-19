@@ -601,17 +601,64 @@ fn require_fact<T: Copy>(
     }
 }
 
-fn clamp_physical_rect(
+pub(crate) fn clamp_physical_rect(
     requested: PhysicalRect,
     work_area: PhysicalRect,
 ) -> Result<PhysicalRect, CoordinateUnavailable> {
     let width = requested.width().min(work_area.width());
     let height = requested.height().min(work_area.height());
-    let maximum_x = work_area.max().x() - width;
-    let maximum_y = work_area.max().y() - height;
+    let maximum_x = (work_area.max().x() - width).max(work_area.x());
+    let maximum_y = (work_area.max().y() - height).max(work_area.y());
     let x = requested.x().clamp(work_area.x(), maximum_x);
     let y = requested.y().clamp(work_area.y(), maximum_y);
     PhysicalRect::new(x, y, width, height).map_err(CoordinateUnavailable::Geometry)
+}
+
+/// Selects by positive overlap, then by distance between rectangle edges.
+/// The flag reports whether the selected area overlaps the window.
+pub(crate) fn select_native_work_area(
+    requested: PhysicalRect,
+    work_areas: impl IntoIterator<Item = ObservedWorkArea>,
+) -> Option<(ObservedWorkArea, bool)> {
+    work_areas
+        .into_iter()
+        .filter(|area| area.bounds().width() > 0.0 && area.bounds().height() > 0.0)
+        .map(|area| {
+            let bounds = area.bounds();
+            let overlap_width =
+                requested.max().x().min(bounds.max().x()) - requested.x().max(bounds.x());
+            let overlap_height =
+                requested.max().y().min(bounds.max().y()) - requested.y().max(bounds.y());
+            let intersects = overlap_width > 0.0 && overlap_height > 0.0;
+            let overlap = if intersects {
+                overlap_width * overlap_height
+            } else {
+                0.0
+            };
+            let horizontal_gap = (requested.x() - bounds.max().x())
+                .max(bounds.x() - requested.max().x())
+                .max(0.0);
+            let vertical_gap = (requested.y() - bounds.max().y())
+                .max(bounds.y() - requested.max().y())
+                .max(0.0);
+            (
+                area,
+                intersects,
+                overlap,
+                horizontal_gap.hypot(vertical_gap),
+            )
+        })
+        .max_by(
+            |(left, left_intersects, left_overlap, left_distance),
+             (right, right_intersects, right_overlap, right_distance)| {
+                left_intersects
+                    .cmp(right_intersects)
+                    .then_with(|| left_overlap.total_cmp(right_overlap))
+                    .then_with(|| right_distance.total_cmp(left_distance))
+                    .then_with(|| right.token().cmp(&left.token()))
+            },
+        )
+        .map(|(area, intersects, _, _)| (area, intersects))
 }
 
 /// Opaque proof that one placement used current binding, content bounds, scale, and work area.

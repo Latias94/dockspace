@@ -94,12 +94,14 @@ impl NativeFirstLiveProjection {
 }
 
 impl DockEngine {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn commit_native_first_live_projection(
         &mut self,
         stamp: NativeFirstLiveProjectionStamp,
         authority: PresentedSurfaceAuthority,
         cause: ReductionCause,
         events: &mut Vec<WorkspaceEvent>,
+        interaction_events: &mut Vec<InteractionEvent>,
         changed_surfaces: &mut BTreeSet<SurfaceId>,
     ) -> Result<bool, EngineError> {
         let ticket = authority.ticket();
@@ -281,6 +283,16 @@ impl DockEngine {
             self.version,
             WorkspaceEventKind::CommandCommitted(outcome),
         ));
+        if let Some(session) = prepared.proposal().drag_session() {
+            interaction_events.push(InteractionEvent::new_caused(
+                cause,
+                self.version,
+                InteractionEventKind::NativePresentationSettled {
+                    session,
+                    result: crate::engine::event::PresentationRehomeResult::Applied,
+                },
+            ));
+        }
         if let Some(request_cause) = prepared.cause() {
             events.push(WorkspaceEvent::new_caused(
                 request_cause,

@@ -37,6 +37,52 @@ fn assert_failed(
 }
 
 #[test]
+fn retiring_a_retained_empty_surface_does_not_roll_back_create_cancellation() {
+    let mut fixture = Fixture::new();
+    let required = SurfaceId::new(10);
+    let mut frame = native_frame(&mut fixture.session);
+    frame
+        .attach_empty_surface_current(required, RootId::new(10))
+        .unwrap();
+    finish(frame);
+    fixture.session.retain_host_surface(required).unwrap();
+
+    let action = fixture
+        .session
+        .prepare_move_to_new_window(DockMoveSource::Item(B), placement());
+    let mut request = fixture.request(action);
+    let ack = request.accept();
+    fixture.observe(&request, NativeCreateReadiness::Created, Some(ack));
+
+    let mut frame = native_frame(&mut fixture.session);
+    assert!(frame.cancel_next_native_create().unwrap());
+    let retirement = frame.retire_empty_surface_current(required).unwrap();
+    let mut report = finish(frame);
+    assert!(matches!(
+        report.submitted_action_outcome(retirement),
+        Some(HostInputOutcome::LogicalSurfaceRejected {
+            surface,
+            reason: dockspace::runtime::LogicalSurfaceRejection::SurfaceRequired,
+        }) if *surface == required
+    ));
+    assert_failed(
+        &report,
+        request.transition,
+        DockspacePresentationTransitionResult::Cancelled,
+    );
+    assert!(fixture.session.view().surface(required).is_some());
+    assert!(!fixture.session.has_pending_native_create());
+    let [close] = report.take_native_effects().try_into().unwrap();
+    assert!(
+        matches!(close.operation(), NativeEffectOperation::CompensatingClose { binding } if *binding == request.binding)
+    );
+    assert!(matches!(
+        close.accepted(),
+        Some(NativeEffectAcknowledgement::Close(_))
+    ));
+}
+
+#[test]
 fn late_required_source_surface_removal_reports_the_original_request_rejection() {
     let mut fixture = Fixture::configured(3, false);
     let action = fixture

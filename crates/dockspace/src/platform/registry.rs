@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::close::plan::NativeCloseEdge;
 #[cfg(test)]
 use crate::geometry::PhysicalPoint;
-use crate::geometry::{LogicalRect, LogicalSize};
+use crate::geometry::{LogicalRect, LogicalSize, PhysicalRect, PhysicalSize, ScaleFactor};
 use crate::ids::{EngineAuthorityDomainId, SurfaceId, WorkspaceEpoch};
 use crate::input::intent::Authority;
 #[cfg(test)]
@@ -28,10 +28,9 @@ use crate::platform::viewport::{
 };
 use crate::platform::{
     ObservedWindow, PlatformSnapshot, WindowCloseObservation, WindowCloseObservationStream,
-    WindowCloseState, WindowCoordinateObservation, WindowCoordinateObservationStream,
-    WindowCreatePreparationObservation, WindowCreatePreparationObservationStream,
-    WindowInputObservation, WindowInputObservationStream, WindowPresentationObservation,
-    WindowPresentationObservationStream, WindowPresentationState,
+    WindowCloseState, WindowCoordinateObservationStream, WindowCreatePreparationObservation,
+    WindowCreatePreparationObservationStream, WindowInputObservation, WindowInputObservationStream,
+    WindowPresentationObservation, WindowPresentationObservationStream, WindowPresentationState,
 };
 
 /// Lifecycle state derived from authoritative inventory, never from callback timing.
@@ -107,7 +106,15 @@ struct WindowRecord {
     ever_observed: bool,
     pending_close_request: Option<WindowCloseObservation>,
     coordinates: Option<WindowCoordinateSnapshot>,
+    last_visible_placement: Option<ObservedWindowPlacement>,
     coordinate_generation: CoordinateGeneration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ObservedWindowPlacement {
+    pub(crate) outer_rect: PhysicalRect,
+    pub(crate) inner_size: Option<PhysicalSize>,
+    pub(crate) scale_factor: Option<ScaleFactor>,
 }
 
 /// Surface-local admission and projection authority for one native placement.
@@ -148,8 +155,11 @@ impl WindowRecordView<'_> {
         self.record.coordinates
     }
     #[cfg(any(test, feature = "serde"))]
-    pub(crate) fn persistent_coordinate_observation(self) -> Option<WindowCoordinateObservation> {
-        window_persistent_coordinates(self.record)
+    pub(crate) fn last_visible_placement(self) -> Option<ObservedWindowPlacement> {
+        match self.record.lifecycle {
+            ViewportLifecycle::AwaitingDestroyed | ViewportLifecycle::Destroyed => None,
+            _ => self.record.last_visible_placement,
+        }
     }
     pub(crate) const fn ever_observed(self) -> bool {
         self.record.ever_observed
@@ -738,6 +748,7 @@ impl ViewportRegistry {
                 ever_observed: false,
                 pending_close_request: None,
                 coordinates: None,
+                last_visible_placement: None,
                 coordinate_generation,
             },
         );
@@ -1093,15 +1104,11 @@ impl ViewportRegistry {
             }
             let presentation_changed = previous.presentation_observations.current()
                 != window.presentation_observations.current();
+            if let Some(placement) = visible_window_placement(window) {
+                window.last_visible_placement = Some(placement);
+            }
             let persistent_placement_changed =
-                window_persistent_coordinates(window).is_some_and(|after| {
-                    window_persistent_coordinates(&previous).is_none_or(|before| {
-                        before.outer_bounds().known() != after.outer_bounds().known()
-                            || before.content_size().known() != after.content_size().known()
-                            || before.native_scale_factor().known()
-                                != after.native_scale_factor().known()
-                    })
-                });
+                previous.last_visible_placement != window.last_visible_placement;
             for (surface, record) in self
                 .records
                 .iter_mut()
@@ -2061,7 +2068,7 @@ fn window_has_coordinate_authority(window: &WindowRecord) -> bool {
 
 /// Physical placement eligible for both document capture and its change signal.
 /// Render scale and input authority do not participate in this decision.
-fn window_persistent_coordinates(window: &WindowRecord) -> Option<WindowCoordinateObservation> {
+fn visible_window_placement(window: &WindowRecord) -> Option<ObservedWindowPlacement> {
     if !window.ever_observed
         || !matches!(
             window.lifecycle,
@@ -2077,10 +2084,20 @@ fn window_persistent_coordinates(window: &WindowRecord) -> Option<WindowCoordina
     {
         return None;
     }
-    window
-        .coordinate_observations
-        .physical_observation()
-        .filter(|observation| observation.outer_bounds().known().is_some())
+    let observation = window.coordinate_observations.physical_observation()?;
+    let outer_rect = *observation.outer_bounds().known()?;
+    if outer_rect.width() <= 0.0 || outer_rect.height() <= 0.0 {
+        return None;
+    }
+    Some(ObservedWindowPlacement {
+        outer_rect,
+        inner_size: observation
+            .content_size()
+            .known()
+            .copied()
+            .filter(|size| size.width() > 0.0 && size.height() > 0.0),
+        scale_factor: observation.native_scale_factor().known().copied(),
+    })
 }
 
 const fn window_has_local_coordinate_authority(window: &WindowRecord) -> bool {

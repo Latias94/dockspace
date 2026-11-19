@@ -553,6 +553,14 @@ impl DockspaceSession {
         )
     }
 
+    /// Returns whether a captured tab belongs to this session's current revision.
+    ///
+    /// A current capture may still be rejected by the action's policy or topology checks.
+    #[must_use]
+    pub fn is_tab_capture_current(&self, tab: &super::PreparedTab) -> bool {
+        tab.authority_domain == self.engine.authority_domain() && tab.expected == self.version()
+    }
+
     /// Prepares an atomic close for an exact captured group without refreshing its authority.
     ///
     /// Layout changes after capture make submission stale. Accepted close plans

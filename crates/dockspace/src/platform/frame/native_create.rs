@@ -77,6 +77,11 @@ impl NativeCreateProposal {
     pub(crate) const fn converted_main(&self) -> ConvertedMainRecovery {
         self.converted_main
     }
+
+    pub(crate) fn drag_session(&self) -> Option<crate::interaction::DragSessionId> {
+        self.drag_tear_off
+            .map(crate::interaction::NativeDragTearOff::session)
+    }
 }
 
 /// Frozen source, mutation, recovery, and focus facts for one native create saga.
@@ -261,6 +266,7 @@ pub(super) struct NativeCreateState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NativeCreateSettlement {
     pub(crate) cause: ReductionCause,
+    pub(crate) drag: Option<crate::interaction::DragSessionId>,
     pub(crate) root: RootId,
     pub(crate) source_surface: SurfaceId,
     pub(crate) target_surface: SurfaceId,
@@ -372,6 +378,7 @@ impl ViewportCoordinator {
                 .settlements
                 .push(NativeCreateSettlement {
                     cause,
+                    drag: prepared.proposal().drag_session(),
                     root: prepared.proposal().root(),
                     source_surface: prepared.source_surface(),
                     target_surface: prepared.proposal().surface(),

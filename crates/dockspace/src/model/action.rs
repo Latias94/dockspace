@@ -14,6 +14,8 @@ pub enum LogicalSurfaceRejection {
     RootAlreadyOwned { root: RootId },
     /// The requested surface is absent.
     SurfaceUnavailable,
+    /// The application host has declared that this surface must remain present.
+    SurfaceRequired,
     /// Main or contained content must be closed or migrated first.
     SurfaceNotEmpty { items: usize },
     /// An exact native binding still owns this logical surface.

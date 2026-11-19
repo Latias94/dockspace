@@ -487,9 +487,10 @@ impl<P: PaneView> NativeRuntimeState<P> {
         let target = match command {
             NativeCommand::CloseItem { item } => ClosePlanTarget::Item { item: *item },
             NativeCommand::CloseTab { tab } => {
-                return self.sole_host_root().is_some_and(|root| {
-                    self.host_root_may_retire(root) && root.contains_only_tab(tab)
-                });
+                return session.is_tab_capture_current(tab)
+                    && self.sole_host_root().is_some_and(|root| {
+                        self.host_root_may_retire(root) && root.contains_only_tab(tab)
+                    });
             }
             NativeCommand::CloseRoot { root } => ClosePlanTarget::Root { root: *root },
             NativeCommand::DecideClose {

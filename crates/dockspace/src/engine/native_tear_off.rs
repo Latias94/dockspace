@@ -6,7 +6,7 @@ use crate::geometry::{LogicalRect, LogicalSize, PhysicalRect};
 use crate::model::{
     DockMoveSource, DockspaceActionOutcome, DockspaceActionRejection, NativeWindowPlacement,
 };
-use crate::platform::ObservedWorkArea;
+use crate::platform::coordinates::{clamp_physical_rect, select_native_work_area};
 use crate::presentation::compiler::{contained_minimum_size, pane_outer_sizing};
 use crate::presentation::manifest::PaneSizingKey;
 
@@ -208,7 +208,7 @@ impl DockEngine {
             expand_content_rect_to_outer(content, source_content, source_outer)
                 .ok_or(unavailable)?
         };
-        let work_area = select_native_work_area(
+        let (work_area, _) = select_native_work_area(
             requested,
             self.viewport.work_areas().map(|(_, work_area)| work_area),
         )
@@ -221,8 +221,8 @@ impl DockEngine {
             requested.height(),
         )
         .map_err(|_| unavailable)?;
-        let clamped = clamp_native_window_rect(cascaded, work_area.bounds())
-            .ok_or(DockspaceActionRejection::NativeUnavailable)?;
+        let clamped = clamp_physical_rect(cascaded, work_area.bounds())
+            .map_err(|_| DockspaceActionRejection::NativeUnavailable)?;
         Ok(NativeWindowPlacement::new(clamped))
     }
 
@@ -548,8 +548,22 @@ impl DockEngine {
         )
     }
 
-    pub(super) fn record_native_create_settlements(&mut self, events: &mut Vec<WorkspaceEvent>) {
+    pub(super) fn record_native_create_settlements(
+        &mut self,
+        events: &mut Vec<WorkspaceEvent>,
+        interaction_events: &mut Vec<InteractionEvent>,
+    ) {
         for settlement in self.viewport.take_native_create_settlements() {
+            if let Some(session) = settlement.drag {
+                interaction_events.push(InteractionEvent::new_caused(
+                    settlement.cause,
+                    self.version,
+                    InteractionEventKind::NativePresentationSettled {
+                        session,
+                        result: settlement.result,
+                    },
+                ));
+            }
             events.push(WorkspaceEvent::new_caused(
                 settlement.cause,
                 self.version,
@@ -690,49 +704,6 @@ impl DockEngine {
     }
 }
 
-/// Selects from the caller's current authoritative work-area roster only.
-///
-/// Like ImGui's FindPlatformMonitorForRect, positive axis-aligned intersection area
-/// takes priority. With no positive intersection, distance is the Euclidean distance
-/// between the closest points of the two rectangles: hypot(horizontal gap, vertical
-/// gap), with touching edges at distance zero. Equal scores choose the lowest token,
-/// independently of roster order. Cascade and clamping happen after this selection.
-fn select_native_work_area(
-    requested: PhysicalRect,
-    work_areas: impl IntoIterator<Item = ObservedWorkArea>,
-) -> Option<ObservedWorkArea> {
-    work_areas
-        .into_iter()
-        .map(|work_area| {
-            let bounds = work_area.bounds();
-            let overlap_width =
-                requested.max().x().min(bounds.max().x()) - requested.x().max(bounds.x());
-            let overlap_height =
-                requested.max().y().min(bounds.max().y()) - requested.y().max(bounds.y());
-            let intersection = if overlap_width > 0.0 && overlap_height > 0.0 {
-                overlap_width * overlap_height
-            } else {
-                0.0
-            };
-            let horizontal_gap = (requested.x() - bounds.max().x())
-                .max(bounds.x() - requested.max().x())
-                .max(0.0);
-            let vertical_gap = (requested.y() - bounds.max().y())
-                .max(bounds.y() - requested.max().y())
-                .max(0.0);
-            (work_area, intersection, horizontal_gap.hypot(vertical_gap))
-        })
-        .max_by(
-            |(left, left_area, left_distance), (right, right_area, right_distance)| {
-                left_area
-                    .total_cmp(right_area)
-                    .then_with(|| right_distance.total_cmp(left_distance))
-                    .then_with(|| right.token().cmp(&left.token()))
-            },
-        )
-        .map(|(work_area, _, _)| work_area)
-}
-
 fn expand_content_rect_to_outer(
     requested_content: PhysicalRect,
     source_content: PhysicalRect,
@@ -753,23 +724,6 @@ fn expand_content_rect_to_outer(
         requested_content.y() - top,
         requested_content.width() + left + right,
         requested_content.height() + top + bottom,
-    )
-    .ok()
-}
-
-fn clamp_native_window_rect(
-    requested: PhysicalRect,
-    work_area: PhysicalRect,
-) -> Option<PhysicalRect> {
-    let width = requested.width().min(work_area.width());
-    let height = requested.height().min(work_area.height());
-    let maximum_x = work_area.max().x() - width;
-    let maximum_y = work_area.max().y() - height;
-    PhysicalRect::new(
-        requested.x().clamp(work_area.x(), maximum_x),
-        requested.y().clamp(work_area.y(), maximum_y),
-        width,
-        height,
     )
     .ok()
 }

@@ -1,6 +1,6 @@
 //! Stateless product feedback projected from committed interaction events.
 
-use crate::engine::event::ReductionCause;
+use crate::engine::event::{PresentationRehomeResult, ReductionCause};
 use crate::ids::{EngineAuthorityDomainId, ReducerTickId};
 use crate::interaction::{
     ContainedTransformSessionId, DragSessionId, InteractionEvent, InteractionEventKind,
@@ -69,6 +69,8 @@ pub enum DockspaceManipulationDelivery {
     Contained,
     /// An explicitly enabled contained fallback was delivered.
     ContainedFallback,
+    /// An exact first-live output transferred the drag into a native window.
+    Native,
     /// A splitter resize committed.
     SplitterResize,
     /// A contained move or resize committed.
@@ -150,6 +152,10 @@ impl DockspaceManipulationFeedback {
                     }
                 }),
             ),
+            InteractionEventKind::NativePresentationSettled { session, result } => (
+                ManipulationIdentity::Drag(*session),
+                native_transfer_status(*result),
+            ),
             InteractionEventKind::ResizeDelivered { session } => (
                 ManipulationIdentity::Resize(*session),
                 DockspaceManipulationStatus::Delivered(
@@ -181,5 +187,24 @@ impl DockspaceManipulationFeedback {
             manipulation: DockspaceManipulationId { domain, identity },
             status,
         })
+    }
+}
+
+fn native_transfer_status(result: PresentationRehomeResult) -> DockspaceManipulationStatus {
+    use DockspaceManipulationCancelReason as CancelReason;
+    use DockspaceManipulationStatus::{Cancelled, Delivered, Rejected};
+
+    match result {
+        PresentationRehomeResult::Applied => Delivered(DockspaceManipulationDelivery::Native),
+        PresentationRehomeResult::TargetNotPresented => {
+            Rejected(DockspaceManipulationRejection::PresentationUnavailable)
+        }
+        PresentationRehomeResult::WorkspaceChanged => Cancelled(CancelReason::WorkspaceChanged),
+        PresentationRehomeResult::PolicyChanged => Cancelled(CancelReason::PolicyChanged),
+        PresentationRehomeResult::SourceUnavailable => Cancelled(CancelReason::SourceVanished),
+        PresentationRehomeResult::Cancelled => Cancelled(CancelReason::ExplicitCancellation),
+        PresentationRehomeResult::ActionRejected(reason) => {
+            Rejected(DockspaceManipulationRejection::from_product(reason))
+        }
     }
 }

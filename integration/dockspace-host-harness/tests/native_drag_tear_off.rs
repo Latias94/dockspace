@@ -526,6 +526,15 @@ fn foreign_intent_adopts_the_same_resource_and_waits_for_exact_first_live() {
         .unwrap();
     let mut admitted = fixture.settle();
     assert_eq!(admitted.native_admissions(), &[child]);
+    let [feedback] = admitted.manipulation_feedback() else {
+        panic!("first-live admission must finish its originating manipulation");
+    };
+    assert_eq!(
+        feedback.status(),
+        dockspace::runtime::DockspaceManipulationStatus::Delivered(
+            dockspace::runtime::DockspaceManipulationDelivery::Native,
+        ),
+    );
     assert!(!fixture.session.has_pending_native_create());
     assert_eq!(
         fixture.session.view().item(MOVED).unwrap().surface(),
@@ -1024,11 +1033,26 @@ fn permanently_rejected_pointer_head_preserves_create_ownership_and_cannot_repla
 
 #[test]
 fn cancelled_first_live_cannot_transfer_source_through_a_late_presented_output() {
+    use dockspace::runtime::{
+        DockspaceManipulationCancelReason, DockspaceManipulationStatus,
+        DockspacePresentationTransitionResult,
+    };
+
     let mut fixture = Fixture::new();
     let before = fixture.session.version();
     let drag = fixture.start_drag();
     let release = fixture.foreign_release(Some(drag));
-    let effect = fixture.release_request(release);
+    fixture.session.record_native_pointer(release).unwrap();
+    let release_report = fixture.settle();
+    let [pending] = release_report.manipulation_feedback() else {
+        panic!("the release must wait for the exact preview to be presented");
+    };
+    assert!(matches!(
+        pending.status(),
+        DockspaceManipulationStatus::Pending(_)
+    ));
+    let manipulation = pending.manipulation_id();
+    let effect = fixture.take_request(release_report, before);
     let (child, placement) = requested_window(&effect);
     assert_eq!(effect.drag_tear_off(), Some(drag));
     fixture.observe(
@@ -1042,6 +1066,23 @@ fn cancelled_first_live_cannot_transfer_source_through_a_late_presented_output()
     let mut cancellation = frame(&mut fixture.session, Some(fixture.scene));
     assert!(cancellation.cancel_next_native_create().unwrap());
     let mut cancelled = finish(cancellation);
+    let [terminal] = cancelled.presentation_transitions() else {
+        panic!("the accepted transfer terminates exactly once");
+    };
+    assert_eq!(
+        terminal.result(),
+        DockspacePresentationTransitionResult::Cancelled
+    );
+    let [feedback] = cancelled.manipulation_feedback() else {
+        panic!("the transfer terminal must also finish its originating manipulation");
+    };
+    assert_eq!(feedback.manipulation_id(), manipulation);
+    assert_eq!(
+        feedback.status(),
+        DockspaceManipulationStatus::Cancelled(
+            DockspaceManipulationCancelReason::ExplicitCancellation
+        )
+    );
     let [close] = cancelled.take_native_effects().try_into().unwrap();
     assert!(
         matches!(close.operation(), NativeEffectOperation::CompensatingClose { binding } if *binding == child)
@@ -1057,6 +1098,7 @@ fn cancelled_first_live_cannot_transfer_source_through_a_late_presented_output()
         .report_surface_presentation(output, SurfacePresentationResult::Presented)
         .unwrap();
     let mut late = fixture.settle();
+    assert!(late.manipulation_feedback().is_empty());
     assert!(late.native_admissions().is_empty());
     assert!(late.take_native_effects().is_empty());
     fixture.assert_source(before);

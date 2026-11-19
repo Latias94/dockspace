@@ -351,7 +351,7 @@ impl DockspaceSession {
     /// Reading this projection neither captures new OS facts nor advances the
     /// save generation. Hosting declarations follow successful publication and
     /// never retain a removed recovery host. Saving a native snapshot captures
-    /// its current observed placement; an unbound session yields no preferences.
+    /// its last confirmed visible placement; an unbound session yields no preferences.
     pub fn surface_presentation_preferences(
         &self,
     ) -> impl Iterator<Item = DockspaceSurfacePresentationPreference> + '_ {

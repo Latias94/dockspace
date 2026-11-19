@@ -352,7 +352,8 @@ impl DockEngine {
             &[],
         );
         let mut events = Vec::new();
-        candidate.record_native_create_settlements(&mut events);
+        let mut interaction_events = Vec::new();
+        candidate.record_native_create_settlements(&mut events, &mut interaction_events);
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,
@@ -361,7 +362,7 @@ impl DockEngine {
             reduced: Vec::new(),
             reduced_pointer_edges: Vec::new(),
             events,
-            interaction_events: Vec::new(),
+            interaction_events,
             platform_effects,
             focus_delta,
             presentation_observations: Vec::new(),
@@ -523,7 +524,7 @@ impl DockEngine {
         );
         let surface_scene_deltas = Self::surface_scene_deltas(self, &candidate);
         let mut events = Vec::new();
-        candidate.record_native_create_settlements(&mut events);
+        candidate.record_native_create_settlements(&mut events, &mut interaction_events);
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,
@@ -847,7 +848,7 @@ impl DockEngine {
             &[],
         );
         let mut events = Vec::new();
-        candidate.record_native_create_settlements(&mut events);
+        candidate.record_native_create_settlements(&mut events, &mut interaction_events);
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,

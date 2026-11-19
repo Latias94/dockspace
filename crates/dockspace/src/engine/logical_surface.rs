@@ -133,6 +133,9 @@ impl DockEngine {
                     CommandError::MissingSurface { .. } => {
                         LogicalSurfaceRejection::SurfaceUnavailable
                     }
+                    CommandError::RequiredSurfaceRemoved { .. } => {
+                        LogicalSurfaceRejection::SurfaceRequired
+                    }
                     CommandError::SurfaceNotEmpty { items, .. } => {
                         LogicalSurfaceRejection::SurfaceNotEmpty { items }
                     }
