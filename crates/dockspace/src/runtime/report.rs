@@ -364,52 +364,6 @@ impl HostFrameReport {
                 )
             })
             .collect();
-        let presentation_transitions = transition
-            .events()
-            .iter()
-            .filter_map(|event| {
-                let WorkspaceEventKind::PresentationRehomeSettled {
-                    root,
-                    source_surface,
-                    target_surface,
-                    result,
-                    outcome,
-                } = event.kind()
-                else {
-                    return None;
-                };
-                Some(DockspacePresentationTransition {
-                    id: DockspacePresentationTransitionId::from_cause(
-                        transition.authority_domain(),
-                        event.cause(),
-                    ),
-                    root: *root,
-                    source_surface: *source_surface,
-                    target_surface: *target_surface,
-                    result: match result {
-                        PresentationRehomeResult::Applied => {
-                            DockspacePresentationTransitionResult::Applied
-                        }
-                        PresentationRehomeResult::TargetNotPresented => {
-                            DockspacePresentationTransitionResult::TargetNotPresented
-                        }
-                        PresentationRehomeResult::WorkspaceChanged => {
-                            DockspacePresentationTransitionResult::WorkspaceChanged
-                        }
-                        PresentationRehomeResult::PolicyChanged => {
-                            DockspacePresentationTransitionResult::PolicyChanged
-                        }
-                        PresentationRehomeResult::SourceUnavailable => {
-                            DockspacePresentationTransitionResult::SourceUnavailable
-                        }
-                        PresentationRehomeResult::CommandRejected => {
-                            DockspacePresentationTransitionResult::CommandRejected
-                        }
-                    },
-                    outcome: outcome.clone(),
-                })
-            })
-            .collect();
         let surface_commits = transition
             .surface_contributions()
             .iter()
@@ -435,7 +389,6 @@ impl HostFrameReport {
                 !native_admissions.is_empty(),
             ),
             submitted_actions,
-            presentation_transitions,
             manipulation_feedback,
             painted_outputs,
             surface_presentation_commits,
@@ -450,6 +403,60 @@ impl HostFrameReport {
     }
 }
 
+pub(super) fn presentation_transitions(
+    transition: &crate::engine::transition::EngineTransition,
+) -> Vec<DockspacePresentationTransition> {
+    transition
+        .events()
+        .iter()
+        .filter_map(|event| {
+            let WorkspaceEventKind::PresentationRehomeSettled {
+                root,
+                source_surface,
+                target_surface,
+                result,
+                outcome,
+            } = event.kind()
+            else {
+                return None;
+            };
+            Some(DockspacePresentationTransition {
+                id: DockspacePresentationTransitionId::from_cause(
+                    transition.authority_domain(),
+                    event.cause(),
+                ),
+                root: *root,
+                source_surface: *source_surface,
+                target_surface: *target_surface,
+                result: match result {
+                    PresentationRehomeResult::Applied => {
+                        DockspacePresentationTransitionResult::Applied
+                    }
+                    PresentationRehomeResult::TargetNotPresented => {
+                        DockspacePresentationTransitionResult::TargetNotPresented
+                    }
+                    PresentationRehomeResult::WorkspaceChanged => {
+                        DockspacePresentationTransitionResult::WorkspaceChanged
+                    }
+                    PresentationRehomeResult::PolicyChanged => {
+                        DockspacePresentationTransitionResult::PolicyChanged
+                    }
+                    PresentationRehomeResult::SourceUnavailable => {
+                        DockspacePresentationTransitionResult::SourceUnavailable
+                    }
+                    PresentationRehomeResult::Cancelled => {
+                        DockspacePresentationTransitionResult::Cancelled
+                    }
+                    PresentationRehomeResult::ActionRejected(reason) => {
+                        DockspacePresentationTransitionResult::ActionRejected(*reason)
+                    }
+                },
+                outcome: outcome.clone(),
+            })
+        })
+        .collect()
+}
+
 fn product_action_host_outcome(
     outcome: &crate::model::DockspaceActionOutcome,
     domain: crate::ids::EngineAuthorityDomainId,
@@ -459,6 +466,7 @@ fn product_action_host_outcome(
         outcome,
         crate::model::DockspaceActionOutcome::RootDockRequested { .. }
             | crate::model::DockspaceActionOutcome::RootFloatRequested { .. }
+            | crate::model::DockspaceActionOutcome::NativeRootTearOffRequested { .. }
     ) {
         HostInputOutcome::ProductPresentationActionRequested {
             outcome: outcome.clone(),

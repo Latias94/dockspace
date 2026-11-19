@@ -142,7 +142,11 @@ pub enum NativeActionStatus {
         /// Stable core category of the preparation rejection.
         kind: DockspaceRuntimeErrorKind,
     },
-    /// A docking, selection, or reopening command reached its terminal status.
+    /// A docking, selection, or reopening command reached its reported status.
+    ///
+    /// Native tear-off returns [`DockspaceActionStatus::Requested`] immediately,
+    /// releasing execution capacity before the child reaches first-live. Match
+    /// its transition identity in the application's notification handler.
     Dock(DockspaceActionStatus),
     /// A content-close request opened or reused one core-owned plan.
     CloseRequested {

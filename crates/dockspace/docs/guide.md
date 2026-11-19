@@ -196,10 +196,19 @@ A native target may request explicit physical bounds or derive placement from
 current platform facts; source ownership still waits for exact first-live admission.
 The source never widens to a representative pane or refreshes its captured revision.
 
-For a fixed host, attach `.preserving_surfaces([host_surface])` to the prepared
+For a fixed host, call `session.retain_host_surface(host_surface)` once before
+starting frames. Pointer previews, releases, menus and application actions then
+share the same lifetime constraint. An approved native window close can end it;
+an explicit native Root continuation transfers it during reset or restore.
+Other layout replacements must retain the declared surface. The declaration is
+session-local, so reconstruct it when opening a saved document.
+
+Use `.preserving_surfaces([surface])` for additional constraints on one prepared
 action. Core checks the actual candidate before publication and retains the
-requirement through deferred native completion. A rejected removal returns
-`DockspaceActionRejection::SurfaceRequired`. `session.action_availability(&action)`
+requirement through deferred native completion. Retiring and recreating the same
+surface identity does not revive an already invalidated request. A rejected
+removal returns `DockspaceActionRejection::SurfaceRequired`.
+`session.action_availability(&action)`
 reports current rejection or the candidate's retired surfaces and whether exact
 target presentation is required. Availability reserves nothing: measurement,
 window inventory and presentation can change without a workspace-version change.
@@ -1196,6 +1205,27 @@ publishing any resulting cleanup work. Frame drop leaves the original saga and
 source sequence intact. A late output can settle only its original emission;
 it cannot admit a cancelled child. Retained resources continue through ordinary
 binding cleanup and exact terminal window facts.
+
+Accepted native tear-off reports `ProductPresentationActionRequested` with the
+immediate `NativeRootTearOffRequested` outcome and an opaque transition identity.
+This means the create lifecycle started; source content has not moved. A later
+`HostFrameReport::presentation_transitions()` entry carries the same identity.
+Exact first-live ownership transfer reports `Applied` with `NativeRootTornOff`.
+Cancellation reports `Cancelled`; a rejected final candidate reports
+`ActionRejected`, including `SurfaceRequired` when a caller or host constraint
+would be violated. Workspace replacement ends the original request with
+`WorkspaceChanged`. Each accepted lifecycle publishes at most one terminal.
+
+The same terminals are available through
+`DockspaceNotification::presentation_transitions()`, including failure-only
+publications with no layout change. Native adapter command receipts use
+`DockspaceActionStatus::Requested { outcome, transition }` and release their
+execution slot immediately; observe the existing notification handler for the
+later terminal. A failed transfer can still own compensating window cleanup.
+Continue servicing its affine effects and exact destruction/quiescence facts;
+the semantic terminal does not acknowledge physical cleanup. A surface required
+by a pending action cannot regain that request's authority merely by being
+retired and recreated with the same logical identifier.
 
 After first-live admission, ordinary surface destruction uses the core's
 existing bound recovery obligation. There is no separate pre-first-live

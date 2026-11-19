@@ -8,6 +8,12 @@ pub enum EngineError {
     /// Initial or replacement workspace violated a durable invariant.
     #[error("workspace is invalid: {0}")]
     InvalidWorkspace(#[source] WorkspaceValidationErrors),
+    /// A host-owned logical surface is absent from its declaration or replacement.
+    #[error("host-owned surface {surface} is unavailable")]
+    HostSurfaceUnavailable {
+        /// Logical surface whose lifetime belongs to the application host.
+        surface: SurfaceId,
+    },
     /// Current policy prevents an application-requested layout replacement.
     #[error("workspace replacement input {input} rejected by policy: {reason}")]
     WorkspaceReplacementPolicyDenied {

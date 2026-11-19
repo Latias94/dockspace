@@ -1144,19 +1144,38 @@ impl DockEngine {
             JournalDeliveryActivation::None,
         )?;
         let staged = match staged {
-            Ok(staged)
-                if Self::first_missing_required_surface(
-                    &staged.publication.workspace,
-                    &pending.required_surfaces,
-                )
-                .is_none() =>
-            {
-                staged
-            }
-            _ => {
+            Ok(staged) => match Self::first_missing_required_surface(
+                &staged.publication.workspace,
+                &pending.required_surfaces,
+            ) {
+                None => staged,
+                Some(surface) => {
+                    Self::record_presentation_rehome_settlement(
+                        &pending,
+                        crate::engine::event::PresentationRehomeResult::ActionRejected(
+                            DockspaceActionRejection::SurfaceRequired { surface },
+                        ),
+                        None,
+                        self.version,
+                        events,
+                    );
+                    return Ok(true);
+                }
+            },
+            Err(error) => {
+                let reason = match error {
+                    CommandError::RequiredSurfaceRemoved { surface } => {
+                        DockspaceActionRejection::SurfaceRequired { surface }
+                    }
+                    CommandError::Policy(_) => DockspaceActionRejection::PolicyDenied,
+                    CommandError::ItemHidden { item } => {
+                        DockspaceActionRejection::ItemHidden { item }
+                    }
+                    _ => DockspaceActionRejection::Conflict,
+                };
                 Self::record_presentation_rehome_settlement(
                     &pending,
-                    crate::engine::event::PresentationRehomeResult::CommandRejected,
+                    crate::engine::event::PresentationRehomeResult::ActionRejected(reason),
                     None,
                     self.version,
                     events,

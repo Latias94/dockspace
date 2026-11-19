@@ -447,6 +447,17 @@ pub enum DockspaceActionOutcome {
         /// Stable items retained by the pending root transfer.
         items: Vec<ItemId>,
     },
+    /// Exact first-live presentation transferred content to a native child.
+    NativeRootTornOff {
+        /// Destination root, preserved for complete-root payloads.
+        root: RootId,
+        /// Surface which retained content until the transfer committed.
+        source_surface: SurfaceId,
+        /// Logical surface admitted with the native child.
+        target_surface: SurfaceId,
+        /// Every transferred item, in committed traversal order.
+        items: Vec<ItemId>,
+    },
 }
 
 impl DockspaceActionOutcome {
@@ -467,7 +478,7 @@ impl DockspaceActionOutcome {
             | Self::RootFloated { changed, .. }
             | Self::ContainedBoundsUpdated { changed, .. }
             | Self::ContainedRaised { changed, .. } => *changed,
-            Self::Opened { .. } => true,
+            Self::Opened { .. } | Self::NativeRootTornOff { .. } => true,
             Self::Existing { .. }
             | Self::RootFloatRequested { .. }
             | Self::RootDockRequested { .. }

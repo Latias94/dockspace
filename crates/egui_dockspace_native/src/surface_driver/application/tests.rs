@@ -1029,14 +1029,16 @@ fn native_payload_commands_retain_exact_first_live_transfer_with_independent_rec
         let mut report = commit_queued_report(&mut state);
         assert_eq!(state.coordinator.session().version(), before);
         assert!(!state.application_actions.is_occupied());
-        let NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-            DockspaceActionOutcome::NativeRootTearOffRequested {
-                root,
-                source_surface: SURFACE,
-                target_surface,
-                items,
-            },
-        )) = take(&state_receipt)
+        let NativeActionStatus::Dock(DockspaceActionStatus::Requested {
+            outcome:
+                DockspaceActionOutcome::NativeRootTearOffRequested {
+                    root,
+                    source_surface: SURFACE,
+                    target_surface,
+                    items,
+                },
+            transition: _,
+        }) = take(&state_receipt)
         else {
             panic!("native payload admission must retain its typed request outcome");
         };

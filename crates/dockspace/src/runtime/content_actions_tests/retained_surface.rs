@@ -80,7 +80,7 @@ fn surface_retirement_preflight_preserves_stale_foreign_and_policy_rejections() 
 
 #[test]
 fn required_surfaces_are_enforced_by_the_submitted_candidate_for_every_move_source() {
-    for kind in 0..4 {
+    for (kind, host_lifetime) in (0..4).flat_map(|kind| [(kind, false), (kind, true)]) {
         let mut session = session();
         let source = match kind {
             0 => DockMoveSource::Item(FIRST),
@@ -88,15 +88,21 @@ fn required_surfaces_are_enforced_by_the_submitted_candidate_for_every_move_sour
             2 => DockMoveSource::Tabs(session.capture_tabs_group(DockAnchor::Item(FIRST)).unwrap()),
             _ => DockMoveSource::Root(ROOT),
         };
-        let action = session
-            .prepare_move(
-                source,
-                DockMoveTarget::Dock {
-                    placement: DockPlacement::Center(DockAnchor::Item(THIRD)),
-                    mode: TabGroupDockMode::PreserveLayout,
-                },
-            )
-            .preserving_surfaces([SURFACE, OTHER_SURFACE]);
+        let action = session.prepare_move(
+            source,
+            DockMoveTarget::Dock {
+                placement: DockPlacement::Center(DockAnchor::Item(THIRD)),
+                mode: TabGroupDockMode::PreserveLayout,
+            },
+        );
+        let action = if host_lifetime {
+            // Already prepared actions must observe a later host declaration.
+            session.retain_host_surface(SURFACE).unwrap();
+            session.retain_host_surface(OTHER_SURFACE).unwrap();
+            action
+        } else {
+            action.preserving_surfaces([SURFACE, OTHER_SURFACE])
+        };
         let before = session.workspace().clone();
         let version = session.version();
         let availability = session.action_availability(&action).unwrap();
@@ -134,4 +140,76 @@ fn required_surfaces_are_enforced_by_the_submitted_candidate_for_every_move_sour
         assert!(session.view().surface(SURFACE).is_some());
         assert!(session.view().surface(OTHER_SURFACE).is_some());
     }
+}
+
+#[test]
+fn host_surface_replacement_requires_retention_and_failed_reset_is_atomic() {
+    let mut session = session();
+    session.retain_host_surface(SURFACE).unwrap();
+    let before = session.workspace().clone();
+    let version = session.version();
+    let without_host = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        OTHER_SURFACE,
+        DockspaceRootLayout::new(
+            OTHER_ROOT,
+            DockspaceNode::tabs([FIRST, SECOND, THIRD, FOURTH]),
+        ),
+    )])
+    .unwrap();
+    let reset = session.prepare_layout_reset(without_host).unwrap();
+    assert_eq!(
+        session
+            .begin_layout_reset_frame(&reset)
+            .err()
+            .unwrap()
+            .kind(),
+        DockspaceRuntimeErrorKind::OperationConflict
+    );
+    assert_eq!(session.workspace(), &before);
+    assert_eq!(session.version(), version);
+
+    let with_host = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(ROOT, DockspaceNode::tabs([FIRST, SECOND, THIRD, FOURTH])),
+    )])
+    .unwrap();
+    let reset = session.prepare_layout_reset(with_host).unwrap();
+    commit(session.begin_layout_reset_frame(&reset).unwrap());
+    assert!(session.view().surface(SURFACE).is_some());
+    assert!(session.view().surface(OTHER_SURFACE).is_none());
+    assert_ne!(session.version().epoch(), version.epoch());
+    session.retain_host_surface(SURFACE).unwrap();
+}
+
+#[test]
+fn host_surface_declaration_respects_suspended_frame_ownership() {
+    let mut session = session();
+    assert_eq!(
+        session
+            .retain_host_surface(SurfaceId::new(99))
+            .unwrap_err()
+            .kind(),
+        DockspaceRuntimeErrorKind::OperationConflict
+    );
+    let update = session.begin_update().unwrap();
+    assert_eq!(
+        session.retain_host_surface(SURFACE).unwrap_err().kind(),
+        DockspaceRuntimeErrorKind::UpdateInProgress
+    );
+    drop(update);
+    session.retain_host_surface(SURFACE).unwrap();
+    session.retain_host_surface(SURFACE).unwrap();
+    let action = session.prepare_move(
+        DockMoveSource::Root(ROOT),
+        DockMoveTarget::Dock {
+            placement: DockPlacement::Center(DockAnchor::Item(THIRD)),
+            mode: TabGroupDockMode::MergeTabs,
+        },
+    );
+    assert_eq!(
+        session.action_availability(&action).unwrap(),
+        DockspaceActionAvailability::Unavailable(DockspaceActionRejection::SurfaceRequired {
+            surface: SURFACE,
+        })
+    );
 }

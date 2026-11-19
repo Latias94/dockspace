@@ -1,7 +1,7 @@
 //! Tokenless shutdown cancels content-ready children without moving source ownership.
 
 use dockspace::model::{DockspaceContainedLayout, FloatingPresentationId, NativeWindowPlacement};
-use dockspace::runtime::PaintedSurfaceOutput;
+use dockspace::runtime::{DockspacePresentationTransitionId, PaintedSurfaceOutput};
 
 use super::*;
 use crate::window_snapshot::CompiledWindowObservation;
@@ -87,7 +87,7 @@ fn prepare_child_content(
     root: RootId,
     x: f64,
     observations: &[(NativeSurfaceBinding, NativeWindowFacts)],
-) -> NativeSurfaceBinding {
+) -> (NativeSurfaceBinding, DockspacePresentationTransitionId) {
     let version = native.session.version();
     let items = native
         .session
@@ -108,7 +108,7 @@ fn prepare_child_content(
         .session
         .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
         .unwrap();
-    frame
+    let submitted = frame
         .move_root_to_new_window_current(
             root,
             NativeWindowPlacement::new(PhysicalRect::new(x, 0.0, 640.0, 480.0).unwrap()),
@@ -118,6 +118,12 @@ fn prepare_child_content(
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
     let mut report = frame.commit().unwrap();
+    let Some(HostInputOutcome::ProductPresentationActionRequested { transition, .. }) =
+        report.submitted_action_outcome(submitted)
+    else {
+        panic!("the pending child must retain its accepted transition identity");
+    };
+    let transition = *transition;
     let [create] = report.take_native_effects().try_into().unwrap();
     let child = match create.operation() {
         NativeEffectOperation::CreateWindow { binding, .. } => *binding,
@@ -152,7 +158,7 @@ fn prepare_child_content(
     assert!(native.session.presented_surface(child.surface()).is_none());
     assert!(native.session.is_current_native_binding(child));
     assert!(native.session.has_pending_native_create());
-    child
+    (child, transition)
 }
 
 fn content_ready_child() -> (
@@ -160,6 +166,7 @@ fn content_ready_child() -> (
     NativeSurfaceBinding,
     NativeSurfaceBinding,
     NativeSurfaceBinding,
+    DockspacePresentationTransitionId,
 ) {
     let mut native = coordinator();
     let (host, source) = register_root_and_child(&mut native);
@@ -182,7 +189,7 @@ fn content_ready_child() -> (
     configuration.commit().unwrap();
     paint_and_present_all_surfaces(&mut native);
 
-    let child = prepare_child_content(
+    let (child, transition) = prepare_child_content(
         &mut native,
         RootId::new(2),
         1400.0,
@@ -195,7 +202,7 @@ fn content_ready_child() -> (
         .bind_viewport(viewport_id_for(child), WindowId::from(33), child)
         .unwrap();
     assert_source_retained(&native, source, child);
-    (native, host, source, child)
+    (native, host, source, child, transition)
 }
 
 fn quarantine_without_source_measurement(native: &mut NativeCoordinator) {
@@ -222,7 +229,7 @@ fn quarantine_without_source_measurement(native: &mut NativeCoordinator) {
 
 #[test]
 fn content_ready_child_preserves_bridge_paint_before_durable_ownership() {
-    let (native, _, source, child) = content_ready_child();
+    let (native, _, source, child, _) = content_ready_child();
     assert_source_retained(&native, source, child);
     assert!(native.session.view().surface(child.surface()).is_none());
     let current = native.session.is_current_native_binding(child);
@@ -288,7 +295,7 @@ fn assert_source_retained(
 
 #[test]
 fn shutdown_cancels_content_ready_child_once_without_source_measurement() {
-    let (mut native, _, source, child) = content_ready_child();
+    let (mut native, _, source, child, _) = content_ready_child();
     quarantine_without_source_measurement(&mut native);
     let context = egui::Context::default();
     let version = native.session.version();
@@ -406,7 +413,7 @@ fn paint_child_output(
 fn native_lifecycle_events_wait_for_first_live_ownership_and_do_not_repeat() {
     use dockspace::runtime::DockspaceEventKind;
 
-    let (mut native, _, source, child) = content_ready_child();
+    let (mut native, _, source, child, _) = content_ready_child();
     let (sender, receiver) = std::sync::mpsc::channel();
     native
         .notifications
@@ -459,23 +466,62 @@ fn native_lifecycle_events_wait_for_first_live_ownership_and_do_not_repeat() {
 
 #[test]
 fn shutdown_cancellation_does_not_notify_a_native_move_as_completed() {
-    let (mut native, _, source, child) = content_ready_child();
+    use dockspace::runtime::DockspacePresentationTransitionResult;
+
+    let (mut native, _, source, child, requested_transition) = content_ready_child();
+    let version = native.session.version();
+    let output = paint_child_output(&mut native, child);
     let (sender, receiver) = std::sync::mpsc::channel();
     native
         .notifications
-        .set_handler(move |notification| sender.send(notification.events().to_vec()).unwrap());
+        .set_handler(move |notification| sender.send(notification.clone()).unwrap());
     quarantine_without_source_measurement(&mut native);
-    let cancelled = native.advance_shutdown_boundary(&egui::Context::default(), &mut test_budget());
+    let context = egui::Context::default();
+    let cancelled = native.advance_shutdown_boundary(&context, &mut test_budget());
     super::lifecycle_events::deliver_notifications(&mut native);
     assert!(cancelled.errors.is_empty(), "{cancelled:#?}");
     assert!(!native.session.has_pending_native_create());
+    assert_eq!(native.session.version(), version);
     assert_source_retained(&native, source, child);
+    let notification = receiver.try_recv().unwrap();
+    assert!(notification.events().is_empty());
+    assert!(notification.layout_change().is_none());
+    let [terminal] = notification.presentation_transitions() else {
+        panic!("shutdown cancellation must notify one semantic terminal");
+    };
+    assert_eq!(terminal.id(), requested_transition);
+    assert_eq!(
+        terminal.result(),
+        DockspacePresentationTransitionResult::Cancelled
+    );
+    assert!(terminal.outcome().is_none());
+    assert_eq!(cancelled.presentation_transitions, [terminal.clone()]);
     assert!(receiver.try_recv().is_err());
+
+    native
+        .session
+        .report_surface_presentation(output, SurfacePresentationResult::Presented)
+        .unwrap();
+    let late = commit_model_frame(&mut native);
+    assert!(late.events().is_empty());
+    assert!(late.presentation_transitions().is_empty());
+    native.settle_host_frame_report(&late).unwrap();
+    super::lifecycle_events::deliver_notifications(&mut native);
+    assert!(receiver.try_recv().is_err());
+    for _ in 0..2 {
+        let waiting = native.advance_shutdown_boundary(&context, &mut test_budget());
+        assert!(waiting.errors.is_empty(), "{waiting:#?}");
+        assert!(waiting.presentation_transitions.is_empty());
+        super::lifecycle_events::deliver_notifications(&mut native);
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(native.session.version(), version);
+        assert_source_retained(&native, source, child);
+    }
 }
 
 #[test]
 fn first_live_report_grants_presented_authority_without_changing_physical_coordinates() {
-    let (mut native, _, source, child) = content_ready_child();
+    let (mut native, _, source, child, _) = content_ready_child();
     let viewport = viewport_id_for(child);
     let window = WindowId::from(33);
     assert!(native.queued_snapshot.is_none());
@@ -529,7 +575,7 @@ fn first_live_report_grants_presented_authority_without_changing_physical_coordi
 
 #[test]
 fn shutdown_cancelled_child_cannot_admit_a_late_real_pane_output() {
-    let (mut native, _, source, child) = content_ready_child();
+    let (mut native, _, source, child, _) = content_ready_child();
     let version = native.session.version();
     let output = paint_child_output(&mut native, child);
     assert_source_retained(&native, source, child);
@@ -567,7 +613,7 @@ fn shutdown_cancelled_child_cannot_admit_a_late_real_pane_output() {
 
 #[test]
 fn shutdown_cancelled_child_drains_after_exact_destroyed_and_clean_roster() {
-    let (mut native, host, source, child) = content_ready_child();
+    let (mut native, host, source, child, _) = content_ready_child();
     quarantine_without_source_measurement(&mut native);
     let context = egui::Context::default();
     let version = native.session.version();
@@ -711,10 +757,11 @@ fn shutdown_cancels_content_ready_children_in_saga_order_one_per_boundary() {
     configuration.commit().unwrap();
     paint_and_present_all_surfaces(&mut native);
 
-    let first_child = prepare_child_content(&mut native, RootId::new(3), 1400.0, &observations);
+    let (first_child, _) =
+        prepare_child_content(&mut native, RootId::new(3), 1400.0, &observations);
     // Refresh only the second source; the first child still awaits its real output.
     present_one_host(&mut native, second_host.surface());
-    let second_child = prepare_child_content(
+    let (second_child, _) = prepare_child_content(
         &mut native,
         RootId::new(4),
         2100.0,

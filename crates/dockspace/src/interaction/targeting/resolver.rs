@@ -2034,6 +2034,10 @@ pub(crate) struct PreparedDropMutation {
 }
 
 impl PreparedDropMutation {
+    pub(crate) fn workspace(&self) -> &Workspace {
+        &self.candidate
+    }
+
     pub(crate) fn new(
         base: WorkspaceVersion,
         policy: PolicyRevision,

@@ -245,6 +245,16 @@ impl NativeApplicationActions {
                     )),
                     (
                         NativeActionExpectation::Dock,
+                        HostInputOutcome::ProductPresentationActionRequested {
+                            outcome: outcome @ dockspace::model::DockspaceActionOutcome::NativeRootTearOffRequested { .. },
+                            transition,
+                        },
+                    ) => ReductionSettlement::Terminal(DockspaceActionStatus::Requested {
+                        outcome: outcome.clone(),
+                        transition: *transition,
+                    }),
+                    (
+                        NativeActionExpectation::Dock,
                         HostInputOutcome::ProductPresentationActionRequested { transition, .. },
                     ) => ReductionSettlement::Presentation {
                         transition: *transition,

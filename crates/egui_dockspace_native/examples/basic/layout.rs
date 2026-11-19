@@ -605,7 +605,10 @@ pub(super) fn describe_status(status: &NativeActionStatus, panes: &ExamplePanes)
                 "The main-window layout could not be replaced: {kind:?}. The current layout remains available."
             )
         }
-        NativeActionStatus::Dock(DockspaceActionStatus::Applied(outcome)) => match outcome {
+        NativeActionStatus::Dock(
+            DockspaceActionStatus::Applied(outcome)
+            | DockspaceActionStatus::Requested { outcome, .. },
+        ) => match outcome {
             DockspaceActionOutcome::ItemActivated { item, .. } => {
                 format!("Activated {}.", title(*item))
             }
@@ -685,6 +688,9 @@ pub(super) fn describe_status(status: &NativeActionStatus, panes: &ExamplePanes)
                 } else {
                     "The group is already floating at that position.".to_owned()
                 }
+            }
+            DockspaceActionOutcome::NativeRootTornOff { .. } => {
+                "The group is displayed in its native window.".to_owned()
             }
             DockspaceActionOutcome::RootFloatRequested { .. }
             | DockspaceActionOutcome::RootDockRequested { .. }

@@ -2158,7 +2158,19 @@ impl DockEngine {
                 let rect = resolved.visual().rect();
                 let command = resolved.command().clone();
                 let tab_strip = resolved.preview_tab_strip();
-                prepared_mutation = Some(resolved.into_prepared_mutation());
+                let mutation = resolved.into_prepared_mutation();
+                if self
+                    .retained_host_surfaces_for_publication(
+                        mutation.workspace(),
+                        WorkspacePublicationAuthority::Ordinary,
+                    )
+                    .is_err()
+                {
+                    return Ok(PreviewEvaluation::without_affordance(
+                        PreviewDecision::Clear(PreviewResolutionStatus::Rejected),
+                    ));
+                }
+                prepared_mutation = Some(mutation);
                 PreviewDecision::Publish {
                     scene,
                     visual: PreviewVisual::Dock {

@@ -9,6 +9,7 @@ mod error;
 pub(crate) mod event;
 mod gesture_cancel;
 mod host_frame;
+mod host_surface;
 mod input;
 #[cfg(feature = "motion")]
 mod layout_motion;
@@ -940,6 +941,7 @@ pub struct DockEngine {
     /// Canonical immutable snapshot shared by rollback candidates. Checked
     /// commands own the existing staging copy and publish a new snapshot.
     workspace: crate::graph::operation::WorkspaceSnapshot,
+    host_surfaces: BTreeSet<SurfaceId>,
     presentation_identity: PresentationIdentityAuthority,
     policy: DockPolicySnapshot,
     version: WorkspaceVersion,
@@ -978,6 +980,7 @@ pub struct DockEngine {
 #[derive(Debug)]
 struct StagedWorkspacePublication {
     workspace: crate::graph::operation::WorkspaceSnapshot,
+    host_surfaces: BTreeSet<SurfaceId>,
     root_recovery_anchors: BTreeMap<crate::ids::SurfaceId, RootRecoveryAnchor>,
     bound_surface_recoveries: BTreeMap<crate::ids::SurfaceId, BoundSurfaceRecovery>,
 }
@@ -1504,6 +1507,7 @@ impl DockEngine {
         Ok(Self {
             authority_domain,
             workspace: workspace.clone(),
+            host_surfaces: BTreeSet::new(),
             presentation_identity,
             policy,
             version,
@@ -2067,6 +2071,7 @@ impl DockEngine {
         let mut candidate = Self {
             authority_domain: self.authority_domain,
             workspace: self.workspace.clone(),
+            host_surfaces: self.host_surfaces.clone(),
             presentation_identity: self.presentation_identity,
             policy: self.policy.clone(),
             version: self.version,

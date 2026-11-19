@@ -42,6 +42,33 @@ pub struct DockspaceSession {
 }
 
 impl DockspaceSession {
+    /// Retains an existing logical surface for this host's lifetime.
+    ///
+    /// Pointer previews, releases and application actions all preserve this
+    /// surface, including when its last item moves elsewhere. Requests which
+    /// would retire it are rejected with `SurfaceRequired`.
+    ///
+    /// An approved native window close may end the declaration. An explicit
+    /// native root continuation transfers it to the replacement surface during
+    /// reset or restore; other replacements must keep the declared surface.
+    /// This declaration is session-local and is not saved in layout documents.
+    /// Repeating it for the same surface has no effect.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the surface does not exist, a frame is suspended,
+    /// or the session's publication fence cannot advance.
+    pub fn retain_host_surface(
+        &mut self,
+        surface: crate::ids::SurfaceId,
+    ) -> Result<(), DockspaceRuntimeError> {
+        if self.active_update.strong_count() != 0 {
+            return Err(DockspaceRuntimeError::update_in_progress());
+        }
+        self.engine.retain_host_surface(surface)?;
+        Ok(())
+    }
+
     /// Creates one product session from stable item, root, and surface layout data.
     ///
     /// Runtime node identities are allocated privately while compiling the layout.

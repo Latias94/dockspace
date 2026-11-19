@@ -20,6 +20,7 @@ mod keyboard_cancel;
 
 mod capture_continuity;
 mod randomized;
+mod retained_host;
 
 fn captured_record(
     native: &NativeCoordinator,
@@ -420,7 +421,12 @@ fn shared_route_facts() -> NativeWindowFacts {
 }
 
 fn shared_routes() -> (NativeCoordinator, NativeSurfaceBinding) {
-    let mut native = coordinator();
+    shared_routes_with_coordinator(coordinator())
+}
+
+fn shared_routes_with_coordinator(
+    mut native: NativeCoordinator,
+) -> (NativeCoordinator, NativeSurfaceBinding) {
     native
         .register_native_root(FIRST_SURFACE, HostWindowToken::new(22))
         .unwrap();
@@ -479,10 +485,19 @@ struct RecordedSource {
 fn source_and_target(
     native: &mut NativeCoordinator,
 ) -> (RecordedSource, PhysicalPosition<f64>, PhysicalPosition<f64>) {
+    source_and_target_for(native, SECOND_SURFACE, ItemId::new(2), FIRST_SURFACE)
+}
+
+fn source_and_target_for(
+    native: &mut NativeCoordinator,
+    source_surface: SurfaceId,
+    source_item: ItemId,
+    target_surface: SurfaceId,
+) -> (RecordedSource, PhysicalPosition<f64>, PhysicalPosition<f64>) {
     let mut frame = native
         .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
         .unwrap();
-    let source_plan = frame.frame.paint_plan(SECOND_SURFACE).unwrap().unwrap();
+    let source_plan = frame.frame.paint_plan(source_surface).unwrap().unwrap();
     let mut receiver = None;
     source_plan
         .visit_surface_program(|step| {
@@ -490,7 +505,7 @@ fn source_and_target(
                 operation: SurfacePaintProgramOperation::Tab(tab),
                 ..
             } = step
-                && tab.item() == Some(ItemId::new(2))
+                && tab.item() == Some(source_item)
             {
                 receiver = source_plan.receiver_for_tab_body(tab);
             }
@@ -498,8 +513,18 @@ fn source_and_target(
         })
         .unwrap();
     let receiver = receiver.unwrap();
-    let source = PhysicalPosition::new(720.0 + receiver.center().x(), receiver.center().y());
-    let target_plan = frame.frame.paint_plan(FIRST_SURFACE).unwrap().unwrap();
+    let source_x = if source_surface == SECOND_SURFACE {
+        720.0
+    } else {
+        0.0
+    };
+    let target_x = if target_surface == SECOND_SURFACE {
+        720.0
+    } else {
+        0.0
+    };
+    let source = PhysicalPosition::new(source_x + receiver.center().x(), receiver.center().y());
+    let target_plan = frame.frame.paint_plan(target_surface).unwrap().unwrap();
     let mut target = None;
     target_plan
         .visit_surface_program(|step| {
@@ -552,7 +577,7 @@ fn source_and_target(
             artifacts,
         },
         source,
-        target,
+        PhysicalPosition::new(target_x + target.x, target.y),
     )
 }
 
@@ -584,11 +609,18 @@ fn resolve(query: NativeReceiverQuery, source: &RecordedSource) -> NativeReceive
 }
 
 fn preview(frame: &mut NativeHostFrame<'_>) -> Option<DockspacePreviewVisual> {
-    if frame.frame.paint_plan(FIRST_SURFACE).unwrap().is_none() {
+    preview_for(frame, FIRST_SURFACE)
+}
+
+fn preview_for(
+    frame: &mut NativeHostFrame<'_>,
+    surface: SurfaceId,
+) -> Option<DockspacePreviewVisual> {
+    if frame.frame.paint_plan(surface).unwrap().is_none() {
         frame
             .frame
             .measure_surface(
-                FIRST_SURFACE,
+                surface,
                 UniformSurfaceMetrics::new(
                     LogicalRect::new(0.0, 0.0, 640.0, 480.0).unwrap(),
                     LogicalSize::new(32.0, 24.0).unwrap(),
@@ -601,7 +633,7 @@ fn preview(frame: &mut NativeHostFrame<'_>) -> Option<DockspacePreviewVisual> {
     let mut preview = None;
     frame
         .frame
-        .paint_plan(FIRST_SURFACE)
+        .paint_plan(surface)
         .unwrap()
         .unwrap()
         .visit_surface_program(|step| {

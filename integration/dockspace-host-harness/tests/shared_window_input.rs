@@ -817,9 +817,12 @@ fn first_live_child_returns_to_a_scaled_shared_placement_through_one_handoff_eve
     assert!(
         matches!(
             requested.submitted_action_outcome(submitted),
-            Some(dockspace::runtime::HostInputOutcome::ProductActionApplied(
-                dockspace::model::DockspaceActionOutcome::NativeRootTearOffRequested { .. }
-            ))
+            Some(
+                dockspace::runtime::HostInputOutcome::ProductPresentationActionRequested {
+                    outcome: dockspace::model::DockspaceActionOutcome::NativeRootTearOffRequested { .. },
+                    transition: _,
+                }
+            )
         ),
         "the exact group must start native creation: {:?}",
         requested.inputs()

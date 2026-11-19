@@ -23,6 +23,8 @@ use dockspace::runtime::{
 };
 use dockspace_host_harness::{OwnedRecord, RecordingRenderer};
 
+#[path = "programmatic_native_tear_off/terminals.rs"]
+mod terminals;
 #[path = "programmatic_native_tear_off/visibility.rs"]
 mod visibility;
 
@@ -41,6 +43,7 @@ struct Fixture {
 }
 
 struct Request {
+    transition: dockspace::runtime::DockspacePresentationTransitionId,
     binding: NativeSurfaceBinding,
     root: RootId,
     placement: PhysicalRect,
@@ -148,14 +151,16 @@ impl Fixture {
         let mut frame = native_frame(&mut self.session);
         let submitted = frame.submit_prepared_action(action).unwrap();
         let mut report = finish(frame);
-        let Some(HostInputOutcome::ProductActionApplied(
-            DockspaceActionOutcome::NativeRootTearOffRequested {
-                root,
-                source_surface: HOST,
-                target_surface,
-                ..
-            },
-        )) = report.submitted_action_outcome(submitted)
+        let Some(HostInputOutcome::ProductPresentationActionRequested {
+            outcome:
+                DockspaceActionOutcome::NativeRootTearOffRequested {
+                    root,
+                    source_surface: HOST,
+                    target_surface,
+                    ..
+                },
+            transition,
+        }) = report.submitted_action_outcome(submitted)
         else {
             panic!(
                 "native tear-off must start without transferring content: {:?}",
@@ -164,6 +169,7 @@ impl Fixture {
         };
         let root = *root;
         let target_surface = *target_surface;
+        let transition = *transition;
         let [effect] = report.take_native_effects().try_into().unwrap();
         let (binding, placement) = match effect.operation() {
             NativeEffectOperation::CreateWindow {
@@ -182,6 +188,7 @@ impl Fixture {
         }
         assert!(self.session.view().surface(target_surface).is_none());
         Request {
+            transition,
             binding,
             root,
             placement,
@@ -442,6 +449,32 @@ fn item_tab_group_and_root_transfer_only_after_exact_first_live() {
             .unwrap();
         let report = idle(&mut fixture.session);
         assert_eq!(report.native_admissions(), &[request.binding]);
+        let [terminal] = report.presentation_transitions() else {
+            panic!("exact first-live presentation must publish one transfer terminal");
+        };
+        assert_eq!(terminal.id(), request.transition);
+        assert_eq!(
+            terminal.result(),
+            dockspace::runtime::DockspacePresentationTransitionResult::Applied,
+        );
+        let expected_items = match kind {
+            0 | 3 => vec![B],
+            1 => vec![A, B],
+            _ => vec![A, B, SIBLING],
+        };
+        assert_eq!(
+            terminal.outcome(),
+            Some(&DockspaceActionOutcome::NativeRootTornOff {
+                root: request.root,
+                source_surface: HOST,
+                target_surface: request.binding.surface(),
+                items: expected_items,
+            }),
+        );
+        assert_eq!(
+            report.notification().presentation_transitions(),
+            report.presentation_transitions(),
+        );
         assert!(!fixture.session.has_pending_native_create());
         let view = fixture.session.view();
         let moved: &[ItemId] = match kind {
@@ -618,6 +651,17 @@ fn cancellation_and_late_output_preserve_the_partial_source() {
     let mut frame = native_frame(&mut fixture.session);
     assert!(frame.cancel_next_native_create().unwrap());
     let mut report = finish(frame);
+    let [terminal] = report.presentation_transitions() else {
+        panic!("explicit cancellation must publish one semantic terminal");
+    };
+    assert_eq!(terminal.id(), request.transition);
+    assert_eq!(
+        terminal.result(),
+        dockspace::runtime::DockspacePresentationTransitionResult::Cancelled,
+    );
+    assert!(terminal.outcome().is_none());
+    assert!(!report.notification().is_empty());
+    assert!(!report.notification().document_changed());
     let [close] = report.take_native_effects().try_into().unwrap();
     assert!(
         matches!(close.operation(), NativeEffectOperation::CompensatingClose { binding } if *binding == request.binding)
@@ -630,7 +674,9 @@ fn cancellation_and_late_output_preserve_the_partial_source() {
         .session
         .report_surface_presentation(output, SurfacePresentationResult::Presented)
         .unwrap();
-    assert!(idle(&mut fixture.session).native_admissions().is_empty());
+    let late = idle(&mut fixture.session);
+    assert!(late.native_admissions().is_empty());
+    assert!(late.presentation_transitions().is_empty());
     fixture.assert_source(before);
     assert!(!fixture.session.has_pending_native_create());
 }
@@ -665,6 +711,14 @@ fn failed_partial_creation_and_discarded_attempt_keep_original_content() {
         .unwrap();
     let mut report = idle(&mut fixture.session);
     assert!(report.native_admissions().is_empty());
+    let [terminal] = report.presentation_transitions() else {
+        panic!("a failed dispatch must terminate the original native transfer");
+    };
+    assert_eq!(terminal.id(), request.transition);
+    assert_eq!(
+        terminal.result(),
+        dockspace::runtime::DockspacePresentationTransitionResult::TargetNotPresented,
+    );
     for cleanup in report.take_native_effects() {
         assert!(
             matches!(cleanup.operation(), NativeEffectOperation::CompensatingClose { binding } if *binding == request.binding)
@@ -951,9 +1005,7 @@ fn native_tear_off_availability_reports_the_previous_child_surface_retirement() 
     let mut report = finish(frame);
     assert!(matches!(
         report.submitted_action_outcome(submitted),
-        Some(HostInputOutcome::ProductActionApplied(
-            DockspaceActionOutcome::NativeRootTearOffRequested { source_surface, .. }
-        )) if *source_surface == request.binding.surface()
+        Some(HostInputOutcome::ProductPresentationActionRequested { outcome: DockspaceActionOutcome::NativeRootTearOffRequested { source_surface, .. }, transition: _, }) if *source_surface == request.binding.surface()
     ));
     let [effect] = report.take_native_effects().try_into().unwrap();
     let NativeEffectOperation::CreateWindow {

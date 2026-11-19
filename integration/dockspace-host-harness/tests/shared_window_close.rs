@@ -453,6 +453,9 @@ fn assert_destroyed_window_quiescence_and_token_reuse(host: &mut Harness, revers
 #[test]
 fn shared_window_allow_closes_both_surfaces_once_and_candidate_drop_preserves_approval() {
     let mut host = Harness::new();
+    for surface in [A, B] {
+        host.session.retain_host_surface(surface).unwrap();
+    }
     let before = format!("{:?}", host.session.view());
     let plan = host.request(NativeSurfaceCloseAction::CloseContent);
     {
@@ -852,6 +855,9 @@ fn shared_window_child_recovery_uses_its_own_b_anchor_and_keeps_a_hosted() {
 #[test]
 fn shared_root_unplanned_destroy_preserves_both_logical_rosters_and_the_live_child() {
     let mut host = Harness::new();
+    for surface in [A, B] {
+        host.session.retain_host_surface(surface).unwrap();
+    }
     let child = host.create_child();
     let before = format!("{:?}", host.session.view());
     let version = host.session.version();
@@ -880,4 +886,23 @@ fn shared_root_unplanned_destroy_preserves_both_logical_rosters_and_the_live_chi
     );
     assert!(host.session.is_current_native_binding(child));
     assert!(destroyed.take_native_effects().is_empty());
+
+    let reset = host
+        .session
+        .prepare_layout_reset(
+            DockspaceLayout::new([DockspaceSurfaceLayout::new(
+                A,
+                DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs(ITEMS)),
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+    let mut frame = native_frame(&mut host.session);
+    assert_eq!(
+        frame.submit_layout_reset(&reset).unwrap_err().kind(),
+        dockspace::runtime::DockspaceRuntimeErrorKind::OperationConflict
+    );
+    drop(frame);
+    assert_eq!(host.session.version(), version);
+    assert_eq!(format!("{:?}", host.session.view()), before);
 }

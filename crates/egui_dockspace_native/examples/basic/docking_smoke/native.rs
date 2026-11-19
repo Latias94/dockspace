@@ -114,9 +114,10 @@ impl NativeSmoke {
             assert!(
                 matches!(
                     result,
-                    Ok(NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-                        DockspaceActionOutcome::NativeRootTearOffRequested { .. }
-                    )))
+                    Ok(NativeActionStatus::Dock(DockspaceActionStatus::Requested {
+                        outcome: DockspaceActionOutcome::NativeRootTearOffRequested { .. },
+                        transition: _,
+                    }))
                 ),
                 "unexpected setup result: {result:?}"
             );

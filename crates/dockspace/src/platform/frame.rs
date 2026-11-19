@@ -118,6 +118,16 @@ pub struct PreparedNativeRootContinuation {
     target: SurfaceId,
 }
 
+impl PreparedNativeRootContinuation {
+    pub(crate) const fn predecessor(self) -> ViewportBinding {
+        self.predecessor
+    }
+
+    pub(crate) const fn target(self) -> SurfaceId {
+        self.target
+    }
+}
+
 /// Summary of the exact native bindings reconciled by a successful workspace restore.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ViewportReconciliation {

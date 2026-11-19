@@ -125,13 +125,15 @@ impl Journey {
                     if let Some(status) = egui_native_smoke::poll_action_receipt(&mut self.receipt)
                     {
                         match status {
-                            Ok(NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-                                DockspaceActionOutcome::NativeRootTearOffRequested {
-                                    target_surface,
-                                    items,
-                                    ..
-                                },
-                            ))) if items == [ITEMS[*index]] => *target = Some(target_surface),
+                            Ok(NativeActionStatus::Dock(DockspaceActionStatus::Requested {
+                                outcome:
+                                    DockspaceActionOutcome::NativeRootTearOffRequested {
+                                        target_surface,
+                                        items,
+                                        ..
+                                    },
+                                transition: _,
+                            })) if items == [ITEMS[*index]] => *target = Some(target_surface),
                             status => return Err(format!("native creation returned {status:?}")),
                         }
                     }

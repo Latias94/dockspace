@@ -260,13 +260,11 @@ fn retained_native_source_keeps_nested_tear_off_available() {
             let mut report = commit(frame);
             assert!(matches!(
                 report.inputs(),
-                [HostInputOutcome::ProductActionApplied(
-                    DockspaceActionOutcome::NativeRootTearOffRequested {
+                [HostInputOutcome::ProductPresentationActionRequested { outcome: DockspaceActionOutcome::NativeRootTearOffRequested {
                         source_surface: NATIVE_SOURCE_SURFACE,
                         items,
                         ..
-                    }
-                )] if items == &[NATIVE_FIRST, NATIVE_SECOND]
+                    }, transition: _, }] if items == &[NATIVE_FIRST, NATIVE_SECOND]
             ));
             let effects = report.take_native_effects();
             assert!(matches!(

@@ -432,14 +432,16 @@ impl SmokeApp {
             return;
         };
         match status {
-            Ok(NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-                DockspaceActionOutcome::NativeRootTearOffRequested {
-                    root,
-                    source_surface,
-                    target_surface,
-                    items,
-                },
-            ))) if root == CHILD_ROOT
+            Ok(NativeActionStatus::Dock(DockspaceActionStatus::Requested {
+                outcome:
+                    DockspaceActionOutcome::NativeRootTearOffRequested {
+                        root,
+                        source_surface,
+                        target_surface,
+                        items,
+                    },
+                transition: _,
+            })) if root == CHILD_ROOT
                 && source_surface == ROOT_SURFACE
                 && items == [CHILD_ITEM, CHILD_DETAIL] =>
             {

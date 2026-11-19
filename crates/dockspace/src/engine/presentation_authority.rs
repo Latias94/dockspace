@@ -402,6 +402,27 @@ impl DockEngine {
         &mut self,
         requested_influence: Option<&TabStripInfluenceDomain>,
     ) -> Result<(), PresentationRequirementFailure> {
+        let invalidated_creates = self
+            .viewport
+            .native_create_sagas()
+            .filter_map(|(saga, create)| {
+                create
+                    .prepared()
+                    .invalidated_required_surface()
+                    .map(|surface| (saga, surface))
+            })
+            .collect::<Vec<_>>();
+        for (saga, surface) in invalidated_creates {
+            self.viewport
+                .reject_native_create_with_result(
+                    saga,
+                    crate::engine::event::PresentationRehomeResult::ActionRejected(
+                        crate::model::DockspaceActionRejection::SurfaceRequired { surface },
+                    ),
+                )
+                .map_err(|source| PresentationRequirementFailure::Invariant(source.to_string()))?;
+            let _ = self.viewport_focus.cancel_activation_reservation(saga);
+        }
         let recovering_sources = self
             .viewport
             .native_create_sagas()
@@ -417,7 +438,10 @@ impl DockEngine {
             // Source recovery revokes every preparation phase, including one
             // which lost readiness before its former first-live scene rebuilt.
             self.viewport
-                .reject_native_create(saga)
+                .reject_native_create_with_result(
+                    saga,
+                    crate::engine::event::PresentationRehomeResult::SourceUnavailable,
+                )
                 .map_err(|source| PresentationRequirementFailure::Invariant(source.to_string()))?;
             let _ = self.viewport_focus.cancel_activation_reservation(saga);
         }
@@ -500,18 +524,25 @@ impl DockEngine {
             return Ok(());
         }
         for saga in pending_creates {
-            let Some(projection) = self
-                .native_first_live_projection(saga)
-                .map_err(|source| PresentationRequirementFailure::Invariant(source.to_string()))?
-            else {
-                // A new policy may revoke the prospective command before its
-                // first content output. Cancel the original lifecycle owner;
-                // source topology has never moved and needs no recovery plan.
-                self.viewport.reject_native_create(saga).map_err(|source| {
-                    PresentationRequirementFailure::Invariant(source.to_string())
-                })?;
-                let _ = self.viewport_focus.cancel_activation_reservation(saga);
-                continue;
+            let projection = self
+                .native_first_live_projection_result(saga)
+                .map_err(|source| PresentationRequirementFailure::Invariant(source.to_string()))?;
+            let projection = match projection {
+                Ok(projection) => projection,
+                Err(reason) => {
+                    // A revoked candidate ends the semantic operation immediately;
+                    // its physical binding continues through compensation cleanup.
+                    self.viewport
+                        .reject_native_create_with_result(
+                            saga,
+                            crate::engine::event::PresentationRehomeResult::ActionRejected(reason),
+                        )
+                        .map_err(|source| {
+                            PresentationRequirementFailure::Invariant(source.to_string())
+                        })?;
+                    let _ = self.viewport_focus.cancel_activation_reservation(saga);
+                    continue;
+                }
             };
             // A prospective workspace has independent topology and issuance.
             // Its roots must never borrow the live index by matching RootId.

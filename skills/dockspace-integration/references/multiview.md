@@ -130,6 +130,9 @@ style that maps to the session's presentation configuration. Keep registry/view
 callbacks short: they hold the runtime lock. Call `request_command` after those
 callbacks return. Committed notification callbacks run outside that lock and
 expose scoped access through `NativeNotificationContext`.
+The adapter declares its fixed host surface through `retain_host_surface`;
+pointer releases and application moves both preserve it. Custom adapters with
+the same requirement should make that session declaration during construction.
 
 Admission returns one caller-owned `NativeActionReceipt`. Poll `try_recv()`:
 `Empty` means pending; `Disconnected` means no further result can arrive because
@@ -149,6 +152,10 @@ slot; Stopped requires runtime recovery, and HostSurfaceRequired requires a
 request/layout that retains the fixed host. Stored tabs groups retain their
 captured session/version through retries. Semantic action completion and
 `is_surface_presented()` answer different questions.
+Native tear-off returns `DockspaceActionStatus::Requested { outcome, transition }`
+and releases execution capacity. Match that identity against the notification's
+`presentation_transitions()` for the eventual transfer or rejection. A failed
+semantic terminal can precede required compensating window cleanup.
 
 The default `motion` feature uses the shared core geometry and egui decoration
 tracks. Configure `with_motion` before attachment, or queue `request_motion`

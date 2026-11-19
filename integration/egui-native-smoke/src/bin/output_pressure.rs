@@ -561,18 +561,22 @@ impl PressureApp {
         });
         if let Some(status) = result {
             match status {
-                Ok(NativeActionStatus::Dock(DockspaceActionStatus::Applied(ref outcome)))
-                    if state
-                        .combined
-                        .as_mut()
-                        .is_some_and(|combined| combined.on_action(outcome)) => {}
-                Ok(NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-                    DockspaceActionOutcome::NativeRootTearOffRequested {
-                        root,
-                        target_surface,
-                        ..
-                    },
-                ))) if root == CHILD_ROOT => state.child_surface = Some(target_surface),
+                Ok(NativeActionStatus::Dock(
+                    DockspaceActionStatus::Applied(ref outcome)
+                    | DockspaceActionStatus::Requested { ref outcome, .. },
+                )) if state
+                    .combined
+                    .as_mut()
+                    .is_some_and(|combined| combined.on_action(outcome)) => {}
+                Ok(NativeActionStatus::Dock(DockspaceActionStatus::Requested {
+                    outcome:
+                        DockspaceActionOutcome::NativeRootTearOffRequested {
+                            root,
+                            target_surface,
+                            ..
+                        },
+                    transition: _,
+                })) if root == CHILD_ROOT => state.child_surface = Some(target_surface),
                 Ok(NativeActionStatus::Dock(DockspaceActionStatus::Applied(
                     DockspaceActionOutcome::RootDocked {
                         root,

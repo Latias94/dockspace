@@ -508,6 +508,7 @@ impl DockEngine {
             obligation,
             focus_causal,
         )
+        .with_cause(cause)
         .with_required_surfaces(required_surfaces);
         let request = self
             .viewport
@@ -528,6 +529,39 @@ impl DockEngine {
         );
         self.last_surface_recovery_obligation = id;
         Ok(Ok(request))
+    }
+
+    pub(super) fn native_create_command_rejection(
+        prepared: &crate::platform::frame::PreparedNativeCreate,
+        error: &CommandError,
+    ) -> Result<DockspaceActionRejection, EngineError> {
+        let source_root = match prepared.payload() {
+            MovePayload::Item(source) => source.root(),
+            MovePayload::Tabs(source) | MovePayload::Subtree(source) => source.root(),
+        };
+        super::product_action::product_command_rejection(
+            ProductAction::TearOffNative {
+                source: DockMoveSource::Root(source_root),
+                placement: None,
+            },
+            error,
+        )
+    }
+
+    pub(super) fn record_native_create_settlements(&mut self, events: &mut Vec<WorkspaceEvent>) {
+        for settlement in self.viewport.take_native_create_settlements() {
+            events.push(WorkspaceEvent::new_caused(
+                settlement.cause,
+                self.version,
+                WorkspaceEventKind::PresentationRehomeSettled {
+                    root: settlement.root,
+                    source_surface: settlement.source_surface,
+                    target_surface: settlement.target_surface,
+                    result: settlement.result,
+                    outcome: None,
+                },
+            ));
+        }
     }
 
     fn check_native_root_create(

@@ -278,17 +278,18 @@ fn programmatic_native_root_tear_off_starts_the_shared_create_saga() {
         operation => panic!("programmatic tear-off emitted the wrong effect: {operation:?}"),
     };
 
-    assert_eq!(
+    assert!(matches!(
         report.inputs(),
-        &[super::super::super::HostInputOutcome::ProductActionApplied(
-            crate::model::DockspaceActionOutcome::NativeRootTearOffRequested {
+        [super::super::super::HostInputOutcome::ProductPresentationActionRequested {
+            outcome: crate::model::DockspaceActionOutcome::NativeRootTearOffRequested {
                 root: ROOT,
                 source_surface: SURFACE,
-                target_surface: child_binding.surface(),
-                items: vec![ITEM, SECOND_ITEM],
+                target_surface,
+                items,
             },
-        )]
-    );
+            ..
+        }] if *target_surface == child_binding.surface() && items == &[ITEM, SECOND_ITEM]
+    ));
     assert_eq!(session.version(), before);
     assert_eq!(
         session.view().item(ITEM).map(|item| item.surface()),
@@ -348,17 +349,18 @@ fn programmatic_native_root_tear_off_preserves_measured_recovery_for_offscreen_g
             panic!("expected native creation at x={x}");
         };
         assert_eq!(*requested, placement);
-        assert_eq!(
+        assert!(matches!(
             report.inputs(),
-            &[super::super::super::HostInputOutcome::ProductActionApplied(
-                crate::model::DockspaceActionOutcome::NativeRootTearOffRequested {
+            [super::super::super::HostInputOutcome::ProductPresentationActionRequested {
+                outcome: crate::model::DockspaceActionOutcome::NativeRootTearOffRequested {
                     root: ROOT,
                     source_surface: SURFACE,
-                    target_surface: binding.surface(),
-                    items: vec![ITEM, SECOND_ITEM],
+                    target_surface,
+                    items,
                 },
-            )]
-        );
+                ..
+            }] if *target_surface == binding.surface() && items == &[ITEM, SECOND_ITEM]
+        ));
         let (_, saga) = session
             .engine
             .viewport()
@@ -665,7 +667,20 @@ fn native_create_cleanup_commits_under_report_backpressure_and_compensates_once(
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
     let mut report = retry.commit().expect("the exact cancellation commits");
-    assert!(report.presentation_transitions().is_empty());
+    let [terminal] = report.presentation_transitions() else {
+        panic!("the committed retry must report the original create cancellation exactly once");
+    };
+    assert_eq!(
+        terminal.id(),
+        crate::runtime::DockspacePresentationTransitionId::from_cause(
+            session.engine.authority_domain(),
+            before.prepared().cause().unwrap(),
+        ),
+    );
+    assert_eq!(
+        terminal.result(),
+        crate::runtime::DockspacePresentationTransitionResult::Cancelled,
+    );
     assert!(report.take_native_effects().is_empty());
     assert_eq!(session.abandoned_native_effects.available_slots(), Some(0));
     assert!(session.engine.viewport().native_create_saga(saga).is_none());
@@ -716,6 +731,7 @@ fn native_create_cleanup_commits_under_report_backpressure_and_compensates_once(
     ));
     assert_eq!(session.abandoned_native_effects.available_slots(), Some(1));
     let mut delivery_report = commit_managed_frame_report(&mut session);
+    assert!(delivery_report.presentation_transitions().is_empty());
     let compensation = take_only_native_effect(&mut delivery_report);
     assert!(matches!(
         compensation.operation(),
@@ -738,6 +754,7 @@ fn native_create_cleanup_commits_under_report_backpressure_and_compensates_once(
     next.complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
     let mut report = next.commit().expect("the quiet cleanup probe commits");
+    assert!(report.presentation_transitions().is_empty());
     assert!(report.take_native_effects().is_empty());
     assert_eq!(session.committed_source_sequence, source_sequence + 1);
     assert_eq!(session.engine.workspace(), &source);
@@ -1299,6 +1316,14 @@ fn managed_native_create_dispatch_failure_preserves_source_ownership() {
         .report_native_effect_result(failed)
         .expect("the exact create failure records");
     let mut failure_report = commit_managed_frame_report(&mut session);
+    let [terminal] = failure_report.presentation_transitions() else {
+        panic!("the first committed create failure must publish exactly one terminal");
+    };
+    assert_eq!(terminal.target_surface(), child_binding.surface());
+    assert_eq!(
+        terminal.result(),
+        crate::runtime::DockspacePresentationTransitionResult::TargetNotPresented,
+    );
     assert!(failure_report.take_native_effects().is_empty());
     assert_eq!(
         session
@@ -1319,6 +1344,7 @@ fn managed_native_create_dispatch_failure_preserves_source_ownership() {
     let mut report = commit_managed_frame_report(&mut session);
 
     assert!(report.take_native_effects().is_empty());
+    assert!(report.presentation_transitions().is_empty());
     assert_eq!(
         session.view().item(ITEM).map(|item| item.surface()),
         Some(SURFACE)

@@ -843,7 +843,21 @@ fn cancelling_first_live_heads_retries_without_moving_sources_or_leaking_childre
             .commit()
             .expect("one cancellation input commits for this head");
         assert!(report.native_admissions().is_empty());
-        assert!(report.presentation_transitions().is_empty());
+        let [terminal] = report.presentation_transitions() else {
+            panic!("one committed head cancellation must publish one semantic terminal");
+        };
+        assert_eq!(
+            terminal.id(),
+            crate::runtime::DockspacePresentationTransitionId::from_cause(
+                session.engine.authority_domain(),
+                saga.prepared().cause().unwrap(),
+            ),
+        );
+        assert_eq!(
+            terminal.result(),
+            crate::runtime::DockspacePresentationTransitionResult::Cancelled,
+        );
+        assert_eq!(terminal.target_surface(), child.surface());
         assert_eq!(session.engine.workspace(), &source);
         assert_eq!(session.version(), version);
         assert_eq!(session.committed_source_sequence, before_sequence + 1);
@@ -905,6 +919,7 @@ fn cancelling_first_live_heads_retries_without_moving_sources_or_leaking_childre
         };
         let mut quiet = commit_managed_frame_report(&mut session);
         assert!(quiet.native_admissions().is_empty());
+        assert!(quiet.presentation_transitions().is_empty());
         assert!(quiet.take_native_effects().is_empty());
         assert_eq!(
             session
@@ -938,6 +953,7 @@ fn cancelling_first_live_heads_retries_without_moving_sources_or_leaking_childre
             .expect("the exactly destroyed child has no remaining external callbacks");
         let mut report = commit_managed_frame_report(&mut session);
         assert!(report.native_admissions().is_empty());
+        assert!(report.presentation_transitions().is_empty());
         assert!(report.take_native_effects().is_empty());
         assert_eq!(session.engine.viewport().binding_retirements().count(), 0);
         assert_eq!(session.engine.workspace(), &source);

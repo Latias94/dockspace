@@ -1176,11 +1176,9 @@ fn assert_close_create_and_output_pressure(
     assert!(
         report.inputs().iter().any(|input| matches!(
             input,
-            HostInputOutcome::ProductActionApplied(
-                DockspaceActionOutcome::NativeRootTearOffRequested {
+            HostInputOutcome::ProductPresentationActionRequested { outcome: DockspaceActionOutcome::NativeRootTearOffRequested {
                     root, source_surface, items, ..
-                }
-            ) if *root == source_root
+                }, transition: _, } if *root == source_root
                 && *source_surface == bindings[2].surface()
                 && items.as_slice() == [ItemId::new(4)]
         )),

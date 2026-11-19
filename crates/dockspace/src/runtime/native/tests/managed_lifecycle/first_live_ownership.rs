@@ -1009,6 +1009,17 @@ fn disabling_native_policy_cancels_pending_first_live_without_transfer_or_late_a
         .find(|(_, saga)| saga.binding() == child.binding)
         .map(|(id, saga)| (id, saga.create()))
         .expect("the pending first-live saga retains its original create");
+    let transition = crate::runtime::DockspacePresentationTransitionId::from_cause(
+        session.engine.authority_domain(),
+        session
+            .engine
+            .viewport()
+            .native_create_saga(saga)
+            .unwrap()
+            .prepared()
+            .cause()
+            .unwrap(),
+    );
     let resources = session
         .engine
         .viewport()
@@ -1033,6 +1044,16 @@ fn disabling_native_policy_cancels_pending_first_live_without_transfer_or_late_a
     let mut report = replace
         .commit()
         .expect("revoking the pending command must cancel instead of rolling back invariants");
+    let [terminal] = report.presentation_transitions() else {
+        panic!("the policy-revoked native operation must publish one original terminal");
+    };
+    assert_eq!(terminal.id(), transition);
+    assert_eq!(
+        terminal.result(),
+        crate::runtime::DockspacePresentationTransitionResult::ActionRejected(
+            crate::model::DockspaceActionRejection::PolicyDenied,
+        ),
+    );
     assert!(report.native_admissions().is_empty());
     assert!(report.surface_presentation_commits().is_empty());
     assert_eq!(session.version().epoch(), version.epoch());

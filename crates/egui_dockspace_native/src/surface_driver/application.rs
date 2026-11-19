@@ -326,9 +326,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
         let required_surface = self.root_surface;
         let prepared_move = if let NativeCommand::Move { source, target } = &command {
             let session = self.coordinator.session();
-            let action = session
-                .prepare_move(source.clone(), *target)
-                .preserving_surfaces([required_surface]);
+            let action = session.prepare_move(source.clone(), *target);
             match session.action_availability(&action) {
                 Ok(dockspace::model::DockspaceActionAvailability::Unavailable(
                     DockspaceActionRejection::SurfaceRequired { .. },
@@ -378,10 +376,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
                     NativeCommand::Move { .. } => {
                         unreachable!("move requests retain the action validated before enqueue")
                     }
-                    NativeCommand::DockRootBack { root } => session
-                        .prepare_dock_root_back(root)
-                        .preserving_surfaces([required_surface])
-                        .into(),
+                    NativeCommand::DockRootBack { root } => {
+                        session.prepare_dock_root_back(root).into()
+                    }
                     NativeCommand::RaiseContained { item } => {
                         session.prepare_raise_contained(item).into()
                     }

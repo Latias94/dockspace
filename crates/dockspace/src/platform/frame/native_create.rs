@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use crate::engine::event::{PresentationRehomeResult, ReductionCause};
 use crate::engine::surface_recovery::{ConvertedMainRecovery, SurfaceRecoveryObligation};
 use crate::geometry::PhysicalRect;
 use crate::graph::command::{MovePayload, WorkspaceCommand};
@@ -81,7 +82,9 @@ impl NativeCreateProposal {
 /// Frozen source, mutation, recovery, and focus facts for one native create saga.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PreparedNativeCreate {
+    cause: Option<ReductionCause>,
     required_surfaces: Vec<SurfaceId>,
+    invalidated_required_surface: Option<SurfaceId>,
     source_presentation: PresentedSurfaceAuthority,
     payload: MovePayload,
     source_epoch: WorkspaceEpoch,
@@ -102,7 +105,9 @@ impl PreparedNativeCreate {
         focus_causal: FocusCausalStamp,
     ) -> Self {
         Self {
+            cause: None,
             required_surfaces: Vec::new(),
+            invalidated_required_surface: None,
             source_presentation,
             payload,
             source_epoch,
@@ -113,6 +118,15 @@ impl PreparedNativeCreate {
         }
     }
 
+    pub(crate) const fn with_cause(mut self, cause: ReductionCause) -> Self {
+        self.cause = Some(cause);
+        self
+    }
+
+    pub(crate) const fn cause(&self) -> Option<ReductionCause> {
+        self.cause
+    }
+
     pub(crate) fn with_required_surfaces(mut self, required: &[SurfaceId]) -> Self {
         self.required_surfaces = required.to_vec();
         self
@@ -120,6 +134,10 @@ impl PreparedNativeCreate {
 
     pub(crate) fn required_surfaces(&self) -> &[SurfaceId] {
         &self.required_surfaces
+    }
+
+    pub(crate) const fn invalidated_required_surface(&self) -> Option<SurfaceId> {
+        self.invalidated_required_surface
     }
 
     pub(crate) const fn source_surface(&self) -> SurfaceId {
@@ -235,6 +253,18 @@ pub struct NativeCreateRequest {
 pub(super) struct NativeCreateState {
     last_saga: NativeCreateSagaId,
     sagas: BTreeMap<NativeCreateSagaId, NativeCreateSaga>,
+    settlements: Vec<NativeCreateSettlement>,
+}
+
+/// A semantic terminal awaiting the current atomic frame's ordinary event report.
+/// Physical compensation remains owned by binding cleanup after this is drained.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NativeCreateSettlement {
+    pub(crate) cause: ReductionCause,
+    pub(crate) root: RootId,
+    pub(crate) source_surface: SurfaceId,
+    pub(crate) target_surface: SurfaceId,
+    pub(crate) result: PresentationRehomeResult,
 }
 
 impl Default for NativeCreateState {
@@ -242,6 +272,7 @@ impl Default for NativeCreateState {
         Self {
             last_saga: NativeCreateSagaId::new(0),
             sagas: BTreeMap::new(),
+            settlements: Vec::new(),
         }
     }
 }
@@ -309,6 +340,46 @@ impl NativeCreateSaga {
 }
 
 impl ViewportCoordinator {
+    /// Revokes pending action constraints at the actual retirement boundary.
+    /// Reattaching a logical identifier cannot restore an earlier request's authority.
+    pub(crate) fn invalidate_native_create_required_surfaces(
+        &mut self,
+        retired: &BTreeSet<SurfaceId>,
+    ) {
+        for saga in self.native_creates.sagas.values_mut() {
+            let prepared = &mut saga.prepared;
+            if prepared.invalidated_required_surface.is_none() {
+                prepared.invalidated_required_surface = prepared
+                    .required_surfaces
+                    .iter()
+                    .copied()
+                    .find(|surface| retired.contains(surface));
+            }
+        }
+    }
+
+    pub(crate) fn take_native_create_settlements(&mut self) -> Vec<NativeCreateSettlement> {
+        std::mem::take(&mut self.native_creates.settlements)
+    }
+
+    fn record_native_create_settlement(
+        &mut self,
+        prepared: &PreparedNativeCreate,
+        result: PresentationRehomeResult,
+    ) {
+        if let Some(cause) = prepared.cause() {
+            self.native_creates
+                .settlements
+                .push(NativeCreateSettlement {
+                    cause,
+                    root: prepared.proposal().root(),
+                    source_surface: prepared.source_surface(),
+                    target_surface: prepared.proposal().surface(),
+                    result,
+                });
+        }
+    }
+
     /// Starts a non-idempotent native create saga without moving source content.
     pub(crate) fn start_native_create(
         &mut self,
@@ -596,29 +667,39 @@ impl ViewportCoordinator {
         Ok(())
     }
 
-    pub(crate) fn reject_native_create(
+    pub(crate) fn reject_native_create_with_result(
         &mut self,
         saga_id: NativeCreateSagaId,
+        result: PresentationRehomeResult,
     ) -> Result<Option<EffectId>, ViewportCoordinatorError> {
-        self.abort_native_create(saga_id)
+        self.abort_native_create_with_result(saga_id, result)
     }
 
     pub(crate) fn cancel_native_create(
         &mut self,
         saga_id: NativeCreateSagaId,
     ) -> Result<Option<EffectId>, ViewportCoordinatorError> {
-        self.abort_native_create(saga_id)
+        self.abort_native_create_with_result(saga_id, PresentationRehomeResult::Cancelled)
     }
 
     pub(super) fn abort_native_create(
         &mut self,
         saga_id: NativeCreateSagaId,
     ) -> Result<Option<EffectId>, ViewportCoordinatorError> {
+        self.abort_native_create_with_result(saga_id, PresentationRehomeResult::TargetNotPresented)
+    }
+
+    fn abort_native_create_with_result(
+        &mut self,
+        saga_id: NativeCreateSagaId,
+        result: PresentationRehomeResult,
+    ) -> Result<Option<EffectId>, ViewportCoordinatorError> {
         let saga = self
             .native_creates
             .sagas
             .remove(&saga_id)
             .ok_or(ViewportCoordinatorError::MissingCreateSaga { saga: saga_id })?;
+        self.record_native_create_settlement(&saga.prepared, result);
         let binding = saga.binding;
         let create = saga.create;
         let resource = saga.resource;
@@ -729,7 +810,12 @@ impl ViewportCoordinator {
     }
 
     pub(super) fn clear_active_native_creates(&mut self) {
-        self.native_creates.sagas.clear();
+        for (_, saga) in std::mem::take(&mut self.native_creates.sagas) {
+            self.record_native_create_settlement(
+                &saga.prepared,
+                PresentationRehomeResult::WorkspaceChanged,
+            );
+        }
     }
 
     pub(super) fn native_create_is_staging_binding(&self, binding: ViewportBinding) -> bool {
@@ -773,6 +859,10 @@ impl ViewportCoordinator {
             .sagas
             .remove(&saga_id)
             .expect("the matching native create saga was just observed");
+        self.record_native_create_settlement(
+            &saga.prepared,
+            PresentationRehomeResult::TargetNotPresented,
+        );
         let inventory_generation = self.registry.inventory_generation();
         let _ = self
             .effects

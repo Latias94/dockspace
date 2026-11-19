@@ -755,6 +755,9 @@ fn multi_root_layout_reset_swaps_a_complete_cycle_only_when_the_retry_commits() 
 fn a_continuing_root_vacates_its_old_surface_for_a_restored_child() {
     let bytes = saved_document();
     let mut host = Host::new(false, false);
+    for surface in ROOTS {
+        host.session.retain_host_surface(surface).unwrap();
+    }
     let reset = host
         .session
         .prepare_layout_reset(

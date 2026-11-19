@@ -132,10 +132,10 @@ impl DockspaceMutation {
 /// Atomic publication plus one exact product-action result.
 ///
 /// Receiving this value means the host update published successfully. Inspect
-/// [`Self::status`] to distinguish an applied action from policy/topology rejection
-/// or a stale prepared revision.
+/// [`Self::status`] for an applied action, an accepted presentation request,
+/// policy/topology rejection, or a stale prepared revision.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[must_use = "inspect status() to distinguish an applied action from rejection or staleness"]
+#[must_use = "inspect status() for completion, a pending request, rejection or staleness"]
 pub struct DockspaceActionResult {
     mutation: DockspaceMutation,
     status: DockspaceActionStatus,
@@ -150,9 +150,13 @@ impl DockspaceActionResult {
             HostInputOutcome::ProductActionApplied(outcome) => {
                 DockspaceActionStatus::Applied(outcome.clone())
             }
-            HostInputOutcome::ProductPresentationActionRequested { outcome, .. } => {
-                DockspaceActionStatus::Applied(outcome.clone())
-            }
+            HostInputOutcome::ProductPresentationActionRequested {
+                outcome,
+                transition,
+            } => DockspaceActionStatus::Requested {
+                outcome: outcome.clone(),
+                transition: *transition,
+            },
             HostInputOutcome::ProductActionRejected(reason) => {
                 DockspaceActionStatus::Rejected(*reason)
             }

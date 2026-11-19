@@ -209,6 +209,38 @@ impl SolarApp {
             .with_panes_mut(|panes| panes.orbit.paused = paused);
     }
 
+    fn finish_launch_outcome(
+        &mut self,
+        planet: usize,
+        status: Result<NativeActionStatus, String>,
+    ) -> Result<(), String> {
+        self.launch = None;
+        match status? {
+            NativeActionStatus::Dock(DockspaceActionStatus::Requested {
+                outcome:
+                    DockspaceActionOutcome::NativeRootTearOffRequested {
+                        target_surface,
+                        items,
+                        ..
+                    },
+                transition: _,
+            }) if items == [PLANETS[planet].item] => {
+                if self.smoke.is_some() {
+                    eprintln!(
+                        "solar-smoke: {} launch accepted for {target_surface:?}",
+                        PLANETS[planet].name
+                    );
+                }
+                self.launch = Some(Launch::AwaitingPresentation {
+                    planet,
+                    surface: target_surface,
+                });
+                Ok(())
+            }
+            unexpected => Err(format!("launch returned {unexpected:?}")),
+        }
+    }
+
     fn advance_launch(&mut self, geometry: GeometryAvailability) -> Result<(), String> {
         if let Some(kind) = self.dockspace.error_kind() {
             return Err(self.dockspace.with_errors(|primary, cleanup| {
@@ -219,29 +251,20 @@ impl SolarApp {
             let Some(status) = poll_receipt(&mut self.receipt) else {
                 return Ok(());
             };
-            match status? {
-                NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-                    DockspaceActionOutcome::NativeRootTearOffRequested {
-                        target_surface,
-                        items,
-                        ..
-                    },
-                )) if items == [PLANETS[planet].item] => {
-                    if self.smoke.is_some() {
-                        eprintln!(
-                            "solar-smoke: {} launch accepted for {target_surface:?}",
-                            PLANETS[planet].name
-                        );
-                    }
-                    self.launch = Some(Launch::AwaitingPresentation {
-                        planet,
-                        surface: target_surface,
-                    });
-                }
-                unexpected => return Err(format!("launch returned {unexpected:?}")),
-            }
+            self.finish_launch_outcome(planet, status)?;
         }
         if let Some(Launch::AwaitingPresentation { planet, surface }) = self.launch {
+            if self.dockspace.is_quiescent()
+                && self
+                    .dockspace
+                    .with_view(|view| view.surface(surface).is_none())
+            {
+                self.launch = None;
+                return Err(format!(
+                    "{} launch was cancelled; its pane remains available to launch again",
+                    PLANETS[planet].name
+                ));
+            }
             if !self.dockspace.is_surface_presented(surface) || !self.dockspace.is_quiescent() {
                 return Ok(());
             }
@@ -493,6 +516,28 @@ mod tests {
                 .unwrap_err()
                 .contains("Wayland does not provide")
         );
+    }
+
+    #[test]
+    fn a_failed_or_rejected_launch_outcome_releases_the_launch_for_retry() {
+        for result in [
+            Err("the launch failed before commit".to_owned()),
+            Ok(NativeActionStatus::Dock(DockspaceActionStatus::Rejected(
+                dockspace::model::DockspaceActionRejection::PresentationUnavailable {
+                    surface: ROOT_SURFACE,
+                },
+            ))),
+        ] {
+            let mut app = app();
+            app.queue.clear();
+            app.launch = Some(Launch::AwaitingOutcome { planet: 0 });
+            let error = app.finish_launch_outcome(0, result).unwrap_err();
+            assert!(!error.is_empty());
+            assert!(app.launch.is_none());
+            assert!(app.receipt.is_none());
+            app.launch_returned();
+            assert_eq!(app.queue.len(), PLANETS.len());
+        }
     }
 }
 

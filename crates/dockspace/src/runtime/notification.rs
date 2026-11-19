@@ -2,7 +2,7 @@
 
 use crate::engine::transition::{EngineTransition, InputOutcome, WorkspaceVersion};
 
-use super::DockspaceEvent;
+use super::{DockspaceEvent, DockspacePresentationTransition};
 
 /// Durable docking-layout changes committed together in one host frame.
 ///
@@ -41,6 +41,7 @@ pub struct DockspaceNotification {
     layout_change: Option<DockspaceLayoutChange>,
     native_window_placement_changed: bool,
     events: Vec<DockspaceEvent>,
+    presentation_transitions: Vec<DockspacePresentationTransition>,
 }
 
 impl DockspaceNotification {
@@ -59,6 +60,7 @@ impl DockspaceNotification {
                     )
                 }),
             events: super::events::committed_events(transition),
+            presentation_transitions: super::report::presentation_transitions(transition),
         }
     }
 
@@ -94,9 +96,20 @@ impl DockspaceNotification {
         &self.events
     }
 
+    /// Returns semantic transfer terminals in this publication, including failures.
+    ///
+    /// Match their identities against the accepted request. A terminal ends the
+    /// semantic operation; physical compensation can still require host cleanup.
+    #[must_use]
+    pub fn presentation_transitions(&self) -> &[DockspacePresentationTransition] {
+        &self.presentation_transitions
+    }
+
     /// Returns whether this publication requires no application notification.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        !self.document_changed() && self.events.is_empty()
+        !self.document_changed()
+            && self.events.is_empty()
+            && self.presentation_transitions.is_empty()
     }
 }

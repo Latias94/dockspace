@@ -25,6 +25,7 @@ impl DockEngine {
         authority: WorkspacePublicationAuthority,
     ) -> Result<StagedWorkspacePublication, CommandError> {
         let candidate = candidate.into();
+        let host_surfaces = self.retained_host_surfaces_for_publication(&candidate, authority)?;
         let anchors = self.root_recovery_anchors.clone();
         let mut recoveries = self.bound_surface_recoveries.clone();
         let recovery_commit = match authority {
@@ -236,6 +237,7 @@ impl DockEngine {
         }
         Ok(StagedWorkspacePublication {
             workspace: candidate,
+            host_surfaces,
             root_recovery_anchors: anchors,
             bound_surface_recoveries: recoveries,
         })
@@ -281,7 +283,7 @@ impl DockEngine {
         {
             return Ok((
                 None,
-                CommandApplication::Rejected(CommandError::SurfaceLifecycleFrozen { surface }),
+                CommandApplication::Rejected(CommandError::RequiredSurfaceRemoved { surface }),
             ));
         }
         Ok(staged)
@@ -395,9 +397,20 @@ impl DockEngine {
     }
 
     pub(super) fn publish_workspace(&mut self, publication: StagedWorkspacePublication) {
+        if self.viewport.native_create_sagas().next().is_some() {
+            let retired = self
+                .workspace
+                .surfaces()
+                .map(|(surface, _)| surface)
+                .filter(|surface| publication.workspace.surface(*surface).is_none())
+                .collect();
+            self.viewport
+                .invalidate_native_create_required_surfaces(&retired);
+        }
         self.presentation_identity
             .observe_workspace(&publication.workspace);
         self.workspace = publication.workspace;
+        self.host_surfaces = publication.host_surfaces;
         self.root_recovery_anchors = publication.root_recovery_anchors;
         self.bound_surface_recoveries = publication.bound_surface_recoveries;
     }

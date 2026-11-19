@@ -248,6 +248,8 @@ pub enum PresentationRehomeResult {
     PolicyChanged,
     /// The exact source presentation or binding was no longer current.
     SourceUnavailable,
-    /// The frozen topology command was rejected at the ownership-transfer barrier.
-    CommandRejected,
+    /// The accepted operation was explicitly cancelled before ownership transfer.
+    Cancelled,
+    /// Current candidate validation rejected the operation with an actionable reason.
+    ActionRejected(crate::model::DockspaceActionRejection),
 }

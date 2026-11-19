@@ -70,12 +70,15 @@ replaying input or advancing its observation time. Actions discovered while
 encoding retain their witness through `DeferredSurfaceAction` and enter a later
 update. An input-only commit consumes its accepted prefix even without painting.
 
-For a fixed logical host, submit a prepared action with
-`.preserving_surfaces([host_surface])`. Use `session.action_availability(&action)`
-for menu feedback, then submit that same value and inspect its committed result.
-Geometry and native facts can change while the workspace version stays the same;
-the action's constraint protects the actual publication. The core guide's
-product-action section defines the availability and deferred-completion contract.
+For a fixed logical host, call `session.retain_host_surface(host_surface)` before
+starting frames. This protects pointer interaction and application actions at
+the same publication gate. Approved native closure can end that lifetime;
+explicit native Root continuation transfers it during layout replacement.
+Use `.preserving_surfaces([surface])` for additional per-action requirements.
+Use `session.action_availability(&action)` for menu feedback, then submit that
+same value and inspect its committed result. Geometry and native facts can
+change while the workspace version stays the same. The core guide's
+product-action section defines availability and deferred completion.
 
 Choose a reference with the same presentation timing:
 

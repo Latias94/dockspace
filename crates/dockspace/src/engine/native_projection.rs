@@ -148,6 +148,24 @@ impl DockEngine {
         else {
             return Ok(false);
         };
+        if let Some(surface) = prepared.invalidated_required_surface() {
+            self.viewport
+                .reject_native_create_with_result(
+                    stamp.saga,
+                    crate::engine::event::PresentationRehomeResult::ActionRejected(
+                        crate::model::DockspaceActionRejection::SurfaceRequired { surface },
+                    ),
+                )
+                .map_err(|source| EngineError::Viewport {
+                    input: self.last_input,
+                    source,
+                })?;
+            let _ = self
+                .viewport_focus
+                .cancel_activation_reservation(stamp.saga);
+            self.rebuild_presentation_requirements(self.last_input)?;
+            return Ok(false);
+        }
         let (publication, application) = self.stage_workspace_command_for_native_commit(
             self.last_input,
             &self.policy,
@@ -155,11 +173,26 @@ impl DockEngine {
             None,
             stamp.saga,
         )?;
-        if !matches!(
-            application,
-            CommandApplication::Applied { changed: true, .. }
-        ) {
-            return Ok(false);
+        match &application {
+            CommandApplication::Rejected(error) => {
+                let reason = Self::native_create_command_rejection(&prepared, error)?;
+                self.viewport
+                    .reject_native_create_with_result(
+                        stamp.saga,
+                        crate::engine::event::PresentationRehomeResult::ActionRejected(reason),
+                    )
+                    .map_err(|source| EngineError::Viewport {
+                        input: self.last_input,
+                        source,
+                    })?;
+                let _ = self
+                    .viewport_focus
+                    .cancel_activation_reservation(stamp.saga);
+                self.rebuild_presentation_requirements(self.last_input)?;
+                return Ok(false);
+            }
+            CommandApplication::Applied { changed: false, .. } => return Ok(false),
+            CommandApplication::Applied { changed: true, .. } => {}
         }
         let Some(mut publication) = publication else {
             return Err(EngineError::MissingCommandOutcome {
@@ -176,8 +209,34 @@ impl DockEngine {
                 obligation.request().host_surface(),
             ) != Ok(obligation.request().clone())
         {
+            self.viewport
+                .reject_native_create_with_result(
+                    stamp.saga,
+                    crate::engine::event::PresentationRehomeResult::ActionRejected(
+                        crate::model::DockspaceActionRejection::Conflict,
+                    ),
+                )
+                .map_err(|source| EngineError::Viewport {
+                    input: self.last_input,
+                    source,
+                })?;
+            let _ = self
+                .viewport_focus
+                .cancel_activation_reservation(stamp.saga);
+            self.rebuild_presentation_requirements(self.last_input)?;
             return Ok(false);
         }
+        let root = prepared.proposal().root();
+        let target_root =
+            publication
+                .workspace
+                .root(root)
+                .ok_or(EngineError::ReductionCauseInvariant {
+                    detail: "a checked native transfer lost its complete target payload",
+                })?;
+        let items = publication
+            .workspace
+            .collect_items_in_subtree(target_root.node);
         let source_surface = prepared.source_surface();
         let target_vacancy = self.viewport.capture_surface_vacancy_authority(surface);
         let vacancy = publication
@@ -222,6 +281,24 @@ impl DockEngine {
             self.version,
             WorkspaceEventKind::CommandCommitted(outcome),
         ));
+        if let Some(request_cause) = prepared.cause() {
+            events.push(WorkspaceEvent::new_caused(
+                request_cause,
+                self.version,
+                WorkspaceEventKind::PresentationRehomeSettled {
+                    root,
+                    source_surface,
+                    target_surface: surface,
+                    result: crate::engine::event::PresentationRehomeResult::Applied,
+                    outcome: Some(crate::model::DockspaceActionOutcome::NativeRootTornOff {
+                        root,
+                        source_surface,
+                        target_surface: surface,
+                        items,
+                    }),
+                },
+            ));
+        }
         let accepted = self
             .presentation_authority
             .scene
@@ -269,11 +346,33 @@ impl DockEngine {
         &self,
         saga: NativeCreateSagaId,
     ) -> Result<Option<NativeFirstLiveProjection>, EngineError> {
+        self.native_first_live_projection_result(saga)
+            .map(Result::ok)
+    }
+
+    pub(super) fn native_first_live_projection_result(
+        &self,
+        saga: NativeCreateSagaId,
+    ) -> Result<
+        Result<NativeFirstLiveProjection, crate::model::DockspaceActionRejection>,
+        EngineError,
+    > {
         let Some(create) = self.viewport.native_create_saga(saga) else {
-            return Ok(None);
+            return Ok(Err(
+                crate::model::DockspaceActionRejection::NativeUnavailable,
+            ));
         };
+        if let Some(surface) = create.prepared().invalidated_required_surface() {
+            return Ok(Err(
+                crate::model::DockspaceActionRejection::SurfaceRequired { surface },
+            ));
+        }
         let Some(ready_basis) = self.viewport.native_ready_basis(create.binding()) else {
-            return Ok(None);
+            return Ok(Err(
+                crate::model::DockspaceActionRejection::PresentationUnavailable {
+                    surface: create.binding().surface(),
+                },
+            ));
         };
         let stamp = NativeFirstLiveProjectionStamp {
             saga,
@@ -285,7 +384,7 @@ impl DockEngine {
             policy: self.policy.revision(),
         };
         if !self.native_first_live_projection_is_current(stamp) {
-            return Ok(None);
+            return Ok(Err(crate::model::DockspaceActionRejection::Conflict));
         }
         let (publication, application) = self.stage_workspace_command_for_native_commit(
             self.last_input,
@@ -294,11 +393,14 @@ impl DockEngine {
             None,
             saga,
         )?;
-        if !matches!(
-            application,
-            CommandApplication::Applied { changed: true, .. }
-        ) {
-            return Ok(None);
+        match &application {
+            CommandApplication::Rejected(error) => {
+                return Self::native_create_command_rejection(create.prepared(), error).map(Err);
+            }
+            CommandApplication::Applied { changed: false, .. } => {
+                return Ok(Err(crate::model::DockspaceActionRejection::Conflict));
+            }
+            CommandApplication::Applied { changed: true, .. } => {}
         }
         let Some(publication) = publication else {
             return Err(EngineError::MissingCommandOutcome {
@@ -388,7 +490,7 @@ impl DockEngine {
                     source.to_string(),
                 ))
             })?;
-        Ok(Some(NativeFirstLiveProjection {
+        Ok(Ok(NativeFirstLiveProjection {
             stamp,
             workspace: publication.workspace.into_workspace(),
             version,

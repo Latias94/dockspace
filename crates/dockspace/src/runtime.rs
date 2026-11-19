@@ -643,8 +643,10 @@ pub enum DockspacePresentationTransitionResult {
     PolicyChanged,
     /// The exact source presentation or native binding was no longer current.
     SourceUnavailable,
-    /// The frozen topology mutation was rejected at the transfer barrier.
-    CommandRejected,
+    /// The accepted operation was explicitly cancelled before ownership transfer.
+    Cancelled,
+    /// Current policy, topology or caller constraints rejected the final candidate.
+    ActionRejected(crate::model::DockspaceActionRejection),
 }
 
 /// High-level report from one atomically published facade frame.
@@ -667,7 +669,6 @@ pub struct HostFrameReport {
     inputs: Vec<HostInputOutcome>,
     notification: DockspaceNotification,
     submitted_actions: Vec<(DockspaceSubmittedAction, usize)>,
-    presentation_transitions: Vec<DockspacePresentationTransition>,
     manipulation_feedback: Vec<DockspaceManipulationFeedback>,
     painted_outputs: Vec<PaintedSurfaceOutput>,
     surface_presentation_commits: Vec<SurfacePresentationCommit>,
@@ -785,7 +786,7 @@ impl HostFrameReport {
     /// core event order of the current atomic publication.
     #[must_use]
     pub fn presentation_transitions(&self) -> &[DockspacePresentationTransition] {
-        &self.presentation_transitions
+        self.notification.presentation_transitions()
     }
 
     /// Returns inert manipulation feedback in the original committed event order.

@@ -528,9 +528,11 @@ impl NativeExampleApp {
         match (self.action, status) {
             (
                 ExampleActionState::AwaitingTearOffOutcome,
-                Ok(NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-                    DockspaceActionOutcome::NativeRootTearOffRequested { target_surface, .. },
-                ))),
+                Ok(NativeActionStatus::Dock(DockspaceActionStatus::Requested {
+                    outcome:
+                        DockspaceActionOutcome::NativeRootTearOffRequested { target_surface, .. },
+                    transition: _,
+                })),
             ) => {
                 self.action = ExampleActionState::AwaitingFirstPresentation(target_surface);
                 self.status = Some("Opening Inspector window…".to_owned());

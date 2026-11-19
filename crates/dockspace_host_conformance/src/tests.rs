@@ -1772,13 +1772,14 @@ impl ManagedLifecycleScenarioFixture {
         let mut report = frame.commit().expect("the lifecycle tear-off commits");
         assert!(matches!(
             report.inputs(),
-            [HostInputOutcome::ProductActionApplied(
-                DockspaceActionOutcome::NativeRootTearOffRequested {
+            [HostInputOutcome::ProductPresentationActionRequested {
+                outcome: DockspaceActionOutcome::NativeRootTearOffRequested {
                     root: SOURCE_ROOT,
                     source_surface: SURFACE,
                     ..
-                }
-            )]
+                },
+                transition: _,
+            }]
         ));
         let effect = take_only_effect(&mut report);
         let child = match effect.operation() {

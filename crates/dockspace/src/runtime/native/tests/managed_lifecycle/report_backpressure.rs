@@ -96,6 +96,14 @@ fn retired_cleanup_observations_keep_window_generation_without_restoring_admissi
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
     let mut cancelled = frame.commit().unwrap();
+    let [terminal] = cancelled.presentation_transitions() else {
+        panic!("the first committed cancellation must report exactly one terminal");
+    };
+    assert_eq!(
+        terminal.result(),
+        crate::runtime::DockspacePresentationTransitionResult::Cancelled,
+    );
+    assert_eq!(terminal.target_surface(), binding.surface());
     let cleanup = take_only_native_effect(&mut cancelled);
     assert!(
         matches!(cleanup.operation(), NativeEffectOperation::CompensatingClose { binding: actual } if *actual == binding)
@@ -128,6 +136,7 @@ fn retired_cleanup_observations_keep_window_generation_without_restoring_admissi
         assert!(report.take_native_effects().is_empty());
         assert_eq!(report.native_bindings(), &[root]);
         assert!(report.native_admissions().is_empty());
+        assert!(report.presentation_transitions().is_empty());
         assert!(session.native_local_coordinates(binding).is_none());
         assert!(!session.native_binding_can_report_focus(binding));
         let state = session
@@ -164,7 +173,11 @@ fn retired_cleanup_observations_keep_window_generation_without_restoring_admissi
             NativeWorkAreaRoster::Exact(vec![work_area(1)]),
         )
         .unwrap();
-    commit_managed_frame(&mut session);
+    assert!(
+        commit_managed_frame_report(&mut session)
+            .presentation_transitions()
+            .is_empty()
+    );
     let state = session
         .native
         .as_ref()

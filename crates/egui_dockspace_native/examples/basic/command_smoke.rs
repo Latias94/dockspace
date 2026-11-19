@@ -343,7 +343,11 @@ impl CommandSmoke {
     }
 
     fn check_status(&mut self, status: &NativeActionStatus) -> Result<(), String> {
-        let NativeActionStatus::Dock(DockspaceActionStatus::Applied(outcome)) = status else {
+        let NativeActionStatus::Dock(
+            DockspaceActionStatus::Applied(outcome)
+            | DockspaceActionStatus::Requested { outcome, .. },
+        ) = status
+        else {
             return Err(format!("command {} did not apply: {status:?}", self.step));
         };
         let valid = match (self.step, outcome) {

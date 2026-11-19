@@ -23,6 +23,8 @@ impl DockEngine {
         }
         let replacement = crate::graph::operation::WorkspaceSnapshot::validated(workspace.clone())
             .map_err(EngineError::InvalidWorkspace)?;
+        let host_surfaces =
+            self.retained_host_surfaces_for_replacement(&replacement, root_continuations)?;
         let previous_focus = self.viewport_focus.workspace_replacement_focus();
         let mut native_focus_surfaces = self
             .viewport
@@ -67,6 +69,7 @@ impl DockEngine {
             None => self.presentation_identity.observe_workspace(workspace),
         }
         self.workspace = replacement;
+        self.host_surfaces = host_surfaces;
         self.surface_recovery.clear();
         self.root_recovery_anchors.clear();
         self.bound_surface_recoveries.clear();

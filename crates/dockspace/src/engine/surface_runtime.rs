@@ -1213,7 +1213,12 @@ impl DockEngine {
                                 ) == Ok(obligation.request().clone());
                             if !valid {
                                 self.viewport
-                                    .reject_native_create(*saga)
+                                    .reject_native_create_with_result(
+                                        *saga,
+                                        crate::engine::event::PresentationRehomeResult::ActionRejected(
+                                            crate::model::DockspaceActionRejection::Conflict,
+                                        ),
+                                    )
                                     .map_err(|source| EngineError::Viewport { input, source })?;
                                 let _ = self.viewport_focus.cancel_activation_reservation(*saga);
                                 continue;
@@ -1224,7 +1229,10 @@ impl DockEngine {
                             {
                                 Ok(binding) => binding,
                                 Err(_) => {
-                                    self.viewport.reject_native_create(*saga).map_err(
+                                    self.viewport.reject_native_create_with_result(
+                                        *saga,
+                                        crate::engine::event::PresentationRehomeResult::TargetNotPresented,
+                                    ).map_err(
                                         |source| EngineError::Viewport { input, source },
                                     )?;
                                     let _ =
@@ -1268,9 +1276,15 @@ impl DockEngine {
                             self.viewport = viewport;
                             self.rebuild_presentation_requirements(input)?;
                         }
-                        CommandApplication::Rejected(_) => {
+                        CommandApplication::Rejected(error) => {
+                            let reason = Self::native_create_command_rejection(prepared, &error)?;
                             self.viewport
-                                .reject_native_create(*saga)
+                                .reject_native_create_with_result(
+                                    *saga,
+                                    crate::engine::event::PresentationRehomeResult::ActionRejected(
+                                        reason,
+                                    ),
+                                )
                                 .map_err(|source| EngineError::Viewport { input, source })?;
                             let _ = self.viewport_focus.cancel_activation_reservation(*saga);
                         }

@@ -472,7 +472,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
 
     pub(crate) fn new_with_storage_limit(
         instance_id: Id,
-        session: dockspace::runtime::DockspaceSession,
+        mut session: dockspace::runtime::DockspaceSession,
         root_surface: SurfaceId,
         panes: P,
         style: DockStyle,
@@ -482,6 +482,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
         if session.view().surface(root_surface).is_none() {
             return Err(NativeHostProtocolError::RootSurfaceUnavailable(root_surface).into());
         }
+        session.retain_host_surface(root_surface)?;
         if storage.is_some_and(|limit| {
             limit.combined.owners.resource_slots == 0 || limit.combined.owners.close_slots == 0
         }) {

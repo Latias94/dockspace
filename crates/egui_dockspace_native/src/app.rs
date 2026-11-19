@@ -287,6 +287,8 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
     /// The callback runs once for each nonempty core publication, including
     /// final UI passes, native service work and shutdown. Repeated encoding
     /// passes and pending native transfers do not emit completion events.
+    /// [`crate::DockspaceNotification::presentation_transitions`] includes
+    /// successful and failed accepted transfers, even without a layout change.
     /// Installing or replacing a handler never replays earlier publications.
     ///
     /// Notifications arrive in commit order after internal settlement releases
@@ -583,6 +585,11 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
     /// any required presentation transition, then releases immediately. Keeping an
     /// unread receipt does not block another command; dropping it does not cancel
     /// accepted work.
+    /// Native tear-off returns [`dockspace::runtime::DockspaceActionStatus::Requested`] immediately.
+    /// Its transition identity matches the later semantic terminal delivered by
+    /// [`Self::with_notification_handler`]; physical compensation can continue
+    /// after a failed terminal. Other presentation-gated moves retain their
+    /// command receipt until their exact transfer finishes.
     ///
     /// Ordinary semantic completion does not prove a fresh framebuffer. Use
     /// [`Self::is_surface_presented`] when the next operation requires presented

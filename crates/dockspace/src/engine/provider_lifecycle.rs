@@ -351,6 +351,8 @@ impl DockEngine {
             candidate.viewport.effects(),
             &[],
         );
+        let mut events = Vec::new();
+        candidate.record_native_create_settlements(&mut events);
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,
@@ -358,7 +360,7 @@ impl DockEngine {
             after: candidate.version,
             reduced: Vec::new(),
             reduced_pointer_edges: Vec::new(),
-            events: Vec::new(),
+            events,
             interaction_events: Vec::new(),
             platform_effects,
             focus_delta,
@@ -520,6 +522,8 @@ impl DockEngine {
             &[],
         );
         let surface_scene_deltas = Self::surface_scene_deltas(self, &candidate);
+        let mut events = Vec::new();
+        candidate.record_native_create_settlements(&mut events);
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,
@@ -527,7 +531,7 @@ impl DockEngine {
             after: candidate.version,
             reduced: Vec::new(),
             reduced_pointer_edges: Vec::new(),
-            events: Vec::new(),
+            events,
             interaction_events,
             platform_effects,
             focus_delta,
@@ -842,6 +846,8 @@ impl DockEngine {
             candidate.viewport.effects(),
             &[],
         );
+        let mut events = Vec::new();
+        candidate.record_native_create_settlements(&mut events);
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,
@@ -849,7 +855,7 @@ impl DockEngine {
             after: candidate.version,
             reduced: Vec::new(),
             reduced_pointer_edges: Vec::new(),
-            events: Vec::new(),
+            events,
             interaction_events,
             platform_effects,
             focus_delta,

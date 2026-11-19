@@ -17,6 +17,80 @@ fn visibility_status(item: ItemId) -> NativeActionStatus {
 }
 
 #[test]
+fn native_request_releases_execution_and_notifies_its_correlated_cancel_terminal() {
+    let mut state = state_for_native_commands();
+    let receipt = state
+        .request_command(NativeCommand::Move {
+            source: DockMoveSource::Item(SECOND),
+            target: DockMoveTarget::Native {
+                placement: Some(NativeWindowPlacement::new(
+                    PhysicalRect::new(900.0, 100.0, 480.0, 320.0).unwrap(),
+                )),
+            },
+        })
+        .unwrap();
+    let mut report = commit_queued_report(&mut state);
+    let NativeActionStatus::Dock(DockspaceActionStatus::Requested {
+        outcome: DockspaceActionOutcome::NativeRootTearOffRequested { target_surface, .. },
+        transition,
+    }) = take(&receipt)
+    else {
+        panic!("the immediate create receipt must expose its eventual transfer identity");
+    };
+    assert!(!state.application_actions.is_occupied());
+    assert!(state.coordinator.session().has_pending_native_create());
+    assert_eq!(state.view().item(SECOND).unwrap().surface(), SURFACE);
+    let [create] = report.take_native_effects().try_into().unwrap();
+    assert!(
+        matches!(create.operation(), NativeEffectOperation::CreateWindow { binding, .. } if binding.surface() == target_surface)
+    );
+    let _ = create.accepted();
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    state
+        .coordinator
+        .notifications
+        .set_handler(move |notification| {
+            sender.send(notification.clone()).unwrap();
+        });
+    let mut frame = state
+        .coordinator
+        .begin_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    assert!(frame.frame.cancel_next_native_create().unwrap());
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let report = frame.commit().unwrap();
+    state.coordinator.settle_host_frame_report(&report).unwrap();
+    while let Some(mut delivery) = state.coordinator.notifications.take_delivery() {
+        delivery.deliver();
+        state.coordinator.notifications.finish_delivery(delivery);
+    }
+    let notification = receiver.try_recv().unwrap();
+    assert!(!notification.document_changed());
+    assert!(notification.events().is_empty());
+    let [terminal] = notification.presentation_transitions() else {
+        panic!("failure-only native publications must reach the application handler");
+    };
+    assert_eq!(terminal.id(), transition);
+    assert_eq!(
+        terminal.result(),
+        DockspacePresentationTransitionResult::Cancelled
+    );
+    assert!(receiver.try_recv().is_err());
+    assert_eq!(state.view().item(SECOND).unwrap().surface(), SURFACE);
+    assert!(
+        state
+            .request_command(NativeCommand::SetItemVisibility {
+                item: THIRD,
+                visible: false
+            })
+            .is_ok()
+    );
+}
+
+#[test]
 fn independent_receipts_can_be_read_in_reverse_completion_order() {
     let mut state = state();
     let first = state
@@ -339,9 +413,10 @@ fn awaiting_native_return() -> (NativeRuntimeState<Panes>, crate::NativeActionRe
     let mut report = commit_queued_report(&mut state);
     assert!(matches!(
         take(&creation),
-        NativeActionStatus::Dock(DockspaceActionStatus::Applied(
-            DockspaceActionOutcome::NativeRootTearOffRequested { .. }
-        ))
+        NativeActionStatus::Dock(DockspaceActionStatus::Requested {
+            outcome: DockspaceActionOutcome::NativeRootTearOffRequested { .. },
+            transition: _,
+        })
     ));
     let (binding, bounds) =
         present_created_native_payload(&mut state, &mut report, before, &[SECOND, THIRD]);
@@ -410,9 +485,10 @@ fn service_updates_an_existing_child_without_a_root_paint() {
     assert!(matches!(
         creation.try_recv(),
         Ok(Ok(NativeActionStatus::Dock(
-            DockspaceActionStatus::Applied(
-                DockspaceActionOutcome::NativeRootTearOffRequested { .. }
-            )
+            DockspaceActionStatus::Requested {
+                outcome: DockspaceActionOutcome::NativeRootTearOffRequested { .. },
+                transition: _,
+            }
         )))
     ));
     assert!(!state.application_actions.is_occupied());

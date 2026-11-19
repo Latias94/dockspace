@@ -352,6 +352,7 @@ pub(super) const fn engine_error_kind(error: &EngineError) -> DockspaceRuntimeEr
     match error {
         EngineError::InvalidWorkspace(_) => DockspaceRuntimeErrorKind::InvalidConfiguration,
         EngineError::WorkspaceReplacementPolicyDenied { .. }
+        | EngineError::HostSurfaceUnavailable { .. }
         | EngineError::NativeWorkspaceChildAlreadyHosted { .. }
         | EngineError::NativeWorkspaceRootUnavailable { .. } => {
             DockspaceRuntimeErrorKind::OperationConflict

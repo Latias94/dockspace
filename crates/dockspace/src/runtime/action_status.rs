@@ -4,7 +4,7 @@ use crate::model::{
     DockspaceActionOutcome, DockspaceActionRejection, RootId, SurfaceId, WorkspaceVersion,
 };
 
-use super::DockspacePresentationTransitionResult;
+use super::{DockspacePresentationTransitionId, DockspacePresentationTransitionResult};
 
 /// Product-level result of submitting one revision-bound action.
 ///
@@ -14,11 +14,17 @@ use super::DockspacePresentationTransitionResult;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DockspaceActionStatus {
     /// The action committed or produced a valid no-op.
-    ///
-    /// Outcomes such as [`DockspaceActionOutcome::RootDockRequested`] start a
-    /// presentation-gated transfer and do not mean that content has moved.
-    /// Observe subsequent committed events for placement changes.
     Applied(DockspaceActionOutcome),
+    /// The action was accepted and source ownership remains unchanged pending presentation.
+    ///
+    /// Match `transition` against a later committed report or notification.
+    /// An operation terminal does not discharge physical window cleanup.
+    Requested {
+        /// Immediate product result describing the accepted transfer.
+        outcome: DockspaceActionOutcome,
+        /// Session-scoped identity of the eventual semantic terminal.
+        transition: DockspacePresentationTransitionId,
+    },
     /// Current policy or topology rejected the action.
     Rejected(DockspaceActionRejection),
     /// The action was prepared from an older workspace revision.
