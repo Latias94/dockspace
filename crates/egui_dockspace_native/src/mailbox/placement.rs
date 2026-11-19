@@ -21,19 +21,18 @@ impl NativeHostState {
         for continuation in frame.native_root_continuations() {
             let predecessor = continuation.predecessor();
             let successor = continuation.successor();
-            let Some(viewport) = self
+            let viewport = self
                 .viewports
-                .workspace_root_continuation_viewport(continuation)?
-            else {
-                continue;
-            };
-            let window = self
-                .viewports
-                .window(viewport)
-                .expect("validated same-window replacement retains its physical window");
+                .workspace_root_continuation_viewport(continuation)?;
             if !self.retirements.can_detach_binding(predecessor)
                 || self.retirements.has_quiescence_owner(successor)
-                || self.retirements.owns_window(window, None)
+                || viewport.is_some_and(|viewport| {
+                    let window = self
+                        .viewports
+                        .window(viewport)
+                        .expect("validated same-window replacement retains its physical window");
+                    self.retirements.owns_window(window, None)
+                })
             {
                 return Err(NativeHostProtocolError::NativeAdmissionRouteChanged(
                     successor.surface(),
@@ -111,6 +110,10 @@ impl NativeHostState {
             let predecessor = continuation.predecessor();
             let successor = continuation.successor();
             let Some(viewport) = self.viewports.viewport_for_window(successor.window()) else {
+                // Registration can commit before the first Root output attaches
+                // a viewport. The exact predecessor still owns a core cleanup
+                // obligation even though no physical receipt needs to move.
+                self.retirements.commit_detachment(None, predecessor);
                 continue;
             };
             assert_eq!(

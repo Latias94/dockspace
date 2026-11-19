@@ -67,7 +67,7 @@ impl NativeCoordinator {
                 record.key(),
                 crate::pointer_event::egui_modifiers(modifiers),
             )
-            && self.session.is_current_native_binding(binding)
+            && self.current_window_route_for_binding(binding).is_some()
             && self
                 .bridge
                 .with_viewports(|routes| record.is_current(routes))

@@ -1607,3 +1607,75 @@ fn initial_service_keeps_bootstrap_for_first_root_output() {
         Some(window)
     );
 }
+
+#[test]
+fn repeated_resets_before_first_output_reclaim_unattached_root_bindings() {
+    use dockspace::runtime::{
+        NativeInputStorageLimit, NativeProducerStorageLimit, NativeReportStorageLimit,
+    };
+    use std::num::NonZeroUsize;
+
+    for register_first in [false, true] {
+        let slots = |count| NonZeroUsize::new(count).unwrap();
+        let input = NativeInputStorageLimit::new(slots(512), 768 * 1024)
+            .with_producer_storage_limit(NativeProducerStorageLimit::new(
+                slots(2),
+                slots(8),
+                128 * 1024,
+            ))
+            .with_report_storage_limit(NativeReportStorageLimit::new(
+                slots(64),
+                slots(16),
+                256 * 1024,
+            ));
+        let storage = crate::NativeStorageLimit::new(input, 8 * 1024 * 1024, 8, 2).unwrap();
+        let style = DockStyle::default();
+        let session = DockspaceSession::from_layout_with_presentation_config(
+            layout(ROOT, &[FIRST, SECOND], FIRST),
+            DockPolicy::default(),
+            style.presentation_config().unwrap(),
+        )
+        .unwrap();
+        let app = crate::NativeDockspaceApp::new_with_storage_limit(
+            egui::Id::unique(("unattached-root-reset", register_first)),
+            session,
+            SURFACE,
+            Panes(Vec::new()),
+            style,
+            NativeWindowClosePolicy::Cancel,
+            storage,
+        )
+        .unwrap();
+        let host = app.native_host_handler();
+        let context = egui::Context::default();
+        let service = || {
+            for _ in 0..32 {
+                match host.on_service(&context) {
+                    eframe::NativeHostWake::Wait => return,
+                    eframe::NativeHostWake::ServiceAfterCurrent => {}
+                    other => panic!("unexpected unattached Root wake: {other:?}"),
+                }
+            }
+            panic!("unattached Root service did not become idle");
+        };
+        if register_first {
+            service();
+        }
+        for root in 20..25 {
+            let receipt = app
+                .request_layout_reset(layout(RootId::new(root), &[FIRST, SECOND], FIRST))
+                .unwrap();
+            service();
+            assert_eq!(app.error_kind(), None);
+            assert!(matches!(
+                take(&receipt),
+                NativeActionStatus::LayoutReset { .. }
+            ));
+            app.with_view(|view| {
+                assert!(view.surface(SURFACE).is_some());
+                assert_eq!(view.item(FIRST).unwrap().root(), RootId::new(root));
+                assert_eq!(view.item(SECOND).unwrap().root(), RootId::new(root));
+            });
+        }
+    }
+}

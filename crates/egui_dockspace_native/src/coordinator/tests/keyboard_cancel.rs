@@ -52,6 +52,86 @@ fn drain_callbacks_without_painting(
 }
 
 #[test]
+fn shared_window_cancel_uses_the_current_window_after_placement_rebinding() {
+    for cancel_first in [true, false] {
+        let clock = dockspace::runtime::NativeMonotonicClock::new(|| Duration::from_millis(40));
+        let (mut native, transport) = shared_routes_with_coordinator(coordinator_with_clock(clock));
+        assert!(!native.session.is_current_native_binding(transport));
+        assert!(native.current_window_route_for_binding(transport).is_some());
+        let (receivers, source, target) = source_and_target(&mut native);
+        let version = native.session.version();
+        for (ordinal, point, state) in [(1, source, Some(ElementState::Pressed)), (2, target, None)]
+        {
+            record_pointer(
+                &mut native,
+                transport,
+                ordinal,
+                mouse_event(point, state, 22, None),
+            );
+        }
+        let mut frame = native
+            .begin_host_frame(|query| resolve(query, &receivers))
+            .unwrap();
+        assert!(matches!(
+            preview(&mut frame),
+            Some(DockspacePreviewVisual::Dock { .. })
+        ));
+        assert!(!finish(frame).workspace_changed());
+
+        let cancel = keyboard_control(
+            &native,
+            transport,
+            if cancel_first { 3 } else { 4 },
+            egui::Key::Escape,
+            true,
+        );
+        let release = HostRecord::WindowEvent(captured_record(
+            &native,
+            transport,
+            if cancel_first { 4 } else { 3 },
+            mouse_event(target, Some(ElementState::Released), 22, None),
+        ));
+        for callback in if cancel_first {
+            [cancel, release]
+        } else {
+            [release, cancel]
+        } {
+            native.bridge.push_record(callback);
+        }
+        let reports = drain_callbacks_without_painting(&mut native, &receivers);
+        let terminals: Vec<_> = reports
+            .iter()
+            .flat_map(|report| report.manipulation_feedback())
+            .map(|feedback| feedback.status())
+            .collect();
+        assert_eq!(
+            terminals,
+            [if cancel_first {
+                Status::Cancelled(CancelReason::ExplicitCancellation)
+            } else {
+                Status::Delivered(Delivery::Dock)
+            }]
+        );
+        assert_eq!(native.session.version() == version, cancel_first);
+        assert!(!native.session.has_active_gesture());
+        assert!(!native.session.has_pending_presentation());
+        assert_eq!(
+            native
+                .session
+                .view()
+                .item(ItemId::new(2))
+                .unwrap()
+                .surface(),
+            if cancel_first {
+                SECOND_SURFACE
+            } else {
+                FIRST_SURFACE
+            }
+        );
+    }
+}
+
+#[test]
 fn peer_modifier_survives_source_pointer_motion() {
     for (peer_modifiers, source_modifiers, cancels) in [
         (ModifiersState::CONTROL, ModifiersState::CONTROL, true),
