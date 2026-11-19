@@ -139,7 +139,6 @@ impl NativePointerTranslator {
     /// Core already terminated the semantic streams. Only phaseful scroll
     /// lanes retain their existing slot until the next explicit start.
     pub(crate) fn finish_overload_cancellation(&mut self) {
-        self.observed_modifiers = None;
         self.devices.retain(|_, entry| match entry {
             NativePointerDeviceEntry::Live(device) => {
                 if matches!(device.scroll, NativeScrollState::Idle) {
@@ -158,12 +157,6 @@ impl NativePointerTranslator {
     /// Touch tombstones and cancelled mouse buttons reuse their original slots;
     /// destruction never needs new adapter storage after the fact is accepted.
     pub(crate) fn retire_binding(&mut self, binding: NativeWindowBinding) {
-        if self
-            .observed_modifiers
-            .is_some_and(|(observed, _)| observed == binding)
-        {
-            self.observed_modifiers = None;
-        }
         for (key, entry) in &mut self.devices {
             if let NativePointerDeviceEntry::Live(device) = entry
                 && device.retire_binding(binding)

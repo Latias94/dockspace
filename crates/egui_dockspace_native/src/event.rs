@@ -10,6 +10,7 @@ use dockspace::runtime::{
 };
 use eframe::{NativeDeviceRemoval, egui::ViewportId};
 use winit::event::{PointerEventFacts, PointerWindowRoute, WindowEvent};
+use winit::keyboard::ModifiersState;
 use winit::window::WindowId;
 
 use crate::viewport_map::NativeViewportMap;
@@ -342,6 +343,22 @@ impl NativeWindowEventRecord {
 
     pub(crate) fn pointer_location(&self) -> Option<CapturedNativePointerLocation> {
         self.pointer.as_ref().map(|pointer| pointer.location)
+    }
+
+    pub(crate) fn pointer_modifiers(&self) -> Option<ModifiersState> {
+        match self.event() {
+            WindowEvent::CursorMoved { facts, .. } | WindowEvent::MouseInput { facts, .. } => {
+                facts.modifiers
+            }
+            WindowEvent::Touch(touch) => touch.facts.modifiers,
+            _ => None,
+        }
+    }
+
+    pub(crate) fn pointer_modifier_observation(
+        &self,
+    ) -> Option<(NativeWindowBinding, ModifiersState)> {
+        Some((self.binding()?.window(), self.pointer_modifiers()?))
     }
 
     /// Counts the pointer payload's data, excluding Arc and allocator metadata.

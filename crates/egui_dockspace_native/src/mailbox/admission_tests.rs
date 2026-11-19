@@ -580,8 +580,7 @@ fn quarantine_device_terminal_uses_capacity_and_freezes_at_the_original_age_boun
 fn ordinary_record_limit_freezes_before_minting_and_preserves_post_boundary_command_owner() {
     let (bridge, now, binding, window) = bridge_with_clock();
     bridge.with_viewports_mut(|routes| {
-        routes
-            .observe_keyboard_modifiers(binding.window(), winit::keyboard::ModifiersState::CONTROL);
+        routes.observe_modifiers(binding.window(), winit::keyboard::ModifiersState::CONTROL);
     });
     let context = eframe::egui::Context::default();
     let token = eframe::queue_native_viewport_pointer_passthrough(&context, ViewportId::ROOT, true);
@@ -670,7 +669,7 @@ fn ordinary_record_limit_freezes_before_minting_and_preserves_post_boundary_comm
     );
     assert!(!bridge.finish_overload_cancellation(4_097));
     assert_eq!(
-        bridge.with_viewports(|routes| routes.keyboard_modifiers(binding.window())),
+        bridge.with_viewports(|routes| routes.modifiers(binding.window())),
         winit::keyboard::ModifiersState::CONTROL
     );
     assert_eq!(
@@ -679,7 +678,7 @@ fn ordinary_record_limit_freezes_before_minting_and_preserves_post_boundary_comm
     );
     assert!(bridge.finish_overload_cancellation(4_096));
     assert_eq!(
-        bridge.with_viewports(|routes| routes.keyboard_modifiers(binding.window())),
+        bridge.with_viewports(|routes| routes.modifiers(binding.window())),
         winit::keyboard::ModifiersState::empty()
     );
     assert!(!bridge.finish_overload_cancellation(4_096));

@@ -306,6 +306,7 @@ impl NativeHostBridge {
         }
         .ok_or(NativeHostProtocolError::WindowEventAcknowledgementMismatch)?;
         if receipt.retire_input(retire)? {
+            records.viewports.forget_modifiers(binding.window());
             // A later lifecycle failure retains the raw callback, but the new
             // core fact must still be allowed to reach its commit boundary.
             records.event_boundary_pending = true;

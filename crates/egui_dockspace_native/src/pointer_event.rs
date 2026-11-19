@@ -35,7 +35,6 @@ mod scroll;
 #[derive(Debug, Clone, Default)]
 pub(crate) struct NativePointerTranslator {
     devices: BTreeMap<NativeInputDeviceKey, NativePointerDeviceEntry>,
-    observed_modifiers: Option<(NativeWindowBinding, ModifiersState)>,
     next_device_identity: u64,
     next_scroll_sequence: u64,
     #[cfg(test)]
@@ -55,22 +54,6 @@ pub(crate) enum NativePointerTranslation {
 }
 
 impl NativePointerTranslator {
-    /// Retains one window's latest real modifiers without enrolling a pointer.
-    ///
-    /// Only a new press delivered through this exact binding may use the
-    /// observation as its initial docking intent. Other windows remain unknown.
-    pub(crate) fn observe_modifiers(
-        &mut self,
-        binding: NativeWindowBinding,
-        modifiers: ModifiersState,
-    ) {
-        self.observed_modifiers = Some((binding, modifiers));
-    }
-
-    pub(crate) const fn observed_modifiers(&self) -> Option<(NativeWindowBinding, ModifiersState)> {
-        self.observed_modifiers
-    }
-
     /// Charges completed callback work to the fixture's existing nanosecond clock.
     /// Clock reads remain pure, and cloned retry candidates share the same source.
     #[cfg(test)]
@@ -106,6 +89,7 @@ impl NativePointerTranslator {
             record,
             captured_at,
             &DockInputConfig::default(),
+            ModifiersState::empty(),
             resolve_work_area,
         )
     }
@@ -116,6 +100,7 @@ impl NativePointerTranslator {
         record: &NativeWindowEventRecord,
         captured_at: Duration,
         config: &DockInputConfig,
+        window_modifiers: ModifiersState,
         resolve_work_area: impl FnMut(PhysicalPoint) -> Option<NativeWorkAreaBinding>,
     ) -> NativePointerTranslation {
         let starts_primary_press = self.starts_primary_press(record.event());
@@ -142,17 +127,7 @@ impl NativePointerTranslator {
             _ => PointerDeviceKind::Unknown,
         };
         let mut metadata = PointerEventMetadata::new(device, captured_at);
-        let modifiers = match record.event() {
-            WindowEvent::CursorMoved { facts, .. } | WindowEvent::MouseInput { facts, .. } => {
-                facts.modifiers
-            }
-            WindowEvent::Touch(touch) => touch.facts.modifiers,
-            _ => None,
-        };
-        if let Some(modifiers) = modifiers {
-            if let Some(binding) = record.binding() {
-                self.observe_modifiers(binding.window(), modifiers);
-            }
+        if let Some(modifiers) = record.pointer_modifiers() {
             let modifiers = egui_modifiers(modifiers);
             metadata = metadata
                 .with_docking_enabled(config.docking_enabled(modifiers))
@@ -160,19 +135,12 @@ impl NativePointerTranslator {
         } else if starts_primary_press {
             // This is an initial gesture policy, not reconstructed event facts.
             // Unknown moves and releases retain core intent.
-            let observed = record
-                .binding()
-                .and_then(|binding| {
-                    self.observed_modifiers
-                        .filter(|(window, _)| *window == binding.window())
-                        .map(|(_, modifiers)| modifiers)
-                })
-                .unwrap_or_default();
             // Core already enables docking for a new gesture without a directive.
-            if !config.docking_enabled(egui_modifiers(observed)) {
+            let modifiers = egui_modifiers(window_modifiers);
+            if !config.docking_enabled(modifiers) {
                 metadata = metadata.with_docking_enabled(false);
             }
-            let mode = config.tab_group_dock_mode(egui_modifiers(observed));
+            let mode = config.tab_group_dock_mode(modifiers);
             if mode == dockspace::model::TabGroupDockMode::PreserveLayout {
                 metadata = metadata.with_group_dock_mode(mode);
             }

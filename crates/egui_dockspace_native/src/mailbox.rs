@@ -460,6 +460,14 @@ impl CursorPrefixClaim<'_> {
         if count > self.len {
             return false;
         }
+        let modifiers = self
+            .captured_events()
+            .take(count.get())
+            .filter_map(|(event, _)| event.pointer_modifier_observation())
+            .last();
+        if let Some((window, modifiers)) = modifiers {
+            self.records.viewports.observe_modifiers(window, modifiers);
+        }
         // Drop the old backing before returning its overlap promise to callbacks.
         *translator = candidate;
         self.records.pointer_translation_reserved_bytes =
@@ -1169,7 +1177,7 @@ impl NativeHostBridge {
         if !records.admission.finish_cancellation(boundary) {
             return false;
         }
-        records.viewports.clear_keyboard_modifiers();
+        records.viewports.clear_modifiers();
         true
     }
 

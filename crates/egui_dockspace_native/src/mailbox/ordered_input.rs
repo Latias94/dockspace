@@ -424,7 +424,10 @@ impl NativeHostState {
                 .take(budget.remaining_records())
                 .take_while(|_| !budget.is_exhausted())
                 .map(|record| match record {
-                    HostRecord::WindowEvent(event) if first.shares_cursor_lane(event) => {
+                    HostRecord::WindowEvent(event)
+                        if first.shares_cursor_lane(event)
+                            && first.pointer_modifiers() == event.pointer_modifiers() =>
+                    {
                         IdleCursorPrefixEntry::Cursor
                     }
                     HostRecord::Output { .. } => IdleCursorPrefixEntry::Output,
@@ -630,13 +633,18 @@ impl NativeHostBridge {
         candidate: NativePointerTranslator,
     ) -> bool {
         let mut records = self.lock();
-        if !matches!(
-            records.front_dispatch_record(),
+        let modifiers = match records.front_dispatch_record() {
             Some(HostRecord::WindowEvent(event))
                 if event.ordinal() == ordinal
-                    && NativeWindowEventClass::classify(event.event()) == NativeWindowEventClass::Pointer
-        ) {
-            return false;
+                    && NativeWindowEventClass::classify(event.event())
+                        == NativeWindowEventClass::Pointer =>
+            {
+                event.pointer_modifier_observation()
+            }
+            _ => return false,
+        };
+        if let Some((window, modifiers)) = modifiers {
+            records.viewports.observe_modifiers(window, modifiers);
         }
         *translator = candidate;
         records.pointer_translation_reserved_bytes =

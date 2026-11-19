@@ -68,6 +68,7 @@ fn configured_activation_uses_native_event_modifiers_and_platform_command_mappin
             &record,
             Duration::from_millis(40),
             &config,
+            ModifiersState::empty(),
             |_| None,
         ) else {
             panic!("a configured real press translates");
@@ -212,7 +213,13 @@ fn configured_group_mode_uses_event_time_modifiers_for_mouse_and_touch() {
             };
             let at = Duration::from_millis(40);
             assert_eq!(
-                translator.translate_captured_with_input(&record, at, &config, |_| None),
+                translator.translate_captured_with_input(
+                    &record,
+                    at,
+                    &config,
+                    ModifiersState::empty(),
+                    |_| None
+                ),
                 NativePointerTranslation::Input(
                     baseline.with_metadata(
                         PointerEventMetadata::new(device, at)
@@ -263,7 +270,13 @@ fn unknown_mouse_and_touch_start_use_the_configured_baseline() {
         };
         let captured_at = Duration::from_millis(40);
         assert_eq!(
-            translator.translate_captured_with_input(&record, captured_at, &config, |_| None),
+            translator.translate_captured_with_input(
+                &record,
+                captured_at,
+                &config,
+                ModifiersState::empty(),
+                |_| None
+            ),
             NativePointerTranslation::Input(baseline.with_metadata(
                 PointerEventMetadata::new(device, captured_at).with_docking_enabled(false)
             ))
@@ -338,7 +351,13 @@ fn a_new_mouse_press_reseeds_activation_after_a_missing_release() {
             other => panic!("the real mouse edge translates: {other:?}"),
         };
         assert_eq!(
-            translator.translate_captured_with_input(&record, captured_at, &config, |_| None),
+            translator.translate_captured_with_input(
+                &record,
+                captured_at,
+                &config,
+                ModifiersState::empty(),
+                |_| None
+            ),
             expected,
             "edge {index} with {state:?}"
         );
@@ -376,8 +395,14 @@ fn replacement_mouse_press_uses_current_configuration_instead_of_the_old_gesture
     else {
         panic!("a second tokenless down must replace the old stream");
     };
-    let NativePointerTranslation::Restart { cancelled, pressed } =
-        translator.translate_captured_with_input(&down(2), captured_at, &config, |_| None)
+    let NativePointerTranslation::Restart { cancelled, pressed } = translator
+        .translate_captured_with_input(
+            &down(2),
+            captured_at,
+            &config,
+            ModifiersState::empty(),
+            |_| None,
+        )
     else {
         panic!("the tokenless down must replace the lost-release stream");
     };

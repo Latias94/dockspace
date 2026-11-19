@@ -81,9 +81,17 @@ fn record_pointer(
     event: WindowEvent,
 ) {
     let record = captured_record(native, binding, ordinal, event);
-    let NativePointerTranslation::Input(input) = native
-        .pointer_translator
-        .translate_captured_with_input(&record, Duration::from_millis(40), &native.input, |_| None)
+    let modifiers = native
+        .bridge
+        .with_viewports(|routes| routes.modifiers(binding.window()));
+    let NativePointerTranslation::Input(input) =
+        native.pointer_translator.translate_captured_with_input(
+            &record,
+            Duration::from_millis(40),
+            &native.input,
+            modifiers,
+            |_| None,
+        )
     else {
         panic!("the fixture retains a real pointer edge");
     };
@@ -111,6 +119,105 @@ fn apply_input_callback(
         .begin_host_frame(|query| resolve(query, receivers))
         .unwrap();
     (preview(&mut frame), finish(frame))
+}
+
+#[test]
+fn source_modifier_observation_survives_the_same_modifier_in_a_peer_window() {
+    let (mut native, peer, source) = presented_routes();
+    native.set_input(egui_dockspace::DockInputConfig {
+        docking: egui_dockspace::DockingActivation::HoldToEnable(egui::Modifiers::ALT),
+        ..Default::default()
+    });
+    let (receivers, origin, target) = source_and_target(&mut native);
+    for (index, binding) in [source, peer].into_iter().enumerate() {
+        apply_input_callback(
+            &mut native,
+            binding,
+            index as u64 + 1,
+            WindowEvent::ModifiersChanged(ModifiersState::ALT.into()),
+            &receivers,
+        );
+    }
+    for (ordinal, point, state, hover) in [
+        (3, origin, Some(ElementState::Pressed), 22),
+        (4, target, None, 11),
+        (5, target, Some(ElementState::Released), 11),
+    ] {
+        apply_input_callback(
+            &mut native,
+            source,
+            ordinal,
+            mouse_event(point, state, hover, None),
+            &receivers,
+        );
+    }
+    assert_eq!(
+        native
+            .session
+            .view()
+            .item(ItemId::new(2))
+            .unwrap()
+            .surface(),
+        FIRST_SURFACE
+    );
+}
+
+#[test]
+fn idle_cursor_coalescing_preserves_the_last_explicit_modifier_before_press() {
+    for batched in [false, true] {
+        let (mut native, _, source) = presented_routes();
+        let (receivers, origin, target) = source_and_target(&mut native);
+        let movements = [
+            (
+                1,
+                mouse_event(origin, None, 22, Some(ModifiersState::SHIFT)),
+            ),
+            (2, mouse_event(origin, None, 22, None)),
+        ];
+        if batched {
+            for (ordinal, event) in movements {
+                let record = captured_record(&native, source, ordinal, event);
+                native.bridge.push_record(HostRecord::WindowEvent(record));
+            }
+            for _ in 0..2 {
+                if native
+                    .reduce_callback_prefix(&egui::Context::default(), &mut test_budget())
+                    .unwrap()
+                    .is_none()
+                {
+                    break;
+                }
+                commit_boundary(&mut native);
+            }
+        } else {
+            for (ordinal, event) in movements {
+                apply_input_callback(&mut native, source, ordinal, event, &receivers);
+            }
+        }
+        for (ordinal, point, state, hover) in [
+            (3, origin, Some(ElementState::Pressed), 22),
+            (4, target, None, 11),
+            (5, target, Some(ElementState::Released), 11),
+        ] {
+            apply_input_callback(
+                &mut native,
+                source,
+                ordinal,
+                mouse_event(point, state, hover, None),
+                &receivers,
+            );
+        }
+        assert_eq!(
+            native
+                .session
+                .view()
+                .item(ItemId::new(2))
+                .unwrap()
+                .surface(),
+            SECOND_SURFACE,
+            "batched={batched}"
+        );
+    }
 }
 
 #[test]
@@ -248,9 +355,10 @@ fn unknown_press_uses_only_source_window_observations_and_forgets_retired_ones()
             &receivers,
         );
         if let Some(retire_source) = retire_source {
+            let window = if retire_source { source_binding } else { peer }.window();
             native
-                .pointer_translator
-                .retire_binding(if retire_source { source_binding } else { peer }.window());
+                .bridge
+                .with_viewports_mut(|routes| routes.forget_modifiers(window));
         }
         for (ordinal, point, state, hover) in [
             (2, source, Some(ElementState::Pressed), 22),
@@ -837,8 +945,7 @@ fn one_modifier_callback_records_one_directive_pair_for_several_mouse_devices_an
         WindowEvent::ModifiersChanged(ModifiersState::SHIFT.into()),
     );
     let recorded = native.session.native_input_recorded_count();
-    let mut expected_translator = native.pointer_translator.clone();
-    expected_translator.observe_modifiers(binding.window(), ModifiersState::SHIFT);
+    let expected_translator = native.pointer_translator.clone();
     let mut budget = test_budget();
     let allowance = budget.remaining_records();
     native.bridge.push_record(HostRecord::WindowEvent(record));
@@ -851,6 +958,12 @@ fn one_modifier_callback_records_one_directive_pair_for_several_mouse_devices_an
         1
     );
     assert_eq!(native.session.native_input_recorded_count(), recorded + 2);
+    assert_eq!(
+        native
+            .bridge
+            .with_viewports(|routes| routes.modifiers(binding.window())),
+        ModifiersState::SHIFT,
+    );
     assert_eq!(
         format!("{:?}", native.pointer_translator),
         format!("{expected_translator:?}")

@@ -706,16 +706,11 @@ impl NativeCoordinator {
         self.input = input;
     }
 
-    fn retain_window_modifiers(&self) {
-        if let Some((window, modifiers)) = self.pointer_translator.observed_modifiers() {
-            self.bridge.with_viewports_mut(|routes| {
-                routes.observe_keyboard_modifiers(window, modifiers);
-            });
-        }
-    }
-
     pub(crate) fn refresh_group_dock_mode(&mut self) -> Result<(), NativeRuntimeError> {
-        let Some((window, modifiers)) = self.pointer_translator.observed_modifiers() else {
+        let Some((window, modifiers)) = self
+            .bridge
+            .with_viewports(|routes| routes.latest_modifiers())
+        else {
             return Ok(());
         };
         if self
@@ -1742,6 +1737,7 @@ impl NativeCoordinator {
                             record,
                             captured_at,
                             &self.input,
+                            winit::keyboard::ModifiersState::empty(),
                             |point| self.work_areas.binding_at(point),
                         ) {
                             NativePointerTranslation::Input(input) => return Some(input),
@@ -1763,7 +1759,6 @@ impl NativeCoordinator {
             if !prefix.retain_translated_prefix(count, &mut self.pointer_translator, candidate) {
                 return Err(NativeHostProtocolError::WindowEventAcknowledgementMismatch.into());
             }
-            self.retain_window_modifiers();
             budget.complete_unsequenced_records(ignored);
             return Ok(Some(count));
         }
@@ -1810,9 +1805,20 @@ impl NativeCoordinator {
         // The accepted raw callback already owns the overlapping storage promise.
         let mut candidate = self.pointer_translator.clone();
         let work_areas = &self.work_areas;
-        match candidate.translate_captured_with_input(&record, captured_at, &self.input, |point| {
-            work_areas.binding_at(point)
-        }) {
+        let modifiers = record
+            .binding()
+            .map(|binding| {
+                self.bridge
+                    .with_viewports(|routes| routes.modifiers(binding.window()))
+            })
+            .unwrap_or_default();
+        match candidate.translate_captured_with_input(
+            &record,
+            captured_at,
+            &self.input,
+            modifiers,
+            |point| work_areas.binding_at(point),
+        ) {
             NativePointerTranslation::NotPointer => {
                 unreachable!("pointer translation follows the same immutable event classification")
             }
@@ -1831,7 +1837,6 @@ impl NativeCoordinator {
         ) {
             return Err(NativeHostProtocolError::WindowEventAcknowledgementMismatch.into());
         }
-        self.retain_window_modifiers();
         Ok(Some(std::num::NonZeroUsize::MIN))
     }
 
@@ -1912,9 +1917,9 @@ impl NativeCoordinator {
                     binding.window(),
                     self.input.tab_group_dock_mode(observed),
                 )?;
-                self.pointer_translator
-                    .observe_modifiers(binding.window(), modifiers.state());
-                self.retain_window_modifiers();
+                self.bridge.with_viewports_mut(|routes| {
+                    routes.observe_modifiers(binding.window(), modifiers.state());
+                });
             }
             winit::event::WindowEvent::CloseRequested => {
                 if self

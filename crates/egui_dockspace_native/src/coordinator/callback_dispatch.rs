@@ -61,7 +61,7 @@ impl NativeCoordinator {
         let binding = record.binding();
         let modifiers = self
             .bridge
-            .with_viewports(|routes| routes.keyboard_modifiers(binding.window()));
+            .with_viewports(|routes| routes.modifiers(binding.window()));
         if record.pressed()
             && self.input.cancel_matches(
                 record.key(),

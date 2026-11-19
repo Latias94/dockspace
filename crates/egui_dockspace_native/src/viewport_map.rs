@@ -39,7 +39,7 @@ struct NativeViewportRoute {
     local_coordinates: Option<NativeLocalCoordinates>,
     focus_reportable: bool,
     semantic_wake: SemanticWake,
-    keyboard_modifiers: winit::keyboard::ModifiersState,
+    modifiers: winit::keyboard::ModifiersState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +69,7 @@ impl NativeViewportRoute {
     fn rebind_same_window(&mut self, successor: NativeSurfaceBinding) {
         self.binding = successor;
         self.local_coordinates = None;
-        self.keyboard_modifiers = winit::keyboard::ModifiersState::empty();
+        self.modifiers = winit::keyboard::ModifiersState::empty();
         if let Some(receipt) = self.terminal.as_mut() {
             receipt.rebind(successor);
         }
@@ -82,11 +82,12 @@ pub(crate) struct NativeViewportMap {
     viewports: Vec<NativeViewportRoute>,
     prepared_retirements: Vec<NativeSurfaceBinding>,
     slot_limit: Option<usize>,
+    last_modifier_window: Option<NativeWindowBinding>,
 }
 
 impl NativeViewportMap {
     /// Modifier observations stay in their exact physical window lifetime.
-    pub(crate) fn observe_keyboard_modifiers(
+    pub(crate) fn observe_modifiers(
         &mut self,
         window: NativeWindowBinding,
         modifiers: winit::keyboard::ModifiersState,
@@ -96,26 +97,48 @@ impl NativeViewportMap {
             .iter_mut()
             .find(|route| route.binding.window() == window)
         {
-            route.keyboard_modifiers = modifiers;
+            route.modifiers = modifiers;
+            self.last_modifier_window = Some(window);
         }
     }
 
-    pub(crate) fn keyboard_modifiers(
-        &self,
-        window: NativeWindowBinding,
-    ) -> winit::keyboard::ModifiersState {
+    pub(crate) fn modifiers(&self, window: NativeWindowBinding) -> winit::keyboard::ModifiersState {
         self.viewports
             .iter()
             .find(|route| route.binding.window() == window)
             .map_or_else(winit::keyboard::ModifiersState::empty, |route| {
-                route.keyboard_modifiers
+                route.modifiers
             })
     }
 
-    pub(crate) fn clear_keyboard_modifiers(&mut self) {
+    pub(crate) fn clear_modifiers(&mut self) {
+        self.last_modifier_window = None;
         for route in &mut self.viewports {
-            route.keyboard_modifiers = winit::keyboard::ModifiersState::empty();
+            route.modifiers = winit::keyboard::ModifiersState::empty();
         }
+    }
+
+    pub(crate) fn forget_modifiers(&mut self, window: NativeWindowBinding) {
+        if self.last_modifier_window == Some(window) {
+            self.last_modifier_window = None;
+        }
+        if let Some(route) = self
+            .viewports
+            .iter_mut()
+            .find(|route| route.binding.window() == window)
+        {
+            route.modifiers = winit::keyboard::ModifiersState::empty();
+        }
+    }
+
+    pub(crate) fn latest_modifiers(
+        &self,
+    ) -> Option<(NativeWindowBinding, winit::keyboard::ModifiersState)> {
+        let window = self.last_modifier_window?;
+        self.viewports
+            .iter()
+            .find(|route| route.binding.window() == window)
+            .map(|route| (window, route.modifiers))
     }
 
     /// Installs both finite backing stores before any route or retirement exists.
@@ -135,6 +158,7 @@ impl NativeViewportMap {
             viewports,
             prepared_retirements,
             slot_limit: Some(slots),
+            last_modifier_window: None,
         })
     }
 
@@ -1297,7 +1321,7 @@ impl NativeViewportMap {
             local_coordinates: None,
             focus_reportable: false,
             semantic_wake: SemanticWake::Idle,
-            keyboard_modifiers: winit::keyboard::ModifiersState::empty(),
+            modifiers: winit::keyboard::ModifiersState::empty(),
         };
         match self
             .viewports
