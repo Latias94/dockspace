@@ -5,7 +5,7 @@ use std::mem::size_of;
 
 use dockspace::runtime::{
     DockspaceClosePlan, NativeCloseEffectAcknowledgement, NativeSurfaceBinding,
-    NativeSurfaceCloseAction, NativeSurfaceCloseRequest,
+    NativeSurfaceCloseAction, NativeSurfaceCloseRequest, NativeWindowBinding,
 };
 use eframe::{NativeViewportCloseRequest, egui::ViewportId};
 use winit::window::WindowId;
@@ -137,6 +137,7 @@ impl CancellationReceipt {
 
 #[derive(Debug, PartialEq, Eq)]
 struct CapturedNativeClose {
+    binding: NativeSurfaceBinding,
     held_request: Option<NativeViewportCloseRequest>,
     event_ordinal: u64,
     viewport: ViewportId,
@@ -161,6 +162,7 @@ impl CapturedNativeClose {
             return None;
         }
         Some(Self {
+            binding,
             held_request,
             event_ordinal: held_request.map_or(event.ordinal(), |request| request.event().get()),
             viewport,
@@ -244,12 +246,15 @@ impl PendingNativeClose {
             && event.viewport_id() == Some(self.capture.viewport)
             && event.window_id() == self.capture.window
             && event.binding() == Some(binding)
+            && binding.window() == self.capture.binding.window()
     }
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct NativeCloseControl {
-    pending: Vec<(NativeSurfaceBinding, PendingNativeClose)>,
+    // Physical callbacks and semantic close edges can name different placements
+    // of the same exact provider-bound window. Keep both identities in one owner.
+    pending: Vec<(NativeWindowBinding, PendingNativeClose)>,
     entry_limit: Option<usize>,
     progress: crate::lifecycle_progress::NativeCloseProgress,
 }
@@ -284,7 +289,7 @@ impl NativeCloseControl {
     /// Includes inline state and selected backing, without allocator metadata.
     pub(crate) fn reservation_bytes(entries: usize) -> Option<usize> {
         size_of::<Self>().checked_add(
-            entries.checked_mul(size_of::<(NativeSurfaceBinding, PendingNativeClose)>())?,
+            entries.checked_mul(size_of::<(NativeWindowBinding, PendingNativeClose)>())?,
         )
     }
 
@@ -294,14 +299,14 @@ impl NativeCloseControl {
         size_of::<Self>().saturating_add(
             self.pending
                 .capacity()
-                .saturating_mul(size_of::<(NativeSurfaceBinding, PendingNativeClose)>()),
+                .saturating_mul(size_of::<(NativeWindowBinding, PendingNativeClose)>()),
         )
     }
 
     fn pending_for_binding(&self, binding: NativeSurfaceBinding) -> Option<&PendingNativeClose> {
         let index = self
             .pending
-            .binary_search_by_key(&binding, |(binding, _)| *binding)
+            .binary_search_by_key(&binding.window(), |(window, _)| *window)
             .ok()?;
         Some(&self.pending[index].1)
     }
@@ -312,7 +317,7 @@ impl NativeCloseControl {
     ) -> Option<&mut PendingNativeClose> {
         let index = self
             .pending
-            .binary_search_by_key(&binding, |(binding, _)| *binding)
+            .binary_search_by_key(&binding.window(), |(window, _)| *window)
             .ok()?;
         Some(&mut self.pending[index].1)
     }
@@ -361,7 +366,7 @@ impl NativeCloseControl {
         };
         if capture.held_request.is_some_and(|request| {
             self.pending.iter().any(|(existing, pending)| {
-                *existing != binding && pending.contains_held_request(request)
+                *existing != binding.window() && pending.contains_held_request(request)
             })
         }) {
             return NativeCloseCaptureAdmission::Conflict;
@@ -414,12 +419,12 @@ impl NativeCloseControl {
             .expect("preflight validated the exact close capture");
         match self
             .pending
-            .binary_search_by_key(&binding, |(binding, _)| *binding)
+            .binary_search_by_key(&binding.window(), |(window, _)| *window)
         {
             Ok(index) => self.pending[index].1.successor = Some(capture),
             Err(index) => self
                 .pending
-                .insert(index, (binding, PendingNativeClose::new(capture))),
+                .insert(index, (binding.window(), PendingNativeClose::new(capture))),
         }
         self.progress.record_request();
         NativeCloseCaptureAdmission::First
@@ -755,7 +760,7 @@ impl NativeCloseControl {
     ) -> bool {
         let Ok(index) = self
             .pending
-            .binary_search_by_key(&binding, |(binding, _)| *binding)
+            .binary_search_by_key(&binding.window(), |(window, _)| *window)
         else {
             return false;
         };
@@ -770,7 +775,7 @@ impl NativeCloseControl {
         &self,
         record: NativeViewportCloseCancellationRecord,
     ) -> Option<(NativeSurfaceBinding, NativeCloseEffectAcknowledgement)> {
-        self.pending.iter().find_map(|(binding, pending)| {
+        self.pending.iter().find_map(|(_, pending)| {
             if pending.clear_recorded
                 || !pending.matches_cancellation(record)
                 || pending
@@ -782,7 +787,8 @@ impl NativeCloseControl {
             }
             pending
                 .cancellation
-                .map(|acknowledgement| (*binding, acknowledgement))
+                .zip(pending.request)
+                .map(|(acknowledgement, request)| (request.binding(), acknowledgement))
         })
     }
 
@@ -838,14 +844,24 @@ impl NativeCloseControl {
     pub(crate) fn retire_binding(&mut self, binding: NativeSurfaceBinding) {
         if let Ok(index) = self
             .pending
-            .binary_search_by_key(&binding, |(binding, _)| *binding)
+            .binary_search_by_key(&binding.window(), |(window, _)| *window)
+            && (self.pending[index].1.capture.binding == binding
+                || self.pending[index]
+                    .1
+                    .request
+                    .is_some_and(|request| request.binding() == binding))
         {
             self.pending.remove(index);
         }
     }
 
     pub(crate) fn references_binding(&self, binding: NativeSurfaceBinding) -> bool {
-        self.pending_for_binding(binding).is_some()
+        self.pending_for_binding(binding).is_some_and(|pending| {
+            pending.capture.binding == binding
+                || pending
+                    .request
+                    .is_some_and(|request| request.binding() == binding)
+        })
     }
 }
 

@@ -303,22 +303,15 @@ impl NativeCoordinator {
                     let close = *close;
                     match resolution {
                         NativeCloseDisposition::Accept => {
-                            let can_retire = self
-                                .exact_viewport_for_binding(close.binding())
-                                .is_some_and(|viewport| {
-                                    self.session
-                                        .recognizes_native_window_binding(close.binding().window())
-                                        && self
-                                            .bridge
-                                            .retirement_can_begin_release(viewport, close.binding())
-                                });
-                            if !can_retire {
+                            let Some(physical_binding) =
+                                self.native_close_retirement_binding(close)
+                            else {
                                 self.submit_failed_effect(
                                     request,
                                     NativeDispatchFailure::AdapterRejected,
                                 )?;
                                 continue;
-                            }
+                            };
                             let dispatch = request.begin_dispatch();
                             if self
                                 .resolve_exact_close(
@@ -336,7 +329,7 @@ impl NativeCoordinator {
                             }
                             self.accept_retirement_effect(
                                 dispatch.await_observation(),
-                                close.binding(),
+                                physical_binding,
                             )?;
                             if !self
                                 .bridge
@@ -620,5 +613,21 @@ impl NativeCoordinator {
                 .expect("failed viewport reservation retains its affine request"));
         }
         Ok(plan)
+    }
+
+    pub(super) fn native_close_retirement_binding(
+        &self,
+        close: dockspace::runtime::NativeSurfaceCloseRequest,
+    ) -> Option<NativeSurfaceBinding> {
+        let viewport = self.exact_viewport_for_binding(close.binding())?;
+        let binding = self
+            .bridge
+            .with_viewports(|routes| routes.binding(viewport))?;
+        (binding.window() == close.binding().window()
+            && self
+                .session
+                .recognizes_native_window_binding(binding.window())
+            && self.bridge.retirement_can_begin_release(viewport, binding))
+        .then_some(binding)
     }
 }

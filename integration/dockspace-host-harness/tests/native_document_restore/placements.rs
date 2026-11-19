@@ -1,6 +1,116 @@
 use super::*;
 use dockspace::runtime::DockMoveSource;
 
+fn saved_root_bounds(session: &mut DockspaceSession) -> PhysicalRect {
+    let bytes = session.save_document_json().unwrap();
+    let document = session
+        .prepare_document_restore_json(&bytes, recognize)
+        .unwrap();
+    document
+        .surface_presentation_preferences()
+        .find(|preference| preference.surface() == HOST)
+        .unwrap()
+        .outer_rect()
+        .unwrap()
+}
+
+#[test]
+fn restored_root_does_not_reuse_previous_binding_placement_before_fresh_observation() {
+    let mut host = NativeDocumentHost::new(4, true);
+    let saved = PhysicalRect::new(100.0, 80.0, 640.0, 480.0).unwrap();
+    let moved = PhysicalRect::new(1100.0, 80.0, 640.0, 480.0).unwrap();
+    assert_eq!(saved_root_bounds(&mut host.session), saved);
+    let bytes = host.session.save_document_json().unwrap();
+    host.session
+        .report_managed_native_snapshot([(host.root, window_facts(moved))], work_areas())
+        .unwrap();
+    assert!(
+        idle(&mut host.session)
+            .notification()
+            .native_window_placement_changed()
+    );
+    assert_eq!(saved_root_bounds(&mut host.session), moved);
+
+    let restore = host
+        .session
+        .prepare_document_restore_json(&bytes, recognize)
+        .unwrap();
+    let predecessor = host.root;
+    let generation = host.session.next_document_generation();
+    let mut rollback = native_frame(&mut host.session);
+    rollback
+        .submit_native_document_restore(&restore, HOST)
+        .unwrap();
+    rollback
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    drop(rollback);
+    assert_eq!(host.session.next_document_generation(), generation);
+    assert!(host.session.is_current_native_binding(predecessor));
+    assert_eq!(saved_root_bounds(&mut host.session), moved);
+
+    // The placement probe saves and advances document sidecars. Prepare a
+    // fresh restore after that capture rather than reusing stale save authority.
+    let restore = host
+        .session
+        .prepare_document_restore_json(&bytes, recognize)
+        .unwrap();
+    let mut frame = native_frame(&mut host.session);
+    frame
+        .submit_native_document_restore(&restore, HOST)
+        .unwrap();
+    let mut report = finish(frame);
+    assert_no_effects(&mut report);
+    let [successor] = report.native_bindings() else {
+        panic!("the restored root must receive one fresh native binding");
+    };
+    host.root = *successor;
+    assert_ne!(host.root, predecessor);
+    assert_eq!(saved_root_bounds(&mut host.session), saved);
+    host.quiesce(predecessor);
+    assert_eq!(saved_root_bounds(&mut host.session), saved);
+    let version = host.session.version();
+
+    host.session
+        .report_managed_native_snapshot([(host.root, window_facts(moved))], work_areas())
+        .unwrap();
+    let mut rollback = native_frame(&mut host.session);
+    rollback
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    drop(rollback);
+    assert_eq!(saved_root_bounds(&mut host.session), saved);
+    let report = idle(&mut host.session);
+    assert!(report.notification().native_window_placement_changed());
+    assert!(report.notification().document_changed());
+    assert!(report.notification().layout_change().is_none());
+    assert_eq!(host.session.version(), version);
+    assert_eq!(saved_root_bounds(&mut host.session), moved);
+
+    for state in [
+        NativeWindowPresentationState::Minimized,
+        NativeWindowPresentationState::Visible,
+    ] {
+        let bounds = if state == NativeWindowPresentationState::Minimized {
+            PhysicalRect::new(5.0, 5.0, 160.0, 20.0).unwrap()
+        } else {
+            moved
+        };
+        host.session
+            .report_managed_native_snapshot(
+                [(host.root, window_facts(bounds).with_presentation(state))],
+                work_areas(),
+            )
+            .unwrap();
+        assert!(
+            !idle(&mut host.session)
+                .notification()
+                .native_window_placement_changed()
+        );
+        assert_eq!(saved_root_bounds(&mut host.session), moved);
+    }
+}
+
 #[test]
 fn first_save_after_minimizing_a_torn_off_child_remains_restorable() {
     let mut host = NativeDocumentHost::new(8, true);

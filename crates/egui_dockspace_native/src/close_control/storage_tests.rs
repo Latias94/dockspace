@@ -447,7 +447,7 @@ fn finite_reservations_match_actual_capacity_and_overflow_preserves_existing_con
     let backing = control.pending.as_ptr();
     for limit in [
         usize::MAX,
-        usize::MAX / size_of::<(NativeSurfaceBinding, PendingNativeClose)>() + 1,
+        usize::MAX / size_of::<(NativeWindowBinding, PendingNativeClose)>() + 1,
     ] {
         assert_eq!(NativeCloseControl::reservation_bytes(limit), None);
         assert_eq!(

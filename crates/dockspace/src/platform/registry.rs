@@ -1573,6 +1573,9 @@ impl ViewportRegistry {
                 self.last_coordinate_generation = generation;
                 window.lifecycle = ViewportLifecycle::AwaitingObservation;
                 window.coordinates = None;
+                // Placement belongs to the exact observation lifetime. Preserve
+                // document hints until this successor supplies its own visible facts.
+                window.last_visible_placement = None;
                 window.coordinate_generation = generation;
                 window.coordinate_observations = WindowCoordinateObservationStream::default();
                 window.input_observations = WindowInputObservationStream::default();

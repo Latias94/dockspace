@@ -14,6 +14,8 @@ use eframe::egui::ViewportCommand;
 use super::*;
 use crate::close_control::NativeWindowClosePolicy;
 
+mod shared_window;
+
 #[test]
 fn default_close_policy_recovers_children_and_accepts_the_external_root() {
     assert_eq!(

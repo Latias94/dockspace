@@ -104,7 +104,12 @@ impl NativeCoordinator {
             else {
                 break;
             };
-            match policy.request(close.surface() == external_root) {
+            let is_external_root = close.surface() == external_root
+                || self
+                    .session
+                    .native_surface_bindings_for_window(close.binding().window())
+                    .any(|binding| binding.surface() == external_root);
+            match policy.request(is_external_root) {
                 Some(action) => self.session.request_native_surface_close(close, action)?,
                 None => self.session.cancel_native_surface_close(close)?,
             }

@@ -169,3 +169,65 @@ fn physical_placement_retains_the_last_visible_bounds_without_notifying_again() 
             .is_none()
     );
 }
+
+#[test]
+fn restored_window_observes_placement_fresh_without_losing_same_lifetime_minimized_bounds() {
+    let (mut registry, predecessor) = fixture();
+    let outer = PhysicalRect::new(1100.0, 20.0, 820.0, 640.0).unwrap();
+    let size = PhysicalSize::new(800.0, 600.0).unwrap();
+    let scale = ScaleFactor::new(1.0).unwrap();
+    registry
+        .apply_snapshot_for_test(&snapshot(
+            1,
+            vec![physical_window(
+                predecessor,
+                1,
+                WindowPresentationState::Visible,
+                outer,
+                size,
+                scale,
+            )],
+        ))
+        .unwrap();
+    let reconciliation = registry
+        .reconcile_restore(
+            WorkspaceEpoch::new(1),
+            &BTreeMap::from([(predecessor, predecessor.surface())]),
+        )
+        .unwrap();
+    let [(_, successor)] = reconciliation.retained() else {
+        panic!("the external window must continue through one fresh binding");
+    };
+    let successor = *successor;
+    assert!(
+        registry
+            .window(successor.window())
+            .unwrap()
+            .last_visible_placement()
+            .is_none()
+    );
+    for (generation, state, expected, changed) in [
+        (2, WindowPresentationState::Minimized, None, false),
+        (3, WindowPresentationState::Visible, Some(outer), true),
+        (4, WindowPresentationState::Visible, Some(outer), false),
+        (5, WindowPresentationState::Minimized, Some(outer), false),
+    ] {
+        let transition = registry
+            .apply_snapshot_for_test(&snapshot(
+                generation,
+                vec![physical_window(
+                    successor, generation, state, outer, size, scale,
+                )],
+            ))
+            .unwrap();
+        assert_eq!(transition.native_window_placement_changed(), changed);
+        assert_eq!(
+            registry
+                .window(successor.window())
+                .unwrap()
+                .last_visible_placement()
+                .map(|placement| placement.outer_rect),
+            expected,
+        );
+    }
+}
