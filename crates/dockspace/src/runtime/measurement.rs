@@ -171,6 +171,34 @@ impl SurfaceMeasurementAnswer {
 }
 
 impl DockspaceHostFrame<'_> {
+    /// Lists pane labels that [`Self::prepare_surface_with`] would measure.
+    ///
+    /// Retained hosts can collect renderer resources before releasing the frame
+    /// borrow with [`Self::suspend`]. This seals input and reserves the same
+    /// output slot as `prepare_surface_with`. Inactive tabs can require
+    /// measurement too. Layout tabs have no pane item and are omitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns the input sealing or output admission error.
+    pub fn tab_measurement_items(
+        &mut self,
+        surface: SurfaceId,
+    ) -> Result<impl Iterator<Item = ItemId> + '_, DockspaceRuntimeError> {
+        let (should_measure, _) = self.surface_measurement_work(surface)?;
+        Ok(should_measure
+            .then(|| {
+                self.frame
+                    .view()
+                    .presentation_requirements()
+                    .surface(surface)
+            })
+            .flatten()
+            .into_iter()
+            .flat_map(crate::presentation::manifest::SurfaceRequirements::tab_intrinsics)
+            .filter_map(|key| key.tab().tab.item()))
+    }
+
     /// Supplies one complete uniform measurement answer for a frozen surface.
     ///
     /// # Errors
@@ -387,23 +415,32 @@ impl DockspaceHostFrame<'_> {
     where
         E: From<DockspaceRuntimeError>,
     {
-        self.begin_encoding_pass().map_err(E::from)?;
-        let should_measure = match self.surface_work(surface).map_err(E::from)? {
-            SurfaceWork::Ready(plan) => {
-                let allowed = plan.measurement_refresh().is_allowed();
-                !self.surface_answered(surface) && allowed
-            }
-            SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured) => {
-                !self.surface_answered(surface)
-            }
-            SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity) => {
-                return Ok(SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity));
-            }
-        };
+        let (should_measure, work) = self.surface_measurement_work(surface).map_err(E::from)?;
+        if matches!(
+            work,
+            SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity)
+        ) {
+            return Ok(SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity));
+        }
         if should_measure {
             self.measure_surface_with(surface, &mut resolve)?;
         }
         self.surface_work(surface).map_err(E::from)
+    }
+
+    fn surface_measurement_work(
+        &mut self,
+        surface: SurfaceId,
+    ) -> Result<(bool, SurfaceWork<'_>), DockspaceRuntimeError> {
+        self.begin_encoding_pass()?;
+        let unanswered = !self.surface_answered(surface);
+        let work = self.surface_work(surface)?;
+        let allowed = match &work {
+            SurfaceWork::Ready(plan) => plan.measurement_refresh().is_allowed(),
+            SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured) => true,
+            SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity) => false,
+        };
+        Ok((unanswered && allowed, work))
     }
 
     /// Explicitly settles every unanswered surface by retaining a current

@@ -636,7 +636,7 @@ fn deferred_tab_navigation_rejects_reordered_members_before_revealing_a_frozen_t
         let action = LocalSurfaceAction::SelectTab {
             scene: witness.stamp(),
             selection: if activate {
-                LocalTabSelection::Activate { source, target }
+                LocalTabSelection::NavigateAndActivate { source, target }
             } else {
                 LocalTabSelection::Navigate { source, target }
             },

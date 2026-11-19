@@ -156,6 +156,7 @@ fn resolve(
     inputs.peek()?;
     let mut handled = false;
     let mut activate = false;
+    let mut navigated = false;
     for input in inputs {
         match input {
             SurfaceTabInput::Navigate(navigation) => {
@@ -163,6 +164,7 @@ fn resolve(
                 handled |= next != cursor;
                 cursor = next;
                 activate = false;
+                navigated = true;
             }
             SurfaceTabInput::Activate => {
                 handled = true;
@@ -172,10 +174,15 @@ fn resolve(
     }
     let source = *tab.id();
     let target = members[cursor].tab();
-    // Reveal a clipped selection even if Home/End leaves its index unchanged.
-    (handled || target != source).then_some(())?;
+    // Header focus and selection can differ. A clipped selected target can
+    // also require revealing even when Home/End leaves the cursor unchanged.
+    (handled || target != source || !plan.tab_selected(tab)).then_some(())?;
     Some(if activate {
-        LocalTabSelection::Activate { source, target }
+        if navigated || target != source {
+            LocalTabSelection::NavigateAndActivate { source, target }
+        } else {
+            LocalTabSelection::Activate(source)
+        }
     } else {
         LocalTabSelection::Navigate { source, target }
     })

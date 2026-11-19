@@ -513,6 +513,23 @@ impl Clone for DeferredSurfaceAction {
 }
 
 impl DeferredSurfaceAction {
+    /// Changes pending tab navigation into content activation of its destination.
+    ///
+    /// Retains the original strip and navigation witness. Use this when Enter
+    /// follows a resolved navigation that has not yet been submitted.
+    /// Returns `None` for actions other than tab navigation.
+    #[must_use]
+    pub fn activate_navigated_tab(mut self) -> Option<Self> {
+        let SurfaceAction::SelectTab { selection, .. } = &mut self.0.action else {
+            return None;
+        };
+        let LocalTabSelection::Navigate { source, target } = *selection else {
+            return None;
+        };
+        *selection = LocalTabSelection::NavigateAndActivate { source, target };
+        Some(self)
+    }
+
     /// Returns the logical surface that exposed the action.
     #[must_use]
     pub const fn surface(&self) -> SurfaceId {

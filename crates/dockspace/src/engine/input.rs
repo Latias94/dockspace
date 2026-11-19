@@ -322,11 +322,12 @@ impl LocalTabChromeAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LocalTabSelection {
-    Activate {
+    Activate(TabSceneId),
+    Navigate {
         source: TabSceneId,
         target: TabSceneId,
     },
-    Navigate {
+    NavigateAndActivate {
         source: TabSceneId,
         target: TabSceneId,
     },
@@ -335,13 +336,15 @@ pub(crate) enum LocalTabSelection {
 impl LocalTabSelection {
     pub(crate) const fn target(self) -> TabSceneId {
         match self {
-            Self::Activate { target, .. } | Self::Navigate { target, .. } => target,
+            Self::Activate(tab) => tab,
+            Self::Navigate { target, .. } | Self::NavigateAndActivate { target, .. } => target,
         }
     }
 
     pub(crate) const fn receiver(self) -> TabSceneId {
         match self {
-            Self::Activate { source, .. } | Self::Navigate { source, .. } => source,
+            Self::Activate(tab) => tab,
+            Self::Navigate { source, .. } | Self::NavigateAndActivate { source, .. } => source,
         }
     }
 }

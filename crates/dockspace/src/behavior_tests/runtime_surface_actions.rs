@@ -1206,6 +1206,54 @@ fn retained_tab_input_resolves_clipped_members_and_rejects_an_old_strip_order() 
 }
 
 #[test]
+fn retained_activation_keeps_the_provenance_of_pending_navigation() {
+    let mut session = overflow_session();
+    install_overflow_candidate(&mut session);
+    let strip = inspect_surface(&mut session, |plan| {
+        plan.retain_tab_strip(plan.tab_bars().next().unwrap())
+            .unwrap()
+    });
+    let next = SurfaceTabInput::Navigate(SurfaceTabNavigation::Next);
+    let enter = SurfaceTabInput::Activate;
+    let navigation = strip.resolve(SECOND, FIRST, [next]).unwrap();
+    let folded = strip.resolve(SECOND, FIRST, [next, enter]).unwrap();
+    let continued = navigation.clone().activate_navigated_tab().unwrap();
+    let direct = strip.resolve(SECOND, SECOND, [enter]).unwrap();
+    for action in [&navigation, &folded, &continued, &direct] {
+        assert_eq!(action.tab_focus_target(), Some(SECOND.into()));
+    }
+
+    let mut reorder = session.begin_host_frame().unwrap();
+    reorder
+        .dock_item_current(THIRD, crate::model::DockPlacement::Before(SECOND))
+        .unwrap();
+    assert!(reorder.commit().unwrap().workspace_changed());
+    assert!(session.view().item(FIRST).unwrap().is_active());
+
+    for action in [navigation, folded, continued] {
+        let mut frame = session.begin_host_frame().unwrap();
+        frame.submit_deferred_surface_action(action).unwrap();
+        assert!(matches!(
+            frame.commit().unwrap().inputs(),
+            [HostInputOutcome::StaleRejected { .. }]
+        ));
+        assert!(session.view().item(FIRST).unwrap().is_active());
+        assert!(session.pane_focus_request(SURFACE).is_none());
+    }
+
+    let mut frame = session.begin_host_frame().unwrap();
+    frame.submit_deferred_surface_action(direct).unwrap();
+    assert!(frame.commit().unwrap().workspace_changed());
+    assert!(session.view().item(SECOND).unwrap().is_active());
+    assert_eq!(
+        session
+            .pane_focus_request(SURFACE)
+            .and_then(|focus| focus.item()),
+        Some(SECOND)
+    );
+}
+
+#[test]
 fn paint_only_tabs_expose_no_receiver_or_prepared_semantic_action() {
     let mut session = paint_only_tab_bar_session();
     install_ready_candidate(&mut session);

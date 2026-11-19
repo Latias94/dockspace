@@ -1028,10 +1028,7 @@ fn local_tab_selection_without_a_native_binding_publishes_pane_focus() {
         EngineInput::SelectLocalSceneTab {
             expected,
             scene,
-            selection: LocalTabSelection::Activate {
-                source: tab,
-                target: tab,
-            },
+            selection: LocalTabSelection::Activate(tab),
         },
     )
     .expect("local tab selection must reduce");

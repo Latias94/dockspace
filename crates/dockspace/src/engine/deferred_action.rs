@@ -291,9 +291,9 @@ impl DockEngine {
             LocalSurfaceAction::SelectTab { selection, .. } => {
                 item_receiver_is_current(PresentationHitRegionKind::TabBody(selection.receiver()))
                     && match selection {
-                        LocalTabSelection::Activate { source, target } if source == target => true,
-                        LocalTabSelection::Activate { source, .. }
-                        | LocalTabSelection::Navigate { source, .. } => {
+                        LocalTabSelection::Activate(_) => true,
+                        LocalTabSelection::Navigate { source, .. }
+                        | LocalTabSelection::NavigateAndActivate { source, .. } => {
                             root_is_current(source.root)
                                 && plan
                                     .tab_bar_records()

@@ -325,7 +325,7 @@ impl DockEngine {
         if matches!(&outcome, InputOutcome::CommandProcessed { .. }) {
             let native_guard = self.viewport_focus_binding(scene.surface());
             match selection {
-                LocalTabSelection::Activate { .. } => {
+                LocalTabSelection::Activate(_) | LocalTabSelection::NavigateAndActivate { .. } => {
                     let Some(item) = self.tab_content_focus_target(tab) else {
                         return Ok(outcome);
                     };

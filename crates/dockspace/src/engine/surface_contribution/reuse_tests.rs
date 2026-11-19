@@ -917,10 +917,7 @@ fn retained_facts_use_current_drop_policy_without_reauthorizing_old_output() {
         EngineInput::SelectLocalSceneTab {
             expected,
             scene: old_scene,
-            selection: LocalTabSelection::Activate {
-                source: old_tab,
-                target: old_tab,
-            },
+            selection: LocalTabSelection::Activate(old_tab),
         },
     )
     .unwrap();
