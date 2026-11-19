@@ -440,12 +440,12 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 [[package]]
 name = "dpi"
 version = "0.1.1"
-source = "git+https://github.com/Latias94/winit.git?rev=e972e49ea599eeb1a4ac8c97e10a403d9ed00a70#e972e49ea599eeb1a4ac8c97e10a403d9ed00a70"
+source = "git+https://github.com/Latias94/winit.git?rev=c45a0701cd6ffa6c223491dfda35d667bf8dc4f4#c45a0701cd6ffa6c223491dfda35d667bf8dc4f4"
 
 [[package]]
 name = "ecolor"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
+source = "git+https://github.com/Latias94/egui?rev=1399d2f905e56790029631deef4dd436885bf433#1399d2f905e56790029631deef4dd436885bf433"
 dependencies = [
  "bytemuck",
  "emath",
@@ -455,7 +455,7 @@ dependencies = [
 [[package]]
 name = "eframe"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
+source = "git+https://github.com/Latias94/egui?rev=1399d2f905e56790029631deef4dd436885bf433#1399d2f905e56790029631deef4dd436885bf433"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -489,7 +489,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
+source = "git+https://github.com/Latias94/egui?rev=1399d2f905e56790029631deef4dd436885bf433#1399d2f905e56790029631deef4dd436885bf433"
 dependencies = [
  "accesskit",
  "ahash",
@@ -533,7 +533,7 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
+source = "git+https://github.com/Latias94/egui?rev=1399d2f905e56790029631deef4dd436885bf433#1399d2f905e56790029631deef4dd436885bf433"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -552,7 +552,7 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
+source = "git+https://github.com/Latias94/egui?rev=1399d2f905e56790029631deef4dd436885bf433#1399d2f905e56790029631deef4dd436885bf433"
 dependencies = [
  "arboard",
  "block2 0.6.2",
@@ -594,7 +594,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
+source = "git+https://github.com/Latias94/egui?rev=1399d2f905e56790029631deef4dd436885bf433#1399d2f905e56790029631deef4dd436885bf433"
 dependencies = [
  "bytemuck",
  "egui",
@@ -607,7 +607,7 @@ dependencies = [
 [[package]]
 name = "egui_inspection"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
+source = "git+https://github.com/Latias94/egui?rev=1399d2f905e56790029631deef4dd436885bf433#1399d2f905e56790029631deef4dd436885bf433"
 dependencies = [
  "egui",
  "image",
@@ -626,7 +626,7 @@ checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 [[package]]
 name = "emath"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
+source = "git+https://github.com/Latias94/egui?rev=1399d2f905e56790029631deef4dd436885bf433#1399d2f905e56790029631deef4dd436885bf433"
 dependencies = [
  "bytemuck",
  "serde",
@@ -646,7 +646,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
+source = "git+https://github.com/Latias94/egui?rev=1399d2f905e56790029631deef4dd436885bf433#1399d2f905e56790029631deef4dd436885bf433"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -672,7 +672,7 @@ dependencies = [
 [[package]]
 name = "epaint_default_fonts"
 version = "0.37.0"
-source = "git+https://github.com/Latias94/egui?rev=705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74#705fe8f5bcd2eb149ea48e29ee5a41a5d7a54d74"
+source = "git+https://github.com/Latias94/egui?rev=1399d2f905e56790029631deef4dd436885bf433#1399d2f905e56790029631deef4dd436885bf433"
 
 [[package]]
 name = "equivalent"
@@ -2934,7 +2934,7 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "git+https://github.com/Latias94/winit.git?rev=e972e49ea599eeb1a4ac8c97e10a403d9ed00a70#e972e49ea599eeb1a4ac8c97e10a403d9ed00a70"
+source = "git+https://github.com/Latias94/winit.git?rev=c45a0701cd6ffa6c223491dfda35d667bf8dc4f4#c45a0701cd6ffa6c223491dfda35d667bf8dc4f4"
 dependencies = [
  "ahash",
  "android-activity",
