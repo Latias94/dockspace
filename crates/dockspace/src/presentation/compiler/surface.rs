@@ -559,6 +559,7 @@ fn compile_root(
         .ok_or(SceneCompilationError::MissingRoot { surface, root })?;
     let RootLayoutMeasurement {
         pane_sizings,
+        tab_bar_visibility,
         layout,
     } = root_measurement;
     let root_overrides = resize_overrides
@@ -605,6 +606,7 @@ fn compile_root(
     ready.push_root_layout_facts(
         RootLayoutFacts::new(root, bounds, pane_sizings, Arc::clone(&projection))
             .with_allocation(allocation)
+            .with_tab_bar_visibility(tab_bar_visibility)
             .with_node_labels(labels),
     );
     let mut node_contexts = BTreeMap::new();

@@ -57,7 +57,11 @@ pub(super) fn record(
                         receiver(&mut draws, plan.receiver_for_pane(pane));
                         if !paint.is_source_gap() {
                             draws.push(Draw::Fill(pane.content_bounds(), colors.pane));
-                            draws.push(Draw::Pane(pane.content_bounds(), pane.item()));
+                            draws.push(Draw::Pane {
+                                layout: pane.layout_bounds(),
+                                clip: pane.clip(),
+                                item: pane.item(),
+                            });
                         }
                     }
                     Operation::Tabs(tabs) => {

@@ -44,12 +44,22 @@ pub(crate) fn tab_leaf_bounds(
 
 pub(crate) fn reveal_tab_bar_bounds(
     pane: LogicalRect,
+    clip: LogicalRect,
     config: &DockPresentationConfig,
 ) -> Result<Option<LogicalRect>, GeometryError> {
+    let header = clip_rect(
+        LogicalRect::new(
+            pane.x(),
+            pane.y(),
+            pane.width(),
+            config.tab_bar_height().min(pane.height()),
+        )?,
+        clip,
+    )?;
     let extent = (config.tab_bar_height() * 0.55)
-        .min(pane.width())
-        .min(pane.height());
-    let bounds = LogicalRect::new(pane.x(), pane.y(), extent, extent)?;
+        .min(header.width())
+        .min(header.height());
+    let bounds = LogicalRect::new(header.x(), header.y(), extent, extent)?;
     Ok((bounds.width() > 0.0 && bounds.height() > 0.0).then_some(bounds))
 }
 

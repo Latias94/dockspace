@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::geometry::{LogicalRect, PaneSizing};
 use crate::ids::{FloatingPresentationId, NodeId, RootId, SurfaceId};
 use crate::interaction::{ContainedTransformSessionId, DragSessionId};
+use crate::policy::TabBarVisibility;
 use crate::presentation::config::DockPresentationConfig;
 use crate::presentation::layout::{LayoutProjection, NodeMap};
 use crate::presentation::manifest::{
@@ -127,6 +128,7 @@ pub(crate) struct RootLayoutFacts {
     pane_sizings: BTreeMap<PaneSizingKey, PaneSizing>,
     projection: Arc<LayoutProjection>,
     labels: Option<NodeMap<super::FrozenTabLabel>>,
+    tab_bar_visibility: BTreeMap<NodeId, TabBarVisibility>,
 }
 
 impl RootLayoutFacts {
@@ -143,6 +145,7 @@ impl RootLayoutFacts {
             pane_sizings,
             projection,
             labels: None,
+            tab_bar_visibility: BTreeMap::new(),
         }
     }
 
@@ -154,6 +157,19 @@ impl RootLayoutFacts {
     pub(crate) fn with_node_labels(mut self, labels: NodeMap<super::FrozenTabLabel>) -> Self {
         self.labels = Some(labels);
         self
+    }
+
+    pub(crate) fn with_tab_bar_visibility(
+        mut self,
+        visibility: BTreeMap<NodeId, TabBarVisibility>,
+    ) -> Self {
+        self.tab_bar_visibility = visibility;
+        self
+    }
+
+    /// Retains resolved chrome independently of whether clipping emitted a header.
+    pub(crate) fn tab_bar_visibility(&self, tabs: NodeId) -> Option<TabBarVisibility> {
+        self.tab_bar_visibility.get(&tabs).copied()
     }
 
     pub(crate) fn node_label(&self, node: NodeId) -> Option<crate::graph::TabLabel<'_>> {

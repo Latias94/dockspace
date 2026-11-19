@@ -1303,15 +1303,11 @@ fn validate_tab_records(
         let item_count = workspace.visible_tab_keys(pane.id().tabs).len();
         let revealed = declaration.visibility() == TabBarVisibility::AutoHideSingle
             && item_count == 1
-            && bars
-                .get(
-                    &ready.facts.tab_bar_records,
-                    TabBarSceneId {
-                        root: pane.id().root,
-                        tabs: pane.id().tabs,
-                    },
-                )
-                .is_some();
+            && ready
+                .layout_facts()
+                .and_then(|facts| facts.root(pane.id().root))
+                .and_then(|root| root.tab_bar_visibility(pane.id().tabs))
+                == Some(TabBarVisibility::Visible);
         declaration.resolved(item_count, revealed)
     };
     let mut controls_by_bar = BTreeMap::<TabBarSceneId, BTreeMap<TabStripControlId, _>>::new();
@@ -1407,7 +1403,8 @@ fn validate_tab_records(
                 );
                 let expected_bounds = ready.layout_facts().and_then(|facts| {
                     crate::presentation::compiler::reveal_tab_bar_bounds(
-                        pane.bounds(),
+                        facts.root(id.root)?.projection().nodes.get(&id.tabs)?.rect,
+                        pane.clip(),
                         facts.config(),
                     )
                     .ok()

@@ -39,7 +39,11 @@ impl Packet {
 
     pub(super) fn pane_bounds(&self, item: ItemId) -> Option<LogicalRect> {
         self.draws.iter().find_map(|draw| match draw {
-            Draw::Pane(bounds, candidate) if *candidate == item => Some(*bounds),
+            Draw::Pane {
+                clip,
+                item: candidate,
+                ..
+            } if *candidate == item => Some(*clip),
             _ => None,
         })
     }
@@ -68,7 +72,11 @@ enum Draw {
     Outline(LogicalRect, Hsla),
     Text(LogicalRect, String, Hsla),
     TabText(LogicalRect, LogicalRect, TabKey, String, Hsla),
-    Pane(LogicalRect, ItemId),
+    Pane {
+        layout: LogicalRect,
+        clip: LogicalRect,
+        item: ItemId,
+    },
     Receiver(DockspaceReceiverDescriptor),
     Preview(LogicalRect),
 }
@@ -80,7 +88,6 @@ enum PreparedDraw {
     ContainedTitle(Bounds<Pixels>, Hsla),
     Guide(Bounds<Pixels>, GuideState),
     Outline(Bounds<Pixels>, Hsla),
-    Element(AnyElement),
     ClippedElement(AnyElement, PreparedSubtreeClip),
     Preview(Bounds<Pixels>, Hsla, Hsla),
 }
@@ -255,7 +262,6 @@ impl Element for DockspaceElement {
                     window.paint_quad(fill(*bounds, *color));
                     outline(*bounds, *border, window);
                 }
-                PreparedDraw::Element(element) => element.paint(window, cx),
                 PreparedDraw::ClippedElement(element, clip) => {
                     let _ =
                         window.with_prepared_subtree_clip(clip, |window| element.paint(window, cx));
@@ -436,8 +442,8 @@ impl DockspaceElement {
                         draws.push(PreparedDraw::ClippedElement(element, clip));
                     }
                 }
-                Draw::Pane(rect, item) => {
-                    let rect = to_gpui(*rect, bounds);
+                Draw::Pane { layout, clip, item } => {
+                    let rect = to_gpui(*layout, bounds);
                     let panel = self.host.borrow().panels.get(item).cloned();
                     let mut element = match panel {
                         Some(panel) => div()
@@ -453,8 +459,18 @@ impl DockspaceElement {
                             .child("Pane unavailable")
                             .into_any_element(),
                     };
-                    element.prepaint_as_root(rect.origin, definite(rect), window, cx);
-                    draws.push(PreparedDraw::Element(element));
+                    let clip = window.prepare_subtree_clip(
+                        &SubtreeClip::own_border_box(),
+                        to_gpui(*clip, bounds),
+                    );
+                    if window
+                        .with_prepared_subtree_clip(&clip, |window| {
+                            element.prepaint_as_root(rect.origin, definite(rect), window, cx);
+                        })
+                        .is_some()
+                    {
+                        draws.push(PreparedDraw::ClippedElement(element, clip));
+                    }
                 }
             }
         }

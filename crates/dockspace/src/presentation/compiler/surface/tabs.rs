@@ -72,8 +72,7 @@ pub(super) fn select_presentation_menu_tab_bar(
             .get(&tabs)
             .map(|result| result.rect)
             .ok_or(SceneCompilationError::MissingNodeProjection { root, node: tabs })?;
-        let bounds = clip_rect(projected, root_bounds)?;
-        let bar = tab_leaf_bounds(bounds, root_bounds, config.tab_bar_height(), None)?.header;
+        let bar = tab_leaf_bounds(projected, root_bounds, config.tab_bar_height(), None)?.header;
         if !rect_has_area(bar) {
             return Ok(None);
         }
@@ -145,6 +144,7 @@ pub(super) fn compile_tabs_leaf(
     } else {
         0.0
     };
+    let allocation = bounds;
     let TabLeafBounds {
         bounds,
         header: tab_bar,
@@ -185,7 +185,7 @@ pub(super) fn compile_tabs_leaf(
         && items.len() == 1
         && rect_has_area(bounds)
     {
-        if let Some(bounds) = reveal_tab_bar_bounds(bounds, config)? {
+        if let Some(bounds) = reveal_tab_bar_bounds(allocation, clip, config)? {
             let control = TabStripControlId::RevealTabBar(bar_id);
             ready.push_tab_strip_control_record(TabStripControlRecord::new(
                 control,

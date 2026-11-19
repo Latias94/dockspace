@@ -83,9 +83,10 @@ pub(crate) fn candidate_tab_bar_policy(
         && items.len() == 1
         && original.visible_tab_keys(tabs) == items
         && target_plan
-            .tab_bar_records()
-            .iter()
-            .any(|bar| *bar.id() == TabBarSceneId { root, tabs });
+            .layout_facts()
+            .and_then(|facts| facts.root(root))
+            .and_then(|facts| facts.tab_bar_visibility(tabs))
+            == Some(TabBarVisibility::Visible);
     Ok(declaration.resolved(items.len(), revealed))
 }
 

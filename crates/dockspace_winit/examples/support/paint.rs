@@ -14,6 +14,10 @@ use dockspace::runtime::{
 };
 use font8x8::{BASIC_FONTS, UnicodeFonts};
 
+#[cfg(test)]
+#[path = "paint/tests.rs"]
+mod tests;
+
 const BACKGROUND: u32 = 0x0017_202d;
 const PANEL: u32 = 0x0020_2c3c;
 const BAR: u32 = 0x0029_374a;
@@ -235,21 +239,22 @@ fn paint_operation(paint: &mut Pixels<'_>, operation: Operation<'_>) {
 }
 
 fn paint_pane(paint: &mut Pixels<'_>, pane: PanePaintRecord<'_>) {
-    paint.fill(rect(pane.bounds()), PANEL);
-    let bounds = intersect(rect(pane.content_bounds()), rect(pane.bounds()));
+    let bounds = rect(pane.layout_bounds());
+    let clip = rect(pane.clip());
+    paint.fill_clipped(bounds, clip, PANEL);
     let item = pane.item();
     let color = accent(item);
     paint.fill_clipped(
         [bounds[0], bounds[1], bounds[0] + 3.0, bounds[3]],
-        bounds,
+        clip,
         color,
     );
     let content = inset(bounds, 16.0);
-    paint.text_at(content[0], content[1], bounds, title(item), color);
+    paint.text_at(content[0], content[1], clip, title(item), color);
     paint.text_at(
         content[0],
         content[1] + 28.0,
-        content,
+        intersect(content, clip),
         pane_content(item),
         TEXT,
     );

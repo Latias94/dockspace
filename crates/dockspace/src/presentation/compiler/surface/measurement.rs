@@ -20,6 +20,7 @@ use crate::presentation::tab_strip::{TabStripStateKey, TabStripStateStore};
 
 pub(super) struct RootLayoutMeasurement<'workspace> {
     pub(super) pane_sizings: BTreeMap<PaneSizingKey, PaneSizing>,
+    pub(super) tab_bar_visibility: BTreeMap<NodeId, TabBarVisibility>,
     pub(super) layout: RootMeasurement<'workspace>,
 }
 
@@ -33,14 +34,35 @@ pub(super) fn measure_root_layout<'workspace>(
 ) -> Result<RootLayoutMeasurement<'workspace>, SceneCompilationError> {
     let surface = requirements.ticket().surface();
     let pane_sizings = root_pane_sizing_measurements(requirements, measurements, root)?;
-    let (sizing, insets) = root_leaf_sizing(
-        workspace,
-        config,
-        requirements,
-        root,
-        &pane_sizings,
-        tab_strip_states,
-    )?;
+    let measured = pane_sizings
+        .iter()
+        .map(|(key, sizing)| (key.item(), *sizing))
+        .collect();
+    let mut tab_bar_visibility = BTreeMap::new();
+    let topology = workspace
+        .root_structure(root)
+        .ok_or(LayoutError::UnfinishedRoot { root })?;
+    for node in &topology.nodes {
+        if matches!(workspace.node(node.id), Some(Node::Tabs { .. }))
+            && workspace.node_has_visible_content(node.id)
+        {
+            let id = TabBarSceneId {
+                root,
+                tabs: node.id,
+            };
+            let requirement = requirements
+                .tab_bar(id)
+                .ok_or(SceneCompilationError::MissingTabBarRequirement { id })?;
+            tab_bar_visibility.insert(
+                node.id,
+                requirement
+                    .resolved_policy(surface, tab_strip_states)
+                    .visibility(),
+            );
+        }
+    }
+    let (sizing, insets) =
+        compose_root_sizing(workspace, root, config, &measured, &tab_bar_visibility)?;
     let layout = measure_root_sizing(
         workspace,
         root,
@@ -68,6 +90,7 @@ pub(super) fn measure_root_layout<'workspace>(
     .with_tab_content_insets(&insets);
     Ok(RootLayoutMeasurement {
         pane_sizings,
+        tab_bar_visibility,
         layout,
     })
 }
@@ -87,44 +110,6 @@ fn root_pane_sizing_measurements(
                 .ok_or(SceneCompilationError::MissingPaneSizingMeasurement { key })
         })
         .collect()
-}
-
-fn root_leaf_sizing(
-    workspace: &Workspace,
-    config: &DockPresentationConfig,
-    requirements: &SurfaceRequirements,
-    root: RootId,
-    pane_sizings: &BTreeMap<PaneSizingKey, PaneSizing>,
-    tab_strip_states: &TabStripStateStore,
-) -> Result<(BTreeMap<NodeId, PaneSizing>, BTreeMap<NodeId, f64>), SceneCompilationError> {
-    let measured = pane_sizings
-        .iter()
-        .map(|(key, sizing)| (key.item(), *sizing))
-        .collect();
-    let mut visibility = BTreeMap::new();
-    let topology = workspace
-        .root_structure(root)
-        .ok_or(LayoutError::UnfinishedRoot { root })?;
-    for node in &topology.nodes {
-        if matches!(workspace.node(node.id), Some(Node::Tabs { .. }))
-            && workspace.node_has_visible_content(node.id)
-        {
-            let id = TabBarSceneId {
-                root,
-                tabs: node.id,
-            };
-            let requirement = requirements
-                .tab_bar(id)
-                .ok_or(SceneCompilationError::MissingTabBarRequirement { id })?;
-            visibility.insert(
-                node.id,
-                requirement
-                    .resolved_policy(requirements.ticket().surface(), tab_strip_states)
-                    .visibility(),
-            );
-        }
-    }
-    compose_root_sizing(workspace, root, config, &measured, &visibility)
 }
 
 /// Composes the active child constraints while retaining sizing for every eligible item.

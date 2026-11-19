@@ -222,6 +222,73 @@ fn an_application_can_embed_its_own_ids_views_and_owned_titles(cx: &mut TestAppC
 }
 
 #[open_gpui::test]
+fn clipped_floating_content_keeps_application_layout_and_clips_its_input(cx: &mut TestAppContext) {
+    use dockspace::{
+        geometry::LogicalRect,
+        model::{DockspaceContainedLayout, FloatingPresentationId},
+    };
+    use open_gpui::{Bounds, Pixels};
+
+    cx.defer_next_window_frame_requests();
+    let mut original: Option<(Bounds<Pixels>, Bounds<Pixels>)> = None;
+    for top in [80.0, -80.0] {
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(RootId::new(37), DockspaceNode::central_tabs([FIRST])),
+        )
+        .with_contained(DockspaceContainedLayout::new(
+            FloatingPresentationId::new(1),
+            DockspaceRootLayout::new(RootId::new(38), DockspaceNode::tabs([SECOND])),
+            LogicalRect::new(200.0, top, 300.0, 240.0).unwrap(),
+        ))])
+        .unwrap();
+        let mut policy = DockPolicy::default();
+        policy.set_close_capability(CloseCapability::Disabled);
+        policy.set_allow_native_surfaces(false);
+        let session = DockspaceSession::from_layout(layout, policy).unwrap();
+        let (dock, views) = cx.update(|app| {
+            let views = [FIRST, SECOND].map(|item| app.new(|_| Content { item, clicks: 0 }));
+            let panes = [FIRST, SECOND]
+                .into_iter()
+                .zip(&views)
+                .map(|(item, view)| DockPane::new(item, "Document", view.clone()));
+            (
+                GpuiDockspace::new(session, SURFACE, panes, GpuiDockspaceConfig::default(), app)
+                    .unwrap(),
+                views,
+            )
+        });
+        let window = cx.open_window(size(px(1100.0), px(760.0)), |_, _| Embedded {
+            dock: dock.clone(),
+            visible: Rc::new(Cell::new(true)),
+        });
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        visual.update(|window, _| {
+            let _ = window.activate_window();
+        });
+        frames(&mut visual, &dock);
+        let pane = visual.debug_bounds("application-pane:509").unwrap();
+        let button = visual.debug_bounds("application-button:509").unwrap();
+        if let Some((old_pane, old_button)) = original {
+            assert_eq!(pane.size, old_pane.size);
+            assert_eq!(pane.origin, old_pane.origin - point(px(0.0), px(160.0)));
+            assert_eq!(button.size, old_button.size);
+            assert_eq!(button.origin, old_button.origin - point(px(0.0), px(160.0)));
+            assert!(
+                button.center().y < px(20.0),
+                "the test click must be above the host clip"
+            );
+            visual.simulate_click(button.center(), Modifiers::default());
+            frames(&mut visual, &dock);
+            assert_eq!(views[1].read_with(&visual, |pane, _| pane.clicks), 0);
+            assert!(!dock.has_active_gesture());
+        } else {
+            original = Some((pane, button));
+        }
+    }
+}
+
+#[open_gpui::test]
 fn removing_and_reinserting_the_host_keeps_application_views_alive(cx: &mut TestAppContext) {
     cx.defer_next_window_frame_requests();
     let (dock, views) = cx.update(|app| host(app, GpuiDockspaceConfig::default()));
