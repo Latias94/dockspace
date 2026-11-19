@@ -11,7 +11,48 @@ const SURFACE: SurfaceId = SurfaceId::new(1);
 const ROOT: RootId = RootId::new(1);
 const FLOATING_ROOT: RootId = RootId::new(2);
 
+#[test]
+fn animating_a_split_keeps_a_clipped_floating_panes_layout_bounds() {
+    let outer = LogicalRect::new(-80.0, -43.0, 280.0, 240.0).unwrap();
+    let (workspace, policy, manifest, target) = fixture_with_contained_bounds(outer);
+    let pane = moving_pane(&target);
+    let sampled = materialize_presentation_sample(
+        &workspace,
+        &policy,
+        &manifest,
+        &TabStripStateStore::default(),
+        &target,
+        &BTreeMap::from([(
+            pane.id(),
+            LogicalRect::new(80.0, 40.0, 300.0, 240.0).unwrap(),
+        )]),
+        &BTreeMap::new(),
+    )
+    .unwrap();
+    let floating_pane = |plan: &PresentationPlan| {
+        plan.pane_records()
+            .iter()
+            .find(|pane| pane.id().root == FLOATING_ROOT)
+            .map(|pane| (pane.layout_bounds(), pane.clip()))
+            .unwrap()
+    };
+    let (layout, clip) = floating_pane(&target);
+    assert!(layout.x() < clip.x());
+    assert_eq!(floating_pane(&sampled), (layout, clip));
+}
+
 fn fixture() -> (
+    Workspace,
+    DockPolicySnapshot,
+    SceneRequirementManifest,
+    PresentationPlan,
+) {
+    fixture_with_contained_bounds(LogicalRect::new(500.0, 320.0, 280.0, 240.0).unwrap())
+}
+
+fn fixture_with_contained_bounds(
+    outer: LogicalRect,
+) -> (
     Workspace,
     DockPolicySnapshot,
     SceneRequirementManifest,
@@ -27,13 +68,7 @@ fn fixture() -> (
     let floating_tabs = builder.insert_node(Node::tabs([ItemId::new(5), ItemId::new(6)]));
     builder.set_root(FLOATING_ROOT, RootRecord::new(floating_tabs));
     let floating = FloatingPresentationId::new(1);
-    builder.set_contained_floating(
-        floating,
-        ContainedFloating::new(
-            FLOATING_ROOT,
-            LogicalRect::new(500.0, 320.0, 280.0, 240.0).unwrap(),
-        ),
-    );
+    builder.set_contained_floating(floating, ContainedFloating::new(FLOATING_ROOT, outer));
     builder.attach_contained(SURFACE, floating).unwrap();
     let workspace = builder.build().unwrap();
     let policy = DockPolicy::default().snapshot(PolicyRevision::new(1));

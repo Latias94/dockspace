@@ -29,7 +29,7 @@ pub(super) fn compile_contained_record(
     surface_bounds: LogicalRect,
     minimum_size: LogicalSize,
     layer: SceneLayerKey,
-) -> Result<(ContainedRecord, PresentationMenuAnchorRecord), SceneCompilationError> {
+) -> Result<(ContainedRecord, PresentationMenuAnchorRecord, LogicalRect), SceneCompilationError> {
     let border = config
         .floating_border_width()
         .min(durable_outer.width() * 0.5)
@@ -136,7 +136,7 @@ pub(super) fn compile_contained_record(
         Some(bounds) => PresentationMenuAnchorRecord::ready(root, host, bounds, layer),
         None => PresentationMenuAnchorRecord::compacted(root, host, layer),
     };
-    Ok((contained, presentation_menu))
+    Ok((contained, presentation_menu, durable_content))
 }
 
 fn root_has_content(

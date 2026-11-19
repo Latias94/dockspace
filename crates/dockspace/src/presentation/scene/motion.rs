@@ -134,7 +134,7 @@ impl PresentationPlan {
         let bounds = self.bounds();
         let content = self.content_mut();
         for pane in &content.pane_records {
-            if !contains(bounds, pane.bounds()) || !contains(pane.bounds(), pane.content_bounds()) {
+            if !contains(bounds, pane.clip()) {
                 return Err(SceneBuildError::InvalidPaneRecord {
                     surface,
                     id: pane.id(),

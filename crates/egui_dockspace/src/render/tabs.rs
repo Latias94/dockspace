@@ -93,7 +93,10 @@ pub(crate) fn paint_pane(
     let _response =
         context.interact_receiver(pane_rect, pane_id, Sense::click_and_drag(), pane_receiver);
     let item = pane.item();
-    let Some(content_rect) = inset_ui_rect(pane_rect) else {
+    if !pane_rect.is_positive() {
+        return;
+    }
+    let Some(content_rect) = egui_rect(pane.layout_bounds()).and_then(inset_ui_rect) else {
         return;
     };
     // Content follows the item when docking changes its slot or parent Ui.
@@ -167,7 +170,9 @@ pub(crate) fn paint_pane(
                                 && widget.layer_id == child_ui.layer_id()
                                 && widget.rect.is_finite()
                                 && widget.rect.is_positive()
-                                && pane_rect.contains_rect(widget.rect)
+                                && content_rect.contains_rect(widget.rect)
+                                && widget.interact_rect.is_positive()
+                                && clip.contains_rect(widget.interact_rect)
                         })
                 })
             });

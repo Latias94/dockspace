@@ -167,6 +167,10 @@ while keeping that UI's own drawing, event delivery and presentation boundary.
 Applications using egui should start with its public runner or complete-output
 facade instead of reproducing these adapter internals.
 
+Size and position pane content with `PanePaintRecord::layout_bounds()`. Use
+`clip()` for the visible paint and input region. This keeps content layout
+stable when a contained window moves partly outside its surface.
+
 Application commands submitted through a host frame return a
 `DockspaceSubmittedAction`. Keep each identity when batching commands, then use
 `HostFrameReport::submitted_action_outcome` to obtain its exact committed result.
@@ -180,10 +184,10 @@ ordered selection, visibility, membership, placement and close details. Split ra
 contained bounds can change without a detailed event. For debounced document
 persistence, use `notification.document_changed()`: it also covers committed
 native-window placement without advancing the docking-layout version.
-`native_window_placement_changed()` reports known outer bounds, client size,
-native scale, first-live admission and physical placement becoming observable
-again. Known physical placement is saved and reported even if presentation
-scale is unavailable; this does not grant input or render-coordinate authority.
+`native_window_placement_changed()` reports changes to the last visible outer
+bounds, physical client size or native scale, as well as first-live admission.
+Physical placement is tracked even when presentation scale is unavailable.
+Returning to the same bounds after minimizing leaves the saved placement intact.
 Renderer zoom and focus do not independently trigger a save. Rejected/no-op
 actions, pending close decisions, pure rendering and unpublished frames do not
 dirty the layout. Hosts own notification delivery and storage; core retains no
@@ -1253,10 +1257,12 @@ For managed native document restoration, use
 `frame.submit_native_document_restore(&restore, root_surface)` as the frame's
 terminal input. It commits the document and explicit Child creation intents
 together while preserving declared surface/recovery-host identities. The retained external Root may
-omit its saved role declaration; every additional surface must declare Child
-hosting to that Root and a positive saved outer placement. Another retained
-external Root cannot silently become a Child. Ordinary `submit_document_restore`
-keeps native declarations inert.
+omit its saved role declaration. Every additional surface must declare Child
+hosting to that Root and a positive saved outer placement. When issuing a Child
+creation request, core checks the current work-area roster. A saved window that
+is entirely off-screen is fitted into the nearest known work area. Saved bounds
+are kept when the window overlaps a work area or the roster is unknown.
+Ordinary `submit_document_restore` keeps native declarations inert.
 
 To replace the logical host itself while retaining an external Root window, use
 `frame.submit_native_layout_reset(&reset, existing_root, incoming_root)` or the
@@ -1506,8 +1512,10 @@ no exact physical outer rectangle has been observed. Purely logical surfaces do
 not acquire a native role from their main-root shape or an old placement hint.
 Saving captures current exact roles and child recovery ownership, retains
 declared preferences for unbound surfaces, and removes rows whose logical surface
-no longer exists. Placement hints capture confirmed physical outer bounds,
-client size and native scale; they grant no current coordinate authority.
+no longer exists. Placement hints capture the last confirmed visible outer
+bounds, physical client size and native scale for the window's current lifetime.
+Saving while a Child is minimized writes those bounds even on the first save.
+Live input and rendering coordinates still require current observations.
 
 Use `surface_presentation_preferences()` on `DockspaceSession`,
 `PreparedDockspaceDocumentRestore` or `DockspaceHostFrame` to inspect the same
@@ -1544,12 +1552,14 @@ preparation and first-live presentation.
 `HostFrameReport::manipulation_feedback()` exposes committed pending and terminal
 results without exposing graph, receiver-proof or reducer internals. A consumed
 release may publish `Pending(AwaitingPresentation)` before the exact preview is
-presented. Its later delivered or cancelled result carries the same opaque
-`manipulation_id()` and a distinct `id()`. Use the latter to deduplicate repeated
-reads or announcements. Motion alone produces no feedback; reading a result
-never moves focus or replaces pane content. `disable_host_pointer` returns any
-committed cancellation on its retirement outcome, including a release already
-waiting for presentation.
+presented. If the drag requests a native window, `Delivered(Native)` marks
+the handoff after exact first-live presentation. A cancellation or rejection
+during creation also settles the original gesture. Pending and terminal results
+carry the same opaque `manipulation_id()` and distinct `id()` values. Use `id()`
+to deduplicate repeated reads or announcements. Motion alone produces no
+feedback. Reading a result never moves focus or replaces pane content.
+`disable_host_pointer` returns committed cancellation on its retirement outcome,
+including a release already waiting for presentation.
 
 Core focus requests identify `DockspaceFocusTarget::Pane(item)` or `Workspace`.
 A focused tab close chooses the next visual tab, or the previous tab at the end;

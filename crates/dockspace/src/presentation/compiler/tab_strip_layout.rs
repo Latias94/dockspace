@@ -2,11 +2,45 @@
 
 use std::collections::BTreeSet;
 
-use super::SceneCompilationError;
-use crate::geometry::{GeometryError, LogicalRect};
+use super::{SceneCompilationError, surface::clip_rect};
+use crate::geometry::{GeometryError, LogicalPoint, LogicalRect};
 use crate::graph::{Node, Workspace};
 use crate::ids::{NodeId, RootId, SurfaceId};
 use crate::presentation::config::DockPresentationConfig;
+
+pub(crate) struct TabLeafBounds {
+    pub(crate) bounds: LogicalRect,
+    pub(crate) header: LogicalRect,
+    pub(crate) content: LogicalRect,
+    pub(crate) content_allocation: LogicalRect,
+}
+
+pub(crate) fn tab_leaf_bounds(
+    allocation: LogicalRect,
+    clip: LogicalRect,
+    header_height: f64,
+    sampled_content_top: Option<f64>,
+) -> Result<TabLeafBounds, GeometryError> {
+    let content_top = sampled_content_top.map_or_else(
+        || allocation.inset_top(header_height).map(LogicalRect::y),
+        |top| Ok(top.clamp(allocation.y(), allocation.max().y())),
+    )?;
+    // Preserve the shared edge exactly, including when only part of the header is visible.
+    let header = LogicalRect::from_min_max(
+        allocation.min(),
+        LogicalPoint::new(allocation.max().x(), content_top)?,
+    )?;
+    let content_allocation = LogicalRect::from_min_max(
+        LogicalPoint::new(allocation.x(), content_top)?,
+        allocation.max(),
+    )?;
+    Ok(TabLeafBounds {
+        bounds: clip_rect(allocation, clip)?,
+        header: clip_rect(header, clip)?,
+        content: clip_rect(content_allocation, clip)?,
+        content_allocation,
+    })
+}
 
 pub(crate) fn reveal_tab_bar_bounds(
     pane: LogicalRect,

@@ -8,8 +8,8 @@ use thiserror::Error;
 use super::surface::{
     clip_rect, compose_root_sizing, operable_tab_chrome, tab_strip_optional_chrome_layout,
 };
-use super::tab_strip_layout::{TabStripFlow, desired_tab_width, select_menu_host};
-use crate::geometry::{GeometryError, LogicalPoint, LogicalRect, PaneSizing};
+use super::tab_strip_layout::{TabStripFlow, desired_tab_width, select_menu_host, tab_leaf_bounds};
+use crate::geometry::{GeometryError, LogicalRect, PaneSizing};
 use crate::graph::command::{MovePayload, TabTarget};
 use crate::graph::error::CommandError;
 use crate::graph::workspace::RootPresentationOwner;
@@ -177,8 +177,13 @@ pub(crate) fn project_future_root(
     )?
     .with_tab_content_insets(&insets)
     .project(
-        super::root_controls_layout(workspace, root, target_root.bounds(), target_facts.config())?
-            .map_or(target_root.bounds(), |controls| controls.content),
+        super::root_controls_layout(
+            workspace,
+            root,
+            target_root.allocation(),
+            target_facts.config(),
+        )?
+        .map_or(target_root.allocation(), |controls| controls.content),
         &[],
     )
     .map(Some)
@@ -214,13 +219,11 @@ pub(crate) fn project_future_tab_strip(
             root: target.root(),
             node: target.tabs(),
         })?;
-    let root_bounds = target_facts
-        .root(target.root())
-        .ok_or(FutureLayoutProjectionError::TargetRootNotPresented {
+    let target_root = target_facts.root(target.root()).ok_or(
+        FutureLayoutProjectionError::TargetRootNotPresented {
             root: target.root(),
-        })?
-        .bounds();
-    let node_bounds = clip_rect(projected_bounds, root_bounds)?;
+        },
+    )?;
     let Node::Tabs { .. } =
         candidate
             .node(target.tabs())
@@ -244,7 +247,20 @@ pub(crate) fn project_future_tab_strip(
         target.root(),
         target.tabs(),
     )?;
-    if target_policy.visibility() == TabBarVisibility::Hidden {
+    let height = if target_policy.visibility() == TabBarVisibility::Visible {
+        config.tab_bar_height()
+    } else {
+        0.0
+    };
+    let geometry = tab_leaf_bounds(
+        clip_rect(projected_bounds, target_root.allocation())?,
+        target_root.bounds(),
+        height,
+        None,
+    )?;
+    let node_bounds = geometry.bounds;
+    let bar = geometry.header;
+    if bar.width() <= 0.0 || bar.height() <= 0.0 {
         return Ok(FutureTabStripProjection {
             insertion: node_bounds,
             strip: None,
@@ -268,20 +284,6 @@ pub(crate) fn project_future_tab_strip(
             });
         }
     };
-
-    let bar = LogicalRect::from_min_max(
-        node_bounds.min(),
-        LogicalPoint::new(
-            node_bounds.max().x(),
-            node_bounds.inset_top(config.tab_bar_height())?.y(),
-        )?,
-    )?;
-    if bar.width() <= 0.0 || bar.height() <= 0.0 {
-        return Ok(FutureTabStripProjection {
-            insertion: node_bounds,
-            strip: None,
-        });
-    }
 
     let strip_key = TabStripKey::new(
         target.surface(),
@@ -459,18 +461,16 @@ fn future_presentation_menu_tab_bar(
             .get(&tabs)
             .map(|result| result.rect)
             .ok_or(FutureLayoutProjectionError::MissingNodeProjection { root, node: tabs })?;
-        let root_bounds = target_facts
+        let target_root = target_facts
             .root(root)
-            .ok_or(FutureLayoutProjectionError::TargetRootNotPresented { root })?
-            .bounds();
-        let node_bounds = clip_rect(projected_bounds, root_bounds)?;
-        let bar = LogicalRect::from_min_max(
-            node_bounds.min(),
-            LogicalPoint::new(
-                node_bounds.max().x(),
-                node_bounds.inset_top(config.tab_bar_height())?.y(),
-            )?,
-        )?;
+            .ok_or(FutureLayoutProjectionError::TargetRootNotPresented { root })?;
+        let bar = tab_leaf_bounds(
+            clip_rect(projected_bounds, target_root.allocation())?,
+            target_root.bounds(),
+            config.tab_bar_height(),
+            None,
+        )?
+        .header;
         if bar.width() <= 0.0 || bar.height() <= 0.0 {
             return Ok(None);
         }

@@ -209,6 +209,7 @@ impl DockEngine {
         let count = target.pane_records().len();
         for (ordinal, pane) in target.pane_records().iter().enumerate() {
             let item = pane.id().item;
+            let layout_bounds = pane.layout_bounds();
             let mut motion = continuing
                 .and_then(|state| state.tracks.get(&item))
                 .filter(|track| track.root == pane.id().root)
@@ -223,10 +224,10 @@ impl DockEngine {
                         .filter(|(root, _)| *root == pane.id().root)
                         .map(|(_, rect)| RectMotion::new(*rect))
                 })
-                .unwrap_or_else(|| RectMotion::new(pane.bounds()));
-            motion.retarget(pane.bounds(), transition, frame.now);
+                .unwrap_or_else(|| RectMotion::new(layout_bounds));
+            motion.retarget(layout_bounds, transition, frame.now);
             let sample = motion.sample(frame.now);
-            let moving = sample.rect() != pane.bounds();
+            let moving = sample.rect() != layout_bounds;
             active |= sample.is_active();
             geometry_changed |= moving;
             rectangles.insert(pane.id(), sample.rect());
@@ -281,7 +282,7 @@ fn presented_panes(scene: &SurfacePlanScene) -> BTreeMap<ItemId, (RootId, Logica
         .plan()
         .pane_records()
         .iter()
-        .map(|pane| (pane.id().item, (pane.id().root, pane.bounds())))
+        .map(|pane| (pane.id().item, (pane.id().root, pane.layout_bounds())))
         .collect()
 }
 

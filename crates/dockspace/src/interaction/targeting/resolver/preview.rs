@@ -13,7 +13,7 @@ use crate::interaction::targeting::targets::{DropTargetKind, DropTargetRecord, D
 use crate::policy::DockPolicySnapshot;
 use crate::presentation::compiler::{
     FutureLayoutProjectionError, FutureTabStrip, candidate_tab_bar_policy, project_future_root,
-    project_future_tab_strip,
+    project_future_tab_strip, tab_leaf_bounds,
 };
 use crate::presentation::layout::{NodeMap, NodeResult};
 use crate::presentation::scene::{PresentationLayoutFacts, PresentationPlan};
@@ -231,13 +231,12 @@ fn projected_center_rect(
     let facts = target_plan
         .layout_facts()
         .ok_or(DropPreviewProjectionError::TargetLayoutFactsMissing)?;
-    let root_bounds = facts
-        .root(target.root())
-        .ok_or(FutureLayoutProjectionError::TargetRootNotPresented {
-            root: target.root(),
-        })?
-        .bounds();
-    let bounds = clip_rect(bounds, root_bounds)?;
+    let target_root =
+        facts
+            .root(target.root())
+            .ok_or(FutureLayoutProjectionError::TargetRootNotPresented {
+                root: target.root(),
+            })?;
     let tab_bar = candidate_tab_bar_policy(
         original,
         candidate,
@@ -251,7 +250,13 @@ fn projected_center_rect(
     } else {
         0.0
     };
-    Ok(bounds.inset_top(tab_height)?)
+    Ok(tab_leaf_bounds(
+        clip_rect(bounds, target_root.allocation())?,
+        target_root.bounds(),
+        tab_height,
+        None,
+    )?
+    .content)
 }
 
 fn projected_tabs_rect(

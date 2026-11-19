@@ -162,9 +162,7 @@ impl<'a> PresentationPlanValidator<'a> {
         let (record_order, drop_target_index) = validator.begin_validation(&ready)?;
         validate_contained_records(&ready, validator.workspace, &validator.workspace_index)?;
         for (id, record) in record_order.panes.iter(&ready.content.pane_records) {
-            if !rect_contains(ready.facts.bounds, record.bounds())
-                || !rect_contains(record.bounds(), record.content_bounds())
-            {
+            if !rect_contains(ready.facts.bounds, record.clip()) {
                 return Err(SceneBuildError::InvalidPaneRecord {
                     surface: ready.surface,
                     id,
@@ -1263,8 +1261,7 @@ fn validate_pane_and_tab_records(
         };
         if record.item() != *item
             || record.layer() != *layer
-            || !rect_contains(ready.facts.bounds, record.bounds())
-            || !rect_contains(record.bounds(), record.content_bounds())
+            || !rect_contains(ready.facts.bounds, record.clip())
         {
             return Err(SceneBuildError::InvalidPaneRecord {
                 surface: ready.surface,
@@ -1372,12 +1369,14 @@ fn validate_tab_records(
             id,
         });
     }
+    let expects_header = |pane: &TabsRecord| {
+        pane.bounds().width() > 0.0
+            && pane.content_bounds().y() > pane.bounds().y()
+            && pane_policy(pane).visibility() == TabBarVisibility::Visible
+    };
     let expected_bars = panes
         .iter(&ready.facts.tabs_records)
-        .filter(|(_, pane)| {
-            rect_has_area(pane.bounds())
-                && pane_policy(pane).visibility() == TabBarVisibility::Visible
-        })
+        .filter(|(_, pane)| expects_header(pane))
         .count();
     if bars.entries().len() != expected_bars {
         return Err(SceneBuildError::TabBarRecordSetMismatch {
@@ -1390,8 +1389,7 @@ fn validate_tab_records(
             tabs: id.tabs,
         };
         let tab_bar_policy = pane_policy(pane);
-        if !rect_has_area(pane.bounds()) || tab_bar_policy.visibility() == TabBarVisibility::Hidden
-        {
+        if !expects_header(pane) {
             if bar_exists(&bar_id) {
                 return Err(SceneBuildError::InvalidTabBarRecord {
                     surface: ready.surface,
@@ -2176,8 +2174,11 @@ fn validate_grid_splitter(
     // Boundary records use their Grid's local frame clipped to the root,
     // including overflow and rounding at the final track's far edge.
     let clip = clip_rect(
-        root.projection().nodes.get(&node).ok_or_else(invalid)?.rect,
-        root.content_bounds(),
+        clip_rect(
+            root.projection().nodes.get(&node).ok_or_else(invalid)?.rect,
+            root.content_bounds(),
+        )?,
+        root.bounds(),
     )?;
     let gap = before.following_gap.ok_or_else(invalid)?;
     let extents_match = record

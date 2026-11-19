@@ -16,7 +16,8 @@ use crate::interaction::targeting::targets::{
 };
 use crate::policy::{DockPolicySnapshot, TabBarInteraction, TabBarVisibility};
 use crate::presentation::compiler::tab_strip_layout::{
-    TabStripFlow, desired_tab_width, reveal_tab_bar_bounds, select_menu_host,
+    TabLeafBounds, TabStripFlow, desired_tab_width, reveal_tab_bar_bounds, select_menu_host,
+    tab_leaf_bounds,
 };
 pub(in crate::presentation::compiler) use crate::presentation::compiler::tab_strip_layout::{
     reveal_tab_range, tab_local_range,
@@ -72,13 +73,7 @@ pub(super) fn select_presentation_menu_tab_bar(
             .map(|result| result.rect)
             .ok_or(SceneCompilationError::MissingNodeProjection { root, node: tabs })?;
         let bounds = clip_rect(projected, root_bounds)?;
-        let bar = LogicalRect::from_min_max(
-            bounds.min(),
-            LogicalPoint::new(
-                bounds.max().x(),
-                bounds.inset_top(config.tab_bar_height())?.y(),
-            )?,
-        )?;
+        let bar = tab_leaf_bounds(bounds, root_bounds, config.tab_bar_height(), None)?.header;
         if !rect_has_area(bar) {
             return Ok(None);
         }
@@ -125,6 +120,7 @@ pub(super) fn compile_tabs_leaf(
     tabs: NodeId,
     depth: usize,
     bounds: LogicalRect,
+    clip: LogicalRect,
     content_top: Option<f64>,
     items: &[crate::ids::TabKey],
     persistent_items: &[crate::ids::TabKey],
@@ -138,7 +134,7 @@ pub(super) fn compile_tabs_leaf(
     emit_drop_targets: bool,
     active_ancestry: Option<usize>,
     ready: &mut PresentationPlan,
-) -> Result<LogicalRect, SceneCompilationError> {
+) -> Result<(LogicalRect, LogicalRect), SceneCompilationError> {
     let bar_id = TabBarSceneId { root, tabs };
     let tab_bar_requirement = requirements
         .tab_bar(bar_id)
@@ -149,21 +145,17 @@ pub(super) fn compile_tabs_leaf(
     } else {
         0.0
     };
-    // A sampled content edge stays fixed when part of its header is clipped.
-    let content_top = content_top
-        .filter(|_| resolved_policy.visibility() == TabBarVisibility::Visible)
-        .map_or_else(
-            || bounds.inset_top(tab_height).map(LogicalRect::y),
-            |top| Ok(top.clamp(bounds.y(), bounds.max().y())),
-        )?;
-    // Share the original edges: rebuilding a sampled maximum from a span can
-    // round the content outside its pane by one ULP.
-    let tab_bar = LogicalRect::from_min_max(
-        bounds.min(),
-        LogicalPoint::new(bounds.max().x(), content_top)?,
+    let TabLeafBounds {
+        bounds,
+        header: tab_bar,
+        content,
+        content_allocation,
+    } = tab_leaf_bounds(
+        bounds,
+        clip,
+        tab_height,
+        content_top.filter(|_| resolved_policy.visibility() == TabBarVisibility::Visible),
     )?;
-    let content =
-        LogicalRect::from_min_max(LogicalPoint::new(bounds.x(), content_top)?, bounds.max())?;
     ready.push_tabs_record(
         TabsRecord::new(bar_id, bounds, content, layer, active_ancestry),
         selected,
@@ -223,7 +215,7 @@ pub(super) fn compile_tabs_leaf(
             ready,
         )?;
     }
-    Ok(content)
+    Ok((content_allocation, content))
 }
 
 #[allow(clippy::too_many_arguments)]

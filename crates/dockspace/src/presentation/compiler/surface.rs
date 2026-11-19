@@ -193,6 +193,7 @@ fn compile_surface_scene(
             root,
             root_measurement,
             bounds,
+            bounds,
             SceneLayerKey::surface_base(),
             fraction,
             tab_strip_states,
@@ -243,7 +244,7 @@ fn compile_surface_scene(
         {
             continue;
         }
-        let (contained, presentation_menu_anchor) = compile_contained_record(
+        let (contained, presentation_menu_anchor, allocation) = compile_contained_record(
             workspace,
             policy,
             config,
@@ -277,6 +278,7 @@ fn compile_surface_scene(
                 surface,
                 record.root,
                 root_measurement,
+                allocation,
                 content,
                 layer,
                 fraction,
@@ -542,6 +544,7 @@ fn compile_root(
     surface: SurfaceId,
     root: RootId,
     root_measurement: RootLayoutMeasurement<'_>,
+    allocation: LogicalRect,
     bounds: LogicalRect,
     layer: SceneLayerKey,
     fraction: DockFraction,
@@ -563,10 +566,11 @@ fn compile_root(
         .copied()
         .filter(|override_| override_.source().root() == root)
         .collect::<Vec<_>>();
-    let controls = root_controls_layout(workspace, root, bounds, config)?;
+    let controls = root_controls_layout(workspace, root, allocation, config)?;
     let content_bounds = controls
         .as_ref()
-        .map_or(bounds, |controls| controls.content);
+        .map_or(allocation, |controls| controls.content);
+    let content_clip = clip_rect(content_bounds, bounds)?;
     if let Some(controls) = &controls {
         let host = PresentationMenuAnchorHost::RootControls;
         let anchor = match controls.menu {
@@ -600,6 +604,7 @@ fn compile_root(
     })?;
     ready.push_root_layout_facts(
         RootLayoutFacts::new(root, bounds, pane_sizings, Arc::clone(&projection))
+            .with_allocation(allocation)
             .with_node_labels(labels),
     );
     let mut node_contexts = BTreeMap::new();
@@ -677,7 +682,8 @@ fn compile_root(
         if !projected.visible {
             continue;
         }
-        let rect = clip_rect(projected.rect, content_bounds)?;
+        let allocation = clip_rect(projected.rect, content_bounds)?;
+        let rect = clip_rect(allocation, content_clip)?;
         match workspace
             .node(*node)
             .ok_or(SceneCompilationError::MissingNode {
@@ -697,7 +703,7 @@ fn compile_root(
                         })?;
                 let id = PaneSceneId { root, item: *item };
                 ready.push_pane_record(
-                    PaneRecord::new(id, *node, projected.slot, rect, layer).with_context(
+                    PaneRecord::new(id, *node, projected.slot, allocation, layer).with_context(
                         rect,
                         containing_bar,
                         ancestors,
@@ -735,7 +741,7 @@ fn compile_root(
                             root,
                             node: *node,
                         })?;
-                let content = compile_tabs_leaf(
+                let (content_allocation, content) = compile_tabs_leaf(
                     policy,
                     config,
                     requirements,
@@ -744,7 +750,8 @@ fn compile_root(
                     root,
                     *node,
                     depth,
-                    rect,
+                    allocation,
+                    content_clip,
                     None,
                     &items,
                     persistent_items,
@@ -767,11 +774,12 @@ fn compile_root(
                     ));
                     let id = PaneSceneId { root, item };
                     ready.push_pane_record(
-                        PaneRecord::new(id, *node, content, content, layer).with_context(
-                            content,
-                            Some(TabBarSceneId { root, tabs: *node }),
-                            branch,
-                        ),
+                        PaneRecord::new(id, *node, content_allocation, content_allocation, layer)
+                            .with_context(
+                                content,
+                                Some(TabBarSceneId { root, tabs: *node }),
+                                branch,
+                            ),
                     );
                     ready.push_surface_program_pane_operation(id)?;
                 }
@@ -829,7 +837,7 @@ fn compile_root(
                         owner: crate::presentation::scene::SplitterOwner::Split(*node),
                         index,
                     };
-                    let splitter = intersect_rect(bounds, splitter)?;
+                    let splitter = intersect_rect(rect, splitter)?;
                     ready.push_splitter_gap_record(SplitterGapRecord::new(
                         id,
                         if splitter.is_some() {
@@ -918,8 +926,8 @@ fn compile_root(
                             splitter,
                             HitRegion::new(hit),
                             *axis,
-                            clip_rect(*before, bounds)?,
-                            clip_rect(*after, bounds)?,
+                            clip_rect(*before, content_clip)?,
+                            clip_rect(*after, content_clip)?,
                             before_minimum_extent,
                             after_minimum_extent,
                             before_maximum_extent,

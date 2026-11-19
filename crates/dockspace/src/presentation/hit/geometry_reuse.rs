@@ -83,7 +83,6 @@ fn same_selection_geometry(
         || pane.containing_tab_bar() != previous_pane.containing_tab_bar()
         || pane.active_ancestry() != previous_pane.active_ancestry()
         || rect_bits(pane.slot()) != rect_bits(previous_pane.slot())
-        || rect_bits(pane.bounds()) != rect_bits(previous_pane.bounds())
         || rect_bits(pane.clip()) != rect_bits(previous_pane.clip())
         || pane.layer() != previous_pane.layer()
     {

@@ -47,7 +47,7 @@ mod requirements;
 mod surface;
 mod tab_strip_layout;
 
-pub(crate) use tab_strip_layout::reveal_tab_bar_bounds;
+pub(crate) use tab_strip_layout::{reveal_tab_bar_bounds, tab_leaf_bounds};
 
 pub(crate) use future_layout::{
     FutureLayoutProjectionError, FutureTab, FutureTabStrip, candidate_tab_bar_policy,

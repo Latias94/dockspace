@@ -47,6 +47,13 @@ impl PanePaintRecord<'_> {
         self.record.content_bounds()
     }
 
+    /// Returns the pane's layout rectangle before clipping it to the surface.
+    /// Size content using this rectangle and restrict painting and input to `clip()`.
+    #[must_use]
+    pub const fn layout_bounds(self) -> LogicalRect {
+        self.record.layout_bounds()
+    }
+
     #[must_use]
     pub const fn item(self) -> ItemId {
         self.record.item()

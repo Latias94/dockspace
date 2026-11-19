@@ -66,6 +66,70 @@ fn a_fractional_contained_header_that_fills_its_body_matches_the_committed_previ
 }
 
 #[test]
+fn a_contained_tab_header_above_the_surface_has_the_same_clip_in_preview_and_commit() {
+    let target_root = RootId::new(2);
+    let floating = FloatingPresentationId::new(1);
+    let policy = DockPolicy::default().snapshot(PolicyRevision::new(1));
+    let config = DockPresentationConfig::default();
+    let strip = TabStripMetrics::new(0.0, 0.0).unwrap();
+    let header_height = config.tab_bar_height();
+    for hidden_header_height in [header_height / 2.0, header_height + 4.0] {
+        let top =
+            -config.floating_border_width() - config.floating_title_height() - hidden_header_height;
+        let mut builder = Workspace::builder();
+        let source = builder.insert_node(Node::tabs([MOVED]));
+        let target = builder.insert_node(Node::tabs([ItemId::new(2)]));
+        builder.set_root(ROOT, RootRecord::new(source).with_central(source));
+        builder.set_root(target_root, RootRecord::new(target));
+        builder.set_surface(SURFACE, SurfacePresentation::with_main(ROOT));
+        builder.set_contained_floating(
+            floating,
+            ContainedFloating::new(
+                target_root,
+                LogicalRect::new(200.0, top, 400.0, 300.0).unwrap(),
+            ),
+        );
+        builder.attach_contained(SURFACE, floating).unwrap();
+        let mut workspace = builder.build().unwrap();
+        let mut states = TabStripStateStore::default();
+        let target_plan = compile(&workspace, &policy, &config, strip, &mut states);
+        let resolved = resolve_target(
+            &workspace,
+            &policy,
+            &target_plan,
+            &target_plan,
+            MovePayload::Item(workspace.capture_item_source(ROOT, source, MOVED).unwrap()),
+            DropTargetId::Center {
+                surface: SURFACE,
+                root: target_root,
+                tabs: target,
+            },
+        );
+        WorkspaceTransaction::from_commands([resolved.command().clone()])
+            .apply(&mut workspace, &policy)
+            .unwrap();
+        let committed = compile(&workspace, &policy, &config, strip, &mut states);
+        let pane = committed
+            .pane_records()
+            .iter()
+            .find(|pane| pane.item() == MOVED)
+            .unwrap();
+        assert_eq!(resolved.visual().rect(), pane.content_bounds());
+        if hidden_header_height < header_height {
+            assert_future_tabs_match_committed(&resolved, &committed, target, &[MOVED]);
+        } else {
+            assert!(resolved.preview_tab_strip().is_none());
+            assert!(
+                committed
+                    .tab_bar_records()
+                    .iter()
+                    .all(|bar| bar.id().tabs != target)
+            );
+        }
+    }
+}
+
+#[test]
 fn central_preview_uses_the_explicit_allocation_and_matches_committed_geometry() {
     for allocation in [RootAllocation::Weighted, RootAllocation::PreferCentral] {
         let source_surface = SurfaceId::new(2);

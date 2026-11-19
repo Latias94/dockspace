@@ -88,7 +88,7 @@ pub struct PaneRecord {
     id: PaneSceneId,
     owner_node: NodeId,
     slot: LogicalRect,
-    bounds: LogicalRect,
+    layout_bounds: LogicalRect,
     clip: LogicalRect,
     layer: SceneLayerKey,
     containing_bar: Option<TabBarSceneId>,
@@ -100,15 +100,15 @@ impl PaneRecord {
         id: PaneSceneId,
         owner_node: NodeId,
         slot: LogicalRect,
-        bounds: LogicalRect,
+        layout_bounds: LogicalRect,
         layer: SceneLayerKey,
     ) -> Self {
         Self {
             id,
             owner_node,
             slot,
-            bounds,
-            clip: bounds,
+            layout_bounds,
+            clip: layout_bounds,
             layer,
             containing_bar: None,
             active_ancestry: None,
@@ -150,15 +150,20 @@ impl PaneRecord {
     pub(crate) const fn slot(&self) -> LogicalRect {
         self.slot
     }
-    /// Returns the actual content frame after applying its sizing caps.
+    /// Returns the visible content frame.
     #[must_use]
     pub const fn bounds(&self) -> LogicalRect {
-        self.bounds
+        self.clip
     }
-    /// Returns the actual content frame.
+    /// Returns the visible content frame.
     #[must_use]
     pub const fn content_bounds(&self) -> LogicalRect {
-        self.bounds
+        self.clip
+    }
+    /// Returns the content frame after applying sizing caps, before surface clipping.
+    #[must_use]
+    pub const fn layout_bounds(&self) -> LogicalRect {
+        self.layout_bounds
     }
     /// Returns the exact content clip.
     #[must_use]

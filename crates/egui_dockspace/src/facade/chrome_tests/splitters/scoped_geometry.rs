@@ -59,6 +59,10 @@ impl GeometryHarness {
             DockspaceRootLayout::new(ROOT, content),
         )])
         .unwrap();
+        Self::with_layout(layout, size, sizing)
+    }
+
+    fn with_layout(layout: DockspaceLayout, size: egui::Vec2, sizing: PaneSizing) -> Self {
         let context = Context::default();
         context.all_styles_mut(|style| style.animation_time = 0.0);
         Self {
@@ -110,6 +114,57 @@ impl GeometryHarness {
         for _ in 0..3 {
             self.run(Vec::new());
         }
+    }
+}
+
+#[test]
+fn clipping_a_translated_contained_grid_preserves_its_layout_and_junction_hit() {
+    use std::num::NonZeroUsize;
+
+    use crate::{DockspaceContainedLayout, FloatingPresentationId, SplitterKind};
+
+    let grid = DockspaceNode::grid(
+        DockspaceGridShape::Fixed {
+            rows: NonZeroUsize::new(2).unwrap(),
+            columns: NonZeroUsize::new(2).unwrap(),
+        },
+        (1..=4).map(|item| DockspaceNode::pane(ItemId::new(item))),
+    )
+    .unwrap();
+    let mut baseline = None;
+    for left in [0.0, -80.0] {
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(ROOT, DockspaceNode::tabs([ItemId::new(50)])),
+        )
+        .with_contained(DockspaceContainedLayout::new(
+            FloatingPresentationId::new(1),
+            DockspaceRootLayout::new(RootId::new(2), grid.clone()),
+            crate::LogicalRect::new(left, 100.0, 404.0, 304.0).unwrap(),
+        ))])
+        .unwrap();
+        let size = vec2(904.0, 524.0);
+        let mut harness = GeometryHarness::with_layout(layout, size, PaneSizing::default());
+        harness.bounds = Rect::from_min_size(Pos2::ZERO, size);
+        harness.settle();
+        let junction = *harness
+            .panes
+            .splitters
+            .iter()
+            .find(|splitter| splitter.kind == SplitterKind::Junction)
+            .unwrap();
+        let right_cell = harness.panes.panes[&B];
+        let (center, cell) = *baseline.get_or_insert((junction.rect.center(), right_cell));
+        let translation = vec2(left as f32, 0.0);
+        assert_eq!(junction.rect.center(), center + translation);
+        assert_eq!(right_cell, cell.translate(translation));
+        harness.run(vec![Event::PointerMoved(center + translation)]);
+        assert_eq!(
+            harness
+                .context
+                .viewport(|viewport| viewport.hits.drag.map(|hit| hit.id)),
+            Some(junction.id)
+        );
     }
 }
 

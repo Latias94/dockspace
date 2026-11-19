@@ -38,7 +38,7 @@ pub(crate) fn materialize_presentation_sample(
         .filter(|pane| {
             rects
                 .get(&pane.id())
-                .is_some_and(|rect| *rect != pane.bounds())
+                .is_some_and(|rect| *rect != pane.layout_bounds())
         })
         .map(|pane| pane.id().root)
         .collect::<BTreeSet<_>>();
@@ -112,21 +112,27 @@ pub(crate) fn materialize_presentation_sample(
                                     surface,
                                     root: id.root,
                                 })?;
-                        let sampled_bounds = pane
-                            .and_then(|pane| rects.get(&pane.id()).copied())
-                            .map(|rect| {
-                                let inset =
-                                    tabs_record.content_bounds().y() - tabs_record.bounds().y();
+                        let projected = root_layout.projection().nodes.get(&id.tabs).ok_or(
+                            SceneCompilationError::MissingNodeProjection {
+                                root: id.root,
+                                node: id.tabs,
+                            },
+                        )?;
+                        let allocation = clip_rect(projected.rect, root_layout.content_bounds())?;
+                        let sample = pane.and_then(|pane| {
+                            rects.get(&pane.id()).copied().map(|rect| (pane, rect))
+                        });
+                        let sampled_bounds = sample
+                            .map(|(pane, rect)| {
+                                let inset = pane.layout_bounds().y() - allocation.y();
                                 LogicalRect::from_min_max(
                                     LogicalPoint::new(rect.x(), rect.y() - inset)?,
                                     rect.max(),
                                 )
                             })
                             .transpose()?
-                            .unwrap_or_else(|| tabs_record.bounds());
-                        let content_top = pane
-                            .and_then(|pane| rects.get(&pane.id()))
-                            .map_or(tabs_record.content_bounds().y(), |rect| rect.y());
+                            .unwrap_or(allocation);
+                        let content_top = sample.map(|(_, rect)| rect.y());
                         let sizing = selected
                             .and_then(crate::ids::TabKey::item)
                             .map(|item| {
@@ -137,16 +143,7 @@ pub(crate) fn materialize_presentation_sample(
                             })
                             .transpose()?
                             .unwrap_or_default();
-                        let maximum = root_layout
-                            .projection()
-                            .nodes
-                            .get(&id.tabs)
-                            .ok_or(SceneCompilationError::MissingNodeProjection {
-                                root: id.root,
-                                node: id.tabs,
-                            })?
-                            .constraints
-                            .max();
+                        let maximum = projected.constraints.max();
                         let capped_bounds = LogicalRect::from_min_max(
                             sampled_bounds.min(),
                             LogicalPoint::new(
@@ -166,7 +163,6 @@ pub(crate) fn materialize_presentation_sample(
                                     }),
                             )?,
                         )?;
-                        let bounds = clip_rect(capped_bounds, root_layout.bounds())?;
                         let presentation_menu_anchor = target
                             .presentation_menu_anchor_records()
                             .iter()
@@ -177,7 +173,7 @@ pub(crate) fn materialize_presentation_sample(
                                         tabs: id.tabs,
                                     })
                             });
-                        let content = compile_tabs_leaf(
+                        let (content_allocation, content) = compile_tabs_leaf(
                             policy,
                             layout.config(),
                             requirements,
@@ -186,8 +182,9 @@ pub(crate) fn materialize_presentation_sample(
                             id.root,
                             id.tabs,
                             0,
-                            bounds,
-                            Some(content_top),
+                            capped_bounds,
+                            root_layout.bounds(),
+                            content_top,
                             &items,
                             persistent_items,
                             selected,
@@ -215,8 +212,8 @@ pub(crate) fn materialize_presentation_sample(
                                 PaneRecord::new(
                                     pane_id,
                                     id.tabs,
-                                    content,
-                                    content,
+                                    content_allocation,
+                                    content_allocation,
                                     tabs_record.layer(),
                                 )
                                 .with_context(

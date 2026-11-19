@@ -123,6 +123,7 @@ impl PresentationLayoutFacts {
 pub(crate) struct RootLayoutFacts {
     root: RootId,
     bounds: LogicalRect,
+    allocation: LogicalRect,
     pane_sizings: BTreeMap<PaneSizingKey, PaneSizing>,
     projection: Arc<LayoutProjection>,
     labels: Option<NodeMap<super::FrozenTabLabel>>,
@@ -138,10 +139,16 @@ impl RootLayoutFacts {
         Self {
             root,
             bounds,
+            allocation: bounds,
             pane_sizings,
             projection,
             labels: None,
         }
+    }
+
+    pub(crate) const fn with_allocation(mut self, allocation: LogicalRect) -> Self {
+        self.allocation = allocation;
+        self
     }
 
     pub(crate) fn with_node_labels(mut self, labels: NodeMap<super::FrozenTabLabel>) -> Self {
@@ -164,13 +171,17 @@ impl RootLayoutFacts {
         self.bounds
     }
 
+    pub(crate) const fn allocation(&self) -> LogicalRect {
+        self.allocation
+    }
+
     /// Returns the actual root allocation after reserving independent controls.
     pub(crate) fn content_bounds(&self) -> LogicalRect {
         self.projection
             .nodes
             .iter_preorder()
             .next()
-            .map_or(self.bounds, |(_, node)| node.slot)
+            .map_or(self.allocation, |(_, node)| node.slot)
     }
 
     pub(crate) fn projection(&self) -> &LayoutProjection {
