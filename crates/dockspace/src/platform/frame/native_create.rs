@@ -261,8 +261,8 @@ pub(super) struct NativeCreateState {
     settlements: Vec<NativeCreateSettlement>,
 }
 
-/// A semantic terminal awaiting the current atomic frame's ordinary event report.
-/// Physical compensation remains owned by binding cleanup after this is drained.
+/// A semantic terminal produced by the current reduction step.
+/// Physical compensation remains owned by binding cleanup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NativeCreateSettlement {
     pub(crate) cause: ReductionCause,
@@ -366,6 +366,10 @@ impl ViewportCoordinator {
 
     pub(crate) fn take_native_create_settlements(&mut self) -> Vec<NativeCreateSettlement> {
         std::mem::take(&mut self.native_creates.settlements)
+    }
+
+    pub(crate) fn has_unreported_native_create_settlements(&self) -> bool {
+        !self.native_creates.settlements.is_empty()
     }
 
     fn record_native_create_settlement(

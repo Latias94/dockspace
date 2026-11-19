@@ -3410,29 +3410,36 @@ impl DockEngine {
             )?;
             self.last_focus_reducer_generation = focus_generation;
             let focus_causal = FocusCausalStamp::new(focus_generation, cause);
-            if let Some(projection) = handoff {
-                self.apply_native_handoff_projection(projection, edge)?;
-            }
             let effective = native_view.as_ref().unwrap_or(edge);
-            let mut interaction = self.reduce_journal_pointer_edge(
-                cause,
-                focus_causal,
-                accepted.stream(),
-                accepted.capture_authority_for_reduction(),
-                effective,
-                receipt,
-                &snapshot,
-                desktop_delivery_routes.get(&edge.sequence()).copied(),
-                desktop_hover_routes.get(&edge.sequence()).copied(),
-                policy,
+            let interaction = self.report_reduction(
                 events,
                 interaction_events,
+                |engine, events, interaction_events| {
+                    if let Some(projection) = handoff {
+                        engine.apply_native_handoff_projection(projection, edge)?;
+                    }
+                    let mut interaction = engine.reduce_journal_pointer_edge(
+                        cause,
+                        focus_causal,
+                        accepted.stream(),
+                        accepted.capture_authority_for_reduction(),
+                        effective,
+                        receipt,
+                        &snapshot,
+                        desktop_delivery_routes.get(&edge.sequence()).copied(),
+                        desktop_hover_routes.get(&edge.sequence()).copied(),
+                        policy,
+                        events,
+                        interaction_events,
+                    )?;
+                    if let Some(outcome) =
+                        engine.cancel_revoked_presentation_caused(cause, interaction_events)?
+                    {
+                        interaction.push(outcome);
+                    }
+                    Ok(interaction)
+                },
             )?;
-            if let Some(outcome) =
-                self.cancel_revoked_presentation_caused(cause, interaction_events)?
-            {
-                interaction.push(outcome);
-            }
             reduced.push(crate::engine::transition::ReducedPointerEdge::new(
                 tick,
                 ordinal,

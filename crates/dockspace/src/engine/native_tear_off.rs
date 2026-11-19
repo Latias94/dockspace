@@ -548,36 +548,6 @@ impl DockEngine {
         )
     }
 
-    pub(super) fn record_native_create_settlements(
-        &mut self,
-        events: &mut Vec<WorkspaceEvent>,
-        interaction_events: &mut Vec<InteractionEvent>,
-    ) {
-        for settlement in self.viewport.take_native_create_settlements() {
-            if let Some(session) = settlement.drag {
-                interaction_events.push(InteractionEvent::new_caused(
-                    settlement.cause,
-                    self.version,
-                    InteractionEventKind::NativePresentationSettled {
-                        session,
-                        result: settlement.result,
-                    },
-                ));
-            }
-            events.push(WorkspaceEvent::new_caused(
-                settlement.cause,
-                self.version,
-                WorkspaceEventKind::PresentationRehomeSettled {
-                    root: settlement.root,
-                    source_surface: settlement.source_surface,
-                    target_surface: settlement.target_surface,
-                    result: settlement.result,
-                    outcome: None,
-                },
-            ));
-        }
-    }
-
     fn check_native_root_create(
         &self,
         source_surface: SurfaceId,

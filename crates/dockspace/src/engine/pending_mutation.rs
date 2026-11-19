@@ -160,15 +160,25 @@ impl DockEngine {
         &mut self,
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
-    ) -> Result<bool, EngineError> {
-        match self.pending_mutation.as_ref() {
-            Some(PendingMutation::DragRelease(_)) => {
-                self.settle_presented_pending_drag_release(events, interaction_events)
-            }
-            Some(PendingMutation::Rehome(_)) => {
-                self.settle_presented_pending_presentation_rehome(events)
-            }
-            None => Ok(false),
-        }
+    ) -> Result<(), EngineError> {
+        self.report_reduction(
+            events,
+            interaction_events,
+            |engine, events, interaction_events| {
+                let settled = match engine.pending_mutation.as_ref() {
+                    Some(PendingMutation::DragRelease(_)) => {
+                        engine.settle_presented_pending_drag_release(events, interaction_events)?
+                    }
+                    Some(PendingMutation::Rehome(_)) => {
+                        engine.settle_presented_pending_presentation_rehome(events)?
+                    }
+                    None => false,
+                };
+                if settled {
+                    engine.rebuild_presentation_requirements(engine.last_input)?;
+                }
+                Ok(())
+            },
+        )
     }
 }

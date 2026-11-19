@@ -179,6 +179,58 @@ impl HostBackendIngressCursor {
 }
 
 impl DockEngine {
+    /// Records the terminal results produced by one ordered step on a private candidate.
+    ///
+    /// Native creation can finish in a later step than the request that started it.
+    /// Preserve that request's cause for correlation, and append at the end of the
+    /// settling step, outside validation of events attributed to the current input.
+    pub(super) fn report_reduction<T>(
+        &mut self,
+        events: &mut Vec<WorkspaceEvent>,
+        interaction_events: &mut Vec<InteractionEvent>,
+        reduce: impl FnOnce(
+            &mut Self,
+            &mut Vec<WorkspaceEvent>,
+            &mut Vec<InteractionEvent>,
+        ) -> Result<T, EngineError>,
+    ) -> Result<T, EngineError> {
+        self.ensure_native_create_settlements_reported()?;
+        let outcome = reduce(self, events, interaction_events)?;
+        for settlement in self.viewport.take_native_create_settlements() {
+            if let Some(session) = settlement.drag {
+                interaction_events.push(InteractionEvent::new_caused(
+                    settlement.cause,
+                    self.version,
+                    InteractionEventKind::NativePresentationSettled {
+                        session,
+                        result: settlement.result,
+                    },
+                ));
+            }
+            events.push(WorkspaceEvent::new_caused(
+                settlement.cause,
+                self.version,
+                WorkspaceEventKind::PresentationRehomeSettled {
+                    root: settlement.root,
+                    source_surface: settlement.source_surface,
+                    target_surface: settlement.target_surface,
+                    result: settlement.result,
+                    outcome: None,
+                },
+            ));
+        }
+        Ok(outcome)
+    }
+
+    pub(super) fn ensure_native_create_settlements_reported(&self) -> Result<(), EngineError> {
+        if self.viewport.has_unreported_native_create_settlements() {
+            return Err(EngineError::ReductionCauseInvariant {
+                detail: "a native create settled outside its report reduction step",
+            });
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(super) fn prepare_host_frame<'a>(
         &'a mut self,
@@ -666,7 +718,9 @@ impl DockEngine {
         let before_viewport = self.viewport.clone();
         let before_viewport_focus = self.viewport_focus.clone();
         if let Some(input) = last_reduced_input {
-            candidate.rebuild_presentation_requirements(input)?;
+            candidate.report_reduction(&mut events, &mut interaction_events, |engine, _, _| {
+                engine.rebuild_presentation_requirements(input)
+            })?;
         }
         if let Some(cause) = last_causal_cause {
             let _ = candidate.reconcile_pointer_provider_scope(cause, &mut interaction_events)?;
@@ -737,11 +791,13 @@ impl DockEngine {
                         != after_contribution_authorities.get(surface)
                 }),
         );
-        candidate.settle_popup_geometry_unavailability_after_surface_contributions(
-            tick,
-            &contribution_outcomes,
-            &mut changed_contribution_surfaces,
-        )?;
+        candidate.report_reduction(&mut events, &mut interaction_events, |engine, _, _| {
+            engine.settle_popup_geometry_unavailability_after_surface_contributions(
+                tick,
+                &contribution_outcomes,
+                &mut changed_contribution_surfaces,
+            )
+        })?;
         let ready_resize_surfaces = contribution_outcomes
             .iter()
             .filter_map(|outcome| match outcome {
@@ -768,11 +824,14 @@ impl DockEngine {
             &mut interaction_events,
         )?;
 
-        let _ =
-            candidate.observe_pending_presentation_rehome_dispositions(&presentation_dispositions);
-        if candidate.settle_presented_pending_presentation_rehome(&mut events)? {
-            candidate.rebuild_presentation_requirements(candidate.last_input)?;
-        }
+        candidate.report_reduction(&mut events, &mut interaction_events, |engine, events, _| {
+            let _ =
+                engine.observe_pending_presentation_rehome_dispositions(&presentation_dispositions);
+            if engine.settle_presented_pending_presentation_rehome(events)? {
+                engine.rebuild_presentation_requirements(engine.last_input)?;
+            }
+            Ok(())
+        })?;
 
         // Native close decisions are deliberately emitted only after every
         // application, renderer, and configuration input in this host frame
@@ -918,7 +977,7 @@ impl DockEngine {
             || before_viewport != candidate.viewport
             || !focus_delta.is_empty();
         let surface_scene_deltas = Self::surface_scene_deltas(self, &candidate);
-        candidate.record_native_create_settlements(&mut events, &mut interaction_events);
+        candidate.ensure_native_create_settlements_reported()?;
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,
@@ -1068,6 +1127,31 @@ impl DockEngine {
     }
 
     pub(super) fn reduce_sequenced_input(
+        &mut self,
+        input: SequencedInput,
+        tick: ReducerTickId,
+        tick_start: TickStartAuthority<'_>,
+        application_base: &mut WorkspaceVersion,
+        events: &mut Vec<WorkspaceEvent>,
+        interaction_events: &mut Vec<InteractionEvent>,
+    ) -> Result<ReducedInput, EngineError> {
+        self.report_reduction(
+            events,
+            interaction_events,
+            |engine, events, interactions| {
+                engine.reduce_input_with_cause(
+                    input,
+                    tick,
+                    tick_start,
+                    application_base,
+                    events,
+                    interactions,
+                )
+            },
+        )
+    }
+
+    fn reduce_input_with_cause(
         &mut self,
         input: SequencedInput,
         tick: ReducerTickId,

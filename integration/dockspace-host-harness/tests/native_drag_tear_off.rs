@@ -1137,3 +1137,146 @@ fn programmatic_creation_does_not_borrow_a_previous_pointer_drag_identity() {
     accept(dispatch.await_observation());
     fixture.assert_source(before);
 }
+
+#[test]
+fn failed_native_transfer_feedback_precedes_a_later_cancel_in_split_and_joined_frames() {
+    use dockspace::runtime::{
+        DockspaceManipulationCancelReason, DockspaceManipulationRejection,
+        DockspaceManipulationStatus, DockspacePresentationTransitionResult,
+    };
+
+    for (split, rollback, cancellation, reason) in
+        [(false, false), (false, true), (true, false), (true, true)]
+            .into_iter()
+            .flat_map(|(split, rollback)| {
+                [
+                    (
+                        NativePointerCancelReason::ExplicitCancellation,
+                        DockspaceManipulationCancelReason::ExplicitCancellation,
+                    ),
+                    (
+                        NativePointerCancelReason::ExplicitPlatformCancellation,
+                        DockspaceManipulationCancelReason::PointerStreamCancelled,
+                    ),
+                ]
+                .into_iter()
+                .map(move |(cancellation, reason)| (split, rollback, cancellation, reason))
+            })
+    {
+        let expected = [
+            DockspaceManipulationStatus::Rejected(
+                DockspaceManipulationRejection::PresentationUnavailable,
+            ),
+            DockspaceManipulationStatus::Cancelled(reason),
+        ];
+        let mut fixture = Fixture::new();
+        let before = fixture.session.version();
+        let drag = fixture.start_drag();
+        let release = fixture.foreign_release(Some(drag));
+        fixture.session.record_native_pointer(release).unwrap();
+        let report = fixture.settle();
+        let [pending] = report.manipulation_feedback() else {
+            panic!("the first release must retain its original manipulation identity");
+        };
+        let original = pending.manipulation_id();
+        let effect = fixture.take_request(report, before);
+        let (child, placement) = requested_window(&effect);
+        let acknowledgement = accept(effect);
+        fixture
+            .session
+            .report_managed_native_snapshot(
+                [
+                    (fixture.root, window_facts(root_bounds())),
+                    (
+                        child,
+                        window_facts(placement).with_create_readiness(
+                            NativeCreateReadiness::Failed,
+                            Some(acknowledgement),
+                        ),
+                    ),
+                ],
+                work_areas(),
+            )
+            .unwrap();
+
+        let mut feedback = Vec::new();
+        let mut transitions = Vec::new();
+        let mut effects = Vec::new();
+        if split {
+            let mut report = fixture.settle();
+            feedback.extend_from_slice(report.manipulation_feedback());
+            transitions.extend_from_slice(report.presentation_transitions());
+            effects.extend(report.take_native_effects());
+        }
+        let press = fixture.press();
+        let moved = fixture.outside(
+            NativePointerEvent::Moved,
+            NativePointerHover::OutsideAll,
+            NativePointerOwner::Native(fixture.root.window()),
+        );
+        let cancelled = fixture.outside(
+            NativePointerEvent::StreamCancelled(cancellation),
+            NativePointerHover::Foreign,
+            NativePointerOwner::None,
+        );
+        fixture
+            .session
+            .record_native_pointer_batch([press, moved, cancelled])
+            .unwrap();
+        if rollback {
+            let mut candidate = frame(&mut fixture.session, Some(fixture.scene));
+            candidate
+                .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+                .unwrap();
+            drop(candidate);
+            assert_eq!(fixture.session.has_pending_native_create(), !split);
+            fixture.assert_source(before);
+        }
+        let mut report = fixture.settle();
+        feedback.extend_from_slice(report.manipulation_feedback());
+        transitions.extend_from_slice(report.presentation_transitions());
+        effects.extend(report.take_native_effects());
+        assert_eq!(
+            feedback
+                .iter()
+                .map(|item| item.status())
+                .collect::<Vec<_>>(),
+            expected,
+            "the terminal order must follow native ingress, split={split}, rollback={rollback}, reason={reason:?}",
+        );
+        assert_eq!(feedback[0].manipulation_id(), original);
+        assert_ne!(feedback[1].manipulation_id(), original);
+        let [terminal] = transitions.as_slice() else {
+            panic!("only the original accepted create can publish a presentation terminal");
+        };
+        assert_eq!(terminal.target_surface(), child.surface());
+        assert_eq!(
+            terminal.result(),
+            DockspacePresentationTransitionResult::TargetNotPresented
+        );
+        assert!(report.native_admissions().is_empty());
+        let [compensation] = effects.try_into().unwrap();
+        assert!(
+            matches!(compensation.operation(), NativeEffectOperation::CompensatingClose { binding } if *binding == child)
+        );
+        let Some(NativeEffectAcknowledgement::Close(destroyed)) = compensation.accepted() else {
+            panic!("the original failed create retains exactly one destruction acknowledgement");
+        };
+        fixture
+            .session
+            .report_managed_native_snapshot(
+                [
+                    (fixture.root, window_facts(root_bounds())),
+                    (child, NativeWindowFacts::destroyed_after(destroyed)),
+                ],
+                work_areas(),
+            )
+            .unwrap();
+        let mut settled = fixture.settle();
+        assert!(settled.manipulation_feedback().is_empty());
+        assert!(settled.presentation_transitions().is_empty());
+        assert!(settled.take_native_effects().is_empty());
+        assert!(!fixture.session.has_pending_native_create());
+        fixture.assert_source(before);
+    }
+}

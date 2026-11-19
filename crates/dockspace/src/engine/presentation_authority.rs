@@ -2032,8 +2032,32 @@ impl DockEngine {
         EngineError,
     > {
         let outcomes = reduction.outcomes().to_vec();
-        let mut changed_surfaces = BTreeSet::new();
         let mut lifecycle_events = Vec::new();
+        let changed_surfaces = self.report_reduction(
+            &mut lifecycle_events,
+            interaction_events,
+            |engine, events, interaction_events| {
+                engine.apply_presentation_promotions(
+                    cause,
+                    reduction,
+                    &outcomes,
+                    events,
+                    interaction_events,
+                )
+            },
+        )?;
+        Ok((outcomes, changed_surfaces, lifecycle_events))
+    }
+
+    fn apply_presentation_promotions(
+        &mut self,
+        cause: ReductionCause,
+        reduction: PresentationObservationReduction,
+        outcomes: &[HostPresentationObservationOutcome],
+        lifecycle_events: &mut Vec<WorkspaceEvent>,
+        interaction_events: &mut Vec<InteractionEvent>,
+    ) -> Result<BTreeSet<SurfaceId>, EngineError> {
+        let mut changed_surfaces = BTreeSet::new();
         let invalidated_streams = outcomes
             .iter()
             .filter_map(|outcome| match outcome {
@@ -2209,7 +2233,7 @@ impl DockEngine {
                             stamp,
                             authority,
                             cause,
-                            &mut lifecycle_events,
+                            lifecycle_events,
                             interaction_events,
                             &mut changed_surfaces,
                         )?
@@ -2241,7 +2265,7 @@ impl DockEngine {
                             self.admit_first_live_native_output(
                                 member_ticket,
                                 member_capture,
-                                &mut lifecycle_events,
+                                lifecycle_events,
                             )?;
                             changed_surfaces.extend(changed);
                             accepted_member = true;
@@ -2280,8 +2304,8 @@ impl DockEngine {
                     .observe_presented_contained_transform_preview(ticket.surface(), token);
             }
         }
-        self.observe_pending_mutation_retirements(&outcomes);
-        Ok((outcomes, changed_surfaces, lifecycle_events))
+        self.observe_pending_mutation_retirements(outcomes);
+        Ok(changed_surfaces)
     }
 
     fn observe_pending_mutation_retirements(

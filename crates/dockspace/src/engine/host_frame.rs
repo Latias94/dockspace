@@ -434,12 +434,10 @@ impl DockEngine {
             changed_surfaces.extend(changed);
             observation_events.append(&mut lifecycle_events);
         }
-        if candidate.settle_presented_pending_mutation(
+        candidate.settle_presented_pending_mutation(
             &mut observation_events,
             &mut observation_interaction_events,
-        )? {
-            candidate.rebuild_presentation_requirements(candidate.last_input)?;
-        }
+        )?;
         candidate.reconcile_interaction_after_presentation_observations(
             tick,
             &changed_surfaces,
@@ -1916,19 +1914,9 @@ impl CoreHostFrame {
         };
 
         self.events.append(&mut lifecycle_events);
-        let pending_settled = match self
+        if let Err(error) = self
             .candidate
             .settle_presented_pending_mutation(&mut self.events, &mut self.interaction_events)
-        {
-            Ok(settled) => settled,
-            Err(error) => {
-                return self.reject_input_prefix(error);
-            }
-        };
-        if pending_settled
-            && let Err(error) = self
-                .candidate
-                .rebuild_presentation_requirements(self.candidate.last_input)
         {
             return self.reject_input_prefix(error);
         }
@@ -2550,7 +2538,11 @@ impl CoreHostFrame {
         self.last_reduced_input = Some(sequence);
         self.last_causal_cause = Some(cause);
         self.reduced_inputs.push(outcome);
-        if let Err(error) = self.candidate.rebuild_presentation_requirements(sequence) {
+        if let Err(error) = self.candidate.report_reduction(
+            &mut self.events,
+            &mut self.interaction_events,
+            |candidate, _, _| candidate.rebuild_presentation_requirements(sequence),
+        ) {
             return self.reject_input_prefix(error);
         }
         if let Err(error) = self.refresh_presentation_snapshot() {

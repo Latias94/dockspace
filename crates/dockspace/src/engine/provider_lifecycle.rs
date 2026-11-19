@@ -351,9 +351,7 @@ impl DockEngine {
             candidate.viewport.effects(),
             &[],
         );
-        let mut events = Vec::new();
-        let mut interaction_events = Vec::new();
-        candidate.record_native_create_settlements(&mut events, &mut interaction_events);
+        candidate.ensure_native_create_settlements_reported()?;
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,
@@ -361,8 +359,8 @@ impl DockEngine {
             after: candidate.version,
             reduced: Vec::new(),
             reduced_pointer_edges: Vec::new(),
-            events,
-            interaction_events,
+            events: Vec::new(),
+            interaction_events: Vec::new(),
             platform_effects,
             focus_delta,
             presentation_observations: Vec::new(),
@@ -471,12 +469,16 @@ impl DockEngine {
             )?;
         }
 
-        let ticket = candidate
-            .viewport
-            .begin_platform_provider_replacement(provider)
-            .map_err(|source| EngineError::Viewport {
-                input: candidate.last_input,
-                source,
+        let mut events = Vec::new();
+        let ticket =
+            candidate.report_reduction(&mut events, &mut interaction_events, |engine, _, _| {
+                engine
+                    .viewport
+                    .begin_platform_provider_replacement(provider)
+                    .map_err(|source| EngineError::Viewport {
+                        input: engine.last_input,
+                        source,
+                    })
             })?;
         let _ = candidate
             .viewport_focus
@@ -523,8 +525,7 @@ impl DockEngine {
             &[],
         );
         let surface_scene_deltas = Self::surface_scene_deltas(self, &candidate);
-        let mut events = Vec::new();
-        candidate.record_native_create_settlements(&mut events, &mut interaction_events);
+        candidate.ensure_native_create_settlements_reported()?;
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,
@@ -847,8 +848,7 @@ impl DockEngine {
             candidate.viewport.effects(),
             &[],
         );
-        let mut events = Vec::new();
-        candidate.record_native_create_settlements(&mut events, &mut interaction_events);
+        candidate.ensure_native_create_settlements_reported()?;
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,
@@ -856,7 +856,7 @@ impl DockEngine {
             after: candidate.version,
             reduced: Vec::new(),
             reduced_pointer_edges: Vec::new(),
-            events,
+            events: Vec::new(),
             interaction_events,
             platform_effects,
             focus_delta,

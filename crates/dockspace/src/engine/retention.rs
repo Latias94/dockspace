@@ -327,9 +327,7 @@ impl DockEngine {
             )?;
         }
         let mut events = Vec::new();
-        if candidate.settle_presented_pending_mutation(&mut events, &mut interaction_events)? {
-            candidate.rebuild_presentation_requirements(candidate.last_input)?;
-        }
+        candidate.settle_presented_pending_mutation(&mut events, &mut interaction_events)?;
         candidate.settle_retired_presentation_hosts()?;
         candidate.reconcile_viewport_focus_authority();
 
@@ -353,7 +351,7 @@ impl DockEngine {
         // The durable host tombstone always changes published core state, even
         // when the host never emitted a stream and no scene delta is visible.
         let published_state_changed = true;
-        candidate.record_native_create_settlements(&mut events, &mut interaction_events);
+        candidate.ensure_native_create_settlements_reported()?;
         let transition = EngineTransition::new(EngineTransitionParts {
             authority_domain: candidate.authority_domain,
             tick,
