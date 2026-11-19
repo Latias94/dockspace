@@ -427,7 +427,7 @@ impl ExactSizeIterator for SplitIter<'_> {}
 impl FusedIterator for SplitIter<'_> {}
 
 /// Complete deterministic projection of one workspace root.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct LayoutProjection {
     /// Complete geometry and composed constraints for every reachable node.
     pub nodes: NodeMap<NodeResult>,
@@ -436,6 +436,17 @@ pub struct LayoutProjection {
     /// Shared rows and columns for actual Grid owners.
     pub grids: super::GridMap,
     pub(super) auto_reflow: Option<Arc<super::FrozenRootLayout>>,
+    pub(super) basis: super::ProjectionBasis,
+}
+
+impl PartialEq for LayoutProjection {
+    fn eq(&self, other: &Self) -> bool {
+        // The basis is a cache of solver inputs, independent of the projected geometry.
+        self.nodes == other.nodes
+            && self.splits == other.splits
+            && self.grids == other.grids
+            && self.auto_reflow == other.auto_reflow
+    }
 }
 
 impl LayoutProjection {

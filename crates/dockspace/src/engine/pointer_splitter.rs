@@ -133,13 +133,22 @@ impl DockEngine {
     ) -> Result<Vec<crate::interaction::FrozenResizeAxisGroup>, InteractionRejection> {
         let groups = prepare_resize_axis_groups(workspace, plan, handles)
             .ok_or(InteractionRejection::SplitterResizeGeometryUnavailable)?;
-        for group in &groups {
+        Self::authorize_resize_axis_groups(workspace, policy, &groups)?;
+        Ok(groups)
+    }
+
+    pub(super) fn authorize_resize_axis_groups(
+        workspace: &Workspace,
+        policy: &DockPolicySnapshot,
+        groups: &[crate::interaction::FrozenResizeAxisGroup],
+    ) -> Result<(), InteractionRejection> {
+        for group in groups {
             for source in group.resized_sources() {
                 Self::check_resize_policy(workspace, source, group.axis, policy)
                     .map_err(InteractionRejection::ResizeRejected)?;
             }
         }
-        Ok(groups)
+        Ok(())
     }
 
     pub(super) fn update_journal_resize(

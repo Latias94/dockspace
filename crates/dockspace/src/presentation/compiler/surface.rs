@@ -1,16 +1,17 @@
 use super::*;
 use crate::geometry::LogicalPoint;
+#[cfg(test)]
 use crate::graph::SplitWeight;
-use crate::presentation::layout::{ChildProjection, measure_resize_geometry};
+use crate::presentation::layout::measure_resize_geometry;
 
 mod contained;
 mod error;
-mod grid;
 mod guides;
 mod measurement;
 #[cfg(feature = "motion")]
 mod motion;
 mod root_controls;
+mod splitters;
 mod tabs;
 
 use contained::compile_contained_record;
@@ -28,10 +29,12 @@ pub(crate) use measurement::{
 #[cfg(feature = "motion")]
 pub(crate) use motion::materialize_presentation_sample;
 pub(crate) use root_controls::root_controls_layout;
+use splitters::RootBoundaries;
+pub(crate) use splitters::reprojected_resize_handles;
+#[cfg(test)]
+pub(super) use tabs::tab_strip_control_layout;
 use tabs::{compile_tabs_leaf, select_presentation_menu_tab_bar};
 pub(super) use tabs::{operable_tab_chrome, tab_strip_optional_chrome_layout};
-#[cfg(test)]
-pub(super) use tabs::{reveal_tab_range, tab_strip_control_layout};
 
 #[cfg(test)]
 mod junction_compile_tests;
@@ -593,6 +596,16 @@ fn compile_root(
         workspace_version,
     )?);
     let resize_contacts = measure_resize_geometry(&projection, config.splitter_thickness());
+    let boundaries = RootBoundaries {
+        policy,
+        config,
+        surface,
+        root,
+        layer,
+        content_clip,
+        projection: &projection,
+        contacts: &resize_contacts,
+    };
     let labels = projection.nodes.try_map_values(|node, _| {
         workspace
             .node(node)
@@ -787,171 +800,25 @@ fn compile_root(
                     ready.push_surface_program_pane_operation(id)?;
                 }
             }
-            Node::Grid { .. } => {
-                let grid = projection
-                    .grids
+            owner @ (Node::Grid { .. } | Node::Split { .. }) => {
+                let ancestry = node_contexts
                     .get(node)
-                    .ok_or(SceneCompilationError::MissingSplitProjection { root, split: *node })?;
-                grid::compile_grid_boundaries(
-                    policy,
-                    config,
-                    surface,
-                    root,
-                    *node,
-                    grid,
-                    rect,
-                    layer,
-                    node_contexts
-                        .get(node)
-                        .and_then(|(_, ancestors, _)| *ancestors),
-                    &resize_contacts,
-                    ready,
-                )?;
-            }
-            Node::Split {
-                axis,
-                children,
-                weights,
-                ..
-            } => {
-                let split = projection
-                    .splits
-                    .get(node)
-                    .ok_or(SceneCompilationError::MissingSplitProjection { root, split: *node })?;
-                let hit_rects =
-                    splitter_hit_rects(split.children, *axis, config.splitter_hit_extent(), rect)?;
-                let mut resize_facts = None;
-                let split_operable = policy.splitter_resize_is_allowed(root, *axis, surface)
-                    && !(config.pane_overflow_policy()
-                        == crate::presentation::config::PaneOverflowPolicy::Compress
-                        && split.overflow > 0.0);
-                for ((index, splitter), hit) in split.indexed_splitter_rects().zip(hit_rects) {
-                    let after_index = split.following_child_index(index).ok_or(
-                        SceneCompilationError::MissingSplitProjection { root, split: *node },
-                    )?;
-                    let operable = split_operable
-                        && resize_contacts.splitter_is_operable(
-                            *node,
-                            children[index],
-                            children[after_index],
-                        );
-                    let id = SplitterSceneId {
-                        root,
-                        owner: crate::presentation::scene::SplitterOwner::Split(*node),
-                        index,
-                    };
-                    let splitter = intersect_rect(rect, splitter)?;
-                    ready.push_splitter_gap_record(SplitterGapRecord::new(
-                        id,
-                        if splitter.is_some() {
-                            SplitterGapPresentation::Rendered
-                        } else {
-                            SplitterGapPresentation::Collapsed
-                        },
-                    ));
-                    let Some(splitter) = splitter else {
-                        continue;
-                    };
-                    let before = projection
-                        .nodes
-                        .get(&children[index])
-                        .map(|result| &result.rect)
-                        .ok_or(SceneCompilationError::MissingNodeProjection {
-                            root,
-                            node: children[index],
-                        })?;
-                    let after = projection
-                        .nodes
-                        .get(&children[after_index])
-                        .map(|result| &result.rect)
-                        .ok_or(SceneCompilationError::MissingNodeProjection {
-                            root,
-                            node: children[after_index],
-                        })?;
-                    let before_minimum_extent =
-                        split.children.get(index).map(|child| child.minimum).ok_or(
-                            SceneCompilationError::MissingSplitMinimum {
-                                root,
-                                split: *node,
-                                child: children[index],
-                            },
+                    .and_then(|(_, ancestors, _)| *ancestors);
+                let tracks = root_overrides
+                    .iter()
+                    .find(|entry| entry.source().node() == *node)
+                    .map(|entry| entry.weights());
+                boundaries.emit(*node, owner, rect, tracks, |gap, record| {
+                    let id = gap.id();
+                    ready.push_splitter_gap_record(gap);
+                    if let Some(record) = record {
+                        ready.push_splitter_record(record.with_active_ancestry(ancestry));
+                        ready.push_surface_program_root_operation(
+                            SurfaceProgramRootOperation::Splitter(id),
                         )?;
-                    let after_minimum_extent = split
-                        .children
-                        .get(after_index)
-                        .map(|child| child.minimum)
-                        .ok_or(SceneCompilationError::MissingSplitMinimum {
-                            root,
-                            split: *node,
-                            child: children[after_index],
-                        })?;
-                    let before_maximum_extent =
-                        split.children.get(index).map(|child| child.maximum).ok_or(
-                            SceneCompilationError::MissingSplitMaximum {
-                                root,
-                                split: *node,
-                                child: children[index],
-                            },
-                        )?;
-                    let after_maximum_extent = split
-                        .children
-                        .get(after_index)
-                        .map(|child| child.maximum)
-                        .ok_or(SceneCompilationError::MissingSplitMaximum {
-                            root,
-                            split: *node,
-                            child: children[after_index],
-                        })?;
-                    let (child_extents, effective_weights) =
-                        resize_facts.get_or_insert_with(|| {
-                            let effective_weights = root_overrides
-                                .iter()
-                                .find(|override_| override_.source().node() == *node)
-                                .and_then(|override_| match override_.weights() {
-                                    crate::graph::command::TrackWeights::Split(weights) => {
-                                        Some(weights.as_slice())
-                                    }
-                                    _ => None,
-                                })
-                                .unwrap_or(weights.as_slice());
-                            (
-                                split
-                                    .children
-                                    .iter()
-                                    .map(|child| child.extent)
-                                    .collect::<Arc<[f64]>>(),
-                                Arc::<[SplitWeight]>::from(effective_weights),
-                            )
-                        });
-                    ready.push_splitter_record(
-                        SplitterRecord::new(
-                            id,
-                            splitter,
-                            HitRegion::new(hit),
-                            *axis,
-                            clip_rect(*before, content_clip)?,
-                            clip_rect(*after, content_clip)?,
-                            before_minimum_extent,
-                            after_minimum_extent,
-                            before_maximum_extent,
-                            after_maximum_extent,
-                            Arc::clone(child_extents),
-                            split.central_index,
-                            Arc::clone(effective_weights),
-                            layer,
-                            operable,
-                        )
-                        .with_after_index(after_index)
-                        .with_active_ancestry(
-                            node_contexts
-                                .get(node)
-                                .and_then(|(_, ancestors, _)| *ancestors),
-                        ),
-                    );
-                    ready.push_surface_program_root_operation(
-                        SurfaceProgramRootOperation::Splitter(id),
-                    )?;
-                }
+                    }
+                    Ok(())
+                })?;
             }
         }
     }
@@ -1001,61 +868,6 @@ fn compile_root(
         config,
     );
     Ok(())
-}
-
-fn splitter_hit_rects(
-    children: &[ChildProjection],
-    axis: crate::graph::Axis,
-    extent: f64,
-    bounds: LogicalRect,
-) -> Result<Vec<LogicalRect>, GeometryError> {
-    children
-        .iter()
-        .enumerate()
-        .filter_map(|(index, child)| child.following_gap.as_ref().map(|gap| (index, gap)))
-        .map(|(index, splitter)| {
-            let center = match axis {
-                crate::graph::Axis::Horizontal => splitter.x() + splitter.width() * 0.5,
-                crate::graph::Axis::Vertical => splitter.y() + splitter.height() * 0.5,
-            };
-            let coordinate = |rect: &LogicalRect| match axis {
-                crate::graph::Axis::Horizontal => rect.x() + rect.width() * 0.5,
-                crate::graph::Axis::Vertical => rect.y() + rect.height() * 0.5,
-            };
-            let axis_min = match axis {
-                crate::graph::Axis::Horizontal => bounds.x(),
-                crate::graph::Axis::Vertical => bounds.y(),
-            };
-            let axis_max = match axis {
-                crate::graph::Axis::Horizontal => bounds.max().x(),
-                crate::graph::Axis::Vertical => bounds.max().y(),
-            };
-            let cell_min = children[..index]
-                .iter()
-                .rev()
-                .find_map(|previous| previous.following_gap.as_ref())
-                .map_or(axis_min, |previous| (coordinate(previous) + center) * 0.5);
-            let cell_max = children
-                .get(index + 1..)
-                .and_then(|children| {
-                    children
-                        .iter()
-                        .find_map(|child| child.following_gap.as_ref())
-                })
-                .map_or(axis_max, |next| (center + coordinate(next)) * 0.5);
-            let hit_min = (center - extent * 0.5).max(cell_min);
-            let hit_max = (center + extent * 0.5).min(cell_max).max(hit_min);
-            let hit = match axis {
-                crate::graph::Axis::Horizontal => {
-                    LogicalRect::new(hit_min, splitter.y(), hit_max - hit_min, splitter.height())?
-                }
-                crate::graph::Axis::Vertical => {
-                    LogicalRect::new(splitter.x(), hit_min, splitter.width(), hit_max - hit_min)?
-                }
-            };
-            clip_rect(hit, bounds)
-        })
-        .collect()
 }
 
 pub(super) fn clip_rect(

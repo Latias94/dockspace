@@ -1255,6 +1255,12 @@ fn retained_activation_keeps_the_provenance_of_pending_navigation() {
 
 #[test]
 fn home_reveals_the_partially_scrolled_selected_first_tab() {
+    for activate in [false, true] {
+        check_home_reveal(activate);
+    }
+}
+
+fn check_home_reveal(activate: bool) {
     let mut session = overflow_session();
     install_overflow_candidate(&mut session);
     let scroll = inspect_surface(&mut session, |plan| {
@@ -1272,12 +1278,10 @@ fn home_reveals_the_partially_scrolled_selected_first_tab() {
         let bar = plan.tab_bars().next().unwrap();
         assert_eq!(bar.scroll_offset(), 12.0);
         let strip = plan.retain_tab_strip(bar).unwrap();
+        let home = SurfaceTabInput::Navigate(SurfaceTabNavigation::First);
+        let enter = activate.then_some(SurfaceTabInput::Activate);
         strip
-            .resolve(
-                FIRST,
-                FIRST,
-                [SurfaceTabInput::Navigate(SurfaceTabNavigation::First)],
-            )
+            .resolve(FIRST, FIRST, std::iter::once(home).chain(enter))
             .expect("Home reveals the selected tab even though it keeps the same selection")
     });
     let mut frame = session.begin_host_frame().unwrap();
@@ -1285,9 +1289,44 @@ fn home_reveals_the_partially_scrolled_selected_first_tab() {
     measure_overflow_surface(&mut frame);
     frame.commit().unwrap();
     assert!(session.view().item(FIRST).unwrap().is_active());
+    assert_eq!(
+        session
+            .pane_focus_request(SURFACE)
+            .and_then(|request| request.item()),
+        activate.then_some(FIRST)
+    );
     inspect_surface(&mut session, |plan| {
         assert_eq!(plan.tab_bars().next().unwrap().scroll_offset(), 0.0);
     });
+}
+
+#[test]
+fn repeated_home_keeps_an_oversized_tab_aligned_to_its_start() {
+    let mut session = overflow_session();
+    let metrics = UniformSurfaceMetrics::new(
+        LogicalRect::new(0.0, 0.0, 32.0, 350.0).unwrap(),
+        crate::geometry::LogicalSize::new(1.0, 1.0).unwrap(),
+        140.0,
+    )
+    .unwrap();
+    let mut previous = None;
+    for _ in 0..4 {
+        let mut frame = session.begin_host_frame().unwrap();
+        if let Some(home) = previous.take() {
+            frame.submit_deferred_surface_action(home).unwrap();
+        }
+        frame.measure_surface(SURFACE, metrics).unwrap();
+        let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+        let bar = plan.tab_bars().next().unwrap();
+        assert_eq!(bar.scroll_offset(), 0.0);
+        assert!(bar.members().next().unwrap().full_bounds().width() > bar.viewport().width());
+        previous = plan.retain_tab_strip(bar).unwrap().resolve(
+            FIRST,
+            FIRST,
+            [SurfaceTabInput::Navigate(SurfaceTabNavigation::First)],
+        );
+        frame.commit().unwrap();
+    }
 }
 
 #[test]

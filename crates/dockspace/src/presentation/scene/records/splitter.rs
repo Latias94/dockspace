@@ -474,7 +474,7 @@ impl SplitterRecord {
         self.operable
     }
 
-    pub(in crate::presentation::scene) fn retain_operability(&mut self, condition: bool) {
+    pub(in crate::presentation) fn retain_operability(&mut self, condition: bool) {
         self.operable &= condition;
     }
 }

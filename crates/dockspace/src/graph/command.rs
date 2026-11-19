@@ -374,12 +374,21 @@ pub struct TrackResize {
     source: NodeSource,
     weights: TrackWeights,
     grid_basis: Option<GridResizeBasis>,
+    materialized_axis: Option<Axis>,
 }
 
 impl TrackResize {
-    pub(crate) fn with_source(mut self, source: NodeSource) -> Self {
-        self.source = source;
+    /// An earlier step changed effective Grid shares on this axis. Keep the
+    /// new basis even if a later step returns to its equal default shares.
+    pub(crate) fn materialize_grid_basis(mut self, axis: Axis) -> Self {
+        if self.grid_basis.is_some() {
+            self.materialized_axis = Some(axis);
+        }
         self
+    }
+
+    pub(crate) const fn materialized_axis(&self) -> Option<Axis> {
+        self.materialized_axis
     }
 
     /// Creates one resize update from a frozen split source and normalized weights.
@@ -391,6 +400,7 @@ impl TrackResize {
             source,
             weights: TrackWeights::Split(weights),
             grid_basis: None,
+            materialized_axis: None,
         }
     }
 
@@ -404,6 +414,7 @@ impl TrackResize {
             source,
             weights: TrackWeights::Grid(shares),
             grid_basis: None,
+            materialized_axis: None,
         }
     }
 
@@ -422,6 +433,7 @@ impl TrackResize {
             source,
             weights: TrackWeights::Grid(shares),
             grid_basis: Some(basis),
+            materialized_axis: None,
         }
     }
 

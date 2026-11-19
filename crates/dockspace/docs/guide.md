@@ -430,7 +430,9 @@ accepted preview; release revalidates that sample before committing it. Source,
 policy or coordinate revocation still cancels delivery. Numeric ranges are
 available only when their frozen endpoints can be proved; they do not search
 extra space made possible by a new Auto shape. Ordered keyboard sequences check
-each step and reverse from the last geometrically accepted position.
+each step and reverse from the last geometrically accepted position. If an
+accepted step changes the captured junction, the sequence commits the steps
+already accepted and stops before applying more input to that junction.
 
 An upper bound may leave background in a larger host. That background is not a
 pane hit target; root docking guides remain available. Infeasible minima retain

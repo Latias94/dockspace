@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 
 use super::SceneCompilationError;
-use super::tabs::{reveal_tab_range, tab_local_range};
 use crate::geometry::{AxisSizing, LogicalSize, PaneSizing};
 use crate::graph::{Node, Workspace};
 use crate::ids::{ItemId, NodeId, RootId, TabKey};
@@ -16,7 +15,9 @@ use crate::presentation::manifest::{
     AuthoritativeSurfaceMeasurements, PaneSizingKey, SurfaceRequirements, TabBarRequirement,
 };
 use crate::presentation::scene::{PresentationPlan, TabBarSceneId};
-use crate::presentation::tab_strip::{TabStripStateKey, TabStripStateStore};
+use crate::presentation::tab_strip::{
+    TabStripStateKey, TabStripStateStore, reveal_tab_range, tab_local_range,
+};
 
 pub(super) struct RootLayoutMeasurement<'workspace> {
     pub(super) pane_sizings: BTreeMap<PaneSizingKey, PaneSizing>,

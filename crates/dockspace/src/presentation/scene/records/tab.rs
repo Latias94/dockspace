@@ -8,7 +8,8 @@ use crate::interaction::targeting::targets::SceneLayerKey;
 use crate::policy::TabBarInteraction;
 use crate::presentation::hit::region::HitRegion;
 use crate::presentation::tab_strip::{
-    PopupRoutingRevision, TabListMenuSessionId, TabStripControlId,
+    PopupRoutingRevision, TabListMenuSessionId, TabStripControlId, reveal_tab_range,
+    tab_local_range,
 };
 
 /// Owned label facts retained with one immutable root projection.
@@ -563,15 +564,20 @@ impl TabBarRecord {
     }
 
     pub(crate) fn reveal_scroll_offset(&self, member: TabStripMemberRecord) -> f64 {
-        let tab = member.full_bounds();
-        let delta = if tab.x() < self.viewport.x() {
-            tab.x() - self.viewport.x()
-        } else if tab.max().x() > self.viewport.max().x() {
-            tab.max().x() - self.viewport.max().x()
-        } else {
-            0.0
-        };
-        (self.scroll_offset + delta).clamp(0.0, self.maximum_scroll_offset)
+        let range = tab_local_range(
+            self.members.iter().map(|member| member.allocated_width()),
+            member.ordinal(),
+        );
+        range.map_or(self.scroll_offset, |(start, end)| {
+            let clipped_left = self.viewport.x() - self.layout_viewport.x();
+            reveal_tab_range(
+                self.scroll_offset,
+                self.maximum_scroll_offset,
+                self.viewport.width(),
+                start - clipped_left,
+                end - clipped_left,
+            )
+        })
     }
 
     /// Returns the core-clamped transient scroll offset.

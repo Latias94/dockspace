@@ -323,6 +323,21 @@ impl DockEngine {
             )?
         };
         if matches!(&outcome, InputOutcome::CommandProcessed { .. }) {
+            if !matches!(selection, LocalTabSelection::Activate(_))
+                && let Some(bar) = candidate
+                    .plan()
+                    .tab_bar_records()
+                    .iter()
+                    .find(|bar| bar.id().root == tab.root && bar.id().tabs == tab.tabs)
+            {
+                let _ = self.finish_tab_strip_scroll(
+                    focus_causal.cause(),
+                    candidate.plan(),
+                    TabStripStateKey::new(scene.surface(), *bar.id()),
+                    bar,
+                    &TabScrollAdjustment::reveal_tab(tab.tab),
+                )?;
+            }
             let native_guard = self.viewport_focus_binding(scene.surface());
             match selection {
                 LocalTabSelection::Activate(_) | LocalTabSelection::NavigateAndActivate { .. } => {
@@ -338,20 +353,6 @@ impl DockEngine {
                         })?;
                 }
                 LocalTabSelection::Navigate { .. } => {
-                    if let Some(bar) = candidate
-                        .plan()
-                        .tab_bar_records()
-                        .iter()
-                        .find(|bar| bar.id().root == tab.root && bar.id().tabs == tab.tabs)
-                    {
-                        let _ = self.finish_tab_strip_scroll(
-                            focus_causal.cause(),
-                            candidate.plan(),
-                            TabStripStateKey::new(scene.surface(), *bar.id()),
-                            bar,
-                            &TabScrollAdjustment::reveal_tab(tab.tab),
-                        )?;
-                    }
                     self.viewport_focus.preserve_local_focus(
                         scene.surface(),
                         native_guard,

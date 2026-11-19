@@ -539,18 +539,20 @@ fn grid_resize_changed_axes(
                 && shares.column_weights().len() == basis.columns()
         })
     });
-    let changed_axis = |current: Option<&[SplitWeight]>, proposed: &[SplitWeight]| {
+    let changed_axis = |axis, current: Option<&[SplitWeight]>, proposed: &[SplitWeight]| {
         current.map_or_else(
-            || !axis_is_equal_default(proposed),
+            || !axis_is_equal_default(proposed) || resize.materialized_axis() == Some(axis),
             |current| current != proposed,
         )
     };
     [
         changed_axis(
+            Axis::Horizontal,
             effective.map(DockspaceGridShares::column_weights),
             proposed.column_weights(),
         ),
         changed_axis(
+            Axis::Vertical,
             effective.map(DockspaceGridShares::row_weights),
             proposed.row_weights(),
         ),

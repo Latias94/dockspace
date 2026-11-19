@@ -97,10 +97,10 @@ enum SampleError {
 
 pub(super) fn prepare(
     workspace: &Workspace,
-    plan: &PresentationPlan,
+    layout: ResizeLayout<'_>,
     handles: &[(NodeSource, SplitterRecord)],
 ) -> Option<Vec<FrozenResizeAxisGroup>> {
-    let facts = plan.layout_facts()?;
+    let facts = layout.facts;
     let mut axes = BTreeMap::<Axis, BTreeMap<RootId, Vec<(NodeId, usize)>>>::new();
     for (source, record) in handles {
         let id = *record.id();
@@ -115,7 +115,7 @@ pub(super) fn prepare(
                 crate::graph::error::ReferenceRole::Source,
             )
             .ok()?;
-        let projection = facts.root(id.root)?.projection();
+        let projection = layout.projection(id.root)?;
         match (id.owner, workspace.node(id.node())?) {
             (
                 SplitterOwner::Split(_),
@@ -128,7 +128,7 @@ pub(super) fn prepare(
             ) => {
                 let split = projection.splits.get(&id.node())?;
                 if *axis != record.axis()
-                    || weights.as_slice() != record.weights()
+                    || layout.split_weights(id.root, id.node(), weights) != record.weights()
                     || split.following_child_index(id.index) != Some(record.after_index())
                     || children.len() != split.children.len()
                     || !record
@@ -181,7 +181,7 @@ pub(super) fn prepare(
             for (root, drivers) in roots {
                 let root_node = workspace.root(root)?.node;
                 let source = workspace.capture_node_source(root, root_node).ok()?;
-                let projection = facts.root(root)?.projection();
+                let projection = layout.projection(root)?;
                 if !projection
                     .nodes
                     .shares_structure(workspace.root_structure(root)?)
@@ -205,10 +205,8 @@ pub(super) fn prepare(
                                 .visible_tab_selection(node)
                                 .and_then(crate::ids::TabKey::layout);
                             let header = if axis == Axis::Vertical
-                                && plan
-                                    .tab_bar_records()
-                                    .iter()
-                                    .any(|bar| bar.id().root == root && bar.id().tabs == node)
+                                && facts.root(root)?.tab_bar_visibility(node)
+                                    == Some(crate::policy::TabBarVisibility::Visible)
                             {
                                 facts.config().tab_bar_height()
                             } else {
@@ -256,7 +254,7 @@ pub(super) fn prepare(
                                     .map(|(index, child)| (child, index))
                                     .collect(),
                                 tracks,
-                                weights: weights.clone(),
+                                weights: layout.split_weights(root, node, weights).to_vec(),
                                 central: split.central_index,
                                 grid: None,
                             })

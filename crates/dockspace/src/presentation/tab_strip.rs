@@ -27,6 +27,29 @@ impl TabNavigation {
     }
 }
 
+pub(crate) fn reveal_tab_range(
+    requested: f64,
+    maximum: f64,
+    viewport_extent: f64,
+    start: f64,
+    end: f64,
+) -> f64 {
+    let start_offset = start.clamp(0.0, maximum);
+    if end - start > viewport_extent {
+        return start_offset;
+    }
+    let end_offset = (end - viewport_extent).clamp(0.0, start_offset);
+    requested.clamp(end_offset, start_offset)
+}
+
+pub(crate) fn tab_local_range(
+    mut widths: impl Iterator<Item = f64>,
+    ordinal: usize,
+) -> Option<(f64, f64)> {
+    let start = widths.by_ref().take(ordinal).sum::<f64>();
+    Some((start, start + widths.next()?))
+}
+
 /// Stable identity of one transient tab-strip state slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TabStripStateKey {

@@ -59,6 +59,7 @@ pub(crate) use requirements::{
 };
 #[cfg(feature = "motion")]
 pub(crate) use surface::materialize_presentation_sample;
+pub(crate) use surface::reprojected_resize_handles;
 pub(crate) use surface::{
     CompiledSurfacePlan, compile_surface_plan, contained_minimum_size, pane_outer_sizing,
     root_controls_layout, selection_geometry_unchanged,
@@ -72,7 +73,9 @@ pub(crate) use surface::{
 };
 
 #[cfg(test)]
-use surface::{edge_preview, rect_contains, reveal_tab_range, tab_strip_control_layout};
+use crate::presentation::tab_strip::reveal_tab_range;
+#[cfg(test)]
+use surface::{edge_preview, rect_contains, tab_strip_control_layout};
 
 #[cfg(test)]
 mod tests;

@@ -572,7 +572,7 @@ pub fn project_root_with_overrides(
         false,
         None,
         &weight_overrides,
-        &BTreeMap::new(),
+        BTreeMap::new(),
     )
 }
 
@@ -682,7 +682,7 @@ impl RootMeasurement<'_> {
             self.minimums_only,
             self.leaf_sizing.as_ref(),
             weight_overrides,
-            &self.tab_projections,
+            self.tab_projections,
         )
     }
 }
@@ -697,29 +697,31 @@ fn project_measurements(
     minimums_only: bool,
     leaf_sizing: Option<&BTreeMap<NodeId, PaneSizing>>,
     weight_overrides: &BTreeMap<NodeId, TrackWeights>,
-    tab_projections: &BTreeMap<usize, (Option<usize>, f64)>,
+    tab_projections: BTreeMap<usize, (Option<usize>, f64)>,
 ) -> Result<LayoutProjection, LayoutError> {
+    let basis = ProjectionBasis {
+        central,
+        metrics,
+        cap_frames: leaf_sizing.is_some(),
+        tabs: (!tab_projections.is_empty()).then(|| Arc::new(tab_projections)),
+    };
     let reflow = FrozenRootLayout::capture(
         &topology,
         &values,
-        &central,
         bounds,
-        metrics,
+        &basis,
         minimums_only,
         leaf_sizing,
         weight_overrides,
-        tab_projections,
     );
     let mut projection = project_measurements_inner(
         topology,
         values,
-        central,
         bounds,
-        metrics,
+        &basis,
         minimums_only,
         leaf_sizing,
         weight_overrides,
-        tab_projections,
     )?;
     projection.auto_reflow = reflow;
     Ok(projection)
@@ -729,14 +731,13 @@ fn project_measurements(
 fn project_measurements_inner(
     topology: Arc<RootStructure>,
     mut values: Vec<NodeResult>,
-    mut central: CentralRoute,
     bounds: LogicalRect,
-    metrics: LayoutMetrics,
+    basis: &ProjectionBasis,
     minimums_only: bool,
     leaf_sizing: Option<&BTreeMap<NodeId, PaneSizing>>,
     weight_overrides: &BTreeMap<NodeId, TrackWeights>,
-    tab_projections: &BTreeMap<usize, (Option<usize>, f64)>,
 ) -> Result<LayoutProjection, LayoutError> {
+    let metrics = basis.metrics;
     if minimums_only {
         let minimum = values[0].constraints.min();
         let leaf_maximum = LogicalSize::new(
@@ -843,19 +844,9 @@ fn project_measurements_inner(
         splits: SplitMap::new(Arc::clone(&topology)),
         grids: GridMap::default(),
         auto_reflow: None,
+        basis: basis.clone(),
     };
-    let initial_central = central.clone();
-    project_subtree(
-        &topology,
-        bounds,
-        metrics,
-        &mut central,
-        leaf_sizing.is_some(),
-        weight_overrides,
-        &mut projection,
-        tab_projections,
-        None,
-    )?;
+    basis.project_into(bounds, weight_overrides, &mut projection, None)?;
     if !topology.grid_rows.is_empty() {
         let shapes = projection
             .grids
@@ -868,20 +859,9 @@ fn project_measurements_inner(
             &shapes,
             metrics,
             bounds.size(),
-            tab_projections,
+            basis.tabs.as_deref().unwrap_or(&BTreeMap::new()),
         )?;
-        central = initial_central;
-        project_subtree(
-            &topology,
-            bounds,
-            metrics,
-            &mut central,
-            leaf_sizing.is_some(),
-            weight_overrides,
-            &mut projection,
-            tab_projections,
-            Some(&shapes),
-        )?;
+        basis.project_into(bounds, weight_overrides, &mut projection, Some(&shapes))?;
     }
     Ok(projection)
 }
@@ -924,7 +904,7 @@ fn project_draft(
         matches!(leaves, LeafMeasurements::Minimums(_)),
         None,
         &BTreeMap::new(),
-        &BTreeMap::new(),
+        BTreeMap::new(),
     )
 }
 
@@ -1328,6 +1308,37 @@ struct ProjectionScratch {
     weights: Vec<f64>,
     sizes: Vec<f64>,
     eligible: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ProjectionBasis {
+    central: CentralRoute,
+    metrics: LayoutMetrics,
+    cap_frames: bool,
+    tabs: Option<Arc<BTreeMap<usize, (Option<usize>, f64)>>>,
+}
+
+impl ProjectionBasis {
+    fn project_into(
+        &self,
+        bounds: LogicalRect,
+        weights: &BTreeMap<NodeId, TrackWeights>,
+        projection: &mut LayoutProjection,
+        grid_shapes: Option<&BTreeMap<NodeId, ResolvedGridShape>>,
+    ) -> Result<(), LayoutError> {
+        let topology = Arc::clone(&projection.nodes.topology);
+        project_subtree(
+            &topology,
+            bounds,
+            self.metrics,
+            &mut self.central.clone(),
+            self.cap_frames,
+            weights,
+            projection,
+            self.tabs.as_deref().unwrap_or(&BTreeMap::new()),
+            grid_shapes,
+        )
+    }
 }
 
 fn project_subtree(

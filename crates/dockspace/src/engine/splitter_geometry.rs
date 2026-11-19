@@ -3,17 +3,58 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::geometry::{LogicalPoint, LogicalRect, LogicalSize};
-use crate::graph::command::{NodeSource, TrackResize};
+use crate::graph::command::{NodeSource, TrackResize, TrackWeights};
 use crate::graph::{Axis, Node, SplitWeight, Workspace};
 use crate::ids::{NodeId, RootId};
 use crate::interaction::{
     ActiveResize, FrozenResizeAxisGroup, FrozenResizeSplit, ResizeAdjustment, ResizeDeltaInterval,
 };
 use crate::presentation::layout::{LayoutProjection, SplitProjection};
-use crate::presentation::scene::{PresentationPlan, SplitterRecord};
+use crate::presentation::scene::{PresentationLayoutFacts, PresentationPlan, SplitterRecord};
 
 pub(crate) mod piecewise;
 pub(crate) use piecewise::FrozenPiecewiseAxis;
+
+#[derive(Clone, Copy)]
+pub(super) struct ResizeLayout<'a> {
+    pub(super) facts: &'a PresentationLayoutFacts,
+    pub(super) staged: Option<(
+        RootId,
+        &'a LayoutProjection,
+        &'a BTreeMap<NodeId, TrackWeights>,
+    )>,
+}
+
+impl<'a> ResizeLayout<'a> {
+    pub(super) fn presented(plan: &'a PresentationPlan) -> Option<Self> {
+        Some(Self {
+            facts: plan.layout_facts()?,
+            staged: None,
+        })
+    }
+
+    pub(super) fn projection(self, root: RootId) -> Option<&'a LayoutProjection> {
+        match self.staged {
+            Some((id, projection, _)) if id == root => Some(projection),
+            _ => Some(self.facts.root(root)?.projection()),
+        }
+    }
+
+    fn split_weights(
+        self,
+        root: RootId,
+        node: NodeId,
+        original: &'a [SplitWeight],
+    ) -> &'a [SplitWeight] {
+        match self.staged {
+            Some((id, _, weights)) if id == root => match weights.get(&node) {
+                Some(TrackWeights::Split(weights)) => weights,
+                _ => original,
+            },
+            _ => original,
+        }
+    }
+}
 
 pub(super) fn split_resize_updates(
     resize: &ActiveResize,
@@ -35,24 +76,32 @@ pub(super) fn prepare_resize_axis_groups(
     plan: &PresentationPlan,
     handles: Vec<(NodeSource, SplitterRecord)>,
 ) -> Option<Vec<FrozenResizeAxisGroup>> {
-    if plan.layout_facts()?.config().resize_propagation()
+    prepare_projected_resize_axis_groups(workspace, ResizeLayout::presented(plan)?, &handles)
+}
+
+pub(super) fn prepare_projected_resize_axis_groups(
+    workspace: &Workspace,
+    layout: ResizeLayout<'_>,
+    handles: &[(NodeSource, SplitterRecord)],
+) -> Option<Vec<FrozenResizeAxisGroup>> {
+    if layout.facts.config().resize_propagation()
         == crate::presentation::config::ResizePropagation::Adjacent
-        && let Some(groups) = prepare_linear_resize_axis_groups(workspace, plan, &handles)
+        && let Some(groups) = prepare_linear_resize_axis_groups(workspace, layout, handles)
     {
         return Some(groups);
     }
-    piecewise::prepare(workspace, plan, &handles)
+    piecewise::prepare(workspace, layout, handles)
 }
 
 fn prepare_linear_resize_axis_groups(
     workspace: &Workspace,
-    plan: &PresentationPlan,
+    layout: ResizeLayout<'_>,
     handles: &[(NodeSource, SplitterRecord)],
 ) -> Option<Vec<FrozenResizeAxisGroup>> {
     if handles.is_empty() {
         return None;
     }
-    let facts = plan.layout_facts()?;
+    let facts = layout.facts;
     let mut roots = BTreeMap::<RootId, NodeSource>::new();
     // Include both outer slots, and merge every incident gap before traversal.
     // No handle independently solves a child shared with another incident gap.
@@ -80,7 +129,7 @@ fn prepare_linear_resize_axis_groups(
                 }
             }
         }
-        let projection = facts.root(id.root)?.projection();
+        let projection = layout.projection(id.root)?;
         let Node::Split {
             axis,
             children,
@@ -90,6 +139,7 @@ fn prepare_linear_resize_axis_groups(
         else {
             return None;
         };
+        let weights = layout.split_weights(id.root, id.node(), weights);
         let split = projection.splits.get(&id.node())?;
         if *axis != record.axis()
             || split.axis != *axis
@@ -101,7 +151,7 @@ fn prepare_linear_resize_axis_groups(
                 .copied()
                 .eq(split.children.iter().map(|child| child.extent))
             || record.central_index() != split.central_index
-            || record.weights() != weights.as_slice()
+            || record.weights() != weights
             || record.before_minimum_extent() != split.children.get(id.index)?.minimum
             || record.after_minimum_extent() != split.children.get(record.after_index())?.minimum
             || record.before_maximum_extent() != split.children.get(id.index)?.maximum
@@ -139,7 +189,7 @@ fn prepare_linear_resize_axis_groups(
             for root in incident_roots {
                 let prototype = roots.get(&root)?;
                 let root_facts = facts.root(root)?;
-                let projection = root_facts.projection();
+                let projection = layout.projection(root)?;
                 let root_node = workspace.root(root)?.node;
                 if projection.nodes.get(&root_node).map(|result| result.slot)
                     != Some(root_facts.content_bounds())
@@ -221,6 +271,7 @@ fn prepare_linear_resize_axis_groups(
                         ));
                         continue;
                     };
+                    let weights = layout.split_weights(root, node, weights);
                     let mut edges = vec![0.0; children.len() + 1];
                     let split = projection.splits.get(&node)?;
                     if *split_axis == axis {
@@ -280,7 +331,7 @@ fn prepare_linear_resize_axis_groups(
                             axis: *split_axis,
                             bounds,
                             constraints: result.constraints,
-                            weights: weights.clone(),
+                            weights: weights.to_vec(),
                             child_extents: split
                                 .children
                                 .iter()

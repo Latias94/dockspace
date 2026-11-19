@@ -3,15 +3,19 @@
 use std::collections::BTreeMap;
 
 use crate::geometry::{AxisSizing, LogicalRect, PaneSizing};
+use crate::graph::command::{TrackResize, TrackWeights};
 use crate::graph::{Axis, Node};
 use crate::ids::{NodeId, RootId};
 use crate::interaction::{FrozenResizeAxisGroup, ResizeAdjustment, ResizeDeltaInterval};
 use crate::policy::TabBarVisibility;
-use crate::presentation::compiler::pane_outer_sizing;
+use crate::presentation::compiler::{pane_outer_sizing, reprojected_resize_handles};
 use crate::presentation::manifest::PaneSizingKey;
-use crate::presentation::scene::{SplitterOwner, SplitterResizeTarget, SplitterSceneId};
+use crate::presentation::scene::{
+    SplitterOwner, SplitterRecord, SplitterResizeTarget, SplitterSceneId,
+};
 use crate::runtime::SurfaceSplitterAdjustment;
 
+use super::splitter_geometry::{ResizeLayout, prepare_projected_resize_axis_groups};
 use super::*;
 
 impl DockEngine {
@@ -29,12 +33,9 @@ impl DockEngine {
             SplitterResizeTarget::Handle(id) => id.root,
             SplitterResizeTarget::Junction(id) => id.root(),
         };
-        let auto = plan
-            .layout_facts()?
-            .root(root)?
-            .projection()
-            .auto_reflow()
-            .is_some();
+        let original = ResizeLayout::presented(plan)?;
+        let root_projection = original.projection(root)?;
+        let auto = root_projection.auto_reflow().is_some();
         let policy = self.policy_snapshot();
         if steps.peek().is_none() {
             if !auto {
@@ -55,8 +56,15 @@ impl DockEngine {
                 axis,
                 policy,
             )?;
-            let delta =
-                Self::splitter_step_delta(&self.workspace, plan, target, &group, step_size, first)?;
+            let delta = Self::splitter_step_delta(
+                &self.workspace,
+                original,
+                |id| plan.splitter_record(id),
+                target,
+                &group,
+                step_size,
+                first,
+            )?;
             let adjustment = ResizeAdjustment::new(delta);
             if auto {
                 let updates = resize_axis_group_adjustment_updates(
@@ -73,17 +81,33 @@ impl DockEngine {
         // A key begins at the previous key's allocation. In Outward mode a
         // reversal can redistribute space without moving the final divider.
         // Keep intermediates private and publish their final weights once.
-        let mut workspace = self.workspace.clone();
-        let mut projection = None;
-        let mut final_tracks = BTreeMap::new();
+        let mut group =
+            Self::prepare_splitter_resize_axis_group(&self.workspace, plan, target, axis, policy)?;
+        let mut projected = None;
+        let mut handles: Option<Vec<SplitterRecord>> = None;
+        let mut weights = BTreeMap::<NodeId, TrackWeights>::new();
+        let mut final_tracks = BTreeMap::<NodeId, TrackResize>::new();
         let mut steps = std::iter::once(first).chain(steps).peekable();
         while let Some(step) = steps.next() {
-            let current = projection.as_ref().unwrap_or(plan);
-            let group = Self::prepare_splitter_resize_axis_group(
-                &workspace, current, target, axis, policy,
+            let layout = ResizeLayout {
+                staged: projected
+                    .as_ref()
+                    .map(|projection| (root, projection, &weights)),
+                ..original
+            };
+            let record = |id| match &handles {
+                Some(records) => records.iter().find(|record| *record.id() == id),
+                None => plan.splitter_record(id),
+            };
+            let delta = Self::splitter_step_delta(
+                &self.workspace,
+                layout,
+                record,
+                target,
+                &group,
+                step_size,
+                step,
             )?;
-            let delta =
-                Self::splitter_step_delta(&workspace, current, target, &group, step_size, step)?;
             let updates = resize_axis_group_adjustment_updates(
                 std::slice::from_ref(&group),
                 axis,
@@ -96,27 +120,61 @@ impl DockEngine {
                 return None;
             };
             let changed =
-                crate::graph::operation::validate_track_resizes(&workspace, policy, &updates)
+                crate::graph::operation::validate_track_resizes(&self.workspace, policy, &updates)
                     .ok()?;
-            let updates = updates
-                .into_iter()
-                .zip(changed)
-                .filter_map(|(update, (_, changed))| changed.then_some(update))
-                .collect::<Vec<_>>();
-            if updates.is_empty() {
+            let mut advanced = false;
+            for (update, (_, changed)) in updates.into_iter().zip(changed) {
+                let node = update.source().node();
+                if final_tracks.get(&node).map_or(changed, |previous| {
+                    previous.weights() != update.weights()
+                        || previous.grid_basis() != update.grid_basis()
+                }) {
+                    weights.insert(node, update.weights().clone());
+                    final_tracks.insert(node, update.materialize_grid_basis(axis));
+                    advanced = true;
+                }
+            }
+            if !advanced || steps.peek().is_none() {
                 continue;
             }
-            for update in &updates {
-                let root = update.source().root();
-                let node = update.source().node();
-                let source = self.workspace.capture_node_source(root, node).ok()?;
-                final_tracks.insert((root, node), update.clone().with_source(source));
+            let projection = root_projection.project_resize_step(&weights).ok()?;
+            let Some(records) = reprojected_resize_handles(
+                &self.workspace,
+                plan,
+                target,
+                &projection,
+                &weights,
+                policy,
+            )
+            .ok()?
+            else {
+                // The accepted prefix can consume its own junction (for example,
+                // two tees become one cross). Later keys have no such receiver.
+                break;
+            };
+            let active = records
+                .iter()
+                .filter(|record| record.axis() == axis)
+                .map(|record| {
+                    let id = *record.id();
+                    self.workspace
+                        .capture_node_source(id.root, id.node())
+                        .map(|source| (source, record.clone()))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .ok()?;
+            let layout = ResizeLayout {
+                staged: Some((root, &projection, &weights)),
+                ..original
+            };
+            if active.is_empty() || active.iter().any(|(_, record)| !record.operable()) {
+                break;
             }
-            if steps.peek().is_some() {
-                let command = WorkspaceCommand::ResizeTracks { tracks: updates };
-                workspace.apply_draft_command(policy, &command).ok()?;
-                projection = Some(self.recompile_splitter_plan(&workspace, plan, policy)?);
-            }
+            let groups = prepare_projected_resize_axis_groups(&self.workspace, layout, &active)?;
+            Self::authorize_resize_axis_groups(&self.workspace, policy, &groups).ok()?;
+            group = groups.into_iter().find(|group| group.axis == axis)?;
+            projected = Some(projection);
+            handles = Some(records);
         }
         if final_tracks.is_empty() {
             return Some(ResizeAdjustment::new(0.0));
@@ -126,9 +184,10 @@ impl DockEngine {
         ))
     }
 
-    fn splitter_step_delta(
+    fn splitter_step_delta<'a>(
         workspace: &Workspace,
-        plan: &PresentationPlan,
+        layout: ResizeLayout<'_>,
+        record: impl Fn(SplitterSceneId) -> Option<&'a SplitterRecord>,
         target: SplitterResizeTarget,
         group: &FrozenResizeAxisGroup,
         step_size: f64,
@@ -140,9 +199,10 @@ impl DockEngine {
             Step::Increment => Some(step_size),
             Step::Minimum => Some(group.common_delta.minimum),
             Step::Maximum => Some(group.common_delta.maximum),
-            Step::Equalize | Step::Preferred => Self::splitter_restoration_delta(
+            Step::Equalize | Step::Preferred => Self::splitter_restoration_in_layout(
                 workspace,
-                plan,
+                layout,
+                record,
                 target,
                 group,
                 if step == Step::Equalize {
@@ -277,10 +337,28 @@ impl DockEngine {
         group: &FrozenResizeAxisGroup,
         adjustment: SplitterReset,
     ) -> Option<f64> {
+        Self::splitter_restoration_in_layout(
+            workspace,
+            ResizeLayout::presented(plan)?,
+            |id| plan.splitter_record(id),
+            target,
+            group,
+            adjustment,
+        )
+    }
+
+    fn splitter_restoration_in_layout<'a>(
+        workspace: &Workspace,
+        layout: ResizeLayout<'_>,
+        record: impl Fn(SplitterSceneId) -> Option<&'a SplitterRecord>,
+        target: SplitterResizeTarget,
+        group: &FrozenResizeAxisGroup,
+        adjustment: SplitterReset,
+    ) -> Option<f64> {
         let limits = group.common_delta;
         let axis = group.axis;
         let restore = |id: SplitterSceneId| {
-            let record = plan.splitter_record(id)?;
+            let record = record(id)?;
             let before = *record.child_extents().get(id.index)?;
             let after = *record.child_extents().get(record.after_index())?;
             let (before_hint, after_hint) = match (adjustment, id.owner) {
@@ -292,7 +370,7 @@ impl DockEngine {
                     let hint = |index| {
                         Self::subtree_axis_sizing(
                             workspace,
-                            plan,
+                            layout,
                             id.root,
                             *children.get(index)?,
                             axis,
@@ -312,7 +390,7 @@ impl DockEngine {
                         return None;
                     }
                     let hint = |track| {
-                        Self::grid_track_preferred(workspace, plan, id.root, node, axis, track)
+                        Self::grid_track_preferred(workspace, layout, id.root, node, axis, track)
                     };
                     (hint(id.index)?, hint(record.after_index())?)
                 }
@@ -357,7 +435,7 @@ impl DockEngine {
             SplitterResizeTarget::Junction(junction) => {
                 let mut displacement = None;
                 for id in junction.splitters() {
-                    if plan.splitter_record(id)?.axis() != axis {
+                    if record(id)?.axis() != axis {
                         continue;
                     }
                     let delta = restore(id)?;
@@ -373,13 +451,13 @@ impl DockEngine {
 
     fn grid_track_preferred(
         workspace: &Workspace,
-        plan: &PresentationPlan,
+        layout: ResizeLayout<'_>,
         root: RootId,
         node: NodeId,
         axis: Axis,
         track: usize,
     ) -> Option<Option<f64>> {
-        let projection = plan.layout_facts()?.root(root)?.projection();
+        let projection = layout.projection(root)?;
         let grid = projection.grids.get(&node)?;
         let mut has_hint = false;
         let mut extent: f64 = 0.0;
@@ -391,7 +469,7 @@ impl DockEngine {
             if index != track || !projection.nodes.get(&child)?.visible {
                 continue;
             }
-            let hint = Self::subtree_axis_sizing(workspace, plan, root, child, axis)?.preferred();
+            let hint = Self::subtree_axis_sizing(workspace, layout, root, child, axis)?.preferred();
             has_hint |= hint.is_some();
             let actual = rect_extent(projection.nodes.get(&child)?.rect, axis);
             extent = extent.max(hint.unwrap_or(actual));
@@ -402,14 +480,13 @@ impl DockEngine {
     /// Resolves hints only for an explicit restoration, using the exact selected panes.
     fn subtree_axis_sizing(
         workspace: &Workspace,
-        plan: &PresentationPlan,
+        layout: ResizeLayout<'_>,
         root: RootId,
         subtree: NodeId,
         axis: Axis,
     ) -> Option<AxisSizing> {
-        let layout = plan.layout_facts()?;
-        let facts = layout.root(root)?;
-        let projection = facts.projection();
+        let facts = layout.facts.root(root)?;
+        let projection = layout.projection(root)?;
         let mut pending = vec![(subtree, false)];
         let mut sizings = BTreeMap::<NodeId, AxisSizing>::new();
         while let Some((node, visited)) = pending.pop() {
@@ -420,9 +497,12 @@ impl DockEngine {
             let sizing = match workspace.node(node)? {
                 Node::Pane { item } => {
                     let measured = facts.pane_sizing(PaneSizingKey::new(root, *item))?;
-                    let content =
-                        pane_outer_sizing(measured, layout.config(), TabBarVisibility::Hidden)
-                            .ok()?;
+                    let content = pane_outer_sizing(
+                        measured,
+                        layout.facts.config(),
+                        TabBarVisibility::Hidden,
+                    )
+                    .ok()?;
                     match axis {
                         Axis::Horizontal => content.width(),
                         Axis::Vertical => content.height(),
@@ -438,12 +518,9 @@ impl DockEngine {
                         }
                         let child_sizing = *sizings.get(&child)?;
                         let chrome = if axis == Axis::Vertical
-                            && plan
-                                .tab_bar_records()
-                                .iter()
-                                .any(|bar| bar.id().root == root && bar.id().tabs == node)
+                            && facts.tab_bar_visibility(node) == Some(TabBarVisibility::Visible)
                         {
-                            layout.config().tab_bar_height()
+                            layout.facts.config().tab_bar_height()
                         } else {
                             0.0
                         };
@@ -458,17 +535,11 @@ impl DockEngine {
                             Some(item) => facts.pane_sizing(PaneSizingKey::new(root, item))?,
                             None => PaneSizing::default(),
                         };
-                        let visibility = if plan
-                            .tab_bar_records()
-                            .iter()
-                            .any(|bar| bar.id().root == root && bar.id().tabs == node)
-                        {
-                            TabBarVisibility::Visible
-                        } else {
-                            TabBarVisibility::Hidden
-                        };
+                        let visibility = facts
+                            .tab_bar_visibility(node)
+                            .unwrap_or(TabBarVisibility::Hidden);
                         let outer =
-                            pane_outer_sizing(measured, layout.config(), visibility).ok()?;
+                            pane_outer_sizing(measured, layout.facts.config(), visibility).ok()?;
                         match axis {
                             Axis::Horizontal => outer.width(),
                             Axis::Vertical => outer.height(),
@@ -839,9 +910,14 @@ mod tests {
         builder.set_root(ROOT, RootRecord::new(outer));
         builder.set_surface(SURFACE, SurfacePresentation::with_main(ROOT));
         let (engine, plan) = compiled(builder.build().unwrap());
-        let actual =
-            DockEngine::subtree_axis_sizing(engine.workspace(), &plan, ROOT, outer, Axis::Vertical)
-                .unwrap();
+        let actual = DockEngine::subtree_axis_sizing(
+            engine.workspace(),
+            ResizeLayout::presented(&plan).unwrap(),
+            ROOT,
+            outer,
+            Axis::Vertical,
+        )
+        .unwrap();
         let current_bare = plan
             .layout_facts()
             .unwrap()
@@ -865,9 +941,15 @@ mod tests {
         builder.set_surface(SURFACE, SurfacePresentation::with_main(ROOT));
         let (engine, plan) = compiled(builder.build().unwrap());
         assert_eq!(
-            DockEngine::subtree_axis_sizing(engine.workspace(), &plan, ROOT, bare, Axis::Vertical)
-                .unwrap()
-                .preferred(),
+            DockEngine::subtree_axis_sizing(
+                engine.workspace(),
+                ResizeLayout::presented(&plan).unwrap(),
+                ROOT,
+                bare,
+                Axis::Vertical
+            )
+            .unwrap()
+            .preferred(),
             Some(80.0)
         );
 
@@ -876,9 +958,14 @@ mod tests {
         builder.set_root(ROOT, RootRecord::new(empty).with_central(empty));
         builder.set_surface(SURFACE, SurfacePresentation::with_main(ROOT));
         let (engine, plan) = compiled(builder.build().unwrap());
-        let baseline =
-            DockEngine::subtree_axis_sizing(engine.workspace(), &plan, ROOT, empty, Axis::Vertical)
-                .unwrap();
+        let baseline = DockEngine::subtree_axis_sizing(
+            engine.workspace(),
+            ResizeLayout::presented(&plan).unwrap(),
+            ROOT,
+            empty,
+            Axis::Vertical,
+        )
+        .unwrap();
         assert_eq!(baseline.minimum(), 21.0);
         assert_eq!(baseline.preferred(), None);
     }

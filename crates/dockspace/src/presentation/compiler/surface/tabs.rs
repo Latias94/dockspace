@@ -19,9 +19,6 @@ use crate::presentation::compiler::tab_strip_layout::{
     TabLeafBounds, TabStripFlow, desired_tab_width, reveal_tab_bar_bounds, select_menu_host,
     tab_leaf_bounds,
 };
-pub(in crate::presentation::compiler) use crate::presentation::compiler::tab_strip_layout::{
-    reveal_tab_range, tab_local_range,
-};
 use crate::presentation::config::DockPresentationConfig;
 use crate::presentation::hit::region::HitRegion;
 use crate::presentation::layout::{NodeMap, NodeResult};

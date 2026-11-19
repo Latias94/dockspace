@@ -7,6 +7,7 @@ use crate::geometry::{GeometryError, LogicalPoint, LogicalRect};
 use crate::graph::{Node, Workspace};
 use crate::ids::{NodeId, RootId, SurfaceId};
 use crate::presentation::config::DockPresentationConfig;
+use crate::presentation::tab_strip::{reveal_tab_range, tab_local_range};
 
 pub(crate) struct TabLeafBounds {
     pub(crate) bounds: LogicalRect,
@@ -187,34 +188,6 @@ fn checked_width_sum(
     } else {
         Err(SceneCompilationError::NonFiniteAggregate { aggregate })
     }
-}
-
-pub(super) fn reveal_tab_range(
-    requested: f64,
-    maximum: f64,
-    viewport_extent: f64,
-    start: f64,
-    end: f64,
-) -> f64 {
-    let (minimum, maximum_for_item) = if end - start <= viewport_extent {
-        (
-            (end - viewport_extent).clamp(0.0, maximum),
-            start.clamp(0.0, maximum),
-        )
-    } else {
-        let aligned = start.clamp(0.0, maximum);
-        (aligned, aligned)
-    };
-    requested.clamp(minimum, maximum_for_item)
-}
-
-pub(super) fn tab_local_range(
-    widths: impl Iterator<Item = f64>,
-    ordinal: usize,
-) -> Option<(f64, f64)> {
-    let mut widths = widths;
-    let start = widths.by_ref().take(ordinal).sum::<f64>();
-    Some((start, start + widths.next()?))
 }
 
 /// `None` excludes a bar; `Some(false)` retains it as a compacted-menu fallback.

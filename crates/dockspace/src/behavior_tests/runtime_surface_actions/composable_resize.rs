@@ -56,6 +56,15 @@ fn session(
     propagation: ResizePropagation,
     hints: &[(ItemId, PaneSizing)],
 ) -> DockspaceSession {
+    session_with_config(content, bounds, config(propagation), hints)
+}
+
+fn session_with_config(
+    content: DockspaceNode,
+    bounds: LogicalRect,
+    config: DockPresentationConfig,
+    hints: &[(ItemId, PaneSizing)],
+) -> DockspaceSession {
     let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
         SURFACE,
         DockspaceRootLayout::new(ROOT, content),
@@ -64,7 +73,7 @@ fn session(
     let mut session = DockspaceSession::from_layout_with_presentation_config(
         layout,
         DockPolicy::default(),
-        config(propagation),
+        config,
     )
     .unwrap();
     let mut frame = session.begin_host_frame().unwrap();
@@ -131,6 +140,132 @@ fn grid_content() -> DockspaceNode {
         .named("Grid"),
         DockspaceNode::pane(FIFTH),
     ])
+}
+
+#[test]
+fn equalize_keeps_the_first_step_when_a_t_junction_becomes_a_cross() {
+    use SurfaceSplitterAdjustment::Equalize;
+
+    let offered = LogicalRect::new(0.0, 0.0, 604.0, 544.0).unwrap();
+    let left = DockspaceNode::split(
+        DockspaceAxis::Vertical,
+        [
+            (DockspaceNode::pane(FIRST), 15.0),
+            (DockspaceNode::pane(SECOND), 17.0),
+        ],
+    )
+    .unwrap();
+    let right = DockspaceNode::equal_split(
+        DockspaceAxis::Vertical,
+        [THIRD, FOURTH].map(DockspaceNode::pane),
+    )
+    .unwrap();
+    let content = DockspaceNode::equal_split(DockspaceAxis::Horizontal, [left, right]).unwrap();
+    for propagation in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
+        for steps in [&[Equalize][..], &[Equalize, Equalize][..]] {
+            let mut session = session(content.clone(), offered, propagation, &[]);
+            assert_cells(
+                &mut session,
+                [
+                    (300.0, 240.0),
+                    (300.0, 272.0),
+                    (300.0, 256.0),
+                    (300.0, 256.0),
+                ],
+            );
+            let mut frame = session.begin_host_frame().unwrap();
+            let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+            let tee = plan
+                .splitter_junctions()
+                .min_by(|a, b| a.hit_bounds().y().total_cmp(&b.hit_bounds().y()))
+                .unwrap();
+            assert_eq!(tee.arm_count(), 3);
+            let id = tee.visual_id();
+            let compiled = crate::presentation::compiler::surface_compilation_count();
+            let action = plan
+                .prepare_splitter_junction_adjustment_sequence(
+                    id,
+                    DockspaceAxis::Vertical,
+                    steps.iter().copied(),
+                )
+                .expect("the accepted prefix still commits when it changes the junction");
+            assert_eq!(
+                crate::presentation::compiler::surface_compilation_count(),
+                compiled
+            );
+            frame.submit_surface_action(action).unwrap();
+            measure(&mut frame, offered, &[]);
+            assert!(frame.commit().unwrap().workspace_changed());
+            assert_cells(&mut session, [(300.0, 256.0); 4]);
+            inspect_surface(&mut session, |plan| {
+                assert_eq!(plan.splitter_junctions().next().unwrap().arm_count(), 4);
+                assert!(
+                    plan.prepare_splitter_junction_adjustment(
+                        id,
+                        DockspaceAxis::Vertical,
+                        Equalize
+                    )
+                    .is_none()
+                );
+            });
+        }
+    }
+}
+
+#[test]
+fn auto_grid_reversal_materializes_the_current_shape_before_returning_to_the_old_shape() {
+    use SurfaceSplitterAdjustment::{Decrement, Increment};
+
+    let content = DockspaceNode::grid_with_shares(
+        DockspaceGridShape::Auto,
+        [FIRST, SECOND, THIRD, FOURTH].map(DockspaceNode::pane),
+        DockspaceGridShares::new([1.0, 3.0], [1.0, 3.0]).unwrap(),
+    )
+    .unwrap();
+    let wide = LogicalRect::new(0.0, 0.0, 803.0, 100.0).unwrap();
+    let square = LogicalRect::new(0.0, 0.0, 401.0, 401.0).unwrap();
+    for propagation in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
+        let config = DockPresentationConfig::builder()
+            .minimum_pane_size(1.0, 1.0)
+            .splitter_thickness(1.0)
+            .splitter_keyboard_step(16.0)
+            .resize_propagation(propagation)
+            .build()
+            .unwrap();
+        for batches in [
+            &[&[Increment, Decrement][..]][..],
+            &[&[Increment][..], &[Decrement][..]][..],
+        ] {
+            let mut session = session_with_config(content.clone(), wide, config.clone(), &[]);
+            assert!(
+                bounds(&mut session)
+                    .iter()
+                    .all(|(_, rect)| rect.y() == 28.0 && rect.width() == 200.0)
+            );
+            for steps in batches {
+                let mut frame = session.begin_host_frame().unwrap();
+                let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+                let handle = plan
+                    .splitters()
+                    .filter(|splitter| splitter.axis() == DockspaceAxis::Horizontal)
+                    .min_by(|a, b| a.draw_bounds().x().total_cmp(&b.draw_bounds().x()))
+                    .unwrap();
+                let action = plan
+                    .prepare_splitter_adjustment_sequence(handle.visual_id(), steps.iter().copied())
+                    .unwrap();
+                frame.submit_surface_action(action).unwrap();
+                measure(&mut frame, wide, &[]);
+                frame.commit().unwrap();
+            }
+            let restored = measured_bounds(&mut session, square, &[]);
+            assert!(
+                restored
+                    .iter()
+                    .all(|(_, rect)| (rect.width() - 200.0).abs() < 1e-8),
+                "{restored:?}"
+            );
+        }
+    }
 }
 
 #[test]
