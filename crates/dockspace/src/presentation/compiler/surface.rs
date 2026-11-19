@@ -807,12 +807,8 @@ fn compile_root(
                     .splits
                     .get(node)
                     .ok_or(SceneCompilationError::MissingSplitProjection { root, split: *node })?;
-                let hit_rects = splitter_hit_rects(
-                    split.children,
-                    *axis,
-                    config.splitter_hit_extent(),
-                    content_bounds,
-                )?;
+                let hit_rects =
+                    splitter_hit_rects(split.children, *axis, config.splitter_hit_extent(), rect)?;
                 let mut resize_facts = None;
                 let split_operable = policy.splitter_resize_is_allowed(root, *axis, surface)
                     && !(config.pane_overflow_policy()

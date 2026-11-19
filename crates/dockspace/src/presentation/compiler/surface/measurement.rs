@@ -255,29 +255,22 @@ pub(crate) fn compose_root_sizing(
                 PaneSizing::new(compose(true)?, compose(false)?)
             }
             Node::Grid { children, .. } => {
-                let children = children
-                    .iter()
-                    .filter_map(|child| sizing.get(child))
-                    .copied()
-                    .collect::<Vec<_>>();
                 let envelope = |horizontal: bool| {
-                    let axes = children
+                    let minimum = children
                         .iter()
+                        .filter_map(|child| sizing.get(child))
                         .map(|child| {
                             if horizontal {
-                                child.width()
+                                child.width().minimum()
                             } else {
-                                child.height()
+                                child.height().minimum()
                             }
                         })
-                        .collect::<Vec<_>>();
-                    let minimum = axes.iter().map(|axis| axis.minimum()).fold(0.0, f64::max);
-                    let maximum = axes
-                        .iter()
-                        .map(|axis| axis.maximum())
-                        .collect::<Option<Vec<_>>>()
-                        .map(|values| values.into_iter().fold(0.0, f64::max));
-                    AxisSizing::new(minimum, maximum, None)
+                        .fold(0.0, f64::max);
+                    // Auto dimensions depend on offered space. A cell maximum
+                    // cannot cap this container before its track count is known;
+                    // exact track maxima are composed after shape resolution.
+                    AxisSizing::new(minimum, None, None)
                         .map_err(|_| SceneCompilationError::PaneSizingOverflow)
                 };
                 PaneSizing::new(envelope(true)?, envelope(false)?)

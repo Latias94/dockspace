@@ -3,6 +3,7 @@
 use super::*;
 
 mod accesskit;
+mod scoped_geometry;
 
 fn splitter_values(output: &FullOutput) -> (f64, f64, f64) {
     let (_, node) = nodes(output)
