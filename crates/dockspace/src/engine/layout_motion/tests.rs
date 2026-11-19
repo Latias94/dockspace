@@ -75,7 +75,7 @@ fn paint_with_metrics(
                 ..
             } => {
                 if let Some(item) = Some(pane.item()) {
-                    sample.panes.insert(item, pane.bounds());
+                    sample.panes.insert(item, pane.content_geometry().clip());
                     sample
                         .receivers
                         .insert(item, plan.receiver_for_pane(pane).unwrap());

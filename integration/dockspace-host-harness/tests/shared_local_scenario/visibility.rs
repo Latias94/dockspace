@@ -83,12 +83,13 @@ fn record_visibility(session: &mut DockspaceSession) -> RecordedVisibility {
             match operation {
                 Operation::Tab(tab) => painted_tabs.extend(tab.item()),
                 Operation::Pane(pane) if group_hidden && pane.item() == THIRD => {
+                    let geometry = pane.content_geometry();
                     assert_eq!(
-                        pane.bounds(),
+                        geometry.layout_bounds(),
                         LogicalRect::new(0.0, header, bounds.width(), bounds.height() - header)
                             .unwrap()
                     );
-                    assert_eq!(pane.content_bounds(), pane.bounds());
+                    assert_eq!(geometry.clip(), geometry.layout_bounds());
                 }
                 Operation::Tabs(tabs) if group_hidden && tabs.root() == ROOT => {
                     assert_eq!(tabs.bounds(), bounds);

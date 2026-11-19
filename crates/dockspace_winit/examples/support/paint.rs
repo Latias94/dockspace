@@ -239,8 +239,9 @@ fn paint_operation(paint: &mut Pixels<'_>, operation: Operation<'_>) {
 }
 
 fn paint_pane(paint: &mut Pixels<'_>, pane: PanePaintRecord<'_>) {
-    let bounds = rect(pane.layout_bounds());
-    let clip = rect(pane.clip());
+    let geometry = pane.content_geometry();
+    let bounds = rect(geometry.layout_bounds());
+    let clip = rect(geometry.clip());
     paint.fill_clipped(bounds, clip, PANEL);
     let item = pane.item();
     let color = accent(item);

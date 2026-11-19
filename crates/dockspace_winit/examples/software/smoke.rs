@@ -52,7 +52,9 @@ pub(super) fn inspect(plan: SurfacePaintPlan<'_>) -> AppResult<Snapshot> {
                     }
                 }
                 Operation::Pane(pane) => {
-                    snapshot.panes.insert(pane.item(), pane.content_bounds());
+                    snapshot
+                        .panes
+                        .insert(pane.item(), pane.content_geometry().clip());
                 }
                 Operation::Splitter(splitter)
                     if root.contained().is_none()

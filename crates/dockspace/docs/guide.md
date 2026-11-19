@@ -167,9 +167,20 @@ while keeping that UI's own drawing, event delivery and presentation boundary.
 Applications using egui should start with its public runner or complete-output
 facade instead of reproducing these adapter internals.
 
-Size and position pane content with `PanePaintRecord::layout_bounds()`. Use
-`clip()` for the visible paint and input region. This keeps content layout
-stable when a contained window moves partly outside its surface.
+When mounting a pane, take `PanePaintRecord::content_geometry()`. Lay out the
+view in its `layout_bounds()` and restrict paint and pointer input to its
+`clip()`. Both rectangles use surface-local logical coordinates. A contained
+window moving partly outside the surface shrinks the clip without resizing
+the view.
+
+For a retained UI, call `SurfacePaintPlan::retain_tab_strip` once per bar and
+keep the handle with the controls for that output. When a key arrives, call
+`resolve(receiver, start, inputs)` and submit its result with
+`submit_deferred_surface_action`. `receiver` is the tab that supplied the
+original authority. `start` is the focused or selected member, which can be
+scrolled out of view. Route events through the original presentation before
+submitting. Immediate renderers can use `prepare_tab_input_sequence` during
+the paint pass with the same navigation rules.
 
 Application commands submitted through a host frame return a
 `DockspaceSubmittedAction`. Keep each identity when batching commands, then use

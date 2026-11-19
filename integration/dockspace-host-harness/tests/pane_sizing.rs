@@ -51,7 +51,7 @@ fn measure(
             ..
         } = step
         {
-            panes.push((pane.item(), pane.content_bounds()));
+            panes.push((pane.item(), pane.content_geometry().clip()));
         }
         Ok::<(), ()>(())
     })

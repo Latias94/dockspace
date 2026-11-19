@@ -458,7 +458,7 @@ fn group_for_widget(
                 let candidate = match operation {
                     Operation::Pane(pane) => {
                         let bounds = match pass {
-                            FocusPass::Current => egui_rect(pane.content_bounds()),
+                            FocusPass::Current => egui_rect(pane.content_geometry().clip()),
                             FocusPass::Previous => {
                                 let id = context.ui.make_persistent_id((
                                     context.instance_id,

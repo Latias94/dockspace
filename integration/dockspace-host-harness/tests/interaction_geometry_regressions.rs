@@ -150,7 +150,9 @@ fn render_present(session: &mut DockspaceSession) -> BTreeMap<SurfaceId, Snapsho
                             snapshot.tab_bars.push(record.bounds());
                         }
                         SurfacePaintProgramOperation::Pane(record) => {
-                            snapshot.panes.insert(record.item(), record.bounds());
+                            snapshot
+                                .panes
+                                .insert(record.item(), record.content_geometry().clip());
                         }
                         SurfacePaintProgramOperation::Splitter(record) => {
                             if let Some(receiver) = plan.receiver_for_splitter(record) {

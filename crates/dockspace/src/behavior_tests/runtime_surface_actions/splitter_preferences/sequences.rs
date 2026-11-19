@@ -159,11 +159,14 @@ impl Expected {
                 .find(|pane| pane.item() == self.selected)
                 .unwrap();
             let second = panes.iter().find(|pane| pane.item() == SECOND).unwrap();
-            assert_close(first.bounds().x(), 0.0);
-            assert_close(first.content_bounds().width(), self.first_width());
-            assert_close(second.bounds().x(), self.first_width() + 1.0);
+            assert_close(first.content_geometry().clip().x(), 0.0);
+            assert_close(first.content_geometry().clip().width(), self.first_width());
             assert_close(
-                second.content_bounds().width(),
+                second.content_geometry().clip().x(),
+                self.first_width() + 1.0,
+            );
+            assert_close(
+                second.content_geometry().clip().width(),
                 self.width - self.first_width(),
             );
             let splitter = outer_splitter(plan);
@@ -374,7 +377,10 @@ fn hiding_and_remeasuring_a_capped_descendant_preserves_piecewise_contacts() {
         assert_outer(&mut session, 200.0, true);
         inspect_surface(&mut session, |plan| {
             let first = plan.panes().find(|pane| pane.item() == FIRST).unwrap();
-            assert_close(first.content_bounds().width(), 200.0_f64.min(maximum));
+            assert_close(
+                first.content_geometry().clip().width(),
+                200.0_f64.min(maximum),
+            );
         });
     }
 }

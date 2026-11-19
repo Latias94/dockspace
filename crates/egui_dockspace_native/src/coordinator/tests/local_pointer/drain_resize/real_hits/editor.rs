@@ -232,7 +232,7 @@ impl Editor {
                         SurfacePaintProgramOperation::Pane(pane)
                             if Some(pane.item()) == outline_selected =>
                         {
-                            let bounds = pane.content_bounds();
+                            let bounds = pane.content_geometry().clip();
                             outline = Some(
                                 LogicalPoint::new(
                                     bounds.x() + bounds.width() * 0.5,

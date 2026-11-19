@@ -152,9 +152,10 @@ fn dragging_fixture() -> (DockspaceSession, LogicalPoint, DockspacePreviewVisual
         .panes()
         .find(|pane| pane.root() == MAIN_ROOT)
         .expect("the main pane provides a magnetic target");
+    let clip = pane.content_geometry().clip();
     let target = LogicalPoint::new(
-        pane.content_bounds().x() + pane.content_bounds().width() * 0.75,
-        pane.content_bounds().y() + pane.content_bounds().height() * 0.75,
+        clip.x() + clip.width() * 0.75,
+        clip.y() + clip.height() * 0.75,
     )
     .expect("the magnetic target is finite");
     assert!(!contained_bounds.contains(target));

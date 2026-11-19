@@ -83,7 +83,7 @@ fn fixed(rows: usize, columns: usize) -> DockspaceGridShape {
 fn bounds(session: &mut DockspaceSession) -> Vec<(ItemId, LogicalRect)> {
     inspect_surface(session, |plan| {
         plan.panes()
-            .map(|pane| (pane.item(), pane.bounds()))
+            .map(|pane| (pane.item(), pane.content_geometry().clip()))
             .collect()
     })
 }
@@ -100,7 +100,7 @@ fn measured_bounds(
         .unwrap()
         .unwrap()
         .panes()
-        .map(|pane| (pane.item(), pane.bounds()))
+        .map(|pane| (pane.item(), pane.content_geometry().clip()))
         .collect();
     frame.commit().unwrap();
     panes
@@ -335,7 +335,7 @@ fn ancestor_resize_reflows_auto_grid_with_the_same_candidate_and_committed_geome
             .unwrap()
             .unwrap()
             .panes()
-            .map(|pane| (pane.item(), pane.bounds()))
+            .map(|pane| (pane.item(), pane.content_geometry().clip()))
             .collect::<Vec<_>>();
         assert!(frame.commit().unwrap().workspace_changed());
         assert_eq!(bounds(&mut session), preview);

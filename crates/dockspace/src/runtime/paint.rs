@@ -53,6 +53,7 @@ mod preview_tabs;
 mod splitter_range;
 mod tab_chrome;
 mod tab_commands;
+mod tab_input;
 mod tabs;
 mod tabs_group_commands;
 pub use actions::ContainedResizeDirection;
@@ -71,9 +72,10 @@ pub use tab_chrome::{
     TabListMenuBackdropPaintRecord, TabListMenuPaintRecord, TabListMenuRowPaintRecord,
     TabStripControlKind, TabStripControlPaintRecord,
 };
+pub use tab_input::RetainedTabStrip;
 pub use tabs::{
-    PanePaintRecord, TabBarPaintRecord, TabGroupDragRegionPaintRecord, TabPaintRecord,
-    TabStripMemberPaintRecord, TabStripMemberVisibility, TabsPaintRecord,
+    PaneContentGeometry, PanePaintRecord, TabBarPaintRecord, TabGroupDragRegionPaintRecord,
+    TabPaintRecord, TabStripMemberPaintRecord, TabStripMemberVisibility, TabsPaintRecord,
 };
 pub use tabs_group_commands::DockspaceTabsGroupCommandKind;
 
@@ -2937,26 +2939,6 @@ impl<'frame> SurfacePaintPlan<'frame> {
             .tab_records()
             .iter()
             .find(|record| record.id().tab == item)
-    }
-
-    fn tab_is_operable(&self, tab: &crate::presentation::scene::TabRecord) -> bool {
-        let bounds = tab.drag_hit().rect();
-        bounds.width() > 0.0
-            && bounds.height() > 0.0
-            && self
-                .plan
-                .tab_bar_records()
-                .binary_search_by_key(
-                    &TabBarSceneId {
-                        root: tab.id().root,
-                        tabs: tab.id().tabs,
-                    },
-                    |bar| *bar.id(),
-                )
-                .ok()
-                .map(|index| &self.plan.tab_bar_records()[index])
-                .is_some_and(|bar| bar.interaction() == crate::policy::TabBarInteraction::Enabled)
-            && self.plan.region_is_operable(bounds, tab.layer())
     }
 
     fn receiver(&self, kind: PresentationHitRegionKind) -> Option<DockspaceReceiverDescriptor> {

@@ -110,7 +110,7 @@ fn paint_frame(
                 if pane.root() == CONTAINED_ROOT {
                     assert_eq!(paint, SurfacePaintDisposition::Visible);
                     assert_eq!(Some(pane.item()), Some([LEFT, RIGHT][panes.len()]));
-                    panes.push((pane.visual_id(), pane.content_bounds()));
+                    panes.push((pane.visual_id(), pane.content_geometry().clip()));
                 }
             }
             _ => {}

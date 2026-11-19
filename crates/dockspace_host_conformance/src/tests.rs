@@ -658,7 +658,7 @@ impl MagneticJourneyFixture {
                 } = step
                     && pane.item() == A
                 {
-                    target_bounds = Some(pane.content_bounds());
+                    target_bounds = Some(pane.content_geometry().clip());
                 }
                 Ok::<(), ()>(())
             })

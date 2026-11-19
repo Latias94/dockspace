@@ -52,10 +52,11 @@ fn clipped_pane_text_is_a_crop_of_the_same_unclipped_layout() {
                     && pane.item() == item
                 {
                     if top < 0.0 {
-                        assert!(pane.layout_bounds().y() < 0.0);
-                        assert_eq!(pane.clip().y(), 0.0);
+                        assert!(pane.content_geometry().layout_bounds().y() < 0.0);
+                        assert_eq!(pane.content_geometry().clip().y(), 0.0);
                     } else {
-                        assert_eq!(pane.layout_bounds(), pane.clip());
+                        let geometry = pane.content_geometry();
+                        assert_eq!(geometry.layout_bounds(), geometry.clip());
                     }
                     paint_pane(&mut paint, pane);
                 }

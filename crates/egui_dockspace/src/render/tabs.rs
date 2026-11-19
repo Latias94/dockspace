@@ -72,19 +72,17 @@ pub(crate) fn paint_pane(
 ) {
     let pane_fill = visual_context.pane_fill(context.visuals.workspace_fill);
     let paint_omitted = paint.is_source_gap();
-    let (Some(bounds), Some(clip)) = (egui_rect(pane.bounds()), egui_rect(pane.clip())) else {
+    let geometry = pane.content_geometry();
+    let Some(pane_rect) = egui_rect(geometry.clip()) else {
         return;
     };
-    let clip = context.ui.clip_rect().intersect(clip);
+    let clip = context.ui.clip_rect().intersect(pane_rect);
     if !paint_omitted {
         context
             .ui
             .painter_at(clip)
-            .rect_filled(bounds, 0.0, pane_fill);
+            .rect_filled(pane_rect, 0.0, pane_fill);
     }
-    let Some(pane_rect) = egui_rect(pane.content_bounds()) else {
-        return;
-    };
     let pane_id =
         context
             .ui
@@ -96,7 +94,7 @@ pub(crate) fn paint_pane(
     if !pane_rect.is_positive() {
         return;
     }
-    let Some(content_rect) = egui_rect(pane.layout_bounds()).and_then(inset_ui_rect) else {
+    let Some(content_rect) = egui_rect(geometry.layout_bounds()).and_then(inset_ui_rect) else {
         return;
     };
     // Content follows the item when docking changes its slot or parent Ui.
@@ -116,7 +114,7 @@ pub(crate) fn paint_pane(
         // accessibility state survive the temporary source gap.
         child.set_opacity(0.0);
     }
-    child.set_clip_rect(clip.intersect(pane_rect));
+    child.set_clip_rect(clip);
     let mut paint_audit = context.paint_audit.take();
     let painter = child.painter().clone();
     // Keep ownership outside the callback so an unwind releases the append

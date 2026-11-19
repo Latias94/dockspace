@@ -549,7 +549,7 @@ impl eframe::App for DriverApp {
                     } = step
                     {
                         assert_eq!(pane.item(), FIRST);
-                        assert!(top.replace(pane.content_bounds().y()).is_none());
+                        assert!(top.replace(pane.content_geometry().clip().y()).is_none());
                     }
                     Ok::<(), std::convert::Infallible>(())
                 })

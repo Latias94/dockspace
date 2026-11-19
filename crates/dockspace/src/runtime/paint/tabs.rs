@@ -11,6 +11,30 @@ use crate::presentation::scene::{
 
 use super::{DockspacePaintLayer, DockspaceVisualId, VisualIdentity};
 
+/// The allocation and clip for mounting application content in a pane.
+///
+/// Both rectangles use surface-local logical coordinates. Moving a pane
+/// across the edge of its surface can shrink its clip without resizing it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PaneContentGeometry {
+    layout_bounds: LogicalRect,
+    clip: LogicalRect,
+}
+
+impl PaneContentGeometry {
+    /// The full allocation for sizing and positioning the content.
+    #[must_use]
+    pub const fn layout_bounds(self) -> LogicalRect {
+        self.layout_bounds
+    }
+
+    /// The visible content region used to clip painting and pointer input.
+    #[must_use]
+    pub const fn clip(self) -> LogicalRect {
+        self.clip
+    }
+}
+
 /// Read-only geometry and identity for one real application Pane.
 #[derive(Debug, Clone, Copy)]
 pub struct PanePaintRecord<'plan> {
@@ -37,32 +61,18 @@ impl PanePaintRecord<'_> {
         self.record.id().root
     }
 
+    /// Mount content in the full allocation and apply its clip separately.
     #[must_use]
-    pub const fn bounds(self) -> LogicalRect {
-        self.record.bounds()
-    }
-
-    #[must_use]
-    pub const fn content_bounds(self) -> LogicalRect {
-        self.record.content_bounds()
-    }
-
-    /// Returns the pane's layout rectangle before clipping it to the surface.
-    /// Size content using this rectangle and restrict painting and input to `clip()`.
-    #[must_use]
-    pub const fn layout_bounds(self) -> LogicalRect {
-        self.record.layout_bounds()
+    pub const fn content_geometry(self) -> PaneContentGeometry {
+        PaneContentGeometry {
+            layout_bounds: self.record.layout_bounds(),
+            clip: self.record.clip(),
+        }
     }
 
     #[must_use]
     pub const fn item(self) -> ItemId {
         self.record.item()
-    }
-
-    /// Returns the exact application content clip.
-    #[must_use]
-    pub const fn clip(self) -> LogicalRect {
-        self.record.clip()
     }
 
     #[must_use]

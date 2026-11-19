@@ -64,10 +64,10 @@ impl RecordingRenderer {
                             sink.records.push(OwnedRecord::PaneContent {
                                 visual: pane.visual_id(),
                                 item: pane.item(),
-                                bounds: pane.content_bounds(),
+                                bounds: pane.content_geometry().clip(),
                                 paint,
                             });
-                            pane.bounds()
+                            pane.content_geometry().clip()
                         }
                         Operation::Tabs(tabs) => tabs.bounds(),
                         Operation::TabBar(bar) => bar.bounds(),

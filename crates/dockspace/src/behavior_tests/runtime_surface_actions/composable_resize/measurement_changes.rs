@@ -72,13 +72,14 @@ fn begin_resize(
             let boundary = plan
                 .receiver_for_splitter(splitter)
                 .expect("the direct column boundary has an exact receiver");
-            let first = plan.panes().find(|pane| pane.item() == FIRST).unwrap();
+            let first = plan
+                .panes()
+                .find(|pane| pane.item() == FIRST)
+                .unwrap()
+                .content_geometry()
+                .clip();
             // Stay inside the first row, away from every row/column junction.
-            LogicalPoint::new(
-                boundary.center().x(),
-                first.bounds().y() + first.bounds().height() * 0.5,
-            )
-            .unwrap()
+            LogicalPoint::new(boundary.center().x(), first.y() + first.height() * 0.5).unwrap()
         }
         ResizeDriver::Junction => {
             let junction = plan
@@ -270,7 +271,7 @@ fn abandoning_a_new_auto_map_measurement_preserves_the_committed_resize() {
             .unwrap()
             .expect("the invalidated resize exposes a clean candidate")
             .panes()
-            .map(|pane| (pane.item(), pane.bounds()))
+            .map(|pane| (pane.item(), pane.content_geometry().clip()))
             .collect::<Vec<_>>();
         assert_eq!(candidate_geometry, clean_geometry);
         assert_eq!(abandoned.version(), version);

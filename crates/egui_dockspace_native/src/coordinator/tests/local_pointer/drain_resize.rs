@@ -166,7 +166,7 @@ fn encode(native: &mut NativeCoordinator) -> (EditorScene, HostFrameReport) {
         if let SurfacePaintProgramStep::Operation { operation, .. } = step {
             match operation {
                 SurfacePaintProgramOperation::Pane(pane) => {
-                    let bounds = pane.content_bounds();
+                    let bounds = pane.content_geometry().clip();
                     panes.push((pane.item(), bounds));
                     if Some(pane.item()) == outline_selected {
                         outline = Some(

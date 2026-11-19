@@ -96,7 +96,7 @@ fn sample(dock: &mut Dockspace) -> (LogicalRect, bool, usize) {
             Step::Operation {
                 operation: Operation::Pane(record),
                 ..
-            } if record.item() == ItemId::new(2) => pane = Some(record.bounds()),
+            } if record.item() == ItemId::new(2) => pane = Some(record.content_geometry().clip()),
             Step::Operation {
                 operation: Operation::Splitter(_),
                 ..

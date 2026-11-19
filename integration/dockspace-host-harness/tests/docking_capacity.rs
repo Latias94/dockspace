@@ -195,12 +195,12 @@ fn paint_present(session: &mut DockspaceSession) -> BTreeMap<SurfaceId, Snapshot
                     operation: Operation::Pane(pane),
                     ..
                 } => {
-                    snapshot.panes.insert(pane.item(), pane.bounds());
+                    snapshot.panes.insert(pane.item(), pane.content_geometry().clip());
                     let (frame, content) = tabs_frames
                         .pop_front()
                         .expect("each fixture pane belongs to one plain Tabs container");
                     assert_eq!(
-                        pane.bounds(),
+                        pane.content_geometry().clip(),
                         content,
                         "the content must occupy its exact Tabs slot even when its header has no area"
                     );

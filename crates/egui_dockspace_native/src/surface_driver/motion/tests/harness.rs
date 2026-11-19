@@ -276,7 +276,7 @@ impl Harness {
                         ..
                     } = step
                     {
-                        panes.insert(pane.item(), pane.bounds());
+                        panes.insert(pane.item(), pane.content_geometry().clip());
                     }
                     Ok::<(), ()>(())
                 })

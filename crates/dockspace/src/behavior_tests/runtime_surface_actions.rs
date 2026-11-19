@@ -20,7 +20,7 @@ use crate::runtime::{
     SurfacePaintDisposition, SurfacePaintPlan, SurfacePaintProgramStep, SurfacePointerButton,
     SurfacePointerCancelReason, SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId,
     SurfacePointerInput, SurfacePointerPosition, SurfacePointerReceiverFacts,
-    SurfacePresentationResult, SurfaceSplitterAdjustment, SurfaceTabNavigation,
+    SurfacePresentationResult, SurfaceSplitterAdjustment, SurfaceTabInput, SurfaceTabNavigation,
     SurfaceUnavailableReason, TabGroupDragRegionKind, TabListMenuMetrics, TabStripControlKind,
     TabStripControlMetric, TabStripControlMetrics, TabStripControlPlacement, TabStripMetrics,
     UniformSurfaceMetrics,
@@ -1164,6 +1164,48 @@ fn exact_surface_tab_action_selects_without_exposing_scene_identity() {
 }
 
 #[test]
+fn retained_tab_input_resolves_clipped_members_and_rejects_an_old_strip_order() {
+    let mut session = overflow_session();
+    install_overflow_candidate(&mut session);
+    let strip = inspect_surface(&mut session, |plan| {
+        assert!(plan.tabs().all(|tab| tab.item() != Some(FOURTH)));
+        plan.retain_tab_strip(plan.tab_bars().next().unwrap())
+            .unwrap()
+    });
+    let sequence = [
+        SurfaceTabInput::Navigate(SurfaceTabNavigation::Previous),
+        SurfaceTabInput::Activate,
+    ];
+    assert!(strip.resolve(FOURTH, FIRST, sequence).is_none());
+    assert!(strip.resolve(FIRST, FIFTH, sequence).is_none());
+    let action = strip.resolve(FIRST, FOURTH, sequence).unwrap();
+    assert_eq!(action.tab_focus_target(), Some(THIRD.into()));
+    let mut frame = session.begin_host_frame().unwrap();
+    frame.submit_deferred_surface_action(action).unwrap();
+    frame.commit().unwrap();
+    assert!(session.view().item(THIRD).unwrap().is_active());
+
+    let mut session = overflow_session();
+    install_overflow_candidate(&mut session);
+    let strip = inspect_surface(&mut session, |plan| {
+        plan.retain_tab_strip(plan.tab_bars().next().unwrap())
+            .unwrap()
+    });
+    let mut reorder = session.begin_host_frame().unwrap();
+    reorder
+        .dock_item_current(FOURTH, crate::model::DockPlacement::Before(SECOND))
+        .unwrap();
+    reorder.commit().unwrap();
+    let resolved = strip.resolve(FIRST, FOURTH, sequence).unwrap();
+    let mut frame = session.begin_host_frame().unwrap();
+    frame.submit_deferred_surface_action(resolved).unwrap();
+    assert!(matches!(
+        frame.commit().unwrap().inputs(),
+        [HostInputOutcome::StaleRejected { .. }]
+    ));
+}
+
+#[test]
 fn paint_only_tabs_expose_no_receiver_or_prepared_semantic_action() {
     let mut session = paint_only_tab_bar_session();
     install_ready_candidate(&mut session);
@@ -1209,7 +1251,7 @@ fn host_tab_drag_into_its_source_pane_center_publishes_a_contained_preview() {
             .panes()
             .find(|pane| pane.root() == tab.root())
             .expect("the source pane is visible");
-        let bounds = pane.content_bounds();
+        let bounds = pane.content_geometry().clip();
         let target = LogicalPoint::new(
             bounds.x() + bounds.width() * 0.65,
             bounds.y() + bounds.height() * 0.65,
@@ -1625,7 +1667,7 @@ fn contained_tab_exits_its_source_rect_then_redocks_through_the_pane_basin() {
             .panes()
             .find(|pane| pane.root() == ROOT)
             .expect("the main pane basin is painted");
-        let bounds = pane.content_bounds();
+        let bounds = pane.content_geometry().clip();
         let target = LogicalPoint::new(
             bounds.x() + bounds.width() * 0.75,
             bounds.y() + bounds.height() * 0.75,

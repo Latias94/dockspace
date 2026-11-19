@@ -121,7 +121,7 @@ fn contained_geometry(frame: &mut DockspaceHostFrame<'_>) -> ContainedGeometry {
                 ..
             } if pane.root() == SOURCE_ROOT => {
                 assert_eq!(paint, SurfacePaintDisposition::Visible);
-                panes.push((pane.item(), pane.content_bounds()));
+                panes.push((pane.item(), pane.content_geometry().clip()));
             }
             _ => {}
         }
@@ -330,10 +330,15 @@ fn group_mode_changes_keep_the_drag_source_and_release_the_previewed_composition
             .group_drag_region(crate::runtime::TabGroupDragRegionKind::LeadingGrip)
             .unwrap();
         let start = center(grip.bounds());
-        let target = plan.panes().find(|pane| pane.item() == TARGET).unwrap();
+        let target = plan
+            .panes()
+            .find(|pane| pane.item() == TARGET)
+            .unwrap()
+            .content_geometry()
+            .clip();
         let point = LogicalPoint::new(
-            target.bounds().x() + target.bounds().width() * 0.65,
-            target.bounds().y() + target.bounds().height() * 0.65,
+            target.x() + target.width() * 0.65,
+            target.y() + target.height() * 0.65,
         )
         .unwrap();
         commit(inspect);
@@ -543,7 +548,7 @@ fn focused_root_controls_child_magnetism_but_unfocused_binding_is_inert() {
                 operation: Operation::Pane(pane),
                 ..
             } if Some(pane.item()) == Some(TARGET) => {
-                let bounds = pane.content_bounds();
+                let bounds = pane.content_geometry().clip();
                 magnetic = Some(
                     LogicalPoint::new(
                         bounds.x() + bounds.width() * 0.65,

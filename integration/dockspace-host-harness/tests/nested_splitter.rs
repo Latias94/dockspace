@@ -103,8 +103,8 @@ impl Geometry {
                                     pane.item(),
                                     Pane {
                                         frame: bar_frames[&pane.tab_bar_visual_id().unwrap()],
-                                        bounds: pane.bounds(),
-                                        content: pane.content_bounds(),
+                                        bounds: pane.content_geometry().clip(),
+                                        content: pane.content_geometry().clip(),
                                     },
                                 )
                                 .is_none()

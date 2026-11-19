@@ -286,13 +286,13 @@ fn deep_public_declaration_compiles_a_complete_measured_scene() {
                         } => {
                             pane_count += 1;
                             assert_eq!(pane.root(), ROOT);
-                            assert!(pane.content_bounds().width() >= leaf_width);
+                            assert!(pane.content_geometry().clip().width() >= leaf_width);
                             assert!(
-                                pane.content_bounds().height()
+                                pane.content_geometry().clip().height()
                                     >= leaf_height - config.tab_bar_height()
                             );
                             if pane.item() == SECOND {
-                                central_bounds = Some(pane.bounds());
+                                central_bounds = Some(pane.content_geometry().clip());
                             }
                         }
                         Step::Operation {

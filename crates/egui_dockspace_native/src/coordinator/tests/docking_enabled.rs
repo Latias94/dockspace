@@ -641,7 +641,7 @@ fn source_and_target_for(
                 ..
             } = step
             {
-                let bounds = pane.content_bounds();
+                let bounds = pane.content_geometry().clip();
                 target = Some(PhysicalPosition::new(
                     bounds.x() + bounds.width() * 0.75,
                     bounds.y() + bounds.height() * 0.75,

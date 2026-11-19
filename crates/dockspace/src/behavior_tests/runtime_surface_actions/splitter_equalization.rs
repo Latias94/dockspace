@@ -50,7 +50,7 @@ fn equalize_with_metrics(
 fn pane_bounds(session: &mut DockspaceSession) -> Vec<(ItemId, LogicalRect)> {
     inspect_surface(session, |plan| {
         plan.panes()
-            .map(|pane| (pane.item(), pane.bounds()))
+            .map(|pane| (pane.item(), pane.content_geometry().clip()))
             .collect()
     })
 }

@@ -120,15 +120,16 @@ fn publish_visible_surface(host: &mut DeterministicHost) {
         if visible.iter().all(|item| *item != A && *item != B) {
             assert!(records.splitters.is_empty());
             let remaining = records.panes.iter().find(|pane| pane.item() == C).unwrap();
+            let remaining = remaining.content_geometry().clip();
             let tabs = records
                 .tab_bars
                 .iter()
                 .find(|bar| bar.selected() == Some(C.into()))
                 .expect("the remaining content retains its real tab bar");
             assert_eq!(tabs.bounds().min(), bounds.min());
-            assert_eq!(remaining.bounds().min().x(), bounds.min().x());
-            assert_eq!(remaining.bounds().min().y(), tabs.bounds().max().y());
-            assert_eq!(remaining.bounds().max(), bounds.max());
+            assert_eq!(remaining.min().x(), bounds.min().x());
+            assert_eq!(remaining.min().y(), tabs.bounds().max().y());
+            assert_eq!(remaining.max(), bounds.max());
         }
         frame.confirm_surface_program(SURFACE).unwrap();
     });

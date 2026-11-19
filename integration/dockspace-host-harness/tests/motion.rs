@@ -71,7 +71,9 @@ fn paint(session: &mut DockspaceSession, motion: MotionFrame) -> (Sample, Painte
                 operation: Operation::Pane(pane),
                 ..
             } => {
-                sample.panes.insert(pane.item(), pane.bounds());
+                sample
+                    .panes
+                    .insert(pane.item(), pane.content_geometry().clip());
                 sample
                     .receivers
                     .insert(pane.item(), plan.receiver_for_pane(pane).unwrap());

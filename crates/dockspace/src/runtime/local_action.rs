@@ -534,6 +534,12 @@ impl DeferredSurfaceAction {
         self.0.tab_focus_target()
     }
 
+    /// Returns the visual identity to focus, including a tab revealed by navigation.
+    #[must_use]
+    pub const fn tab_focus_visual(&self) -> Option<super::DockspaceVisualId> {
+        self.0.tab_focus_visual()
+    }
+
     /// Compares semantics within one adapter event slot, ignoring scene and version.
     ///
     /// This comparison supplies no event identity. Independent events with the

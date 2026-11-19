@@ -56,8 +56,10 @@ for capped resize frontiers and infeasible minima.
 
 Consume independent `Tabs`, `TabBar` and `Pane` program operations. A bare Pane
 has no implicit header; a layout tab can present several real Pane records.
-Use each record's supplied clip and `TabLabel` rather than deriving chrome or
-labels from a representative descendant. Store application content by `ItemId`;
+For a Pane, mount the view in `content_geometry().layout_bounds()` and apply
+`content_geometry().clip()` to paint and pointer input. Test a floating pane
+crossing the surface edge and confirm that the view keeps its allocated size.
+Use the supplied `TabLabel` for structural labels. Store application content by `ItemId`;
 its immediate `.tabs()` and `.tab_index()` are optional. For composed trees,
 verify that switching an outer tab removes every inactive body's callback and
 receiver while retaining all owned content. Start from
@@ -117,12 +119,15 @@ drag lanes and let core resolve the current hover target. The helper does not
 establish framework clearance; use explicit blocked or unknown facts when an
 overlay or capture prevents that proof.
 
-Route a keyboard batch in event order. Use `prepare_tab_input_sequence` with
-the focused tab as the header's starting point, or the selected tab for document
-cycling. Once activation transfers ownership to pane content, leave later
-events for that content. Menu confirmation and cancellation likewise terminate
-the menu's prefix. Splitter sequence helpers apply each step's constraint before
-preparing one final action; folding deltas first loses reversals at a limit.
+Route a keyboard batch in event order. Immediate hosts use
+`prepare_tab_input_sequence`. Retained hosts call `retain_tab_strip` while
+encoding and use the original output's handle to resolve events at dispatch.
+Pass the focused member as the starting point for header keys, or the selected
+member for document cycling. Once activation transfers ownership to pane
+content, leave later events for that content. Menu confirmation and cancellation
+likewise terminate the menu's prefix. Splitter sequence helpers apply each
+step's constraint before preparing one final action so reversals at a limit are
+preserved.
 
 Preserve wheel units, phase, momentum, device and modifiers when the host
 provides them. Decide routing from the actual chrome/content receiver; a

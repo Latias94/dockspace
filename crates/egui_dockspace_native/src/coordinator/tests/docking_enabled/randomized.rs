@@ -215,7 +215,7 @@ fn scene(
                 ..
             } = step
             {
-                let bounds = pane.content_bounds();
+                let bounds = pane.content_geometry().clip();
                 target = Some(PhysicalPosition::new(
                     x(target_surface) + bounds.x() + bounds.width() * 0.75,
                     bounds.y() + bounds.height() * 0.75,

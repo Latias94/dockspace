@@ -377,7 +377,7 @@ fn paint_pending_children(
                         match operation {
                             SurfacePaintProgramOperation::Pane(pane) => {
                                 assert_eq!(
-                                    pane.bounds(),
+                                    pane.content_geometry().clip(),
                                     LogicalRect::new(0.0, 28.0, 420.0, 292.0).unwrap()
                                 );
                                 panes.push((pane.root(), Some(pane.item())));

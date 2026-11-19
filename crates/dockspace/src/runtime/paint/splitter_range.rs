@@ -333,7 +333,7 @@ mod tests {
                     2 => 102.0,
                     _ => 122.0,
                 };
-                assert!((pane.bounds().width() - expected).abs() < 1.0e-9);
+                assert!((pane.content_geometry().clip().width() - expected).abs() < 1.0e-9);
             }
             assert!(frame.commit().unwrap().workspace_changed());
         }
@@ -372,7 +372,7 @@ mod tests {
                 measure(&mut frame, minimum_height);
                 let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
                 let peer = plan.panes().find(|pane| pane.item() == PEER).unwrap();
-                assert!((peer.bounds().width() - maximum * 1000.0).abs() < 1.0e-9);
+                assert!((peer.content_geometry().clip().width() - maximum * 1000.0).abs() < 1.0e-9);
                 assert!(frame.commit().unwrap().workspace_changed());
             }
         }
@@ -427,7 +427,7 @@ mod tests {
             let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
             let actual = plan
                 .panes()
-                .map(|pane| (pane.item(), pane.bounds()))
+                .map(|pane| (pane.item(), pane.content_geometry().clip()))
                 .collect::<Vec<_>>();
             for (item, bounds) in &actual {
                 let width = match item.get() {

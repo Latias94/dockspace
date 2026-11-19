@@ -56,10 +56,11 @@ pub(super) fn record(
                     Operation::Pane(pane) => {
                         receiver(&mut draws, plan.receiver_for_pane(pane));
                         if !paint.is_source_gap() {
-                            draws.push(Draw::Fill(pane.content_bounds(), colors.pane));
+                            let geometry = pane.content_geometry();
+                            draws.push(Draw::Fill(geometry.clip(), colors.pane));
                             draws.push(Draw::Pane {
-                                layout: pane.layout_bounds(),
-                                clip: pane.clip(),
+                                layout: geometry.layout_bounds(),
+                                clip: geometry.clip(),
                                 item: pane.item(),
                             });
                         }

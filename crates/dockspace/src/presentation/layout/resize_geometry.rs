@@ -506,9 +506,10 @@ mod tests {
                         assert_eq!(plan.tab_bars().count(), 0);
                         for (item, expected) in [FIRST, SECOND, THIRD].into_iter().zip(expected) {
                             let pane = plan.panes().find(|pane| pane.item() == item).unwrap();
+                            let bounds = pane.content_geometry().clip();
                             let actual = match axis {
-                                DockspaceAxis::Horizontal => pane.bounds().width(),
-                                DockspaceAxis::Vertical => pane.bounds().height(),
+                                DockspaceAxis::Horizontal => bounds.width(),
+                                DockspaceAxis::Vertical => bounds.height(),
                             };
                             assert!(
                                 (actual - expected).abs() < 1.0e-9,
@@ -684,9 +685,10 @@ mod tests {
                     .unwrap();
                 let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
                 let pane = plan.panes().find(|pane| pane.item() == FIRST).unwrap();
+                let bounds = pane.content_geometry().clip();
                 let extent = match axis {
-                    DockspaceAxis::Horizontal => pane.bounds().height(),
-                    DockspaceAxis::Vertical => pane.bounds().width(),
+                    DockspaceAxis::Horizontal => bounds.height(),
+                    DockspaceAxis::Vertical => bounds.width(),
                 };
                 let chrome = match axis {
                     DockspaceAxis::Horizontal => tab_bar_height,

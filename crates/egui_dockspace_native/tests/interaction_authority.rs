@@ -262,7 +262,7 @@ fn run_surface_frame_with_overlay<P: PaneView>(
                 Ok::<(), ()>(())
             })
             .expect("interaction authority paint program resolves");
-            pane_center = pane.map(|pane| logical_center(pane.content_bounds()));
+            pane_center = pane.map(|pane| logical_center(pane.content_geometry().clip()));
             pane_receiver = pane
                 .and_then(|pane| plan.receiver_for_pane(pane))
                 .map(|receiver| receiver.visual_id());

@@ -207,7 +207,9 @@ impl Fixture {
                         );
                     }
                     Operation::Pane(pane) => {
-                        geometry.panes.insert(pane.item(), pane.content_bounds());
+                        geometry
+                            .panes
+                            .insert(pane.item(), pane.content_geometry().clip());
                     }
                     Operation::Splitter(splitter) => geometry.splitters.push(splitter.hit_bounds()),
                     Operation::ContainedControls(contained) => {

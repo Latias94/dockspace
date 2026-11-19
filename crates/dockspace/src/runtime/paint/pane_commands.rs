@@ -112,15 +112,14 @@ impl SurfacePaintPlan<'_> {
     }
 
     fn pane_menu_is_operable(self, pane: PanePaintRecord<'_>) -> bool {
+        let clip = pane.content_geometry().clip();
         self.plan
             .pane_records()
             .iter()
             .any(|row| std::ptr::eq(row, pane.record))
-            && pane.content_bounds().width() > 0.0
-            && pane.content_bounds().height() > 0.0
-            && self
-                .plan
-                .region_is_operable(pane.content_bounds(), pane.record.layer())
+            && clip.width() > 0.0
+            && clip.height() > 0.0
+            && self.plan.region_is_operable(clip, pane.record.layer())
             && self.plan.receiver_active_path_is_current(
                 crate::presentation::hit::PresentationHitRegionKind::PaneBody(pane.record.id()),
                 self.candidate.workspace(),

@@ -209,7 +209,7 @@ fn apply_sized(
                     ..
                 } = step
                 {
-                    let bounds = pane.content_bounds();
+                    let bounds = pane.content_geometry().clip();
                     assert!(
                         [bounds.x(), bounds.y(), bounds.width(), bounds.height()]
                             .into_iter()
