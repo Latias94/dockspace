@@ -483,7 +483,7 @@ pub(crate) fn paint_surface(
         };
         #[cfg(feature = "motion")]
         motion::begin(&context);
-        tab_shortcuts::prepare(&context);
+        let skip_tab_key_capture = tab_shortcuts::prepare(&mut context);
         let completed_program = context
             .plan
             .execute_surface_program(|step| -> Result<(), DockspaceRuntimeError> {
@@ -602,7 +602,9 @@ pub(crate) fn paint_surface(
                         }
                     }
                     SurfacePaintProgramStep::SurfaceEnd { semantic_output } => {
-                        tab_shortcuts::capture(&mut context);
+                        if !skip_tab_key_capture {
+                            tab_shortcuts::capture(&mut context);
+                        }
                         wheel::capture(&mut context);
                         #[cfg(feature = "motion")]
                         motion::finish(&mut context);

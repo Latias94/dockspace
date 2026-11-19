@@ -7,7 +7,9 @@ use egui::{PointerButton, Sense, UiBuilder, vec2};
 use crate::{TabClose, TabCloseVisibility, TabVisuals};
 
 use super::RenderContext;
-use super::actions::{button_activation_origin, effective_enabled, unambiguous_pointer_click};
+use super::actions::{
+    effective_enabled, pointer_or_accesskit_activation_origin, unambiguous_pointer_click,
+};
 use super::geometry::{accesskit_bounds, egui_rect};
 use super::measurement::TabPaintResource;
 
@@ -50,9 +52,7 @@ pub(super) fn paint(
     let Some(rect) = tab.close_bounds().and_then(egui_rect) else {
         return;
     };
-    let id = context
-        .ui
-        .make_persistent_id((context.instance_id, "tab-close", tab.key()));
+    let id = id(context, tab.key());
     let receiver = context.plan.receiver_for_tab_close(tab);
     let enabled = effective_enabled(context.ui, receiver.is_some());
     let close_label = if tab.key().is_layout() {
@@ -125,10 +125,16 @@ pub(super) fn paint(
     });
     if enabled
         && let Some(origin) =
-            button_activation_origin(context.ui, &response, context.pointer_authority)
+            pointer_or_accesskit_activation_origin(context.ui, &response, context.pointer_authority)
                 .or_else(|| middle_click_origin(context, tab, &response))
         && let Some(action) = context.plan.prepare_tab_close(tab.key())
     {
         context.push_local_action(origin, action);
     }
+}
+
+pub(super) fn id(context: &RenderContext<'_, '_, '_>, tab: dockspace::model::TabKey) -> egui::Id {
+    context
+        .ui
+        .make_persistent_id((context.instance_id, "tab-close", tab))
 }

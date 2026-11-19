@@ -141,6 +141,17 @@ pub(super) fn button_activation_origin(
     {
         return Some(response.id.with(("keyboard-activate", key)));
     }
+    pointer_or_accesskit_activation_origin(ui, response, pointer_authority)
+}
+
+pub(super) fn pointer_or_accesskit_activation_origin(
+    ui: &Ui,
+    response: &Response,
+    pointer_authority: PointerActionAuthority,
+) -> Option<Id> {
+    if !effective_enabled(ui, response.enabled()) {
+        return None;
+    }
     if ui.input(|input| input.has_accesskit_action_request(response.id, Action::Click)) {
         return Some(response.id.with("accesskit-click"));
     }

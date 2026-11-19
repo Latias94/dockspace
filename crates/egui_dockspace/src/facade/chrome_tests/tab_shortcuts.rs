@@ -461,6 +461,175 @@ fn batched_header_keys_follow_order_and_activate_the_final_tab() {
     }
 }
 
+#[test]
+fn tab_traversal_and_close_follow_header_navigation_across_input_batches() {
+    use std::num::NonZeroUsize;
+
+    for batches in [
+        &[&[Key::End][..], &[Key::Tab], &[Key::Enter]][..],
+        &[&[Key::End, Key::Tab][..], &[Key::Enter]],
+        &[&[Key::End][..], &[Key::Tab, Key::Enter]],
+        &[&[Key::End, Key::Tab, Key::Enter][..]],
+    ] {
+        let mut harness = Harness::tabs(1);
+        let grid = DockspaceNode::grid(
+            crate::DockspaceGridShape::Fixed {
+                rows: NonZeroUsize::MIN,
+                columns: NonZeroUsize::new(2).unwrap(),
+            },
+            [
+                DockspaceNode::tabs([1, 2, 3].map(ItemId::new)),
+                DockspaceNode::tabs([4, 5].map(ItemId::new)),
+            ],
+        )
+        .unwrap();
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(
+                RootId::new(1),
+                DockspaceNode::composed_tabs([grid, DockspaceNode::pane(ItemId::new(6))]),
+            ),
+        )])
+        .unwrap();
+        harness.dockspace = Dockspace::builder("ordered-tab-close", layout)
+            .build()
+            .unwrap();
+        present(&mut harness, 904.0, Vec::new());
+        harness.focus_tab(904.0, "Document 1");
+        harness.run(904.0, Vec::new());
+        let closed = close_requests_for_batches(
+            &mut harness,
+            batches
+                .iter()
+                .map(|keys| keys.iter().copied().map(key).collect()),
+        );
+        assert_eq!(closed, [ItemId::new(3)], "input batches: {batches:?}");
+    }
+}
+
+#[test]
+fn focused_close_button_respects_both_traversal_and_configured_navigation_order() {
+    for batched in [false, true] {
+        for (first, second, expected) in [
+            (key(Key::Enter), key(Key::Tab), vec![ItemId::new(1)]),
+            (
+                shortcut(bindings().next_tab.unwrap()),
+                key(Key::Enter),
+                Vec::new(),
+            ),
+        ] {
+            let mut harness = Harness::tabs(1);
+            harness.dockspace.set_input(bindings());
+            present(&mut harness, 904.0, Vec::new());
+            harness.focus(904.0, Role::Button, "Close Document 1");
+            harness.run(904.0, Vec::new());
+            let batches = if batched {
+                vec![vec![first, second]]
+            } else {
+                vec![vec![first], vec![second]]
+            };
+            assert_eq!(
+                close_requests_for_batches(&mut harness, batches),
+                expected,
+                "batched={batched}"
+            );
+            if expected.is_empty() {
+                assert_selected(&harness, 2);
+                assert_eq!(
+                    harness.context.memory(egui::Memory::focused),
+                    harness.panes.focus_target(ItemId::new(2))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn reverse_traversal_activates_the_header_instead_of_its_close_button() {
+    for batched in [false, true] {
+        let mut harness = Harness::tabs(1);
+        present(&mut harness, 904.0, Vec::new());
+        harness.focus(904.0, Role::Button, "Close Document 1");
+        harness.run(904.0, Vec::new());
+        let reverse = shortcut(KeyboardShortcut::new(Modifiers::SHIFT, Key::Tab));
+        let enter = key(Key::Enter);
+        let batches = if batched {
+            vec![vec![reverse, enter]]
+        } else {
+            vec![vec![reverse], vec![enter]]
+        };
+        assert!(
+            close_requests_for_batches(&mut harness, batches).is_empty(),
+            "batched={batched}"
+        );
+        assert_eq!(
+            harness.context.memory(egui::Memory::focused),
+            harness.panes.focus_target(ItemId::new(1)),
+            "batched={batched}"
+        );
+    }
+}
+
+#[test]
+fn two_traversal_presses_keep_their_order_before_activation() {
+    for batches in [
+        &[&[Key::Tab][..], &[Key::Tab], &[Key::Enter]][..],
+        &[&[Key::Tab, Key::Tab][..], &[Key::Enter]],
+        &[&[Key::Tab, Key::Tab, Key::Enter][..]],
+    ] {
+        let mut harness = Harness::tabs(1);
+        present(&mut harness, 904.0, Vec::new());
+        harness.focus_tab(904.0, "Document 1");
+        harness.run(904.0, Vec::new());
+        let closed = close_requests_for_batches(
+            &mut harness,
+            batches
+                .iter()
+                .map(|keys| keys.iter().copied().map(key).collect()),
+        );
+        assert!(closed.is_empty(), "input batches: {batches:?}");
+        assert_selected(&harness, 2);
+        assert_eq!(
+            harness.context.memory(egui::Memory::focused),
+            harness.panes.focus_target(ItemId::new(2)),
+            "input batches: {batches:?}"
+        );
+    }
+}
+
+fn close_requests_for_batches(
+    harness: &mut Harness,
+    batches: impl IntoIterator<Item = Vec<Event>>,
+) -> Vec<ItemId> {
+    let mut closed = Vec::new();
+    for events in batches
+        .into_iter()
+        .chain([Vec::new(), Vec::new(), Vec::new()])
+    {
+        harness.frame += 1;
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(904.0, 600.0))),
+            time: Some(f64::from(harness.frame) * 0.1),
+            events,
+            ..Default::default()
+        };
+        let (output, response) = harness
+            .dockspace
+            .run_single_surface(&harness.context, raw, SURFACE, &mut harness.panes)
+            .unwrap();
+        closed.extend(
+            response
+                .close_requests()
+                .flat_map(|request| request.items().iter().map(|entry| entry.item())),
+        );
+        output
+            .into_parts()
+            .1
+            .report(SurfacePresentationResult::Presented);
+    }
+    closed
+}
+
 struct HeaderActivationProbe {
     discarded_passes: usize,
     remaining: Arc<Mutex<Vec<Event>>>,
