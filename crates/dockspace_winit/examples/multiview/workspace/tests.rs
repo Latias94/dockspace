@@ -1,11 +1,12 @@
 use std::convert::Infallible;
 
 use dockspace::{
-    geometry::{LogicalRect, ScaleFactor},
+    geometry::ScaleFactor,
     model::DockspaceActionOutcome,
     runtime::{
         DockspacePresentationTransitionResult, HostInputOutcome, HostWindowToken,
-        NativeEffectOperation, NativeSurfaceRole, NativeWindowFacts, NativeWindowInputState,
+        NativeCreateReadiness, NativeEffectAcknowledgement, NativeEffectOperation,
+        NativeSurfaceRole, NativeWindowFacts, NativeWindowInputState,
         NativeWindowPresentationState, NativeWorkAreaRoster, SurfacePresentationResult,
     },
 };
@@ -22,6 +23,7 @@ fn detach_accepts_requested_transfer_and_retains_source_until_first_live() {
     let [binding] = registered.native_bindings() else {
         panic!("the Root must register before measuring its content");
     };
+    let root_window = binding.window();
     let bounds = PhysicalRect::new(100.0, 80.0, 640.0, 480.0).unwrap();
     let scale = ScaleFactor::new(1.0).unwrap();
     let facts = NativeWindowFacts::live()
@@ -94,12 +96,88 @@ fn detach_accepts_requested_transfer_and_retains_source_until_first_live() {
     assert!(session.has_pending_native_create());
     assert!(report.presentation_transitions().is_empty());
     let [create] = report.take_native_effects().try_into().unwrap();
+    let NativeEffectOperation::CreateWindow {
+        binding,
+        role: NativeSurfaceRole::Child,
+        placement: actual,
+    } = *create.operation()
+    else {
+        panic!("detach must request a child window");
+    };
+    assert_eq!(binding.surface(), target_surface);
+    assert_eq!(actual, placement);
+    let Some(NativeEffectAcknowledgement::Create(acknowledgement)) = create.accepted() else {
+        panic!("create must provide its readiness acknowledgement");
+    };
+
+    let child_bounds = LogicalRect::new(0.0, 0.0, placement.width(), placement.height()).unwrap();
+    let child_facts = facts
+        .with_outer_bounds(placement)
+        .with_content_bounds(placement);
+    let child = binding.window();
+    session
+        .report_managed_native_snapshot(
+            [
+                (root_window, facts),
+                (
+                    child,
+                    child_facts.with_create_readiness(
+                        NativeCreateReadiness::Created,
+                        Some(acknowledgement),
+                    ),
+                ),
+            ],
+            NativeWorkAreaRoster::Unknown,
+        )
+        .unwrap();
+    let mut early_redraw = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
     assert!(
-        matches!(create.operation(), NativeEffectOperation::CreateWindow {
-        binding, role: NativeSurfaceRole::Child, placement: actual,
-    } if binding.surface() == target_surface && *actual == placement)
+        early_redraw
+            .native_surface_bindings_for_window(child)
+            .any(|b| b == binding)
     );
-    let _ = create.accepted();
+    assert!(
+        prepare_window_paint(&mut early_redraw, child, child_bounds)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        early_redraw
+            .commit()
+            .unwrap()
+            .take_painted_outputs()
+            .is_empty()
+    );
+    session
+        .report_managed_native_snapshot(
+            [
+                (root_window, facts),
+                (
+                    child,
+                    child_facts.with_create_readiness(
+                        NativeCreateReadiness::Prepared,
+                        Some(acknowledgement),
+                    ),
+                ),
+            ],
+            NativeWorkAreaRoster::Unknown,
+        )
+        .unwrap();
+    let ready = idle(&mut session).unwrap();
+    assert!(ready.repaint_surfaces().contains(&target_surface));
+    let mut ready_redraw = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    assert!(
+        prepare_window_paint(&mut ready_redraw, child, child_bounds)
+            .unwrap()
+            .is_some()
+    );
+    ready_redraw.commit().unwrap();
+    assert_eq!(session.version(), version);
+    assert_eq!(session.view().item(INSPECTOR).unwrap().surface(), MAIN);
 
     let mut frame = session
         .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)

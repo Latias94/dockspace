@@ -151,22 +151,13 @@ impl App {
             f64::from(size.width) / scale,
             f64::from(size.height) / scale,
         )?;
-        let surfaces: Vec<_> = self
-            .session
-            .native_surface_bindings_for_window(binding)
-            .collect();
-        let [surface] = surfaces.as_slice() else {
-            return Err("this example renders one logical surface per native window".into());
-        };
         let mut frame = self
             .session
             .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)?;
-        frame.begin_encoding_pass()?;
-        paint::measure(&mut frame, surface.surface(), bounds)?;
-        let Some(plan) = frame.paint_plan(surface.surface())? else {
+        let Some(plan) = workspace::prepare_window_paint(&mut frame, binding, bounds)? else {
             let report = frame.commit()?;
             self.host.accept(&mut self.session, report)?;
-            return Ok(());
+            return self.advance(event_loop);
         };
         let window = Rc::clone(&state.window);
         let renderer = state

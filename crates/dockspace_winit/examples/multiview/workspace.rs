@@ -1,15 +1,16 @@
 //! The application chooses commands; core owns layout and recovery decisions.
 
 use dockspace::{
-    geometry::PhysicalRect,
+    geometry::{LogicalRect, PhysicalRect},
     model::{
         DockspaceAxis, DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout,
         ItemId, NativeWindowPlacement, RootId, SurfaceId,
     },
     policy::DockPolicy,
     runtime::{
-        DockMoveSource, DockspaceSession, HostFrameReport, NativeHostCapabilities,
-        NativeHostCapability, NativePointerRoster, NativeReceiverAnswer,
+        DockMoveSource, DockspaceHostFrame, DockspaceSession, HostFrameReport,
+        NativeHostCapabilities, NativeHostCapability, NativePointerRoster, NativeReceiverAnswer,
+        NativeWindowBinding, SurfacePaintPlan,
     },
 };
 
@@ -57,6 +58,30 @@ pub(super) fn idle(session: &mut DockspaceSession) -> AppResult<HostFrameReport>
     Ok(session
         .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)?
         .commit()?)
+}
+
+pub(super) fn prepare_window_paint<'frame>(
+    frame: &'frame mut DockspaceHostFrame<'_>,
+    window: NativeWindowBinding,
+    bounds: LogicalRect,
+) -> AppResult<Option<SurfacePaintPlan<'frame>>> {
+    let surface = {
+        let mut bindings = frame.native_surface_bindings_for_window(window);
+        let Some(binding) = bindings.next() else {
+            return Ok(None);
+        };
+        if bindings.next().is_some() {
+            return Err("this example renders one logical surface per native window".into());
+        }
+        binding.surface()
+    };
+    // The platform can request redraw before the child enters the paint roster.
+    if !frame.surfaces().contains(&surface) {
+        return Ok(None);
+    }
+    frame.begin_encoding_pass()?;
+    super::paint::measure(frame, surface, bounds)?;
+    Ok(frame.paint_plan(surface)?)
 }
 
 pub(super) fn detach(
