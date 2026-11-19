@@ -1,109 +1,27 @@
 //! Splitter and junction pointer-resize transactions.
 
 use super::*;
-use crate::ids::NodeId;
 
 impl DockEngine {
-    pub(super) fn splitter_resize_delta_interval(
-        &self,
-        plan: &PresentationPlan,
-        target: SplitterResizeTarget,
-        axis: Axis,
-    ) -> Option<crate::interaction::ResizeDeltaInterval> {
-        self.prepare_splitter_resize_axis_group(plan, target, axis)
-            .map(|group| group.common_delta)
-    }
-
     pub(super) fn prepare_splitter_resize_axis_group(
-        &self,
+        workspace: &Workspace,
         plan: &PresentationPlan,
         target: SplitterResizeTarget,
         axis: Axis,
+        policy: &DockPolicySnapshot,
     ) -> Option<crate::interaction::FrozenResizeAxisGroup> {
         let handles = match target {
-            SplitterResizeTarget::Handle(_) => self.prepare_splitter_resize_handles(plan, target),
+            SplitterResizeTarget::Handle(_) => {
+                Self::prepare_splitter_resize_handles(workspace, plan, target)
+            }
             SplitterResizeTarget::Junction(junction) => {
-                self.prepare_splitter_junction_axis_handles(plan, junction, axis)
+                Self::prepare_splitter_junction_axis_handles(workspace, plan, junction, axis)
             }
         }
         .ok()?;
-        let groups = self
-            .prepare_checked_resize_axis_groups(plan, handles, self.policy_snapshot())
-            .ok()?;
+        let groups =
+            Self::prepare_checked_resize_axis_groups(workspace, plan, handles, policy).ok()?;
         groups.into_iter().find(|group| group.axis == axis)
-    }
-
-    /// Samples the already-proved linear frontier without solving another layout.
-    pub(super) fn splitter_resize_axis_extents(
-        &self,
-        plan: &PresentationPlan,
-        target: SplitterResizeTarget,
-        axis: Axis,
-        delta: f64,
-    ) -> Option<BTreeMap<NodeId, f64>> {
-        let group = self.prepare_splitter_resize_axis_group(plan, target, axis)?;
-        if !delta.is_finite()
-            || delta < group.common_delta.minimum
-            || delta > group.common_delta.maximum
-        {
-            return None;
-        }
-        if let Some(piecewise) = &group.piecewise {
-            return piecewise.extents(delta);
-        }
-        let root = match target {
-            SplitterResizeTarget::Handle(id) => id.root,
-            SplitterResizeTarget::Junction(id) => id.root(),
-        };
-        let projection = plan.layout_facts()?.root(root)?.projection();
-        let splits = group
-            .splits
-            .iter()
-            .filter(|split| split.axis == axis)
-            .map(|split| (split.source.node(), split))
-            .collect::<BTreeMap<_, _>>();
-        let mut pending = vec![(self.workspace.root(root)?.node, 0.0)];
-        let mut extents = BTreeMap::new();
-        while let Some((node, coefficient)) = pending.pop() {
-            let result = projection.nodes.get(&node)?;
-            let coefficient = if result.visible { coefficient } else { 0.0 };
-            let current = match axis {
-                Axis::Horizontal => result.rect.width(),
-                Axis::Vertical => result.rect.height(),
-            };
-            let extent = current + coefficient * delta;
-            if !extent.is_finite() || extent < 0.0 {
-                return None;
-            }
-            extents.insert(node, extent);
-            if let Node::Split {
-                axis: split_axis,
-                children,
-                ..
-            } = self.workspace.node(node)?
-            {
-                for (index, &child) in children.iter().enumerate().rev() {
-                    let child_coefficient = if *split_axis == axis {
-                        match splits.get(&node) {
-                            Some(split) => *split.child_coefficients.get(index)?,
-                            None => 0.0,
-                        }
-                    } else {
-                        coefficient
-                    };
-                    pending.push((child, child_coefficient));
-                }
-            } else {
-                pending.extend(
-                    self.workspace
-                        .node(node)?
-                        .child_nodes()
-                        .rev()
-                        .map(|(_, child)| (child, coefficient)),
-                );
-            }
-        }
-        Some(extents)
     }
 
     pub(super) fn prepare_journal_splitter_gesture(
@@ -150,8 +68,9 @@ impl DockEngine {
         if winner != Some(region) {
             return Err(InteractionRejection::SplitterGestureHitUnavailable { surface });
         }
-        let handles = self.prepare_splitter_resize_handles(plan, target)?;
-        let axis_groups = self.prepare_checked_resize_axis_groups(plan, handles, policy)?;
+        let handles = Self::prepare_splitter_resize_handles(&self.workspace, plan, target)?;
+        let axis_groups =
+            Self::prepare_checked_resize_axis_groups(&self.workspace, plan, handles, policy)?;
         Ok(ResizeStart {
             owner,
             journal_capture_authority: capture_authority,
@@ -167,7 +86,7 @@ impl DockEngine {
     }
 
     fn prepare_splitter_resize_handles(
-        &self,
+        workspace: &Workspace,
         plan: &PresentationPlan,
         target: SplitterResizeTarget,
     ) -> Result<Vec<(NodeSource, crate::presentation::scene::SplitterRecord)>, InteractionRejection>
@@ -183,8 +102,7 @@ impl DockEngine {
                     .contained_records()
                     .iter()
                     .find(|record| record.root() == id.root)
-                    && self
-                        .workspace
+                    && workspace
                         .contained_floating(contained.floating())
                         .is_none_or(|durable| {
                             durable.root != id.root
@@ -199,8 +117,7 @@ impl DockEngine {
                     .filter(|record| record.operable())
                     .cloned()
                     .ok_or(InteractionRejection::SplitterGestureHitUnavailable { surface })?;
-                let source = self
-                    .workspace
+                let source = workspace
                     .capture_node_source(id.root, id.node())
                     .map_err(InteractionRejection::ResizeRejected)?;
                 Ok((source, record))
@@ -208,17 +125,17 @@ impl DockEngine {
             .collect()
     }
 
-    pub(super) fn prepare_checked_resize_axis_groups(
-        &self,
+    fn prepare_checked_resize_axis_groups(
+        workspace: &Workspace,
         plan: &PresentationPlan,
         handles: Vec<(NodeSource, crate::presentation::scene::SplitterRecord)>,
         policy: &DockPolicySnapshot,
     ) -> Result<Vec<crate::interaction::FrozenResizeAxisGroup>, InteractionRejection> {
-        let groups = prepare_resize_axis_groups(&self.workspace, plan, handles)
+        let groups = prepare_resize_axis_groups(workspace, plan, handles)
             .ok_or(InteractionRejection::SplitterResizeGeometryUnavailable)?;
         for group in &groups {
             for source in group.resized_sources() {
-                self.check_resize_policy(source, group.axis, policy)
+                Self::check_resize_policy(workspace, source, group.axis, policy)
                     .map_err(InteractionRejection::ResizeRejected)?;
             }
         }
@@ -535,14 +452,19 @@ impl DockEngine {
 }
 
 impl DockEngine {
-    pub(super) fn check_resize_policy(
-        &self,
+    fn check_resize_policy(
+        workspace: &Workspace,
         split: &NodeSource,
         requested_axis: Axis,
         policy: &DockPolicySnapshot,
     ) -> Result<(), CommandError> {
-        self.validate_node_source(split)?;
-        let axis = match self.workspace.node(split.node()) {
+        workspace.verify_reference(
+            split.root(),
+            split.node(),
+            split.reference(),
+            ReferenceRole::Source,
+        )?;
+        let axis = match workspace.node(split.node()) {
             Some(Node::Split { axis, .. }) if *axis == requested_axis => *axis,
             Some(Node::Grid { .. }) => requested_axis,
             Some(Node::Split { .. }) => {
@@ -558,7 +480,9 @@ impl DockEngine {
                 });
             }
         };
-        let surface = self.root_surface(split.root());
+        let surface = workspace
+            .presentation_for_root(split.root())
+            .map(crate::graph::workspace::RootPresentationOwner::surface);
         match policy.evaluate(&DockPolicyRequest::Resize(DockResizePolicyRequest::new(
             split.root(),
             axis,
@@ -680,11 +604,15 @@ impl DockEngine {
             }
         };
         let axis = record.axis();
-        let groups =
-            match self.prepare_checked_resize_axis_groups(plan, vec![(source, record)], policy) {
-                Ok(groups) => groups,
-                Err(rejection) => return Ok(InteractionOutcome::Rejected(rejection)),
-            };
+        let groups = match Self::prepare_checked_resize_axis_groups(
+            &self.workspace,
+            plan,
+            vec![(source, record)],
+            policy,
+        ) {
+            Ok(groups) => groups,
+            Err(rejection) => return Ok(InteractionOutcome::Rejected(rejection)),
+        };
         let Some(updates) = resize_axis_group_adjustment_updates(&groups, axis, adjustment) else {
             return Ok(InteractionOutcome::Rejected(
                 InteractionRejection::SplitterResizeGeometryUnavailable,
@@ -739,7 +667,7 @@ impl DockEngine {
     }
 
     fn prepare_splitter_junction_axis_handles(
-        &self,
+        workspace: &Workspace,
         plan: &PresentationPlan,
         junction: crate::presentation::scene::SplitterJunctionId,
         axis: Axis,
@@ -786,10 +714,7 @@ impl DockEngine {
 
         let mut sources = Vec::with_capacity(handles.len());
         for record in handles {
-            let source = match self
-                .workspace
-                .capture_node_source(record.id().root, record.id().node())
-            {
+            let source = match workspace.capture_node_source(record.id().root, record.id().node()) {
                 Ok(source) => source,
                 Err(error) => {
                     return Err(InteractionRejection::ResizeRejected(error));
@@ -814,14 +739,22 @@ impl DockEngine {
         interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<InteractionOutcome, EngineError> {
         let axis = axis.into();
-        let sources =
-            match self.prepare_splitter_junction_axis_handles(painted.plan(), junction, axis) {
-                Ok(sources) => sources,
-                Err(rejection) => return Ok(InteractionOutcome::Rejected(rejection)),
-            };
+        let sources = match Self::prepare_splitter_junction_axis_handles(
+            &self.workspace,
+            painted.plan(),
+            junction,
+            axis,
+        ) {
+            Ok(sources) => sources,
+            Err(rejection) => return Ok(InteractionOutcome::Rejected(rejection)),
+        };
 
-        let groups = match self.prepare_checked_resize_axis_groups(painted.plan(), sources, policy)
-        {
+        let groups = match Self::prepare_checked_resize_axis_groups(
+            &self.workspace,
+            painted.plan(),
+            sources,
+            policy,
+        ) {
             Ok(groups) => groups,
             Err(rejection) => return Ok(InteractionOutcome::Rejected(rejection)),
         };

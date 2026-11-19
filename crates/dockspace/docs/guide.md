@@ -413,9 +413,8 @@ independently of painted fallbacks and scene readiness. Newer unpainted measurem
 and explicit measurement unavailability cannot be discarded by a later weight
 update to authorize an older reset. After those checks, it projects the current
 weights and shares the ordinary restoration calculation and touching-frontier
-solver. Relative steps,
-endpoints, junction adjustments and sequences with multiple steps retain their
-original geometry-bound displacement contract.
+solver. Relative steps, endpoints, junction adjustments and multi-step
+sequences require the original scene and workspace version.
 
 `DockPresentationConfig::resize_propagation()` selects adjacent or outward
 capacity transfer. The default `ResizePropagation::Adjacent` stops at the
@@ -542,14 +541,13 @@ workspace mutation. A pointer gesture with zero final displacement preserves
 its original persistent weights, including when it moves away and returns to
 its starting point.
 
-For representable movements, discrete keyboard/accessibility steps preserve
-their ordered resize intent across input packet boundaries. If a sequence
-actually moves and then returns to its initial visible size, it commits the achieved size
-proportions, just as separately submitted steps would. A sequence whose every
-step is blocked by the same size limit preserves the original weights. This
-distinction matters when a pane's minimum has already displaced its stored
-weighted size: the next host resize or saved layout must not depend on how many
-input events happened to arrive in one frame.
+Discrete keyboard and accessibility steps start from the track allocation of
+the previous accepted step. A batched action publishes only the final weights
+in one mutation. With the same geometry and constraints, splitting the sequence
+across frames produces the same layout. In Outward mode, a divider can return to
+its starting point while space remains redistributed among its siblings. A
+sequence blocked at a size limit preserves the stored weights, including when a
+minimum has already displaced the original weighted size.
 
 An overflowing, underallocated or compressed separator projection cannot begin
 a resize; clipped hit geometry is never substituted for complete layout facts.

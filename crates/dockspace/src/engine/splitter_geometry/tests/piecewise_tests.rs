@@ -257,48 +257,6 @@ fn resizing_an_outer_split_preserves_the_far_grid_column_position() {
 }
 
 #[test]
-fn outward_discrete_history_commits_only_owners_whose_tracks_really_moved() {
-    let (base, split) = constrained();
-    let fixture = Fixture::with_propagation(
-        base.workspace,
-        base.bounds,
-        base.constraints,
-        1.0,
-        ResizePropagation::Outward,
-    );
-    let groups = fixture.groups(&[(split, 0)]);
-    let mut adjustment = ResizeAdjustment::new(0.0);
-    adjustment.record(50.0);
-    adjustment.record(0.0);
-    let updates =
-        resize_axis_group_adjustment_updates(&groups, Axis::Horizontal, adjustment).unwrap();
-    assert_eq!(
-        updates[0]
-            .split_weights()
-            .unwrap()
-            .iter()
-            .map(|weight| weight.get())
-            .collect::<Vec<_>>(),
-        [0.5, 0.5]
-    );
-    let blocked = resize_axis_group_adjustment_updates(
-        &groups,
-        Axis::Horizontal,
-        ResizeAdjustment::new(-40.0),
-    )
-    .unwrap();
-    assert_eq!(
-        blocked[0]
-            .split_weights()
-            .unwrap()
-            .iter()
-            .map(|weight| weight.get())
-            .collect::<Vec<_>>(),
-        [0.25, 0.75]
-    );
-}
-
-#[test]
 fn zero_grid_motion_preserves_absent_and_latent_user_shares() {
     for shares in [
         None,
@@ -515,7 +473,7 @@ fn auto_reflow_checks_new_minima_and_the_actual_ancestor_boundary() {
             .piecewise
             .as_ref()
             .unwrap()
-            .updates(100.0, None)
+            .updates(100.0)
             .unwrap();
         let projected = fixture.project_updates(&updates);
         let shape = projected.grids.get(&grid).unwrap().shape;

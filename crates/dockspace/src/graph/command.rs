@@ -377,6 +377,11 @@ pub struct TrackResize {
 }
 
 impl TrackResize {
+    pub(crate) fn with_source(mut self, source: NodeSource) -> Self {
+        self.source = source;
+        self
+    }
+
     /// Creates one resize update from a frozen split source and normalized weights.
     ///
     /// Validation against the current workspace is deferred to command execution.

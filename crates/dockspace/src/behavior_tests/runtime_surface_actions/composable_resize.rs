@@ -309,11 +309,9 @@ fn ancestor_resize_reflows_auto_grid_with_the_same_candidate_and_committed_geome
     )
     .unwrap();
     let offered = LogicalRect::new(0.0, 0.0, 1004.0, 232.0).unwrap();
-    let mut session = session(content, offered, ResizePropagation::Adjacent, &[]);
-    for (adjustment, expected_width, expected_height) in [
-        (SurfaceSplitterAdjustment::Increment, 198.0, 100.0),
-        (SurfaceSplitterAdjustment::Decrement, 122.0, 204.0),
-    ] {
+    let mut separate = session(content.clone(), offered, ResizePropagation::Adjacent, &[]);
+    let mut batch = session(content, offered, ResizePropagation::Adjacent, &[]);
+    let apply = |session: &mut DockspaceSession, adjustments: &[SurfaceSplitterAdjustment]| {
         let mut frame = session.begin_host_frame().unwrap();
         let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
         let outer = plan
@@ -326,7 +324,7 @@ fn ancestor_resize_reflows_auto_grid_with_the_same_candidate_and_committed_geome
             })
             .unwrap();
         let action = plan
-            .prepare_splitter_adjustment_sequence(outer.visual_id(), [adjustment; 5])
+            .prepare_splitter_adjustment_sequence(outer.visual_id(), adjustments.iter().copied())
             .unwrap();
         frame.submit_surface_action(action).unwrap();
         measure(&mut frame, offered, &[]);
@@ -338,8 +336,26 @@ fn ancestor_resize_reflows_auto_grid_with_the_same_candidate_and_committed_geome
             .map(|pane| (pane.item(), pane.content_geometry().clip()))
             .collect::<Vec<_>>();
         assert!(frame.commit().unwrap().workspace_changed());
-        assert_eq!(bounds(&mut session), preview);
-        for item in [SECOND, THIRD, FOURTH, FIFTH] {
+        assert_eq!(bounds(session), preview);
+        preview
+    };
+    for (adjustment, expected_widths, expected_height) in [
+        (SurfaceSplitterAdjustment::Increment, [198.0; 4], 100.0),
+        (
+            SurfaceSplitterAdjustment::Decrement,
+            [182.0, 102.0, 102.0, 102.0],
+            204.0,
+        ),
+    ] {
+        for _ in 0..5 {
+            apply(&mut separate, &[adjustment]);
+        }
+        let preview = apply(&mut batch, &[adjustment; 5]);
+        assert_eq!(bounds(&mut separate), preview);
+        for (item, expected_width) in [SECOND, THIRD, FOURTH, FIFTH]
+            .into_iter()
+            .zip(expected_widths)
+        {
             let rect = preview.iter().find(|(id, _)| *id == item).unwrap().1;
             assert!(
                 (rect.width() - expected_width).abs() < 1e-8,

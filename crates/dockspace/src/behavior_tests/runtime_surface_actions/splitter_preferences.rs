@@ -2,7 +2,9 @@
 
 use super::*;
 use crate::geometry::{AxisSizing, PaneSizing};
-use crate::runtime::{DockPresentationConfig, DockspaceHostFrame, SplitterPaintRecord};
+use crate::runtime::{
+    DockPresentationConfig, DockspaceHostFrame, ResizePropagation, SplitterPaintRecord,
+};
 
 mod sequences;
 
@@ -53,6 +55,14 @@ fn measure_at(
 }
 
 fn measured(content: DockspaceNode, hints: &[(ItemId, PaneSizing)]) -> DockspaceSession {
+    measured_with_propagation(content, hints, ResizePropagation::Adjacent)
+}
+
+fn measured_with_propagation(
+    content: DockspaceNode,
+    hints: &[(ItemId, PaneSizing)],
+    propagation: ResizePropagation,
+) -> DockspaceSession {
     let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
         SURFACE,
         DockspaceRootLayout::new(ROOT, content),
@@ -62,6 +72,7 @@ fn measured(content: DockspaceNode, hints: &[(ItemId, PaneSizing)]) -> Dockspace
         .minimum_pane_size(1.0, 1.0)
         .splitter_thickness(1.0)
         .splitter_keyboard_step(16.0)
+        .resize_propagation(propagation)
         .build()
         .unwrap();
     let mut session = DockspaceSession::from_layout_with_presentation_config(
@@ -138,15 +149,30 @@ fn apply_at(
     bounds: LogicalRect,
     steps: &[SurfaceSplitterAdjustment],
 ) {
+    apply_at_splitter(session, hints, bounds, steps, outer_splitter);
+}
+
+fn apply_at_splitter(
+    session: &mut DockspaceSession,
+    hints: &[(ItemId, PaneSizing)],
+    bounds: LogicalRect,
+    steps: &[SurfaceSplitterAdjustment],
+    splitter: for<'a> fn(SurfacePaintPlan<'a>) -> SplitterPaintRecord<'a>,
+) {
     let mut frame = session.begin_host_frame().unwrap();
     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
-    let splitter = outer_splitter(plan);
     let action = plan
-        .prepare_splitter_adjustment_sequence(splitter.visual_id(), steps.iter().copied())
+        .prepare_splitter_adjustment_sequence(splitter(plan).visual_id(), steps.iter().copied())
         .expect("the constrained splitter prepares the explicit preference sequence");
     frame.submit_surface_action(action).unwrap();
     measure_at(&mut frame, hints, bounds);
     frame.commit().unwrap();
+}
+
+fn leftmost_splitter(plan: SurfacePaintPlan<'_>) -> SplitterPaintRecord<'_> {
+    plan.splitters()
+        .min_by(|a, b| a.draw_bounds().x().total_cmp(&b.draw_bounds().x()))
+        .unwrap()
 }
 
 fn pair_extents(session: &mut DockspaceSession) -> (f64, f64) {
@@ -408,6 +434,109 @@ fn a_small_but_representable_resize_retains_its_proportion_after_expansion() {
     measure_at(&mut frame, &hints, expanded);
     frame.commit().unwrap();
     assert_pair(&mut session, (200.0, 200.0));
+}
+
+#[test]
+fn pressing_against_a_fractional_minimum_keeps_the_saved_weights() {
+    let hints = [(
+        FIRST,
+        PaneSizing::builder().min_width(72.2).build().unwrap(),
+    )];
+    let bounds = LogicalRect::new(123.4, 0.0, 201.0, 400.0).unwrap();
+    for propagation in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
+        let content = DockspaceNode::split(
+            DockspaceAxis::Horizontal,
+            [
+                (DockspaceNode::tabs([FIRST]), 1.0),
+                (DockspaceNode::tabs([SECOND]), 7.0),
+            ],
+        )
+        .unwrap();
+        let mut session = measured_with_propagation(content, &hints, propagation);
+        let mut frame = session.begin_host_frame().unwrap();
+        measure_at(&mut frame, &hints, bounds);
+        frame.commit().unwrap();
+        assert_pair(&mut session, (72.2, 127.8));
+        let weights = split_weights(&session);
+        apply_at(
+            &mut session,
+            &hints,
+            bounds,
+            &[SurfaceSplitterAdjustment::Decrement],
+        );
+        assert_eq!(split_weights(&session), weights, "{propagation:?}");
+
+        let mut frame = session.begin_host_frame().unwrap();
+        measure_at(
+            &mut frame,
+            &hints,
+            LogicalRect::new(123.4, 0.0, 801.0, 400.0).unwrap(),
+        );
+        frame.commit().unwrap();
+        assert_pair(&mut session, (100.0, 700.0));
+    }
+}
+
+#[test]
+fn outward_reversal_uses_the_track_distribution_after_each_step() {
+    use SurfaceSplitterAdjustment::{Decrement, Increment};
+    let hints = [(
+        SECOND,
+        PaneSizing::builder().min_width(90.0).build().unwrap(),
+    )];
+    let bounds = LogicalRect::new(0.0, 0.0, 302.0, 400.0).unwrap();
+    let fixture = || {
+        let content = DockspaceNode::equal_split(
+            DockspaceAxis::Horizontal,
+            [FIRST, SECOND, THIRD].map(|item| DockspaceNode::tabs([item])),
+        )
+        .unwrap();
+        let mut session = measured_with_propagation(content, &hints, ResizePropagation::Outward);
+        let mut frame = session.begin_host_frame().unwrap();
+        measure_at(&mut frame, &hints, bounds);
+        frame.commit().unwrap();
+        session
+    };
+    let widths = |session: &mut DockspaceSession| {
+        inspect_surface(session, |plan| {
+            [FIRST, SECOND, THIRD].map(|item| {
+                plan.panes()
+                    .find(|pane| pane.item() == item)
+                    .unwrap()
+                    .content_geometry()
+                    .layout_bounds()
+                    .width()
+            })
+        })
+    };
+    let mut separate = fixture();
+    apply_at_splitter(
+        &mut separate,
+        &hints,
+        bounds,
+        &[Increment],
+        leftmost_splitter,
+    );
+    apply_at_splitter(
+        &mut separate,
+        &hints,
+        bounds,
+        &[Decrement],
+        leftmost_splitter,
+    );
+    for (width, expected) in widths(&mut separate).into_iter().zip([100.0, 106.0, 94.0]) {
+        assert!((width - expected).abs() < 1.0e-9, "{width} != {expected}");
+    }
+    let mut batch = fixture();
+    apply_at_splitter(
+        &mut batch,
+        &hints,
+        bounds,
+        &[Increment, Decrement],
+        leftmost_splitter,
+    );
+    assert_eq!(split_weights(&batch), split_weights(&separate));
+    assert_eq!(widths(&mut batch), widths(&mut separate));
 }
 
 #[test]

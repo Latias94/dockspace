@@ -1,8 +1,7 @@
 //! On-demand resize limits from the same touching-frontier solver as gestures.
 
-use crate::engine::SplitterReset;
 use crate::graph::Axis;
-use crate::interaction::{ResizeAdjustment, ResizeDeltaInterval};
+use crate::interaction::ResizeAdjustment;
 use crate::presentation::scene::SplitterResizeTarget;
 
 use super::super::SurfaceSplitterAdjustment;
@@ -97,116 +96,12 @@ impl SurfacePaintPlan<'_> {
         axis: Axis,
         adjustments: impl IntoIterator<Item = SurfaceSplitterAdjustment>,
     ) -> Option<ResizeAdjustment> {
-        let mut adjustments = adjustments.into_iter();
-        let first = adjustments.next()?;
-        let root = match target {
-            SplitterResizeTarget::Handle(id) => id.root,
-            SplitterResizeTarget::Junction(id) => id.root(),
-        };
-        let auto = self
-            .plan
-            .layout_facts()?
-            .root(root)?
-            .projection()
-            .auto_reflow()
-            .is_some();
-        let Some(second) = adjustments.next() else {
-            let adjustment = self
-                .splitter_adjustment_delta(target, axis, first)
-                .map(ResizeAdjustment::new)?;
-            if auto
-                && !self.candidate.splitter_adjustment_geometry_is_available(
-                    self.plan, target, axis, adjustment,
-                )?
-            {
-                return None;
-            }
-            return Some(adjustment);
-        };
-        let limits = self
-            .candidate
-            .splitter_resize_delta_interval(self.plan, target, axis)?;
-        let mut sequence = ResizeAdjustment::new(0.0);
-        for adjustment in [first, second].into_iter().chain(adjustments) {
-            let delta = match adjustment {
-                SurfaceSplitterAdjustment::Decrement => {
-                    sequence.delta() - self.splitter_keyboard_step
-                }
-                SurfaceSplitterAdjustment::Increment => {
-                    sequence.delta() + self.splitter_keyboard_step
-                }
-                SurfaceSplitterAdjustment::Minimum => limits.minimum,
-                SurfaceSplitterAdjustment::Maximum => limits.maximum,
-                SurfaceSplitterAdjustment::Equalize | SurfaceSplitterAdjustment::Preferred => self
-                    .splitter_restoration_delta(
-                        target,
-                        axis,
-                        limits,
-                        adjustment,
-                        sequence.delta(),
-                    )?,
-            }
-            .clamp(limits.minimum, limits.maximum);
-            let mut trial = sequence;
-            trial.record(delta);
-            if !auto
-                || self
-                    .candidate
-                    .splitter_adjustment_geometry_is_available(self.plan, target, axis, trial)?
-            {
-                sequence = trial;
-            }
-        }
-        Some(sequence)
-    }
-
-    fn splitter_adjustment_delta(
-        self,
-        target: SplitterResizeTarget,
-        axis: Axis,
-        adjustment: SurfaceSplitterAdjustment,
-    ) -> Option<f64> {
-        match adjustment {
-            SurfaceSplitterAdjustment::Decrement => Some(-self.splitter_keyboard_step),
-            SurfaceSplitterAdjustment::Increment => Some(self.splitter_keyboard_step),
-            SurfaceSplitterAdjustment::Minimum
-            | SurfaceSplitterAdjustment::Maximum
-            | SurfaceSplitterAdjustment::Equalize
-            | SurfaceSplitterAdjustment::Preferred => {
-                let limits = self
-                    .candidate
-                    .splitter_resize_delta_interval(self.plan, target, axis)?;
-                if adjustment == SurfaceSplitterAdjustment::Minimum {
-                    Some(limits.minimum)
-                } else if adjustment == SurfaceSplitterAdjustment::Maximum {
-                    Some(limits.maximum)
-                } else {
-                    self.splitter_restoration_delta(target, axis, limits, adjustment, 0.0)
-                }
-            }
-        }
-    }
-
-    fn splitter_restoration_delta(
-        self,
-        target: SplitterResizeTarget,
-        axis: Axis,
-        limits: ResizeDeltaInterval,
-        adjustment: SurfaceSplitterAdjustment,
-        cumulative_delta: f64,
-    ) -> Option<f64> {
-        let reset = match adjustment {
-            SurfaceSplitterAdjustment::Equalize => SplitterReset::Equalize,
-            SurfaceSplitterAdjustment::Preferred => SplitterReset::Preferred,
-            _ => return None,
-        };
-        self.candidate.splitter_restoration_delta(
+        self.candidate.prepare_splitter_adjustments(
             self.plan,
             target,
             axis,
-            limits,
-            reset,
-            cumulative_delta,
+            self.splitter_keyboard_step,
+            adjustments,
         )
     }
 }

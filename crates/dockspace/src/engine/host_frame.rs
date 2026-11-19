@@ -476,38 +476,16 @@ impl<'frame> HostFrameView<'frame> {
         self.engine.checked_splitter_resize_range(plan, splitter)
     }
 
-    pub(crate) fn splitter_adjustment_geometry_is_available(
+    pub(crate) fn prepare_splitter_adjustments(
         &self,
         plan: &PresentationPlan,
         target: crate::presentation::scene::SplitterResizeTarget,
         axis: Axis,
-        adjustment: crate::interaction::ResizeAdjustment,
-    ) -> Option<bool> {
+        step_size: f64,
+        steps: impl IntoIterator<Item = crate::runtime::SurfaceSplitterAdjustment>,
+    ) -> Option<crate::interaction::ResizeAdjustment> {
         self.engine
-            .splitter_adjustment_geometry_is_available(plan, target, axis, adjustment)
-    }
-
-    pub(crate) fn splitter_resize_delta_interval(
-        &self,
-        plan: &PresentationPlan,
-        target: crate::presentation::scene::SplitterResizeTarget,
-        axis: Axis,
-    ) -> Option<crate::interaction::ResizeDeltaInterval> {
-        self.engine
-            .splitter_resize_delta_interval(plan, target, axis)
-    }
-
-    pub(crate) fn splitter_restoration_delta(
-        &self,
-        plan: &PresentationPlan,
-        target: crate::presentation::scene::SplitterResizeTarget,
-        axis: Axis,
-        limits: crate::interaction::ResizeDeltaInterval,
-        reset: SplitterReset,
-        cumulative_delta: f64,
-    ) -> Option<f64> {
-        self.engine
-            .splitter_restoration_delta(plan, target, axis, limits, reset, cumulative_delta)
+            .prepare_splitter_adjustments(plan, target, axis, step_size, steps)
     }
 
     /// Returns the post-observation workspace visible to this frame.

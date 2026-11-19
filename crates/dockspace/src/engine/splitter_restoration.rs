@@ -5,39 +5,153 @@ use std::collections::BTreeMap;
 use crate::geometry::{AxisSizing, LogicalRect, PaneSizing};
 use crate::graph::{Axis, Node};
 use crate::ids::{NodeId, RootId};
-use crate::interaction::{ResizeAdjustment, ResizeDeltaInterval};
+use crate::interaction::{FrozenResizeAxisGroup, ResizeAdjustment, ResizeDeltaInterval};
 use crate::policy::TabBarVisibility;
 use crate::presentation::compiler::pane_outer_sizing;
 use crate::presentation::manifest::PaneSizingKey;
 use crate::presentation::scene::{SplitterOwner, SplitterResizeTarget, SplitterSceneId};
+use crate::runtime::SurfaceSplitterAdjustment;
 
 use super::*;
 
 impl DockEngine {
-    /// Distinguishes geometric refusal from failed source or policy preparation.
-    /// A false result may keep a prior accepted step; None aborts the sequence.
-    pub(crate) fn splitter_adjustment_geometry_is_available(
+    pub(crate) fn prepare_splitter_adjustments(
         &self,
         plan: &PresentationPlan,
         target: SplitterResizeTarget,
         axis: Axis,
-        adjustment: ResizeAdjustment,
-    ) -> Option<bool> {
-        let group = self.prepare_splitter_resize_axis_group(plan, target, axis)?;
-        let Some(updates) = crate::engine::splitter_geometry::resize_axis_group_adjustment_updates(
-            std::slice::from_ref(&group),
-            axis,
-            adjustment,
-        ) else {
-            return Some(false);
+        step_size: f64,
+        adjustments: impl IntoIterator<Item = SurfaceSplitterAdjustment>,
+    ) -> Option<ResizeAdjustment> {
+        let mut steps = adjustments.into_iter().peekable();
+        let first = steps.next()?;
+        let root = match target {
+            SplitterResizeTarget::Handle(id) => id.root,
+            SplitterResizeTarget::Junction(id) => id.root(),
         };
-        crate::graph::operation::validate_track_resizes(
-            self.workspace(),
-            self.policy_snapshot(),
-            &updates,
-        )
-        .ok()?;
-        Some(true)
+        let auto = plan
+            .layout_facts()?
+            .root(root)?
+            .projection()
+            .auto_reflow()
+            .is_some();
+        let policy = self.policy_snapshot();
+        if steps.peek().is_none() {
+            if !auto {
+                match first {
+                    SurfaceSplitterAdjustment::Decrement => {
+                        return Some(ResizeAdjustment::new(-step_size));
+                    }
+                    SurfaceSplitterAdjustment::Increment => {
+                        return Some(ResizeAdjustment::new(step_size));
+                    }
+                    _ => {}
+                }
+            }
+            let group = Self::prepare_splitter_resize_axis_group(
+                &self.workspace,
+                plan,
+                target,
+                axis,
+                policy,
+            )?;
+            let delta =
+                Self::splitter_step_delta(&self.workspace, plan, target, &group, step_size, first)?;
+            let adjustment = ResizeAdjustment::new(delta);
+            if auto {
+                let updates = resize_axis_group_adjustment_updates(
+                    std::slice::from_ref(&group),
+                    axis,
+                    adjustment.clone(),
+                )?;
+                crate::graph::operation::validate_track_resizes(&self.workspace, policy, &updates)
+                    .ok()?;
+            }
+            return Some(adjustment);
+        }
+
+        // A key begins at the previous key's allocation. In Outward mode a
+        // reversal can redistribute space without moving the final divider.
+        // Keep intermediates private and publish their final weights once.
+        let mut workspace = self.workspace.clone();
+        let mut projection = None;
+        let mut final_tracks = BTreeMap::new();
+        let mut steps = std::iter::once(first).chain(steps).peekable();
+        while let Some(step) = steps.next() {
+            let current = projection.as_ref().unwrap_or(plan);
+            let group = Self::prepare_splitter_resize_axis_group(
+                &workspace, current, target, axis, policy,
+            )?;
+            let delta =
+                Self::splitter_step_delta(&workspace, current, target, &group, step_size, step)?;
+            let updates = resize_axis_group_adjustment_updates(
+                std::slice::from_ref(&group),
+                axis,
+                ResizeAdjustment::new(delta),
+            );
+            let Some(updates) = updates else {
+                if auto {
+                    continue;
+                }
+                return None;
+            };
+            let changed =
+                crate::graph::operation::validate_track_resizes(&workspace, policy, &updates)
+                    .ok()?;
+            let updates = updates
+                .into_iter()
+                .zip(changed)
+                .filter_map(|(update, (_, changed))| changed.then_some(update))
+                .collect::<Vec<_>>();
+            if updates.is_empty() {
+                continue;
+            }
+            for update in &updates {
+                let root = update.source().root();
+                let node = update.source().node();
+                let source = self.workspace.capture_node_source(root, node).ok()?;
+                final_tracks.insert((root, node), update.clone().with_source(source));
+            }
+            if steps.peek().is_some() {
+                let command = WorkspaceCommand::ResizeTracks { tracks: updates };
+                workspace.apply_draft_command(policy, &command).ok()?;
+                projection = Some(self.recompile_splitter_plan(&workspace, plan, policy)?);
+            }
+        }
+        if final_tracks.is_empty() {
+            return Some(ResizeAdjustment::new(0.0));
+        }
+        Some(ResizeAdjustment::Tracks(
+            final_tracks.into_values().collect(),
+        ))
+    }
+
+    fn splitter_step_delta(
+        workspace: &Workspace,
+        plan: &PresentationPlan,
+        target: SplitterResizeTarget,
+        group: &FrozenResizeAxisGroup,
+        step_size: f64,
+        step: SurfaceSplitterAdjustment,
+    ) -> Option<f64> {
+        use SurfaceSplitterAdjustment as Step;
+        match step {
+            Step::Decrement => Some(-step_size),
+            Step::Increment => Some(step_size),
+            Step::Minimum => Some(group.common_delta.minimum),
+            Step::Maximum => Some(group.common_delta.maximum),
+            Step::Equalize | Step::Preferred => Self::splitter_restoration_delta(
+                workspace,
+                plan,
+                target,
+                group,
+                if step == Step::Equalize {
+                    SplitterReset::Equalize
+                } else {
+                    SplitterReset::Preferred
+                },
+            ),
+        }
     }
 
     /// Proves advertised Auto range endpoints with the shared resize evaluator.
@@ -48,10 +162,12 @@ impl DockEngine {
     ) -> Option<ResizeDeltaInterval> {
         let record = plan.splitter_record(splitter)?;
         let axis = record.axis();
-        let group = self.prepare_splitter_resize_axis_group(
+        let group = Self::prepare_splitter_resize_axis_group(
+            &self.workspace,
             plan,
             SplitterResizeTarget::Handle(splitter),
             axis,
+            self.policy_snapshot(),
         )?;
         let limits = group.common_delta;
         if plan
@@ -92,7 +208,8 @@ impl DockEngine {
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<InteractionOutcome, EngineError> {
-        let Some(plan) = self.splitter_reset_projection(witness, policy) else {
+        let Some(plan) = self.recompile_splitter_plan(&self.workspace, witness.plan(), policy)
+        else {
             return Ok(InteractionOutcome::Rejected(
                 InteractionRejection::SplitterResizeGeometryUnavailable,
             ));
@@ -102,8 +219,14 @@ impl DockEngine {
             (record.operable() && plan.region_is_operable(record.hit().rect(), record.layer()))
                 .then_some(())?;
             let axis = record.axis();
-            let limits = self.splitter_resize_delta_interval(&plan, target, axis)?;
-            self.splitter_restoration_delta(&plan, target, axis, limits, reset, 0.0)
+            let group = Self::prepare_splitter_resize_axis_group(
+                &self.workspace,
+                &plan,
+                target,
+                axis,
+                policy,
+            )?;
+            Self::splitter_restoration_delta(&self.workspace, &plan, target, &group, reset)
                 .map(ResizeAdjustment::new)
         });
         let Some(adjustment) = adjustment else {
@@ -122,20 +245,17 @@ impl DockEngine {
         )
     }
 
-    fn splitter_reset_projection(
+    fn recompile_splitter_plan(
         &self,
-        witness: &crate::presentation::scene::SurfacePlanScene,
+        workspace: &Workspace,
+        basis: &PresentationPlan,
         policy: &DockPolicySnapshot,
     ) -> Option<PresentationPlan> {
         let requirements = &self.presentation_authority.presentation_requirements;
-        let ticket = requirements.surface(witness.stamp().surface())?.ticket();
-        let measurements = witness
-            .plan()
-            .layout_facts()?
-            .measurements()
-            .reticket(ticket);
+        let ticket = requirements.surface(basis.surface())?.ticket();
+        let measurements = basis.layout_facts()?.measurements().reticket(ticket);
         compile_surface_plan(
-            &self.workspace,
+            workspace,
             self.version,
             policy,
             &self.presentation_authority.presentation_config,
@@ -143,137 +263,75 @@ impl DockEngine {
             &measurements,
             &self.presentation_authority.tab_strip_states,
             &[],
-            self.contained_layout_projection(witness.stamp().surface()),
+            self.contained_layout_projection(basis.surface()),
         )
         .ok()?
         .finalize()
         .ok()
     }
 
-    pub(super) fn splitter_restoration_delta(
-        &self,
+    fn splitter_restoration_delta(
+        workspace: &Workspace,
         plan: &PresentationPlan,
         target: SplitterResizeTarget,
-        axis: Axis,
-        limits: ResizeDeltaInterval,
+        group: &FrozenResizeAxisGroup,
         adjustment: SplitterReset,
-        cumulative_delta: f64,
     ) -> Option<f64> {
-        let piecewise = self
-            .prepare_splitter_resize_axis_group(plan, target, axis)?
-            .piecewise;
-        let current_extents = if adjustment == SplitterReset::Preferred && cumulative_delta != 0.0 {
-            Some(match &piecewise {
-                Some(frozen) => frozen.extents(cumulative_delta)?,
-                None => self.splitter_resize_axis_extents(plan, target, axis, cumulative_delta)?,
-            })
-        } else {
-            None
-        };
+        let limits = group.common_delta;
+        let axis = group.axis;
         let restore = |id: SplitterSceneId| {
             let record = plan.splitter_record(id)?;
             let before = *record.child_extents().get(id.index)?;
             let after = *record.child_extents().get(record.after_index())?;
-            let delta = match adjustment {
-                SplitterReset::Equalize => match &piecewise {
-                    Some(frozen) => {
-                        piecewise_target_delta(limits, cumulative_delta, None, None, |delta| {
-                            let tracks = frozen.track_extents(id.root, id.node(), delta)?;
-                            Some((*tracks.get(id.index)?, *tracks.get(record.after_index())?))
-                        })?
-                    }
-                    None => (after - before) * 0.5,
-                },
-                SplitterReset::Preferred => {
-                    let (before_hint, after_hint, current_before, current_after) = match id.owner {
-                        SplitterOwner::Split(node) => {
-                            let Node::Split { children, .. } = self.workspace.node(node)? else {
-                                return None;
-                            };
-                            let before_node = *children.get(id.index)?;
-                            let after_node = *children.get(record.after_index())?;
-                            (
-                                self.subtree_axis_sizing(
-                                    plan,
-                                    id.root,
-                                    before_node,
-                                    axis,
-                                    current_extents.as_ref(),
-                                )?
-                                .preferred(),
-                                self.subtree_axis_sizing(
-                                    plan,
-                                    id.root,
-                                    after_node,
-                                    axis,
-                                    current_extents.as_ref(),
-                                )?
-                                .preferred(),
-                                current_extents.as_ref().map_or(Some(before), |extents| {
-                                    extents.get(&before_node).copied()
-                                })?,
-                                current_extents.as_ref().map_or(Some(after), |extents| {
-                                    extents.get(&after_node).copied()
-                                })?,
-                            )
-                        }
-                        SplitterOwner::Grid {
-                            node,
-                            axis: owner_axis,
-                        } => {
-                            if axis != owner_axis {
-                                return None;
-                            }
-                            let hint = |track| {
-                                self.grid_track_preferred(
-                                    plan,
-                                    id.root,
-                                    node,
-                                    axis,
-                                    track,
-                                    current_extents.as_ref(),
-                                )
-                            };
-                            let (current_before, current_after) = match &piecewise {
-                                Some(frozen) => {
-                                    let tracks =
-                                        frozen.track_extents(id.root, node, cumulative_delta)?;
-                                    (*tracks.get(id.index)?, *tracks.get(record.after_index())?)
-                                }
-                                None => (before + cumulative_delta, after - cumulative_delta),
-                            };
-                            (
-                                hint(id.index)?,
-                                hint(record.after_index())?,
-                                current_before,
-                                current_after,
-                            )
-                        }
+            let (before_hint, after_hint) = match (adjustment, id.owner) {
+                (SplitterReset::Equalize, _) => (None, None),
+                (SplitterReset::Preferred, SplitterOwner::Split(node)) => {
+                    let Node::Split { children, .. } = workspace.node(node)? else {
+                        return None;
                     };
-                    if let Some(frozen) = &piecewise {
-                        piecewise_target_delta(
-                            limits,
-                            cumulative_delta,
-                            before_hint,
-                            after_hint,
-                            |delta| {
-                                let tracks = frozen.track_extents(id.root, id.node(), delta)?;
-                                Some((*tracks.get(id.index)?, *tracks.get(record.after_index())?))
-                            },
-                        )?
-                    } else {
-                        match (before_hint, after_hint) {
-                            (Some(first), Some(second)) if first > 0.0 || second > 0.0 => {
-                                let scale = first.max(second);
-                                let fraction = (first / scale) / (first / scale + second / scale);
-                                cumulative_delta
-                                    + ((current_before + current_after) * fraction - current_before)
-                            }
-                            (Some(first), None) => cumulative_delta + (first - current_before),
-                            (None, Some(second)) => cumulative_delta + (current_after - second),
-                            (Some(_), Some(_)) | (None, None) => (after - before) * 0.5,
-                        }
+                    let hint = |index| {
+                        Self::subtree_axis_sizing(
+                            workspace,
+                            plan,
+                            id.root,
+                            *children.get(index)?,
+                            axis,
+                        )
+                        .map(AxisSizing::preferred)
+                    };
+                    (hint(id.index)?, hint(record.after_index())?)
+                }
+                (
+                    SplitterReset::Preferred,
+                    SplitterOwner::Grid {
+                        node,
+                        axis: owner_axis,
+                    },
+                ) => {
+                    if axis != owner_axis {
+                        return None;
                     }
+                    let hint = |track| {
+                        Self::grid_track_preferred(workspace, plan, id.root, node, axis, track)
+                    };
+                    (hint(id.index)?, hint(record.after_index())?)
+                }
+            };
+            let delta = if let Some(frozen) = &group.piecewise {
+                piecewise_target_delta(limits, before_hint, after_hint, |delta| {
+                    let tracks = frozen.track_extents(id.root, id.node(), delta)?;
+                    Some((*tracks.get(id.index)?, *tracks.get(record.after_index())?))
+                })?
+            } else {
+                match (before_hint, after_hint) {
+                    (Some(first), Some(second)) if first > 0.0 || second > 0.0 => {
+                        let scale = first.max(second);
+                        let fraction = (first / scale) / (first / scale + second / scale);
+                        (before + after) * fraction - before
+                    }
+                    (Some(first), None) => first - before,
+                    (None, Some(second)) => after - second,
+                    (Some(_), Some(_)) | (None, None) => (after - before) * 0.5,
                 }
             };
             let scale = if record
@@ -314,13 +372,12 @@ impl DockEngine {
     }
 
     fn grid_track_preferred(
-        &self,
+        workspace: &Workspace,
         plan: &PresentationPlan,
         root: RootId,
         node: NodeId,
         axis: Axis,
         track: usize,
-        current: Option<&BTreeMap<NodeId, f64>>,
     ) -> Option<Option<f64>> {
         let projection = plan.layout_facts()?.root(root)?.projection();
         let grid = projection.grids.get(&node)?;
@@ -334,14 +391,9 @@ impl DockEngine {
             if index != track || !projection.nodes.get(&child)?.visible {
                 continue;
             }
-            let hint = self
-                .subtree_axis_sizing(plan, root, child, axis, current)?
-                .preferred();
+            let hint = Self::subtree_axis_sizing(workspace, plan, root, child, axis)?.preferred();
             has_hint |= hint.is_some();
-            let actual = current
-                .and_then(|current| current.get(&child))
-                .copied()
-                .unwrap_or(rect_extent(projection.nodes.get(&child)?.rect, axis));
+            let actual = rect_extent(projection.nodes.get(&child)?.rect, axis);
             extent = extent.max(hint.unwrap_or(actual));
         }
         Some(has_hint.then_some(extent))
@@ -349,17 +401,15 @@ impl DockEngine {
 
     /// Resolves hints only for an explicit restoration, using the exact selected panes.
     fn subtree_axis_sizing(
-        &self,
+        workspace: &Workspace,
         plan: &PresentationPlan,
         root: RootId,
         subtree: NodeId,
         axis: Axis,
-        current_extents: Option<&BTreeMap<NodeId, f64>>,
     ) -> Option<AxisSizing> {
         let layout = plan.layout_facts()?;
         let facts = layout.root(root)?;
         let projection = facts.projection();
-        let workspace = &self.workspace;
         let mut pending = vec![(subtree, false)];
         let mut sizings = BTreeMap::<NodeId, AxisSizing>::new();
         while let Some((node, visited)) = pending.pop() {
@@ -448,10 +498,7 @@ impl DockEngine {
                         let sizing = sizings.get(child)?;
                         let hint = sizing.preferred();
                         has_hint |= hint.is_some();
-                        let actual = current_extents
-                            .and_then(|values| values.get(child))
-                            .copied()
-                            .unwrap_or(rect_extent(projection.nodes.get(child)?.rect, axis));
+                        let actual = rect_extent(projection.nodes.get(child)?.rect, axis);
                         let (extent, maximum, occupied) = &mut values[index];
                         *occupied = true;
                         *extent = extent.max(hint.unwrap_or(actual));
@@ -500,10 +547,7 @@ impl DockEngine {
                         let child_sizing = sizings.get(child)?;
                         let hint = child_sizing.preferred();
                         has_hint |= hint.is_some();
-                        let current = current_extents.map_or_else(
-                            || Some(rect_extent(child_result.rect, axis)),
-                            |extents| extents.get(child).copied(),
-                        )?;
+                        let current = rect_extent(child_result.rect, axis);
                         let child_extent = hint.unwrap_or(current);
                         let gap = split
                             .children
@@ -546,16 +590,14 @@ impl DockEngine {
 /// Inverts the already-frozen monotone pair without resolving another layout.
 fn piecewise_target_delta(
     limits: ResizeDeltaInterval,
-    current: f64,
     before_hint: Option<f64>,
     after_hint: Option<f64>,
     mut pair_at: impl FnMut(f64) -> Option<(f64, f64)>,
 ) -> Option<f64> {
     if !limits.minimum.is_finite()
         || !limits.maximum.is_finite()
-        || !current.is_finite()
-        || current < limits.minimum
-        || current > limits.maximum
+        || limits.minimum > 0.0
+        || limits.maximum < 0.0
         || [before_hint, after_hint]
             .into_iter()
             .flatten()
@@ -585,6 +627,7 @@ fn piecewise_target_delta(
             },
         })
     };
+    let current = 0.0;
     let initial = residual_at(current)?;
     if initial == 0.0 {
         return Some(current);
@@ -768,6 +811,21 @@ mod tests {
         (engine, plan)
     }
 
+    fn prepare_group(
+        engine: &DockEngine,
+        plan: &PresentationPlan,
+        target: SplitterResizeTarget,
+        axis: Axis,
+    ) -> Option<FrozenResizeAxisGroup> {
+        DockEngine::prepare_splitter_resize_axis_group(
+            engine.workspace(),
+            plan,
+            target,
+            axis,
+            engine.policy_snapshot(),
+        )
+    }
+
     #[test]
     fn selected_layout_restoration_combines_explicit_and_current_sizes_with_each_bar_once() {
         let mut builder = Workspace::builder();
@@ -781,9 +839,9 @@ mod tests {
         builder.set_root(ROOT, RootRecord::new(outer));
         builder.set_surface(SURFACE, SurfacePresentation::with_main(ROOT));
         let (engine, plan) = compiled(builder.build().unwrap());
-        let actual = engine
-            .subtree_axis_sizing(&plan, ROOT, outer, Axis::Vertical, None)
-            .unwrap();
+        let actual =
+            DockEngine::subtree_axis_sizing(engine.workspace(), &plan, ROOT, outer, Axis::Vertical)
+                .unwrap();
         let current_bare = plan
             .layout_facts()
             .unwrap()
@@ -797,11 +855,6 @@ mod tests {
             actual.preferred(),
             Some(20.0 + 20.0 + 80.0 + 4.0 + current_bare)
         );
-        let changed_extents = BTreeMap::from([(inner, 300.0), (bare, 150.0)]);
-        let adjusted = engine
-            .subtree_axis_sizing(&plan, ROOT, outer, Axis::Vertical, Some(&changed_extents))
-            .unwrap();
-        assert_eq!(adjusted.preferred(), Some(20.0 + 20.0 + 80.0 + 4.0 + 150.0));
     }
 
     #[test]
@@ -812,8 +865,7 @@ mod tests {
         builder.set_surface(SURFACE, SurfacePresentation::with_main(ROOT));
         let (engine, plan) = compiled(builder.build().unwrap());
         assert_eq!(
-            engine
-                .subtree_axis_sizing(&plan, ROOT, bare, Axis::Vertical, None)
+            DockEngine::subtree_axis_sizing(engine.workspace(), &plan, ROOT, bare, Axis::Vertical)
                 .unwrap()
                 .preferred(),
             Some(80.0)
@@ -824,15 +876,15 @@ mod tests {
         builder.set_root(ROOT, RootRecord::new(empty).with_central(empty));
         builder.set_surface(SURFACE, SurfacePresentation::with_main(ROOT));
         let (engine, plan) = compiled(builder.build().unwrap());
-        let baseline = engine
-            .subtree_axis_sizing(&plan, ROOT, empty, Axis::Vertical, None)
-            .unwrap();
+        let baseline =
+            DockEngine::subtree_axis_sizing(engine.workspace(), &plan, ROOT, empty, Axis::Vertical)
+                .unwrap();
         assert_eq!(baseline.minimum(), 21.0);
         assert_eq!(baseline.preferred(), None);
     }
 
     #[test]
-    fn nested_layout_tabs_keep_linear_cumulative_preferred_and_equalize_samples() {
+    fn nested_layout_tabs_restore_preferences_and_equalize_on_the_linear_path() {
         let mut builder = Workspace::builder();
         let first = builder.insert_node(Node::pane(A));
         let second = builder.insert_node(Node::pane(D));
@@ -851,45 +903,31 @@ mod tests {
         let (engine, plan) = compiled(builder.build().unwrap());
         let id = SplitterSceneId::split(ROOT, split, 0);
         let target = SplitterResizeTarget::Handle(id);
-        let group = engine
-            .prepare_splitter_resize_axis_group(&plan, target, Axis::Vertical)
-            .unwrap();
+        let group = prepare_group(&engine, &plan, target, Axis::Vertical).unwrap();
         assert!(
             group.piecewise.is_none(),
             "ordinary nested Tabs retain the linear path"
         );
-        let extents = engine
-            .splitter_resize_axis_extents(&plan, target, Axis::Vertical, 10.0)
-            .unwrap();
-        assert_eq!(extents[&outer], 500.0);
-        assert_eq!(extents[&inner], 480.0);
-        assert_eq!(extents[&split], 460.0);
-        assert_eq!(extents[&first], 124.0);
-        assert_eq!(extents[&second], 332.0);
-        for current in [0.0, 10.0, 40.0] {
-            assert_eq!(
-                engine.splitter_restoration_delta(
-                    &plan,
-                    target,
-                    Axis::Vertical,
-                    group.common_delta,
-                    SplitterReset::Preferred,
-                    current,
-                ),
-                Some(-34.0)
-            );
-            assert_eq!(
-                engine.splitter_restoration_delta(
-                    &plan,
-                    target,
-                    Axis::Vertical,
-                    group.common_delta,
-                    SplitterReset::Equalize,
-                    current,
-                ),
-                Some(114.0)
-            );
-        }
+        assert_eq!(
+            DockEngine::splitter_restoration_delta(
+                engine.workspace(),
+                &plan,
+                target,
+                &group,
+                SplitterReset::Preferred
+            ),
+            Some(-34.0)
+        );
+        assert_eq!(
+            DockEngine::splitter_restoration_delta(
+                engine.workspace(),
+                &plan,
+                target,
+                &group,
+                SplitterReset::Equalize
+            ),
+            Some(114.0)
+        );
     }
 
     #[test]
@@ -952,13 +990,9 @@ mod tests {
                     };
                     let record = plan.splitter_record(id).unwrap();
                     let original_weights = record.weights().to_vec();
-                    let group = engine
-                        .prepare_splitter_resize_axis_group(
-                            &plan,
-                            SplitterResizeTarget::Handle(id),
-                            axis,
-                        )
-                        .unwrap();
+                    let group =
+                        prepare_group(&engine, &plan, SplitterResizeTarget::Handle(id), axis)
+                            .unwrap();
                     let frozen = group.piecewise.as_ref().unwrap();
                     assert_eq!(group.common_delta.minimum, -297.0);
                     assert_eq!(group.common_delta.maximum, 297.0);
@@ -1088,30 +1122,24 @@ mod tests {
         for grid in [true, false] {
             let (engine, plan, id) = outward_tracks(Some(150.0), Some(100.0), grid);
             let target = SplitterResizeTarget::Handle(id);
-            let group = engine
-                .prepare_splitter_resize_axis_group(&plan, target, Axis::Vertical)
-                .unwrap();
+            let group = prepare_group(&engine, &plan, target, Axis::Vertical).unwrap();
             let frozen = group.piecewise.as_ref().unwrap();
             assert_eq!(
                 frozen.track_extents(ROOT, id.node(), 0.0).unwrap(),
                 [118.0, 118.0, 236.0]
             );
-            for current in [0.0, 70.0, 150.0] {
-                let delta = engine
-                    .splitter_restoration_delta(
-                        &plan,
-                        target,
-                        Axis::Vertical,
-                        group.common_delta,
-                        SplitterReset::Preferred,
-                        current,
-                    )
-                    .unwrap();
-                assert!((delta - 136.0).abs() < 1.0e-10, "{current}: {delta}");
-                let actual = frozen.track_extents(ROOT, id.node(), delta).unwrap();
-                for (actual, expected) in actual.into_iter().zip([222.0, 150.0, 100.0]) {
-                    assert!((actual - expected).abs() < 1.0e-10);
-                }
+            let delta = DockEngine::splitter_restoration_delta(
+                engine.workspace(),
+                &plan,
+                target,
+                &group,
+                SplitterReset::Preferred,
+            )
+            .unwrap();
+            assert!((delta - 136.0).abs() < 1.0e-10, "{delta}");
+            let actual = frozen.track_extents(ROOT, id.node(), delta).unwrap();
+            for (actual, expected) in actual.into_iter().zip([222.0, 150.0, 100.0]) {
+                assert!((actual - expected).abs() < 1.0e-10);
             }
         }
     }
@@ -1121,30 +1149,24 @@ mod tests {
         for grid in [false, true] {
             let (engine, plan, id) = outward_tracks(Some(150.0), Some(100.0), grid);
             let target = SplitterResizeTarget::Handle(id);
-            let group = engine
-                .prepare_splitter_resize_axis_group(&plan, target, Axis::Vertical)
-                .unwrap();
+            let group = prepare_group(&engine, &plan, target, Axis::Vertical).unwrap();
             let frozen = group.piecewise.as_ref().unwrap();
             assert_eq!(
                 frozen.track_extents(ROOT, id.node(), 59.0).unwrap(),
                 [145.0, 150.0, 177.0]
             );
-            for current in [0.0, 70.0, 150.0] {
-                let delta = engine
-                    .splitter_restoration_delta(
-                        &plan,
-                        target,
-                        Axis::Vertical,
-                        group.common_delta,
-                        SplitterReset::Equalize,
-                        current,
-                    )
-                    .unwrap();
-                assert!((delta - 86.0).abs() < 1.0e-10, "{current}: {delta}");
-                let actual = frozen.track_extents(ROOT, id.node(), delta).unwrap();
-                for (actual, expected) in actual.into_iter().zip([172.0, 150.0, 150.0]) {
-                    assert!((actual - expected).abs() < 1.0e-10);
-                }
+            let delta = DockEngine::splitter_restoration_delta(
+                engine.workspace(),
+                &plan,
+                target,
+                &group,
+                SplitterReset::Equalize,
+            )
+            .unwrap();
+            assert!((delta - 86.0).abs() < 1.0e-10, "{delta}");
+            let actual = frozen.track_extents(ROOT, id.node(), delta).unwrap();
+            for (actual, expected) in actual.into_iter().zip([172.0, 150.0, 150.0]) {
+                assert!((actual - expected).abs() < 1.0e-10);
             }
         }
     }
@@ -1202,16 +1224,13 @@ mod tests {
                 })
                 .unwrap();
             let target = SplitterResizeTarget::Junction(junction.id());
-            let group = engine
-                .prepare_splitter_resize_axis_group(&plan, target, Axis::Vertical)
-                .unwrap();
-            let delta = engine.splitter_restoration_delta(
+            let group = prepare_group(&engine, &plan, target, Axis::Vertical).unwrap();
+            let delta = DockEngine::splitter_restoration_delta(
+                engine.workspace(),
                 &plan,
                 target,
-                Axis::Vertical,
-                group.common_delta,
+                &group,
                 SplitterReset::Equalize,
-                70.0,
             );
             if matching {
                 assert!((delta.unwrap() - 86.0).abs() < 1.0e-10);
@@ -1231,36 +1250,19 @@ mod tests {
         ] {
             let (engine, plan, id) = outward_tracks(before, after, true);
             let target = SplitterResizeTarget::Handle(id);
-            let group = engine
-                .prepare_splitter_resize_axis_group(&plan, target, Axis::Vertical)
-                .unwrap();
-            let delta = engine
-                .splitter_restoration_delta(
-                    &plan,
-                    target,
-                    Axis::Vertical,
-                    group.common_delta,
-                    SplitterReset::Preferred,
-                    0.0,
-                )
-                .unwrap();
+            let group = prepare_group(&engine, &plan, target, Axis::Vertical).unwrap();
+            let delta = DockEngine::splitter_restoration_delta(
+                engine.workspace(),
+                &plan,
+                target,
+                &group,
+                SplitterReset::Preferred,
+            )
+            .unwrap();
             assert!(
                 (delta - expected).abs() < 1.0e-10,
                 "{before:?}/{after:?}: {delta}"
             );
-            if before == Some(150.0) && after.is_none() {
-                assert_eq!(
-                    engine.splitter_restoration_delta(
-                        &plan,
-                        target,
-                        Axis::Vertical,
-                        group.common_delta,
-                        SplitterReset::Preferred,
-                        70.0,
-                    ),
-                    Some(70.0)
-                );
-            }
         }
     }
 
@@ -1269,17 +1271,14 @@ mod tests {
         let nearly_current = f64::from_bits(118.0_f64.to_bits() + 1);
         let (engine, plan, id) = outward_tracks(Some(nearly_current), Some(236.0), true);
         let target = SplitterResizeTarget::Handle(id);
-        let limits = engine
-            .splitter_resize_delta_interval(&plan, target, Axis::Vertical)
-            .unwrap();
+        let group = prepare_group(&engine, &plan, target, Axis::Vertical).unwrap();
         assert_eq!(
-            engine.splitter_restoration_delta(
+            DockEngine::splitter_restoration_delta(
+                engine.workspace(),
                 &plan,
                 target,
-                Axis::Vertical,
-                limits,
-                SplitterReset::Preferred,
-                0.0,
+                &group,
+                SplitterReset::Preferred
             ),
             Some(0.0)
         );
@@ -1347,16 +1346,13 @@ mod tests {
                 })
                 .unwrap();
             let target = SplitterResizeTarget::Junction(junction);
-            let limits = engine
-                .splitter_resize_delta_interval(&plan, target, Axis::Vertical)
-                .unwrap();
-            let delta = engine.splitter_restoration_delta(
+            let group = prepare_group(&engine, &plan, target, Axis::Vertical).unwrap();
+            let delta = DockEngine::splitter_restoration_delta(
+                engine.workspace(),
                 &plan,
                 target,
-                Axis::Vertical,
-                limits,
+                &group,
                 SplitterReset::Preferred,
-                0.0,
             );
             if matching_hints {
                 assert!((delta.unwrap() - 136.0).abs() < 1.0e-10);
@@ -1379,7 +1375,7 @@ mod tests {
             (Some(tiny), Some(tiny)),
         ] {
             let mut samples = 0;
-            let delta = piecewise_target_delta(limits, 0.0, hints.0, hints.1, |delta| {
+            let delta = piecewise_target_delta(limits, hints.0, hints.1, |delta| {
                 samples += 1;
                 let before = (40.0 + delta).clamp(0.0, 100.0);
                 Some((before, 100.0 - before))
@@ -1389,13 +1385,13 @@ mod tests {
             assert!(samples <= 66);
         }
         assert_eq!(
-            piecewise_target_delta(limits, 0.0, Some(tiny), Some(tiny * 2.0), |_| {
+            piecewise_target_delta(limits, Some(tiny), Some(tiny * 2.0), |_| {
                 Some((100.0, 200.0))
             }),
             Some(0.0)
         );
         assert_eq!(
-            piecewise_target_delta(limits, 0.0, Some(0.0), Some(0.0), |_| Some((0.0, 0.0))),
+            piecewise_target_delta(limits, Some(0.0), Some(0.0), |_| Some((0.0, 0.0))),
             Some(0.0)
         );
     }

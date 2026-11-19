@@ -446,4 +446,48 @@ proptest! {
     ) {
         journey(&trace);
     }
+
+    #[test]
+    fn splitter_key_sequences_preserve_weights_across_frame_boundaries(
+        steps in prop::collection::vec(prop::sample::select(vec![
+            SurfaceSplitterAdjustment::Increment,
+            SurfaceSplitterAdjustment::Decrement,
+            SurfaceSplitterAdjustment::Minimum,
+            SurfaceSplitterAdjustment::Maximum,
+        ]), 2..12),
+        outward in any::<bool>(),
+        fractional_origin in any::<bool>(),
+    ) {
+        let bounds = LogicalRect::new(
+            if fractional_origin { 123.4 } else { 0.0 },
+            0.0,
+            302.0,
+            400.0,
+        ).unwrap();
+        let hints = [(SECOND, PaneSizing::builder().min_width(90.0).build().unwrap())];
+        let propagation = if outward {
+            ResizePropagation::Outward
+        } else {
+            ResizePropagation::Adjacent
+        };
+        let fixture = || {
+            let content = DockspaceNode::equal_split(
+                DockspaceAxis::Horizontal,
+                [FIRST, SECOND, THIRD].map(|item| DockspaceNode::tabs([item])),
+            ).unwrap();
+            let mut session = measured_with_propagation(content, &hints, propagation);
+            let mut frame = session.begin_host_frame().unwrap();
+            measure_at(&mut frame, &hints, bounds);
+            frame.commit().unwrap();
+            session
+        };
+        let mut separate = fixture();
+        for step in &steps {
+            apply_at_splitter(&mut separate, &hints, bounds, &[*step], leftmost_splitter);
+        }
+        let mut batch = fixture();
+        apply_at_splitter(&mut batch, &hints, bounds, &steps, leftmost_splitter);
+        prop_assert_eq!(split_weights(&batch), split_weights(&separate));
+        assert_geometry_close(&mut batch, &mut separate);
+    }
 }

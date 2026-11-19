@@ -403,14 +403,13 @@ impl SurfacePaintPlan<'_> {
 
     /// Folds ordered adjustments into one scene-bound splitter action.
     ///
-    /// Each step clamps to the same touching-layout solver limits as a direct
-    /// resize. An endpoint followed by an outward and inward step therefore
-    /// finishes one step inside that endpoint. Effective intermediate movement
-    /// commits visible proportions even when the final displacement is zero.
+    /// Each step uses the track allocation left by the previous accepted step
+    /// and the same limits as a direct resize. Only the final track weights
+    /// are published. A sequence can redistribute space even if the divider
+    /// returns to its starting point.
     /// Auto steps are checked in order: an infeasible step retains the last
-    /// accepted displacement and reversal continues from there. Failed source or
-    /// policy checks abort preparation; a single infeasible Auto step returns None.
-    /// Empty sequences return `None`.
+    /// accepted allocation. Failed source or policy checks abort preparation.
+    /// An empty sequence or a single infeasible Auto step returns `None`.
     #[must_use]
     pub fn prepare_splitter_adjustment_sequence(
         self,
@@ -480,13 +479,12 @@ impl SurfacePaintPlan<'_> {
 
     /// Folds ordered adjustments for one junction axis into one action.
     ///
-    /// Every step uses the common reachable displacement of all incident pairs
-    /// on this axis. The other axis remains unchanged. Equalizing still requires
-    /// a common constrained destination. Effective intermediate movement commits
-    /// visible proportions. Auto steps are checked in order: an infeasible step
-    /// retains the last accepted displacement and reversal continues from there.
-    /// Failed source or policy checks abort preparation; a single infeasible
-    /// Auto step returns `None`. Empty sequences return `None`.
+    /// Each step uses the previous accepted track allocation and the common
+    /// reachable displacement of all incident pairs on this axis. Equalizing
+    /// requires a common constrained destination. The final track weights are
+    /// published together. An infeasible Auto step keeps the last accepted
+    /// allocation. Failed source or policy checks abort preparation. An empty
+    /// sequence or a single infeasible Auto step returns `None`.
     #[must_use]
     pub fn prepare_splitter_junction_adjustment_sequence(
         self,

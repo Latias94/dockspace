@@ -338,34 +338,7 @@ pub(super) fn resize_axis_group_updates(
     groups: &[FrozenResizeAxisGroup],
     delta: [f64; 2],
 ) -> Option<Vec<TrackResize>> {
-    resize_axis_group_updates_with_history(groups, delta, None)
-}
-
-/// Discrete adjustments commit proportions for each split that actually moved,
-/// even when their final displacement returns to the original boundary.
-pub(super) fn resize_axis_group_adjustment_updates(
-    groups: &[FrozenResizeAxisGroup],
-    axis: Axis,
-    adjustment: ResizeAdjustment,
-) -> Option<Vec<TrackResize>> {
-    let delta = match axis {
-        Axis::Horizontal => [adjustment.delta(), 0.0],
-        Axis::Vertical => [0.0, adjustment.delta()],
-    };
-    resize_axis_group_updates_with_history(groups, delta, Some((axis, adjustment.visited())))
-}
-
-fn resize_axis_group_updates_with_history(
-    groups: &[FrozenResizeAxisGroup],
-    delta: [f64; 2],
-    history: Option<(Axis, ResizeDeltaInterval)>,
-) -> Option<Vec<TrackResize>> {
-    if groups.is_empty()
-        || delta.iter().any(|value| !value.is_finite())
-        || history.is_some_and(|(_, visited)| {
-            !visited.minimum.is_finite() || !visited.maximum.is_finite()
-        })
-    {
+    if groups.is_empty() || delta.iter().any(|value| !value.is_finite()) {
         return None;
     }
     let mut axes = BTreeSet::new();
@@ -379,18 +352,8 @@ fn resize_axis_group_updates_with_history(
             Axis::Vertical => delta[1],
         };
         let shared = requested.clamp(group.common_delta.minimum, group.common_delta.maximum);
-        let visited = history
-            .filter(|(axis, _)| *axis == group.axis)
-            .map(|(_, visited)| ResizeDeltaInterval {
-                minimum: visited
-                    .minimum
-                    .clamp(group.common_delta.minimum, group.common_delta.maximum),
-                maximum: visited
-                    .maximum
-                    .clamp(group.common_delta.minimum, group.common_delta.maximum),
-            });
         if let Some(piecewise) = &group.piecewise {
-            for update in piecewise.updates(shared, visited)? {
+            for update in piecewise.updates(shared)? {
                 let key = (update.source().root(), update.source().node());
                 if let Some(previous) = updates.remove(&key) {
                     // Orthogonal Grid axes share one actual owner and commit both
@@ -427,7 +390,7 @@ fn resize_axis_group_updates_with_history(
             continue;
         }
         for split in group.splits.iter().filter(|split| split.axis == group.axis) {
-            let update = split_update(split, shared, visited)?;
+            let update = split_update(split, shared)?;
             if updates
                 .insert((split.source.root(), split.source.node()), update)
                 .is_some()
@@ -438,6 +401,24 @@ fn resize_axis_group_updates_with_history(
     }
     validate_auto_reflow(groups, delta, &updates)?;
     Some(updates.into_values().collect())
+}
+
+pub(super) fn resize_axis_group_adjustment_updates(
+    groups: &[FrozenResizeAxisGroup],
+    axis: Axis,
+    adjustment: ResizeAdjustment,
+) -> Option<Vec<TrackResize>> {
+    let delta = match adjustment {
+        ResizeAdjustment::Displace(delta) => delta,
+        ResizeAdjustment::Tracks(tracks) => return Some(tracks.to_vec()),
+    };
+    resize_axis_group_updates(
+        groups,
+        match axis {
+            Axis::Horizontal => [delta, 0.0],
+            Axis::Vertical => [0.0, delta],
+        },
+    )
 }
 
 fn validate_auto_reflow(
@@ -706,30 +687,14 @@ fn intersect_split_intervals(
     (interval.minimum <= interval.maximum).then_some(())
 }
 
-fn split_update(
-    split: &FrozenResizeSplit,
-    delta: f64,
-    visited: Option<ResizeDeltaInterval>,
-) -> Option<TrackResize> {
+fn split_update(split: &FrozenResizeSplit, delta: f64) -> Option<TrackResize> {
     let extents = split
         .child_extents
         .iter()
         .zip(&split.child_coefficients)
         .map(|(&extent, &coefficient)| extent + coefficient * delta)
         .collect::<Vec<_>>();
-    let moved_before = visited.is_some_and(|visited| {
-        split
-            .child_extents
-            .iter()
-            .zip(&split.child_coefficients)
-            .any(|(&extent, &coefficient)| {
-                extent + coefficient * visited.minimum != extent
-                    || extent + coefficient * visited.maximum != extent
-            })
-    });
-    // Pointer motion retains its frozen intent on return to the press boundary.
-    // Discrete inputs retain intermediate commits only where extents changed.
-    if extents == split.child_extents && !moved_before {
+    if extents == split.child_extents {
         return Some(TrackResize::split(
             split.source.clone(),
             split.weights.clone(),

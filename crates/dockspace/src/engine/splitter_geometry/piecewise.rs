@@ -86,9 +86,7 @@ impl Scalar {
 
 struct Sample {
     updates: BTreeMap<(RootId, NodeId), TrackResize>,
-    extents: BTreeMap<NodeId, f64>,
     tracks: BTreeMap<(RootId, NodeId), Vec<f64>>,
-    moved: BTreeSet<(RootId, NodeId)>,
 }
 
 #[derive(Debug)]
@@ -579,32 +577,14 @@ impl FrozenPiecewiseAxis {
         self.sources.iter()
     }
 
-    pub(super) fn updates(
-        &self,
-        delta: f64,
-        visited: Option<ResizeDeltaInterval>,
-    ) -> Option<Vec<TrackResize>> {
-        let (_, mut sample) = self.sample_clamped(delta)?;
-        if let Some(visited) = visited {
-            for endpoint in [visited.minimum, visited.maximum] {
-                let (_, previous) = self.sample_clamped(endpoint)?;
-                for key in previous.moved {
-                    let root = self.roots.iter().find(|root| root.source.root() == key.0)?;
-                    let FrozenKind::Tracks(tracks) = &root.nodes.get(&key.1)?.kind else {
-                        return None;
-                    };
-                    sample.updates.insert(
-                        key,
-                        tracks.update(self.axis, sample.tracks.get(&key)?, true)?,
-                    );
-                }
-            }
-        }
-        Some(sample.updates.into_values().collect())
-    }
-
-    pub(crate) fn extents(&self, delta: f64) -> Option<BTreeMap<NodeId, f64>> {
-        self.sample_clamped(delta).map(|(_, sample)| sample.extents)
+    pub(super) fn updates(&self, delta: f64) -> Option<Vec<TrackResize>> {
+        Some(
+            self.sample_clamped(delta)?
+                .1
+                .updates
+                .into_values()
+                .collect(),
+        )
     }
 
     pub(crate) fn track_extents(&self, root: RootId, node: NodeId, delta: f64) -> Option<Vec<f64>> {
@@ -654,9 +634,7 @@ impl FrozenPiecewiseAxis {
     fn sample(&self, delta: f64) -> Result<Sample, SampleError> {
         let mut sample = Sample {
             updates: BTreeMap::new(),
-            extents: BTreeMap::new(),
             tracks: BTreeMap::new(),
-            moved: BTreeSet::new(),
         };
         for root in &self.roots {
             let initial = root
@@ -679,7 +657,6 @@ impl FrozenPiecewiseAxis {
                 };
                 let minimum = size_extent(node.result.constraints.min(), self.axis);
                 require_range(frame, minimum, maximum, delta)?;
-                sample.extents.insert(id, frame.value);
                 match &node.kind {
                     FrozenKind::Pane => {}
                     FrozenKind::Tabs { child, header } => {
@@ -705,12 +682,9 @@ impl FrozenPiecewiseAxis {
                             .zip(&tracks.tracks)
                             .any(|(extent, track)| *extent != track.extent);
                         let key = (root.source.root(), id);
-                        if moved {
-                            sample.moved.insert(key);
-                        }
                         if moved || (!drivers.is_empty() && tracks.grid.is_none()) {
                             let update = tracks
-                                .update(self.axis, &extents, false)
+                                .update(self.axis, &extents)
                                 .ok_or(SampleError::Invalid)?;
                             sample.updates.insert(key, update);
                         }
@@ -759,18 +733,18 @@ impl FrozenTracks {
                 .filter_map(|(weight, track)| (track.extent > 0.0).then_some(weight.get())),
         );
         let share_floor = f64::EPSILON.max(f64::from_bits(1) / visible_share);
-        let mut prefix = vec![0.0];
-        for &index in &visible {
-            prefix.push(prefix.last().copied().unwrap_or(0.0) + self.tracks[index].extent);
-        }
-        // Transport the change in the offered frame through the original track
-        // sum. Reconstructing that baseline from frame minus rounded gaps can
-        // otherwise invent a transfer even at zero displacement.
-        let total = Scalar {
-            value: prefix[visible.len()] + (frame.value - self.frame_extent),
+        let total = visible
+            .iter()
+            .map(|&index| self.tracks[index].extent)
+            .sum::<f64>();
+        // Work in displacement from each original boundary. Subtracting two
+        // rounded prefixes can manufacture capacity at a saturated track.
+        let frame_change = Scalar {
+            value: frame.value - self.frame_extent,
             slope: frame.slope,
         };
-        let mut pinned = BTreeMap::from([(0, Scalar::fixed(0.0)), (visible.len(), total)]);
+        let mut pinned = BTreeMap::from([(0, Scalar::fixed(0.0)), (visible.len(), frame_change)]);
+        let origin_movement = origin.value - old_origin;
         for &driver in drivers {
             let boundary = visible
                 .iter()
@@ -783,7 +757,7 @@ impl FrozenTracks {
             pinned.insert(
                 boundary,
                 Scalar {
-                    value: prefix[boundary] + (old_origin - origin.value) + delta,
+                    value: delta - origin_movement,
                     slope: 1.0 - origin.slope,
                 },
             );
@@ -798,11 +772,9 @@ impl FrozenTracks {
         for endpoints in pinned.windows(2) {
             let (first, start) = endpoints[0];
             let (last, end) = endpoints[1];
-            let target = end.difference(start);
-            let old_total = prefix[last] - prefix[first];
-            let origin_movement = origin.value - old_origin;
-            let from_end = (end.value - prefix[last] + origin_movement).abs()
-                >= (start.value - prefix[first] + origin_movement).abs();
+            let transfer = end.difference(start);
+            let from_end =
+                (end.value + origin_movement).abs() >= (start.value + origin_movement).abs();
             let mut order = visible[first..last].to_vec();
             if from_end {
                 order.reverse();
@@ -810,27 +782,27 @@ impl FrozenTracks {
             if propagation == ResizePropagation::Adjacent {
                 order.truncate(1);
             }
-            let minimum = old_total
-                + order
-                    .iter()
-                    .map(|&index| {
-                        self.minimum(index, prefix[visible.len()], share_floor)
-                            - self.tracks[index].extent
-                    })
-                    .sum::<f64>();
-            let maximum = order.iter().fold(old_total, |total, &index| {
-                (total + (self.tracks[index].maximum - self.tracks[index].extent)).min(f64::MAX)
+            let minimum = order
+                .iter()
+                .map(|&index| {
+                    (self.minimum(index, total, share_floor) - self.tracks[index].extent).min(0.0)
+                })
+                .sum::<f64>();
+            let maximum = order.iter().fold(0.0, |capacity, &index| {
+                (capacity + (self.tracks[index].maximum - self.tracks[index].extent).max(0.0))
+                    .min(f64::MAX)
             });
-            require_range(target, minimum, maximum, delta)?;
-            let mut remaining = target.value - old_total;
-            let remaining_slope = target.slope;
+            require_transfer(transfer, minimum, maximum, delta)?;
+            let mut remaining = transfer.value;
+            let remaining_slope = transfer.slope;
             for (position, &index) in order.iter().enumerate() {
                 let track = self.tracks[index];
                 let requested = track.extent + remaining;
-                let bounded = requested.clamp(
-                    self.minimum(index, prefix[visible.len()], share_floor),
-                    track.maximum,
-                );
+                let bounded = if remaining == 0.0 {
+                    track.extent
+                } else {
+                    requested.clamp(self.minimum(index, total, share_floor), track.maximum)
+                };
                 extents[index] = bounded;
                 // An unclipped request consumes the whole transfer. Subtracting
                 // the old extent can round differently from the request, losing
@@ -872,12 +844,12 @@ impl FrozenTracks {
         })
     }
 
-    fn update(&self, axis: Axis, extents: &[f64], force: bool) -> Option<TrackResize> {
+    fn update(&self, axis: Axis, extents: &[f64]) -> Option<TrackResize> {
         let unchanged = extents
             .iter()
             .zip(&self.tracks)
             .all(|(extent, track)| *extent == track.extent);
-        let weights = if unchanged && !force {
+        let mut weights = if unchanged {
             self.weights.clone()
         } else {
             let original = self
@@ -895,6 +867,12 @@ impl FrozenTracks {
                 super::weights_for_extents(&self.weights, &original, extents, self.central)?
             }
         };
+        // A cap may round the projected split one ULP inside its limit.
+        // If reaching that limit only rounds the stored shares, keep the
+        // original bits. A small movement that changes proportions still commits.
+        if !unchanged && self.rounded_contact(extents, &weights) {
+            weights.clone_from(&self.weights);
+        }
         Some(if let Some((basis, grid)) = &self.grid {
             let shares = match axis {
                 Axis::Horizontal => {
@@ -909,6 +887,17 @@ impl FrozenTracks {
         } else {
             TrackResize::split(self.source.clone(), weights)
         })
+    }
+
+    fn rounded_contact(&self, extents: &[f64], weights: &[SplitWeight]) -> bool {
+        extents.iter().zip(&self.tracks).all(|(&extent, track)| {
+            extent == track.extent
+                || (extent == track.minimum && extent == track.extent.next_down())
+                || (extent == track.maximum && extent == track.extent.next_up())
+        }) && weights
+            .iter()
+            .zip(&self.weights)
+            .all(|(new, old)| new.get().to_bits().abs_diff(old.get().to_bits()) <= 1)
     }
 }
 
@@ -981,11 +970,29 @@ fn require_range(value: Scalar, minimum: f64, maximum: f64, delta: f64) -> Resul
     } else {
         return Ok(());
     };
+    limit_at(value, endpoint, delta)
+}
+
+fn require_transfer(
+    transfer: Scalar,
+    minimum: f64,
+    maximum: f64,
+    delta: f64,
+) -> Result<(), SampleError> {
+    // The frozen tracks have no capacity in this direction. Rounding is
+    // permitted at a reachable endpoint, but it cannot create travel here.
+    if (minimum == 0.0 && transfer.value < 0.0) || (maximum == 0.0 && transfer.value > 0.0) {
+        return limit_at(transfer, 0.0, delta);
+    }
+    require_range(transfer, minimum, maximum, delta)
+}
+
+fn limit_at(value: Scalar, endpoint: f64, delta: f64) -> Result<(), SampleError> {
     if value.slope == 0.0 {
         return Err(SampleError::Invalid);
     }
-    let limit = delta + (endpoint - value.value) / value.slope;
-    Err(SampleError::Limit(limit))
+    let intercept = (-value.slope).mul_add(delta, value.value);
+    Err(SampleError::Limit((endpoint - intercept) / value.slope))
 }
 
 fn rect_start(rect: LogicalRect, axis: Axis) -> f64 {
