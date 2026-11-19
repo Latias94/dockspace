@@ -15,6 +15,10 @@ use dockspace::{
 
 use super::AppResult;
 
+#[cfg(test)]
+#[path = "workspace/tests.rs"]
+mod tests;
+
 pub(super) const MAIN: SurfaceId = SurfaceId::new(1);
 pub(super) const DOCUMENT: ItemId = ItemId::new(1);
 pub(super) const INSPECTOR: ItemId = ItemId::new(5);
@@ -36,6 +40,7 @@ pub(super) fn session() -> AppResult<DockspaceSession> {
     let mut policy = DockPolicy::default();
     policy.set_allow_native_surfaces(true);
     let mut session = DockspaceSession::from_layout(layout, policy)?;
+    session.retain_host_surface(MAIN)?;
     // Stock winit cannot establish a complete physical pointer roster. This
     // example exercises keyboard commands and native presentation, not dragging.
     session.enable_managed_native_host(NativePointerRoster::Unknown)?;
@@ -70,7 +75,7 @@ pub(super) fn detach(
     let report = frame.commit()?;
     if !matches!(
         report.submitted_action_outcome(action),
-        Some(dockspace::runtime::HostInputOutcome::ProductActionApplied { .. })
+        Some(dockspace::runtime::HostInputOutcome::ProductPresentationActionRequested { .. })
     ) {
         return Err(format!(
             "native tear-off rejected: {:?}",
