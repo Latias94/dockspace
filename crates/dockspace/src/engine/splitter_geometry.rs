@@ -540,17 +540,16 @@ fn intersect_extent_interval(
     if coefficient == 0.0 {
         return Some(());
     }
-    // A rounded contact has no remaining travel into the bound.
-    let lower = if lower_gap < -lower_tolerance {
-        lower_gap / coefficient
-    } else {
-        0.0
-    };
-    let upper = if upper_gap > upper_tolerance {
-        upper_gap / coefficient
-    } else {
-        0.0
-    };
+    // Near a constraint, the linear rectangle alone cannot distinguish a
+    // rounded contact from real remaining travel. Let the piecewise solver
+    // inspect the allocation before deciding how much movement is available.
+    if (lower_gap < 0.0 && lower_gap >= -lower_tolerance)
+        || (upper_gap > 0.0 && upper_gap <= upper_tolerance)
+    {
+        return None;
+    }
+    let lower = lower_gap.min(0.0) / coefficient;
+    let upper = upper_gap.max(0.0) / coefficient;
     interval.minimum = interval.minimum.max(lower.min(upper));
     interval.maximum = interval.maximum.min(lower.max(upper));
     (interval.minimum <= interval.maximum).then_some(())

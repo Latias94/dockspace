@@ -124,6 +124,20 @@ fn apply(
     hints: &[(ItemId, PaneSizing)],
     steps: &[SurfaceSplitterAdjustment],
 ) {
+    apply_at(
+        session,
+        hints,
+        LogicalRect::new(0.0, 0.0, 601.0, 601.0).unwrap(),
+        steps,
+    );
+}
+
+fn apply_at(
+    session: &mut DockspaceSession,
+    hints: &[(ItemId, PaneSizing)],
+    bounds: LogicalRect,
+    steps: &[SurfaceSplitterAdjustment],
+) {
     let mut frame = session.begin_host_frame().unwrap();
     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
     let splitter = outer_splitter(plan);
@@ -131,7 +145,7 @@ fn apply(
         .prepare_splitter_adjustment_sequence(splitter.visual_id(), steps.iter().copied())
         .expect("the constrained splitter prepares the explicit preference sequence");
     frame.submit_surface_action(action).unwrap();
-    measure(&mut frame, hints);
+    measure_at(&mut frame, hints, bounds);
     frame.commit().unwrap();
 }
 
@@ -337,6 +351,63 @@ fn preference_batches_and_separate_steps_preserve_durable_resize_behavior() {
         assert_pair(&mut batch, (expected.0 * 10.0, expected.1 * 10.0));
         assert_pair(&mut separate, (expected.0 * 10.0, expected.1 * 10.0));
     }
+}
+
+#[test]
+fn a_large_origin_does_not_make_the_last_resize_step_depend_on_batching() {
+    use SurfaceSplitterAdjustment::Increment;
+
+    let hints = [(FIRST, width_sizing(None, Some(124.0)))];
+    let bounds = LogicalRect::new(2.0_f64.powi(50), 0.0, 201.0, 400.0).unwrap();
+    for batches in [&[&[Increment, Increment][..]][..], &[&[Increment][..]; 2]] {
+        let mut session = pair_session([1.0, 1.0], &hints);
+        let mut frame = session.begin_host_frame().unwrap();
+        measure_at(&mut frame, &hints, bounds);
+        frame.commit().unwrap();
+        assert_pair(&mut session, (100.0, 100.0));
+
+        for steps in batches {
+            apply_at(&mut session, &hints, bounds, steps);
+        }
+        assert_pair(&mut session, (124.0, 76.0));
+    }
+}
+
+#[test]
+fn a_small_but_representable_resize_retains_its_proportion_after_expansion() {
+    let hints = [
+        (
+            FIRST,
+            PaneSizing::builder().min_width(100.0).build().unwrap(),
+        ),
+        (
+            SECOND,
+            PaneSizing::builder()
+                .min_width(100.0 - 2.0_f64.powi(-40))
+                .build()
+                .unwrap(),
+        ),
+    ];
+    let small = LogicalRect::new(0.0, 0.0, 201.0, 400.0).unwrap();
+    let mut session = pair_session([1.0, 3.0], &hints);
+    let mut frame = session.begin_host_frame().unwrap();
+    measure_at(&mut frame, &hints, small);
+    frame.commit().unwrap();
+    assert_eq!(pair_extents(&mut session).0, 100.0);
+
+    apply_at(
+        &mut session,
+        &hints,
+        small,
+        &[SurfaceSplitterAdjustment::Increment],
+    );
+    assert!(pair_extents(&mut session).0 > 100.0);
+
+    let mut frame = session.begin_host_frame().unwrap();
+    let expanded = LogicalRect::new(0.0, 0.0, 401.0, 400.0).unwrap();
+    measure_at(&mut frame, &hints, expanded);
+    frame.commit().unwrap();
+    assert_pair(&mut session, (200.0, 200.0));
 }
 
 #[test]
