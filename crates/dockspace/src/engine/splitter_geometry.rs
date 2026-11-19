@@ -527,16 +527,30 @@ fn intersect_extent_interval(
         || !maximum.is_finite()
         || minimum < 0.0
         || minimum > maximum
-        || minimum - extent > tolerance(extent, minimum).max(coordinate_tolerance)
-        || extent - maximum > tolerance(extent, maximum).max(coordinate_tolerance)
     {
+        return None;
+    }
+    let lower_gap = minimum - extent;
+    let upper_gap = maximum - extent;
+    let lower_tolerance = tolerance(extent, minimum).max(coordinate_tolerance);
+    let upper_tolerance = tolerance(extent, maximum).max(coordinate_tolerance);
+    if lower_gap > lower_tolerance || upper_gap < -upper_tolerance {
         return None;
     }
     if coefficient == 0.0 {
         return Some(());
     }
-    let lower = (minimum - extent).min(0.0) / coefficient;
-    let upper = (maximum - extent).max(0.0) / coefficient;
+    // A rounded contact has no remaining travel into the bound.
+    let lower = if lower_gap < -lower_tolerance {
+        lower_gap / coefficient
+    } else {
+        0.0
+    };
+    let upper = if upper_gap > upper_tolerance {
+        upper_gap / coefficient
+    } else {
+        0.0
+    };
     interval.minimum = interval.minimum.max(lower.min(upper));
     interval.maximum = interval.maximum.min(lower.max(upper));
     (interval.minimum <= interval.maximum).then_some(())

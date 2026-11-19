@@ -295,6 +295,22 @@ fn journey(actions: &[Action]) {
 }
 
 #[test]
+fn increasing_a_splitter_at_its_cap_after_host_resize_keeps_the_saved_weights() {
+    journey(&[
+        Action::HostWidth(600),
+        Action::Profile {
+            third: true,
+            profile: Profile::Capped,
+        },
+        Action::Adjust(SurfaceSplitterAdjustment::Preferred),
+        Action::Adjust(SurfaceSplitterAdjustment::Decrement),
+        Action::Adjust(SurfaceSplitterAdjustment::Decrement),
+        Action::HostWidth(1_000),
+        Action::Adjust(SurfaceSplitterAdjustment::Increment),
+    ]);
+}
+
+#[test]
 fn hiding_and_remeasuring_a_capped_descendant_preserves_piecewise_contacts() {
     let column = DockspaceNode::equal_split(
         DockspaceAxis::Vertical,
