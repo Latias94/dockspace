@@ -2278,13 +2278,9 @@ impl DockEngine {
                 PreviewDecision::Clear(PreviewResolutionStatus::KnownNone),
                 None,
             )),
-            CoreContainedCandidate::Proposal(proposal) => self.resolve_contained_proposal(
-                cause,
-                drag,
-                proposal,
-                ContainedPlacementAuthority::PresentedCoordinates,
-                policy,
-            ),
+            CoreContainedCandidate::Proposal(proposal) => {
+                self.resolve_contained_proposal(cause, drag, proposal, policy)
+            }
             CoreContainedCandidate::Rejected => Ok((
                 PreviewDecision::Clear(PreviewResolutionStatus::Rejected),
                 None,
@@ -2362,18 +2358,9 @@ impl DockEngine {
         &self,
         origin: &FrozenContainedDragOrigin,
         proposal: crate::input::intent::ContainedTearOffProposal,
-        authority: ContainedPlacementAuthority,
     ) -> bool {
         let proof = proposal.placement();
-        let current = match authority {
-            ContainedPlacementAuthority::PresentedCoordinates => {
-                self.scene().ready_surface(proof.surface())
-            }
-            ContainedPlacementAuthority::CurrentCandidate => {
-                self.semantic_candidate(proof.scene()).ok()
-            }
-        };
-        let Some(current) = current else {
+        let Some(current) = self.scene().ready_surface(proof.surface()) else {
             return false;
         };
         let requested = proof.requested_rect();
@@ -2397,7 +2384,6 @@ impl DockEngine {
         cause: ReductionCause,
         drag: &crate::interaction::ActiveDrag,
         proposal: crate::input::intent::ContainedTearOffProposal,
-        authority: ContainedPlacementAuthority,
         policy: &DockPolicySnapshot,
     ) -> Result<(PreviewDecision, Option<PreparedDropMutation>), EngineError> {
         let Some(command) = self.contained_presentation_command(
@@ -2414,16 +2400,16 @@ impl DockEngine {
                 None,
             ));
         };
-        let valid = match &drag.origin {
+        let geometry_is_current = match &drag.origin {
             FrozenDragOrigin::Contained(origin) => {
-                self.valid_contained_move_proposal(origin, proposal, authority)
-                    && self.valid_contained_command_structure(drag, proposal, &command)
+                self.valid_contained_move_proposal(origin, proposal)
             }
-            FrozenDragOrigin::Workspace => {
-                self.valid_core_contained_command(drag, proposal, &command, authority)
-            }
+            FrozenDragOrigin::Workspace => self
+                .validate_contained_placement(proposal.placement())
+                .is_ok(),
         };
-        if !valid {
+        if !geometry_is_current || !self.valid_contained_command_structure(drag, proposal, &command)
+        {
             return Ok((
                 PreviewDecision::Clear(PreviewResolutionStatus::Rejected),
                 None,

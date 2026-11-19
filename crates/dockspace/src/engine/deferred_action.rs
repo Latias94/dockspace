@@ -309,7 +309,7 @@ impl DockEngine {
                                                 state.scroll_offset().is_none_or(|offset| {
                                                     offset == bar.scroll_offset()
                                                 }) && state.resolved_viewport_width().is_none_or(
-                                                    |width| width == bar.viewport().width(),
+                                                    |width| width == bar.layout_viewport().width(),
                                                 )
                                             })
                                     })

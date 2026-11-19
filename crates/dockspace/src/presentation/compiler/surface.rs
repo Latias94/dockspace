@@ -660,7 +660,8 @@ fn compile_root(
                 root,
                 root_record.node,
                 root_record.central,
-                bounds,
+                content_bounds,
+                content_clip,
                 &projection.nodes,
                 tab_strip_states,
             )

@@ -237,7 +237,7 @@ pub(super) fn contained_transform_requested_rect(
     }
 }
 
-pub(super) fn cardinal_contained_resize_requested_rect(
+pub(super) fn cardinal_contained_resize_rect(
     source: LogicalRect,
     bounds: LogicalRect,
     minimum: LogicalSize,
@@ -347,13 +347,12 @@ fn clamp_translated_axis(
     {
         return None;
     }
+    if extent == bounds_max - bounds_min {
+        return Some(bounds_min);
+    }
+    // Subtraction need not invert the original addition at a fractional origin.
     let fit_max = bounds_max - extent;
-    let (minimum, maximum) = if extent <= bounds_max - bounds_min {
-        (bounds_min, fit_max)
-    } else {
-        (fit_max, bounds_min)
-    };
-    Some(requested_min.clamp(minimum, maximum))
+    Some(requested_min.clamp(bounds_min.min(fit_max), bounds_min.max(fit_max)))
 }
 
 fn contained_resize_axis(
@@ -408,6 +407,16 @@ mod tests {
 
     fn rect(x: f64, y: f64, width: f64, height: f64) -> LogicalRect {
         LogicalRect::new(x, y, width, height).unwrap()
+    }
+
+    #[test]
+    fn a_full_width_floating_window_moves_vertically_at_a_fractional_origin() {
+        let bounds = rect(0.3, 0.0, 600.0, 400.0);
+        let source = rect(0.3, 40.0, 600.0, 200.0);
+        let press = LogicalPoint::new(300.3, 50.0).unwrap();
+        let moved = LogicalPoint::new(300.3, 74.0).unwrap();
+        let (_, result) = contained_move_geometry(bounds, source, press, moved).unwrap();
+        assert_eq!(result, rect(0.3, 64.0, 600.0, 200.0));
     }
 
     #[test]
@@ -474,13 +483,7 @@ mod tests {
 
         let oversized = rect(0.0, 100.0, 1000.0, 800.0);
         assert_eq!(
-            cardinal_contained_resize_requested_rect(
-                oversized,
-                bounds,
-                minimum,
-                Direction::East,
-                -50.0,
-            ),
+            cardinal_contained_resize_rect(oversized, bounds, minimum, Direction::East, -50.0,),
             Ok(rect(0.0, 100.0, 950.0, 800.0)),
             "horizontal resize must preserve an oversized vertical extent",
         );

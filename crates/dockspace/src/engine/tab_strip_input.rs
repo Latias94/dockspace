@@ -945,15 +945,7 @@ impl DockEngine {
         };
         match &adjustment.0 {
             TabScrollAdjustmentKind::RevealTab(item) => {
-                let member = member(*item)?;
-                Ok(reveal_scroll_offset(
-                    record.scroll_offset(),
-                    record.maximum_scroll_offset(),
-                    member.full_bounds().x(),
-                    member.full_bounds().max().x(),
-                    record.viewport().x(),
-                    record.viewport().max().x(),
-                ))
+                Ok(record.reveal_scroll_offset(member(*item)?))
             }
             TabScrollAdjustmentKind::ScrollByPreserving {
                 delta,

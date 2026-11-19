@@ -569,7 +569,6 @@ impl SurfacePaintPlan<'_> {
             .contained_floating(floating)
             .filter(|record| record.root == contained.root())?;
         let delta = crate::engine::DockEngine::cardinal_contained_resize_sequence_delta(
-            self.surface,
             source.rect,
             self.plan.bounds(),
             contained.minimum_size(),

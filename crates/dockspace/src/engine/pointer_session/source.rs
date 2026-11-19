@@ -272,37 +272,6 @@ impl DockEngine {
                 })
     }
 
-    pub(in crate::engine) fn valid_core_contained_command(
-        &self,
-        drag: &crate::interaction::ActiveDrag,
-        proposal: crate::input::intent::ContainedTearOffProposal,
-        command: &WorkspaceCommand,
-        authority: ContainedPlacementAuthority,
-    ) -> bool {
-        let placement_is_current = match authority {
-            ContainedPlacementAuthority::PresentedCoordinates => {
-                self.validate_contained_placement(proposal.placement())
-            }
-            ContainedPlacementAuthority::CurrentCandidate => self
-                .semantic_candidate(proposal.placement().scene())
-                .map_err(|_| ContainedPlacementUnavailable::StaleScene {
-                    expected: proposal.placement().scene(),
-                    current: self
-                        .presentation_authority
-                        .scene
-                        .surface(proposal.surface())
-                        .map(SurfaceScene::stamp),
-                })
-                .and_then(|candidate| {
-                    Self::validate_contained_placement_geometry(proposal.placement(), candidate)
-                }),
-        };
-        if placement_is_current.is_err() {
-            return false;
-        }
-        self.valid_contained_command_structure(drag, proposal, command)
-    }
-
     pub(in crate::engine) fn valid_contained_command_structure(
         &self,
         drag: &crate::interaction::ActiveDrag,

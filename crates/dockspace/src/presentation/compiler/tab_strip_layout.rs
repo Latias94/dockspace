@@ -11,6 +11,7 @@ use crate::presentation::config::DockPresentationConfig;
 pub(crate) struct TabLeafBounds {
     pub(crate) bounds: LogicalRect,
     pub(crate) header: LogicalRect,
+    pub(crate) header_allocation: LogicalRect,
     pub(crate) content: LogicalRect,
     pub(crate) content_allocation: LogicalRect,
 }
@@ -37,6 +38,7 @@ pub(crate) fn tab_leaf_bounds(
     Ok(TabLeafBounds {
         bounds: clip_rect(allocation, clip)?,
         header: clip_rect(header, clip)?,
+        header_allocation: header,
         content: clip_rect(content_allocation, clip)?,
         content_allocation,
     })

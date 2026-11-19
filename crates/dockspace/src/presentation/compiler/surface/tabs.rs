@@ -49,6 +49,7 @@ pub(super) fn select_presentation_menu_tab_bar(
     root: RootId,
     root_node: NodeId,
     central: Option<NodeId>,
+    allocation: LogicalRect,
     root_bounds: LogicalRect,
     node_results: &NodeMap<NodeResult>,
     tab_strip_states: &TabStripStateStore,
@@ -72,8 +73,13 @@ pub(super) fn select_presentation_menu_tab_bar(
             .get(&tabs)
             .map(|result| result.rect)
             .ok_or(SceneCompilationError::MissingNodeProjection { root, node: tabs })?;
-        let bar = tab_leaf_bounds(projected, root_bounds, config.tab_bar_height(), None)?.header;
-        if !rect_has_area(bar) {
+        let geometry = tab_leaf_bounds(
+            clip_rect(projected, allocation)?,
+            root_bounds,
+            config.tab_bar_height(),
+            None,
+        )?;
+        if !rect_has_area(geometry.header) {
             return Ok(None);
         }
         let items = match workspace.node(tabs) {
@@ -91,8 +97,16 @@ pub(super) fn select_presentation_menu_tab_bar(
         let strip = measurements
             .tab_strip(strip_key)
             .ok_or(SceneCompilationError::MissingTabStripMeasurement { key: strip_key })?;
-        let chrome = tab_strip_optional_chrome_layout(bar, items.len(), strip, config, true)?;
-        Ok(Some(chrome.presentation_menu_bounds.is_some()))
+        let chrome = tab_strip_optional_chrome_layout(
+            geometry.header_allocation,
+            items.len(),
+            strip,
+            config,
+            true,
+        )?;
+        Ok(Some(chrome.presentation_menu_bounds.is_some_and(
+            |bounds| rect_contains(geometry.header, bounds),
+        )))
     };
 
     select_menu_host(
@@ -148,6 +162,7 @@ pub(super) fn compile_tabs_leaf(
     let TabLeafBounds {
         bounds,
         header: tab_bar,
+        header_allocation,
         content,
         content_allocation,
     } = tab_leaf_bounds(
@@ -170,6 +185,7 @@ pub(super) fn compile_tabs_leaf(
             surface,
             root,
             tabs,
+            header_allocation,
             tab_bar,
             items,
             persistent_items,
@@ -228,6 +244,7 @@ fn compile_tab_strip(
     root: RootId,
     tabs: NodeId,
     bar: LogicalRect,
+    visible_bar: LogicalRect,
     items: &[crate::ids::TabKey],
     persistent_items: &[crate::ids::TabKey],
     selected: Option<crate::ids::TabKey>,
@@ -253,11 +270,18 @@ fn compile_tab_strip(
         config,
         presentation_menu_anchor,
     )?;
-    let presentation_menu_bounds = chrome.presentation_menu_bounds;
+    let visible_button = |bounds: &LogicalRect| rect_contains(visible_bar, *bounds);
+    let clip_slot = |slot: Option<LogicalRect>| -> Result<Option<LogicalRect>, GeometryError> {
+        Ok(slot
+            .map(|bounds| intersect_rect(bounds, visible_bar))
+            .transpose()?
+            .flatten())
+    };
+    let presentation_menu_bounds = chrome.presentation_menu_bounds.filter(visible_button);
     let group_extent = chrome.group_extent;
     let group_grip_bounds = if group_extent > 0.0 {
         let grip = LogicalRect::new(bar.x(), bar.y(), group_extent, bar.height())?;
-        Some(grip)
+        intersect_rect(grip, visible_bar)?
     } else {
         None
     };
@@ -295,9 +319,12 @@ fn compile_tab_strip(
         close_allowed.push(item_close_allowed);
     }
 
-    let viewport = chrome.viewport;
-    let viewport_width = viewport.width();
-    let control_rects = chrome.controls.map(|layout| layout.rects);
+    let layout_viewport = chrome.viewport;
+    let viewport = clip_rect(layout_viewport, visible_bar)?;
+    let viewport_width = layout_viewport.width();
+    let control_rects = chrome
+        .controls
+        .map(|layout| layout.rects.map(|bounds| bounds.filter(visible_button)));
     let menu_geometry = if control_rects
         .as_ref()
         .is_some_and(|rects| rects[2].is_some())
@@ -332,7 +359,7 @@ fn compile_tab_strip(
 
     let mut full_tabs = Vec::with_capacity(items.len());
     let mut program_tabs = Vec::with_capacity(items.len());
-    let mut cursor = viewport.x() - scroll;
+    let mut cursor = layout_viewport.x() - scroll;
     let mut visible_items = BTreeSet::new();
     let mut members = Vec::with_capacity(items.len());
     for (ordinal, ((item, width), close_allowed)) in items
@@ -398,12 +425,12 @@ fn compile_tab_strip(
         .transpose()?;
     cursor += flow.after_tabs_width;
     let trailing_empty_bounds = if max_scroll == 0.0 {
-        let trailing_start = cursor.min(viewport.max().x());
+        let trailing_start = cursor.clamp(viewport.x(), viewport.max().x());
         let trailing_width = (viewport.max().x() - trailing_start).max(0.0);
-        (trailing_width > 0.0)
+        (trailing_width > 0.0 && viewport.height() > 0.0)
             .then(|| {
                 LogicalRect::from_min_max(
-                    LogicalPoint::new(trailing_start, bar.y())?,
+                    LogicalPoint::new(trailing_start, viewport.y())?,
                     viewport.max(),
                 )
             })
@@ -419,8 +446,9 @@ fn compile_tab_strip(
     ready.push_tab_bar_record(
         TabBarRecord::new(
             bar_id,
-            bar,
+            visible_bar,
             viewport,
+            layout_viewport,
             scroll,
             max_scroll,
             items
@@ -436,11 +464,11 @@ fn compile_tab_strip(
             layer,
         )
         .with_application_bounds(
-            chrome.leading_reserved_bounds,
-            chrome.trailing_reserved_bounds,
+            clip_slot(chrome.leading_reserved_bounds)?,
+            clip_slot(chrome.trailing_reserved_bounds)?,
             after_tabs_bounds,
         )
-        .with_group_menu_bounds(chrome.group_menu_bounds),
+        .with_group_menu_bounds(chrome.group_menu_bounds.filter(visible_button)),
     );
     if presentation_menu_anchor {
         let host = PresentationMenuAnchorHost::TabBar(bar_id);
@@ -868,12 +896,16 @@ pub(in crate::presentation::compiler) fn operable_tab_chrome(
     let close = if let Some(close) = allocated_close {
         if rect_contains(visible, close) {
             Some(close)
-        } else if visible.max().x() < full.max().x() {
-            None
-        } else {
+        } else if visible.x() > full.x()
+            && visible.max().x() == full.max().x()
+            && visible.y() == full.y()
+            && visible.max().y() == full.max().y()
+        {
             // A left-clipped tail must retain complete close chrome before
             // it can expose selection or drag input beneath that control.
             return Ok(None);
+        } else {
+            None
         }
     } else {
         None

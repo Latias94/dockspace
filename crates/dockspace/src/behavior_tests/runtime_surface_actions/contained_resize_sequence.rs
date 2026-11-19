@@ -8,6 +8,10 @@ fn apply(
     steps: &[SurfaceContainedResizeAdjustment],
     deferred: bool,
 ) {
+    let metrics = inspect_surface(session, |plan| {
+        UniformSurfaceMetrics::new(plan.bounds(), LogicalSize::new(64.0, 48.0).unwrap(), 96.0)
+            .unwrap()
+    });
     let mut frame = session.begin_host_frame().unwrap();
     let action = frame
         .paint_plan(SURFACE)
@@ -22,7 +26,7 @@ fn apply(
     } else {
         frame.submit_surface_action(action).unwrap();
     }
-    frame.measure_surface(SURFACE, metrics()).unwrap();
+    frame.measure_surface(SURFACE, metrics).unwrap();
     frame.commit().unwrap();
 }
 
@@ -67,7 +71,7 @@ fn contained_resize_sequence_preserves_repetition_round_trips_and_endpoint_order
 }
 
 #[test]
-fn contained_resize_sequence_keeps_placement_after_normalizing_an_offscreen_source() {
+fn contained_resize_sequence_keeps_the_opposite_edge_of_an_offscreen_source() {
     let fixture = || {
         let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
             SURFACE,
@@ -97,7 +101,7 @@ fn contained_resize_sequence_keeps_placement_after_normalizing_an_offscreen_sour
         let expected = contained_rect(&separate);
         assert_eq!(
             expected,
-            LogicalRect::new(160.0, 432.0, 320.0, 168.0).unwrap()
+            LogicalRect::new(160.0, 532.0, 320.0, 168.0).unwrap()
         );
         let mut batched = fixture();
         apply(
@@ -107,6 +111,50 @@ fn contained_resize_sequence_keeps_placement_after_normalizing_an_offscreen_sour
             deferred,
         );
         assert_eq!(contained_rect(&batched), expected);
+    }
+}
+
+#[test]
+fn contained_resize_at_the_right_edge_preserves_an_oversized_height() {
+    use SurfaceContainedResizeAdjustment::{Decrement, Increment};
+    let bounds = LogicalRect::new(0.0, 0.0, 600.0, 400.0).unwrap();
+    let source = LogicalRect::new(200.0, 0.0, 400.0, 500.0).unwrap();
+    for deferred in [false, true] {
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(ROOT, DockspaceNode::central_tabs([FIRST])),
+        )
+        .with_contained(DockspaceContainedLayout::new(
+            FLOATING,
+            DockspaceRootLayout::new(FLOATING_ROOT, DockspaceNode::tabs([SECOND])),
+            source,
+        ))])
+        .unwrap();
+        let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+        let mut frame = session.begin_host_frame().unwrap();
+        let metrics =
+            UniformSurfaceMetrics::new(bounds, LogicalSize::new(64.0, 48.0).unwrap(), 96.0)
+                .unwrap();
+        frame.measure_surface(SURFACE, metrics).unwrap();
+        frame.commit().unwrap();
+
+        apply(
+            &mut session,
+            ContainedResizeDirection::East,
+            &[Increment],
+            deferred,
+        );
+        assert_eq!(contained_rect(&session), source);
+        apply(
+            &mut session,
+            ContainedResizeDirection::East,
+            &[Increment, Decrement],
+            deferred,
+        );
+        assert_eq!(
+            contained_rect(&session),
+            LogicalRect::new(200.0, 0.0, 384.0, 500.0).unwrap()
+        );
     }
 }
 

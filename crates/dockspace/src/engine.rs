@@ -86,7 +86,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use self::contained_geometry::{
-    cardinal_contained_resize_requested_rect, clamp_contained_rect, clamp_moved_contained_rect,
+    cardinal_contained_resize_rect, clamp_contained_rect, clamp_moved_contained_rect,
     contained_resize_edges, contained_transform_requested_rect, translated_contained_rect,
 };
 pub(crate) use self::input::SplitterReset;
@@ -1044,12 +1044,6 @@ enum SplitterAdjustmentAuthority {
     CurrentCandidate,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ContainedPlacementAuthority {
-    PresentedCoordinates,
-    CurrentCandidate,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 enum PreparedCloseOperation {
     Content(crate::close::plan::ContentCloseScope),
@@ -1928,14 +1922,7 @@ impl DockEngine {
         interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<InputOutcome, EngineError> {
         self.reduce_versioned_interaction(expected, |engine| {
-            engine.apply_contained_placement(
-                input,
-                placement,
-                ContainedPlacementAuthority::PresentedCoordinates,
-                policy,
-                events,
-                interaction_events,
-            )
+            engine.apply_contained_placement(input, placement, policy, events, interaction_events)
         })
     }
 
@@ -1943,15 +1930,25 @@ impl DockEngine {
         &mut self,
         input: InputSequence,
         update: ContainedPlacementInput,
-        authority: ContainedPlacementAuthority,
         policy: &DockPolicySnapshot,
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<InteractionOutcome, EngineError> {
-        let command = match self.checked_contained_placement_command(update, authority) {
+        let command = match self.checked_contained_placement_command(update) {
             Ok(command) => command,
             Err(error) => return Ok(InteractionOutcome::Rejected(error)),
         };
+        self.apply_contained_rect_command(input, command, policy, events, interaction_events)
+    }
+
+    fn apply_contained_rect_command(
+        &mut self,
+        input: InputSequence,
+        command: WorkspaceCommand,
+        policy: &DockPolicySnapshot,
+        events: &mut Vec<WorkspaceEvent>,
+        interaction_events: &mut Vec<InteractionEvent>,
+    ) -> Result<InteractionOutcome, EngineError> {
         match self.apply_interaction_command_with_policy(input, policy, &command, events)? {
             CommandApplication::Applied { outcome, changed } => {
                 if changed {
@@ -1972,31 +1969,15 @@ impl DockEngine {
     fn checked_contained_placement_command(
         &self,
         update: ContainedPlacementInput,
-        authority: ContainedPlacementAuthority,
     ) -> Result<WorkspaceCommand, InteractionRejection> {
-        let validated = match authority {
-            ContainedPlacementAuthority::PresentedCoordinates => {
-                self.validate_contained_placement(update.placement)
-            }
-            ContainedPlacementAuthority::CurrentCandidate => self
-                .semantic_candidate(update.placement.scene())
-                .map_err(|_| ContainedPlacementUnavailable::StaleScene {
-                    expected: update.placement.scene(),
-                    current: self
-                        .presentation_authority
-                        .scene
-                        .surface(update.placement.surface())
-                        .map(SurfaceScene::stamp),
-                })
-                .and_then(|candidate| {
-                    Self::validate_contained_placement_geometry(update.placement, candidate)
-                }),
-        };
-        validated.map_err(|error| match error {
-            ContainedPlacementUnavailable::StaleScene { .. }
-            | ContainedPlacementUnavailable::SceneUnavailable => InteractionRejection::StaleScene,
-            other => InteractionRejection::ContainedPlacementUnavailable(other),
-        })?;
+        self.validate_contained_placement(update.placement)
+            .map_err(|error| match error {
+                ContainedPlacementUnavailable::StaleScene { .. }
+                | ContainedPlacementUnavailable::SceneUnavailable => {
+                    InteractionRejection::StaleScene
+                }
+                other => InteractionRejection::ContainedPlacementUnavailable(other),
+            })?;
         Ok(WorkspaceCommand::UpdateContainedRect {
             surface: update.placement.surface(),
             root: update.root,

@@ -1254,6 +1254,75 @@ fn retained_activation_keeps_the_provenance_of_pending_navigation() {
 }
 
 #[test]
+fn home_reveals_the_partially_scrolled_selected_first_tab() {
+    let mut session = overflow_session();
+    install_overflow_candidate(&mut session);
+    let scroll = inspect_surface(&mut session, |plan| {
+        let bar = plan.tab_bars().next().unwrap();
+        let receiver = plan.receiver_for_tab_strip_scroll(bar).unwrap();
+        plan.prepare_tab_strip_scroll_at(bar, receiver.center(), 12.0)
+            .unwrap()
+    });
+    let mut frame = session.begin_host_frame().unwrap();
+    frame.submit_surface_action(scroll).unwrap();
+    measure_overflow_surface(&mut frame);
+    frame.commit().unwrap();
+
+    let home = inspect_surface(&mut session, |plan| {
+        let bar = plan.tab_bars().next().unwrap();
+        assert_eq!(bar.scroll_offset(), 12.0);
+        let strip = plan.retain_tab_strip(bar).unwrap();
+        strip
+            .resolve(
+                FIRST,
+                FIRST,
+                [SurfaceTabInput::Navigate(SurfaceTabNavigation::First)],
+            )
+            .expect("Home reveals the selected tab even though it keeps the same selection")
+    });
+    let mut frame = session.begin_host_frame().unwrap();
+    frame.submit_deferred_surface_action(home).unwrap();
+    measure_overflow_surface(&mut frame);
+    frame.commit().unwrap();
+    assert!(session.view().item(FIRST).unwrap().is_active());
+    inspect_surface(&mut session, |plan| {
+        assert_eq!(plan.tab_bars().next().unwrap().scroll_offset(), 0.0);
+    });
+}
+
+#[test]
+fn clipping_a_floating_bar_preserves_the_layout_of_its_visible_tabs() {
+    let project = |left| {
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(ROOT, DockspaceNode::central_tabs([FIRST])),
+        )
+        .with_contained(DockspaceContainedLayout::new(
+            FLOATING,
+            DockspaceRootLayout::new(FLOATING_ROOT, DockspaceNode::tabs([SECOND, THIRD])),
+            LogicalRect::new(left, 80.0, 500.0, 300.0).unwrap(),
+        ))])
+        .unwrap();
+        let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+        install_ready_candidate(&mut session);
+        inspect_surface(&mut session, |plan| {
+            let tab = plan.tabs().find(|tab| tab.item() == Some(THIRD)).unwrap();
+            assert_eq!(tab.text_layout_bounds(), tab.text_bounds());
+            let hit = plan.receiver_for_tab_body(tab).unwrap().bounds();
+            (tab.text_bounds(), hit)
+        })
+    };
+    let (text, hit) = project(0.0);
+    for left in [80.0, -80.0] {
+        let (translated_text, translated_hit) = project(left);
+        assert_eq!(translated_text.x(), text.x() + left);
+        assert_eq!(translated_text.size(), text.size());
+        assert_eq!(translated_hit.x(), hit.x() + left);
+        assert_eq!(translated_hit.size(), hit.size());
+    }
+}
+
+#[test]
 fn paint_only_tabs_expose_no_receiver_or_prepared_semantic_action() {
     let mut session = paint_only_tab_bar_session();
     install_ready_candidate(&mut session);

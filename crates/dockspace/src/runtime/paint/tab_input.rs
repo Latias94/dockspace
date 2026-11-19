@@ -176,7 +176,8 @@ fn resolve(
     let target = members[cursor].tab();
     // Header focus and selection can differ. A clipped selected target can
     // also require revealing even when Home/End leaves the cursor unchanged.
-    (handled || target != source || !plan.tab_selected(tab)).then_some(())?;
+    let must_reveal = bar.reveal_scroll_offset(members[cursor]) != bar.scroll_offset();
+    (handled || target != source || !plan.tab_selected(tab) || must_reveal).then_some(())?;
     Some(if activate {
         if navigated || target != source {
             LocalTabSelection::NavigateAndActivate { source, target }

@@ -466,6 +466,7 @@ pub struct TabBarRecord {
     id: TabBarSceneId,
     bounds: LogicalRect,
     viewport: LogicalRect,
+    layout_viewport: LogicalRect,
     scroll_offset: f64,
     maximum_scroll_offset: f64,
     hidden_tabs: Vec<TabKey>,
@@ -507,6 +508,7 @@ impl TabBarRecord {
         id: TabBarSceneId,
         bounds: LogicalRect,
         viewport: LogicalRect,
+        layout_viewport: LogicalRect,
         scroll_offset: f64,
         maximum_scroll_offset: f64,
         hidden_tabs: Vec<TabKey>,
@@ -521,6 +523,7 @@ impl TabBarRecord {
             id,
             bounds,
             viewport,
+            layout_viewport,
             scroll_offset,
             maximum_scroll_offset,
             hidden_tabs,
@@ -553,6 +556,22 @@ impl TabBarRecord {
     #[must_use]
     pub const fn viewport(&self) -> LogicalRect {
         self.viewport
+    }
+
+    pub(crate) const fn layout_viewport(&self) -> LogicalRect {
+        self.layout_viewport
+    }
+
+    pub(crate) fn reveal_scroll_offset(&self, member: TabStripMemberRecord) -> f64 {
+        let tab = member.full_bounds();
+        let delta = if tab.x() < self.viewport.x() {
+            tab.x() - self.viewport.x()
+        } else if tab.max().x() > self.viewport.max().x() {
+            tab.max().x() - self.viewport.max().x()
+        } else {
+            0.0
+        };
+        (self.scroll_offset + delta).clamp(0.0, self.maximum_scroll_offset)
     }
 
     /// Returns the core-clamped transient scroll offset.

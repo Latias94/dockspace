@@ -4,7 +4,6 @@ use super::*;
 
 impl DockEngine {
     pub(crate) fn cardinal_contained_resize_sequence_delta(
-        surface: SurfaceId,
         source: crate::geometry::LogicalRect,
         bounds: crate::geometry::LogicalRect,
         minimum: crate::geometry::LogicalSize,
@@ -18,19 +17,14 @@ impl DockEngine {
         };
         let mut rect = source;
         for delta in [first, second].into_iter().chain(steps) {
-            let requested =
-                cardinal_contained_resize_requested_rect(rect, bounds, minimum, direction, delta)
-                    .ok()?;
-            rect = clamp_contained_rect(surface, bounds, requested, minimum).ok()?;
+            rect = cardinal_contained_resize_rect(rect, bounds, minimum, direction, delta).ok()?;
         }
-        // Placement can translate an initially offscreen window. Retain the
-        // change in extent so one final resize reproduces that same placement.
         use crate::presentation::scene::ContainedResizeDirection as Direction;
         let delta = match direction {
-            Direction::North => source.height() - rect.height(),
-            Direction::East => rect.width() - source.width(),
-            Direction::South => rect.height() - source.height(),
-            Direction::West => source.width() - rect.width(),
+            Direction::North => rect.y() - source.y(),
+            Direction::East => rect.max().x() - source.max().x(),
+            Direction::South => rect.max().y() - source.max().y(),
+            Direction::West => rect.x() - source.x(),
             Direction::NorthEast
             | Direction::SouthEast
             | Direction::SouthWest
@@ -51,46 +45,17 @@ impl DockEngine {
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<InputOutcome, EngineError> {
-        let placement = match self.prepare_cardinal_contained_resize_placement(
-            candidate.stamp(),
+        let command = match self.prepare_cardinal_contained_resize(
             candidate.plan(),
             floating,
             direction,
             delta,
         ) {
-            Ok(placement) => placement,
+            Ok(command) => command,
             Err(error) => return Ok(self.candidate_action_rejection(error)),
         };
-        if let Err(error) =
-            Self::validate_contained_placement_geometry(placement.placement, candidate)
-        {
-            return Ok(self.candidate_action_rejection(
-                InteractionRejection::ContainedPlacementUnavailable(error),
-            ));
-        }
-        let command = WorkspaceCommand::UpdateContainedRect {
-            surface: placement.placement.surface(),
-            root: placement.root,
-            floating: placement.floating,
-            expected_rect: placement.expected_rect,
-            rect: placement.placement.clamped_rect(),
-        };
         let outcome =
-            match self.apply_interaction_command_with_policy(input, policy, &command, events)? {
-                CommandApplication::Applied { outcome, changed } => {
-                    if changed {
-                        self.invalidate_transient(
-                            input,
-                            InteractionCancelReason::WorkspaceChanged,
-                            interaction_events,
-                        )?;
-                    }
-                    InteractionOutcome::ContainedPlacementApplied { outcome, changed }
-                }
-                CommandApplication::Rejected(error) => {
-                    InteractionOutcome::Rejected(InteractionRejection::CommandRejected(error))
-                }
-            };
+            self.apply_contained_rect_command(input, command, policy, events, interaction_events)?;
         Ok(InputOutcome::InteractionProcessed {
             outcome,
             version: self.version,
@@ -116,48 +81,30 @@ impl DockEngine {
                 accepted_base: self.version,
             });
         }
-        let placement = {
-            let candidate = match self.semantic_candidate(scene) {
-                Ok(candidate) => candidate,
-                Err(error) => return Ok(self.candidate_action_rejection(error)),
-            };
-            match self.prepare_cardinal_contained_resize_placement(
-                scene,
-                candidate.plan(),
-                floating,
-                direction,
-                delta,
-            ) {
-                Ok(placement) => placement,
-                Err(error) => return Ok(self.candidate_action_rejection(error)),
-            }
+        let candidate = match self.semantic_candidate(scene) {
+            Ok(candidate) => candidate.frozen_witness(),
+            Err(error) => return Ok(self.candidate_action_rejection(error)),
         };
-        let outcome = self.apply_contained_placement(
+        self.resize_contained_from_candidate(
             input,
-            placement,
-            ContainedPlacementAuthority::CurrentCandidate,
+            &candidate,
+            floating,
+            direction,
+            delta,
             policy,
             events,
             interaction_events,
-        )?;
-        Ok(InputOutcome::InteractionProcessed {
-            outcome,
-            version: self.version,
-        })
+        )
     }
 
-    pub(super) fn prepare_cardinal_contained_resize_placement(
+    fn prepare_cardinal_contained_resize(
         &self,
-        scene: SurfaceSceneStamp,
         plan: &crate::presentation::scene::PresentationPlan,
         floating: FloatingPresentationId,
         direction: crate::presentation::scene::ContainedResizeDirection,
         delta: f64,
-    ) -> Result<ContainedPlacementInput, InteractionRejection> {
-        let surface = scene.surface();
-        if plan.surface() != surface {
-            return Err(InteractionRejection::TargetAuthorityInvalid);
-        }
+    ) -> Result<WorkspaceCommand, InteractionRejection> {
+        let surface = plan.surface();
         let contained = plan
             .contained_records()
             .iter()
@@ -185,7 +132,7 @@ impl DockEngine {
                 ContainedPlacementUnavailable::UnrepresentableGeometry { surface },
             )
         };
-        let requested = cardinal_contained_resize_requested_rect(
+        let rect = cardinal_contained_resize_rect(
             workspace_record.rect,
             plan.bounds(),
             contained.minimum_size(),
@@ -193,21 +140,12 @@ impl DockEngine {
             delta,
         )
         .map_err(|()| unavailable())?;
-        let clamped =
-            clamp_contained_rect(surface, plan.bounds(), requested, contained.minimum_size())
-                .map_err(InteractionRejection::ContainedPlacementUnavailable)?;
-        Ok(ContainedPlacementInput {
+        Ok(WorkspaceCommand::UpdateContainedRect {
+            surface,
             root: contained.root(),
             floating,
             expected_rect: workspace_record.rect,
-            placement: ContainedPlacementProof::new(
-                scene,
-                surface,
-                requested,
-                contained.minimum_size(),
-                plan.bounds(),
-                clamped,
-            ),
+            rect,
         })
     }
 }

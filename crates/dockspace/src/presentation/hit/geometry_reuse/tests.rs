@@ -182,6 +182,7 @@ impl Fixture {
             bar,
             self.chrome_bounds,
             self.chrome_bounds,
+            self.chrome_bounds,
             0.0,
             0.0,
             Vec::new(),

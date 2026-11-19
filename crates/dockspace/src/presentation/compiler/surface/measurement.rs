@@ -426,7 +426,7 @@ pub(crate) fn selection_geometry_unchanged(
                 reveal_tab_range(
                     requested,
                     record.maximum_scroll_offset(),
-                    record.viewport().width(),
+                    record.layout_viewport().width(),
                     start,
                     end,
                 )

@@ -1344,6 +1344,7 @@ fn touch_protection_uses_visible_chrome_and_real_front_occlusion() {
         bar,
         rect(80.0, 350.0, 60.0, 20.0),
         rect(80.0, 350.0, 60.0, 20.0),
+        rect(80.0, 350.0, 60.0, 20.0),
         0.0,
         0.0,
         Vec::new(),

@@ -6,7 +6,8 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use super::surface::{
-    clip_rect, compose_root_sizing, operable_tab_chrome, tab_strip_optional_chrome_layout,
+    clip_rect, compose_root_sizing, operable_tab_chrome, rect_contains,
+    tab_strip_optional_chrome_layout,
 };
 use super::tab_strip_layout::{TabStripFlow, desired_tab_width, select_menu_host, tab_leaf_bounds};
 use crate::geometry::{GeometryError, LogicalRect, PaneSizing};
@@ -260,8 +261,8 @@ pub(crate) fn project_future_tab_strip(
         None,
     )?;
     let node_bounds = geometry.bounds;
-    let bar = geometry.header;
-    if bar.width() <= 0.0 || bar.height() <= 0.0 {
+    let visible_bar = geometry.header;
+    if visible_bar.width() <= 0.0 || visible_bar.height() <= 0.0 {
         return Ok(FutureTabStripProjection {
             insertion: node_bounds,
             strip: None,
@@ -309,6 +310,7 @@ pub(crate) fn project_future_tab_strip(
         target.root(),
         projection,
     )? == Some(target.tabs());
+    let bar = geometry.header_allocation;
     let chrome = tab_strip_optional_chrome_layout(
         bar,
         items.len(),
@@ -334,10 +336,11 @@ pub(crate) fn project_future_tab_strip(
         close_allowed.push(close);
     }
 
-    let viewport = chrome.viewport;
+    let layout_viewport = chrome.viewport;
+    let viewport = clip_rect(layout_viewport, visible_bar)?;
     let flow = TabStripFlow::allocate(
         &desired_widths,
-        viewport.width(),
+        layout_viewport.width(),
         strip.after_tabs_width(),
         config.tab_min_width(),
     )?;
@@ -352,10 +355,11 @@ pub(crate) fn project_future_tab_strip(
     let requested_scroll = previous_bar.map_or(0.0, |bar| bar.scroll_offset());
     let selected_index =
         selected.and_then(|selected| items.iter().position(|item| *item == selected));
-    let viewport_shrank = previous_bar.is_some_and(|bar| viewport.width() < bar.viewport().width());
+    let viewport_shrank =
+        previous_bar.is_some_and(|bar| layout_viewport.width() < bar.layout_viewport().width());
     let scroll = flow.scroll_offset(
         requested_scroll,
-        viewport.width(),
+        layout_viewport.width(),
         selected_index,
         original_selected != selected || viewport_shrank,
     );
@@ -367,7 +371,7 @@ pub(crate) fn project_future_tab_strip(
         .ok_or(FutureLayoutProjectionError::PayloadContainsNoItems)?;
     let payload_items = payload_items.into_iter().collect::<BTreeSet<_>>();
     let mut tabs = Vec::with_capacity(items.len());
-    let mut cursor = viewport.x() - scroll;
+    let mut cursor = layout_viewport.x() - scroll;
     for (ordinal, ((item, width), close)) in items
         .iter()
         .copied()
@@ -396,10 +400,10 @@ pub(crate) fn project_future_tab_strip(
         cursor += width;
     }
     let strip = Some(Arc::new(FutureTabStrip {
-        bounds: bar,
+        bounds: visible_bar,
         viewport,
         scroll_offset: scroll,
-        maximum_scroll_offset: flow.maximum_scroll_offset(viewport.width()),
+        maximum_scroll_offset: flow.maximum_scroll_offset(layout_viewport.width()),
         tabs: tabs.into_boxed_slice(),
     }));
     let payload_index = items
@@ -410,7 +414,7 @@ pub(crate) fn project_future_tab_strip(
         .tab_range(payload_index)
         .ok_or(FutureLayoutProjectionError::PayloadTabMissing { tab: first_payload })?
         .0;
-    let marker_x = viewport.x() - scroll + payload_start;
+    let marker_x = layout_viewport.x() - scroll + payload_start;
     let marker_width = config.splitter_thickness().min(viewport.width());
     if marker_width <= 0.0 {
         return Ok(FutureTabStripProjection {
@@ -465,22 +469,29 @@ fn future_presentation_menu_tab_bar(
         let target_root = target_facts
             .root(root)
             .ok_or(FutureLayoutProjectionError::TargetRootNotPresented { root })?;
-        let bar = tab_leaf_bounds(
+        let geometry = tab_leaf_bounds(
             clip_rect(projected_bounds, target_root.allocation())?,
             target_root.bounds(),
             config.tab_bar_height(),
             None,
-        )?
-        .header;
-        if bar.width() <= 0.0 || bar.height() <= 0.0 {
+        )?;
+        if geometry.header.width() <= 0.0 || geometry.header.height() <= 0.0 {
             return Ok(None);
         }
         let key = TabStripKey::new(surface, TabBarSceneId { root, tabs });
         let strip = target_facts
             .tab_strip(key)
             .ok_or(FutureLayoutProjectionError::TabStripMeasurementUnavailable { key })?;
-        let chrome = tab_strip_optional_chrome_layout(bar, items.len(), strip, config, true)?;
-        Ok(Some(chrome.presentation_menu_bounds.is_some()))
+        let chrome = tab_strip_optional_chrome_layout(
+            geometry.header_allocation,
+            items.len(),
+            strip,
+            config,
+            true,
+        )?;
+        Ok(Some(chrome.presentation_menu_bounds.is_some_and(
+            |bounds| rect_contains(geometry.header, bounds),
+        )))
     };
 
     select_menu_host(

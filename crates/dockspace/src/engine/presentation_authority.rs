@@ -1529,7 +1529,7 @@ impl DockEngine {
                             id,
                             record.scroll_offset(),
                             selected,
-                            record.viewport().width(),
+                            record.layout_viewport().width(),
                         )
                     })
                     .collect::<Vec<_>>();

@@ -1498,9 +1498,10 @@ fn validate_tab_records(
                             .map(|member| member.full_bounds().max().x())
                     })
                     .unwrap_or(bar.viewport().x())
-                    .min(bar.viewport().max().x());
+                    .clamp(bar.viewport().x(), bar.viewport().max().x());
                 let expected_trailing = !items.is_empty()
                     && bar.maximum_scroll_offset() == 0.0
+                    && bar.viewport().height() > 0.0
                     && expected_trailing_start < bar.viewport().max().x();
                 let leading = bar.group_drag().and_then(|group| group.leading_grip());
                 let leading_matches = match (bar.group_grip_bounds(), leading) {
@@ -1610,7 +1611,7 @@ fn validate_tab_records(
                 };
                 let full = member.full_bounds();
                 let preceding_edge_matches = if ordinal == 0 {
-                    full.x() == bar.viewport().x() - bar.scroll_offset()
+                    full.x() == bar.layout_viewport().x() - bar.scroll_offset()
                 } else {
                     bar.members()[ordinal - 1].full_bounds().max().x() == full.x()
                 };
@@ -1619,8 +1620,8 @@ fn validate_tab_records(
                     && tab.tabs == bar_id.tabs
                     && items.get(ordinal).copied() == Some(tab.tab)
                     && rect_has_area(full)
-                    && full.y() == bar.bounds().y()
-                    && full.height() == bar.bounds().height()
+                    && full.y() == bar.layout_viewport().y()
+                    && full.height() == bar.layout_viewport().height()
                     && preceding_edge_matches
                     && visibility_matches
             });
@@ -1653,9 +1654,13 @@ fn validate_tab_records(
                 (true, Some(close)) => {
                     rect_has_area(close) && rect_contains(record.visible_bounds(), close)
                 }
-                // A clipped right edge may hide close chrome while leaving
-                // enough visible tab body for selection and dragging.
-                (true, None) => record.visible_bounds().max().x() < record.full_bounds().max().x(),
+                // Clipping may hide close chrome while leaving enough tab
+                // body for selection and dragging.
+                (true, None) => {
+                    record.visible_bounds().max().x() < record.full_bounds().max().x()
+                        || record.visible_bounds().y() != record.full_bounds().y()
+                        || record.visible_bounds().max().y() != record.full_bounds().max().y()
+                }
                 _ => false,
             };
             let interaction_geometry_matches = match bar.interaction() {
