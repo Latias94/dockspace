@@ -133,6 +133,7 @@ struct RenderContext<'ui, 'plan, 'scroll> {
     pane_focus_target_requested: &'ui mut bool,
     pane_focus_target: &'ui mut Option<Id>,
     pane_focus_bindings: &'ui mut Vec<(ItemId, Id)>,
+    pane_input: Option<tab_shortcuts::PaneInputDelivery>,
     local_actions: &'ui mut Vec<EguiSurfaceAction>,
     menu_action: &'ui mut Option<DockMenuAction>,
     receivers: &'ui mut Vec<ProductReceiverBinding>,
@@ -462,6 +463,7 @@ pub(crate) fn paint_surface(
             pane_focus_target_requested: &mut pane_focus_target_requested,
             pane_focus_target: &mut pane_focus_target,
             pane_focus_bindings: &mut pane_focus_bindings,
+            pane_input: None,
             local_actions: &mut local_actions,
             menu_action: &mut menu_action,
             receivers: &mut receivers,
@@ -483,7 +485,7 @@ pub(crate) fn paint_surface(
         };
         #[cfg(feature = "motion")]
         motion::begin(&context);
-        let skip_tab_key_capture = tab_shortcuts::prepare(&mut context);
+        let mut keyboard = Some(tab_shortcuts::TabKeyboard::prepare(&mut context));
         let completed_program = context
             .plan
             .execute_surface_program(|step| -> Result<(), DockspaceRuntimeError> {
@@ -602,8 +604,8 @@ pub(crate) fn paint_surface(
                         }
                     }
                     SurfacePaintProgramStep::SurfaceEnd { semantic_output } => {
-                        if !skip_tab_key_capture {
-                            tab_shortcuts::capture(&mut context);
+                        if let Some(keyboard) = keyboard.take() {
+                            keyboard.capture(&mut context);
                         }
                         wheel::capture(&mut context);
                         #[cfg(feature = "motion")]

@@ -461,6 +461,13 @@ impl DockEngine {
 }
 
 impl<'frame> HostFrameView<'frame> {
+    pub(crate) fn tab_content_focus_target(
+        &self,
+        tab: crate::presentation::scene::TabSceneId,
+    ) -> Option<ItemId> {
+        self.engine.tab_content_focus_target(tab)
+    }
+
     pub(crate) fn checked_splitter_resize_range(
         &self,
         plan: &PresentationPlan,

@@ -4,6 +4,8 @@ use super::*;
 use egui::{KeyboardShortcut, Modifiers};
 use std::sync::{Arc, Mutex};
 
+mod text_routing;
+
 fn bindings() -> crate::DockInputConfig {
     crate::DockInputConfig {
         next_tab: Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Tab)),
@@ -508,6 +510,25 @@ fn tab_traversal_and_close_follow_header_navigation_across_input_batches() {
 }
 
 #[test]
+fn two_traversals_on_either_side_of_navigation_can_close_the_destination() {
+    for batches in [
+        &[&[Key::Tab][..], &[Key::End], &[Key::Tab], &[Key::Enter]][..],
+        &[&[Key::Tab, Key::End, Key::Tab, Key::Enter][..]],
+    ] {
+        let mut harness = Harness::tabs(1);
+        present(&mut harness, 904.0, Vec::new());
+        harness.focus(904.0, Role::Button, "Close Document 1");
+        let closed = close_requests_for_batches(
+            &mut harness,
+            batches
+                .iter()
+                .map(|keys| keys.iter().copied().map(key).collect()),
+        );
+        assert_eq!(closed, [ItemId::new(6)], "input batches: {batches:?}");
+    }
+}
+
+#[test]
 fn focused_close_button_respects_both_traversal_and_configured_navigation_order() {
     for batched in [false, true] {
         for (first, second, expected) in [
@@ -660,17 +681,12 @@ impl egui::plugin::Plugin for HeaderActivationProbe {
 fn header_activation_ends_ownership_before_trailing_navigation() {
     for callback in [false, true] {
         for discards in [0, 2] {
-            for (keys, expected, tail) in [
-                (vec![Key::Enter, Key::ArrowRight], 1, vec![Key::ArrowRight]),
-                (
-                    vec![Key::End, Key::Enter, Key::ArrowLeft],
-                    6,
-                    vec![Key::ArrowLeft],
-                ),
+            for (keys, expected) in [
+                (vec![Key::Enter, Key::ArrowRight], 1),
+                (vec![Key::End, Key::Enter, Key::ArrowLeft], 6),
                 (
                     vec![Key::ArrowRight, Key::Space, Key::ArrowRight, Key::Home],
                     2,
-                    vec![Key::ArrowRight, Key::Home],
                 ),
             ] {
                 let setup = || {
@@ -714,9 +730,9 @@ fn header_activation_ends_ownership_before_trailing_navigation() {
                         _ => None,
                     })
                     .collect();
-                assert_eq!(
-                    remaining_keys, tail,
-                    "the header owns only the prefix through activation: {keys:?}, callback={callback}, discards={discards}"
+                assert!(
+                    remaining_keys.is_empty(),
+                    "the tail must wait for content focus: {keys:?}, callback={callback}, discards={discards}"
                 );
                 present(&mut batched, 360.0, Vec::new());
                 assert_selected(&batched, expected);

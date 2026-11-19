@@ -1,8 +1,11 @@
-//! Ordered tab keyboard input follows current widget focus and one core action.
+//! Routes ordered keyboard input through tab chrome and hands content input off at focus changes.
 
+mod pane_input;
+
+use dockspace::model::{ItemId, TabKey};
 use dockspace::runtime::{
-    DockspaceVisualId, SurfacePaintProgramOperation as Operation, SurfacePaintProgramStep as Step,
-    SurfaceTabInput, SurfaceTabNavigation,
+    DockspaceVisualId, PanePaintRecord, SurfacePaintProgramOperation as Operation,
+    SurfacePaintProgramStep as Step, SurfaceTabInput, SurfaceTabNavigation,
 };
 use egui::{Event, FocusDirection, Id, Key, KeyboardShortcut};
 
@@ -10,195 +13,146 @@ use crate::PaneFocusState;
 
 use super::{RenderContext, actions::effective_enabled, geometry::egui_rect};
 
-/// Returns whether a tab control can no longer receive the remaining keys this pass.
-pub(super) fn prepare(context: &mut RenderContext<'_, '_, '_>) -> bool {
-    if !can_cycle(context) {
-        return false;
-    }
-    let traversals = context
-        .ui
-        .input(|input| tab_traversals(&input.events, context.input).collect::<Vec<_>>());
-    if let Some(&(index, direction)) = traversals.first()
-        && let Some(group) = focused_group(context, FocusPass::Previous)
-        && group.control != FocusedControl::Group
-    {
-        let mut prefix = matching_events(context, true);
-        let prefix_len = prefix.partition_point(|input| input.index < index);
-        let tail_start = prefix.get(prefix_len).map(|input| input.index);
-        prefix.truncate(prefix_len);
-        if capture_keys(context, group, prefix) {
-            return true;
-        }
-        context.ui.memory_mut(|memory| memory.move_focus(direction));
-        let traversal_end = tail_start.map_or(traversals.len(), |tail| {
-            traversals.partition_point(|(index, _)| *index < tail)
-        });
-        if traversal_end > 1 || tail_start.is_some() && direction == FocusDirection::Previous {
-            // egui folds repeated traversal into one direction and schedules
-            // reverse focus for the next pass. Apply the tab chrome stops in order.
-            if !focus_through_tab_controls(context, &traversals[..traversal_end]) {
-                return true;
+pub(super) use pane_input::PaneInputDelivery;
+
+pub(super) struct PaneCycle {
+    item: ItemId,
+    focused: Id,
+    shortcut: Event,
+    tail: Vec<Event>,
+}
+
+pub(super) enum TabKeyboard {
+    Done,
+    AfterWidgets,
+    PaneShortcut(PaneCycle),
+}
+
+impl TabKeyboard {
+    pub(super) fn prepare(context: &mut RenderContext<'_, '_, '_>) -> Self {
+        match pane_input::prepare(context) {
+            pane_input::PaneInputState::Ready(delivery) => context.pane_input = Some(delivery),
+            pane_input::PaneInputState::Waiting => {}
+            pane_input::PaneInputState::None => {
+                if can_capture(context) {
+                    return Self::prepare_keys(context);
+                }
             }
         }
-        // A second traversal after a local action may depend on widgets created
-        // by that action. Keep the remaining keys from activating the earlier control.
-        return traversal_end < traversals.len();
+        Self::Done
     }
-    if (context.input.next_tab.is_some() || context.input.previous_tab.is_some())
-        && let Some(input) = matching_events(context, false).first()
-        && matches!(
-            input.event,
-            Event::Key {
-                key: egui::Key::Tab,
-                ..
+
+    fn prepare_keys(context: &mut RenderContext<'_, '_, '_>) -> Self {
+        let keys = matching_events(context);
+        let Some((focused, group)) = (!keys.is_empty())
+            .then(|| focused_group(context, FocusPass::Previous))
+            .flatten()
+        else {
+            return Self::AfterWidgets;
+        };
+        if group.control.is_tab_control() {
+            route(context, focused, group, &keys, FocusPass::Previous);
+            return Self::Done;
+        }
+        prepare_pane_cycle(context, focused, group, &keys)
+            .map_or(Self::AfterWidgets, Self::PaneShortcut)
+    }
+
+    pub(super) fn for_replayed_pane(
+        context: &RenderContext<'_, '_, '_>,
+        pane: PanePaintRecord<'_>,
+    ) -> Self {
+        let cycle = context
+            .ui
+            .memory(egui::Memory::focused)
+            .and_then(|focused| {
+                prepare_pane_cycle(
+                    context,
+                    focused,
+                    FocusedGroup {
+                        visual: pane.tab_bar_visual_id()?,
+                        control: FocusedControl::Pane(pane.item()),
+                    },
+                    &matching_events(context),
+                )
+            });
+        cycle.map_or(Self::AfterWidgets, Self::PaneShortcut)
+    }
+
+    pub(super) fn capture(self, context: &mut RenderContext<'_, '_, '_>) {
+        let routed_from_pane = matches!(self, Self::PaneShortcut(_));
+        if matches!(self, Self::Done) {
+            return;
+        }
+        if let Self::PaneShortcut(cycle) = self {
+            if context.ui.memory(egui::Memory::focused) != Some(cycle.focused) {
+                return;
             }
-        )
-        && let Some(group) = focused_group(context, FocusPass::Previous)
-        && prepare_navigation(context, group, std::slice::from_ref(input)).is_some()
-    {
-        // egui treats Ctrl+Shift+Tab as reverse traversal. Cancel that before
-        // focus registration can queue a delayed destination. Content still
-        // receives the untouched event before capture decides whether to cycle.
+            if !context
+                .ui
+                .input(|input| input.events.contains(&cycle.shortcut))
+            {
+                // A pane that consumes its configured shortcut keeps the following
+                // input. The callback has run, so deliver it on its next pass.
+                pane_input::continue_at(context, cycle.item, cycle.focused, cycle.tail);
+                return;
+            }
+            context
+                .ui
+                .input_mut(|input| input.events.extend(cycle.tail));
+        }
+        if !can_capture(context) {
+            return;
+        }
+        let keys = matching_events(context);
+        let keys = if routed_from_pane {
+            keys.as_slice()
+        } else {
+            // egui has already applied traversal while registering widgets.
+            // Only interpret commands that follow that handoff.
+            let after_traversal = keys
+                .iter()
+                .rposition(|key| key.traversal.is_some())
+                .map_or(0, |index| index + 1);
+            &keys[after_traversal..]
+        };
+        if !keys.is_empty()
+            && let Some((focused, group)) = focused_group(context, FocusPass::Current)
+        {
+            route(context, focused, group, keys, FocusPass::Current);
+        }
+    }
+}
+
+fn prepare_pane_cycle(
+    context: &RenderContext<'_, '_, '_>,
+    focused: Id,
+    group: FocusedGroup,
+    keys: &[TabKeyInput],
+) -> Option<PaneCycle> {
+    let shortcut = keys.iter().find(|key| key.selected_start)?;
+    let _ = prepare_navigation(context, group, std::slice::from_ref(shortcut), None)?;
+    if shortcut.key == Key::Tab {
+        // Preserve configured Ctrl+Shift+Tab for the pane's shortcut handler.
         context
             .ui
             .memory_mut(|memory| memory.move_focus(FocusDirection::None));
     }
-    false
-}
-
-pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
-    if !can_cycle(context) {
-        return;
-    }
-    let mut events = matching_events(context, true);
-    if events.is_empty() {
-        return;
-    }
-    let Some(group) = focused_group(context, FocusPass::Current) else {
-        return;
+    let FocusedControl::Pane(item) = group.control else {
+        return None;
     };
-    if let Some((index, _)) = context
-        .ui
-        .input(|input| tab_traversals(&input.events, context.input).last())
-    {
-        events.retain(|input| input.index > index);
-    }
-    capture_keys(context, group, events);
-}
-
-fn capture_keys(
-    context: &mut RenderContext<'_, '_, '_>,
-    group: FocusedGroup,
-    mut events: Vec<TabKeyInput>,
-) -> bool {
-    if group.control.header().is_none() {
-        let Some(start) = events.iter().position(|event| {
-            event.selected_start
-                || matches!(group.control, FocusedControl::Close(_))
-                    && event.input == SurfaceTabInput::Activate
-        }) else {
-            return false;
-        };
-        events.drain(..start);
-        if let FocusedControl::Close(tab) = group.control
-            && !events[0].selected_start
-        {
-            let key = match events[0].event {
-                Event::Key { key, .. } => key,
-                _ => unreachable!("a tab action always originates from a key"),
-            };
-            if let Some(action) = context.plan.prepare_tab_close(tab)
-                && consume_events(context.ui, &events[..1])
-            {
-                let origin = super::tab_close::id(context, tab).with(("keyboard-activate", key));
-                context.push_local_action(origin, action);
-            }
-            return false;
-        }
-    }
-    let activation = events
-        .iter()
-        .position(|event| matches!(event.input, SurfaceTabInput::Activate));
-    if let Some(index) = activation {
-        // Activation hands later keys to pane content rather than retaining
-        // header ownership for the rest of this original input packet.
-        events.truncate(index + 1);
-    }
-    let Some(action) = prepare_navigation(context, group, &events) else {
-        return false;
-    };
-    let Some(target) = action.tab_focus_visual() else {
-        return false;
-    };
-    if !consume_events(context.ui, &events) {
-        return false;
-    }
-    context.ui.memory_mut(|memory| {
-        memory.request_focus(super::tabs::tab_id_for_visual(
-            context.ui,
-            context.instance_id,
-            target,
-        ));
-        memory.move_focus(FocusDirection::None);
-    });
-    let origin = context.ui.make_persistent_id((
-        context.instance_id,
-        "tab-keyboard-input",
-        context.plan.surface(),
-        group.visual,
-    ));
-    context.push_local_action(origin, action);
-    activation.is_some()
-}
-
-fn consume_events(ui: &egui::Ui, events: &[TabKeyInput]) -> bool {
-    ui.input_mut(|input| {
-        if events
-            .iter()
-            .any(|event| input.events.get(event.index) != Some(&event.event))
-        {
-            return false;
-        }
-        for event in events.iter().rev() {
-            input.events.remove(event.index);
-        }
-        true
+    let tail = pane_input::take_keys_after(context.ui, shortcut.index + 1);
+    (!tail.is_empty()).then(|| PaneCycle {
+        item,
+        focused,
+        shortcut: shortcut.event.clone(),
+        tail,
     })
 }
 
-fn tab_traversals<'a>(
-    events: &'a [Event],
-    input: &crate::DockInputConfig,
-) -> impl Iterator<Item = (usize, FocusDirection)> + 'a {
-    let shortcuts = [input.previous_tab, input.next_tab];
-    events.iter().enumerate().filter_map(move |(index, event)| {
-        let Event::Key {
-            key: Key::Tab,
-            modifiers,
-            pressed: true,
-            ..
-        } = event
-        else {
-            return None;
-        };
-        if shortcuts.into_iter().flatten().any(|shortcut| {
-            shortcut.logical_key == Key::Tab && modifiers.matches_exact(shortcut.modifiers)
-        }) {
-            return None;
-        }
-        if modifiers.is_none() {
-            Some((index, FocusDirection::Next))
-        } else if modifiers.shift_only() {
-            Some((index, FocusDirection::Previous))
-        } else {
-            None
-        }
-    })
-}
-
-fn can_cycle(context: &RenderContext<'_, '_, '_>) -> bool {
+fn can_capture(context: &RenderContext<'_, '_, '_>) -> bool {
     effective_enabled(context.ui, true)
-        && context.ui.input(|input| input.focused)
+        && super::actions::focus_uninterrupted(context.ui)
         && !context.plan.has_manipulation_preview()
         && context.plan.prepare_gesture_cancel().is_none()
         && context.ui.ctx().dragged_id().is_none()
@@ -207,14 +161,138 @@ fn can_cycle(context: &RenderContext<'_, '_, '_>) -> bool {
         && !context.ui.ctx().any_popup_open()
 }
 
+/// Routes through known tab controls. At a destination owned by egui, give it
+/// the traversal and stop interpreting later keys as tab commands in this pass.
+fn route(
+    context: &mut RenderContext<'_, '_, '_>,
+    mut focused: Id,
+    mut group: FocusedGroup,
+    keys: &[TabKeyInput],
+    pass: FocusPass,
+) {
+    let mut selection = None;
+    let mut consumed = Vec::new();
+    let mut focus = None;
+    let mut activation = None;
+    let mut remaining = keys;
+    while !remaining.is_empty() {
+        let end = remaining
+            .iter()
+            .position(|key| key.traversal.is_some())
+            .unwrap_or(remaining.len());
+        let (chunk, tail) = remaining.split_at(end);
+        if let Some((action, accepted)) = navigation_chunk(context, group, chunk, selection) {
+            let first = &accepted[0];
+            let last = &accepted[accepted.len() - 1];
+            if let Some((key, visual)) = action.tab_focus_target().zip(action.tab_focus_visual()) {
+                focused = super::tabs::tab_id_for_visual(context.ui, context.instance_id, visual);
+                focus = Some((focused, FocusDirection::None));
+                selection = Some((group.visual, key));
+                if last.input == Some(SurfaceTabInput::Activate) {
+                    activation = Some((last.index, last.key, key, focused));
+                }
+            }
+            consumed.extend(accepted.iter().map(|key| key.index));
+            let origin = context.ui.make_persistent_id((
+                context.instance_id,
+                "tab-keyboard-input",
+                context.plan.surface(),
+                group.visual,
+                first.index,
+            ));
+            context.push_local_action(origin, action);
+
+            if activation.is_some() {
+                break;
+            }
+        }
+        let Some((traversal, rest)) = tail.split_first() else {
+            break;
+        };
+        let direction = traversal.traversal.expect("the chunk ends at a traversal");
+        if focus.is_none() && !group.control.is_tab_control() {
+            // The pane or application owns regular Tab traversal from here.
+            break;
+        }
+        let next = adjacent_widget(context, focused, direction, pass).and_then(|next| {
+            let group = group_for_widget(context, next, pass)?;
+            group.control.is_tab_control().then_some((next, group))
+        });
+        let Some((next, destination)) = next else {
+            if matches!(pass, FocusPass::Previous) {
+                focus = Some((focused, direction));
+            }
+            break;
+        };
+        focused = next;
+        group = destination;
+        focus = Some((focused, FocusDirection::None));
+        consumed.push(traversal.index);
+        remaining = rest;
+    }
+
+    if let Some((index, key, tab, header)) = activation {
+        pane_input::activate(context, index + 1, key, tab, header);
+    }
+    if !consumed.is_empty() {
+        context.ui.input_mut(|input| {
+            for index in consumed.into_iter().rev() {
+                input.events.remove(index);
+            }
+        });
+    }
+    if let Some((target, direction)) = focus {
+        context.ui.memory_mut(|memory| {
+            if !memory.has_focus(target) {
+                memory.request_focus(target);
+            }
+            memory.move_focus(direction);
+        });
+    }
+}
+
+fn navigation_chunk<'a>(
+    context: &RenderContext<'_, '_, '_>,
+    group: FocusedGroup,
+    keys: &'a [TabKeyInput],
+    selection: Option<(DockspaceVisualId, TabKey)>,
+) -> Option<(dockspace::runtime::PreparedSurfaceAction, &'a [TabKeyInput])> {
+    let keys = if group.control.header().is_some() {
+        keys
+    } else {
+        let first = keys.iter().position(|key| {
+            key.selected_start
+                || matches!(group.control, FocusedControl::Close(_))
+                    && key.input == Some(SurfaceTabInput::Activate)
+        })?;
+        &keys[first..]
+    };
+    let activation = keys
+        .iter()
+        .position(|key| key.input == Some(SurfaceTabInput::Activate));
+    let keys = activation.map_or(keys, |activation| &keys[..=activation]);
+    let first = keys.first()?;
+    if let FocusedControl::Close(tab) = group.control
+        && !first.selected_start
+    {
+        return context
+            .plan
+            .prepare_tab_close(tab)
+            .map(|action| (action, &keys[..1]));
+    }
+    prepare_navigation(context, group, keys, selection).map(|action| (action, keys))
+}
+
 struct TabKeyInput {
     index: usize,
+    key: Key,
     event: Event,
-    input: SurfaceTabInput,
+    input: Option<SurfaceTabInput>,
+    traversal: Option<FocusDirection>,
     selected_start: bool,
 }
 
-fn matching_events(context: &RenderContext<'_, '_, '_>, header: bool) -> Vec<TabKeyInput> {
+fn matching_events(context: &RenderContext<'_, '_, '_>) -> Vec<TabKeyInput> {
     context.ui.input(|input| {
         input
             .events
@@ -226,37 +304,53 @@ fn matching_events(context: &RenderContext<'_, '_, '_>, header: bool) -> Vec<Tab
                     modifiers,
                     pressed: true,
                     ..
-                } = event
+                } = *event
                 else {
                     return None;
                 };
                 let matches = |shortcut: Option<KeyboardShortcut>| {
                     shortcut.is_some_and(|shortcut| {
-                        *key == shortcut.logical_key && modifiers.matches_exact(shortcut.modifiers)
+                        key == shortcut.logical_key && modifiers.matches_exact(shortcut.modifiers)
                     })
                 };
-                let selected_start =
-                    matches(context.input.previous_tab) || matches(context.input.next_tab);
-                let input = if matches(context.input.previous_tab) {
-                    SurfaceTabInput::Navigate(SurfaceTabNavigation::Previous)
+                let (input, traversal, selected_start) = if matches(context.input.previous_tab) {
+                    (
+                        Some(SurfaceTabInput::Navigate(SurfaceTabNavigation::Previous)),
+                        None,
+                        true,
+                    )
                 } else if matches(context.input.next_tab) {
-                    SurfaceTabInput::Navigate(SurfaceTabNavigation::Next)
-                } else if header && modifiers.matches_logically(egui::Modifiers::NONE) {
-                    match key {
+                    (
+                        Some(SurfaceTabInput::Navigate(SurfaceTabNavigation::Next)),
+                        None,
+                        true,
+                    )
+                } else if key == Key::Tab && (modifiers.is_none() || modifiers.shift_only()) {
+                    let direction = if modifiers.is_none() {
+                        FocusDirection::Next
+                    } else {
+                        FocusDirection::Previous
+                    };
+                    (None, Some(direction), false)
+                } else if modifiers.matches_logically(egui::Modifiers::NONE) {
+                    let input = match key {
                         Key::ArrowLeft => SurfaceTabInput::Navigate(SurfaceTabNavigation::Previous),
                         Key::ArrowRight => SurfaceTabInput::Navigate(SurfaceTabNavigation::Next),
                         Key::Home => SurfaceTabInput::Navigate(SurfaceTabNavigation::First),
                         Key::End => SurfaceTabInput::Navigate(SurfaceTabNavigation::Last),
                         Key::Enter | Key::Space => SurfaceTabInput::Activate,
                         _ => return None,
-                    }
+                    };
+                    (Some(input), None, false)
                 } else {
                     return None;
                 };
                 Some(TabKeyInput {
                     index,
+                    key,
                     event: event.clone(),
                     input,
+                    traversal,
                     selected_start,
                 })
             })
@@ -276,68 +370,60 @@ struct FocusedGroup {
     control: FocusedControl,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum FocusedControl {
     Group,
-    Header(dockspace::model::TabKey),
-    Close(dockspace::model::TabKey),
+    Pane(ItemId),
+    Header(TabKey),
+    Close(TabKey),
 }
 
 impl FocusedControl {
-    fn header(self) -> Option<dockspace::model::TabKey> {
+    fn header(self) -> Option<TabKey> {
         match self {
             Self::Header(tab) => Some(tab),
-            Self::Group | Self::Close(_) => None,
+            _ => None,
         }
+    }
+
+    fn is_tab_control(self) -> bool {
+        matches!(self, Self::Header(_) | Self::Close(_))
     }
 }
 
-fn focused_group(context: &RenderContext<'_, '_, '_>, pass: FocusPass) -> Option<FocusedGroup> {
+fn focused_group(
+    context: &RenderContext<'_, '_, '_>,
+    pass: FocusPass,
+) -> Option<(Id, FocusedGroup)> {
     let focused = context.ui.memory(egui::Memory::focused)?;
     group_for_widget(context, focused, pass)
         .filter(|_| context.ui.memory(egui::Memory::focused) == Some(focused))
+        .map(|group| (focused, group))
 }
 
-fn focus_through_tab_controls(
+fn adjacent_widget(
     context: &RenderContext<'_, '_, '_>,
-    traversals: &[(usize, FocusDirection)],
-) -> bool {
-    let Some(focused) = context.ui.memory(egui::Memory::focused) else {
-        return false;
-    };
-    let mut target = focused;
-    for &(_, direction) in traversals {
-        let next = context.ui.ctx().viewport(|viewport| {
-            let widgets = &viewport.prev_pass.widgets;
-            let (layer, index) = widgets.order(target)?;
-            let is_focusable =
-                |widget: &&egui::WidgetRect| widget.enabled && widget.sense.is_focusable();
-            let widget = match direction {
-                FocusDirection::Previous => widgets
-                    .get_layer(layer)
-                    .take(index)
-                    .filter(is_focusable)
-                    .last(),
-                FocusDirection::Next => widgets.get_layer(layer).skip(index + 1).find(is_focusable),
-                _ => return None,
-            }?;
-            Some(widget.id)
-        });
-        let Some(next) = next.filter(|&id| {
-            group_for_widget(context, id, FocusPass::Previous)
-                .is_some_and(|group| group.control != FocusedControl::Group)
-        }) else {
-            return false;
+    current: Id,
+    direction: FocusDirection,
+    pass: FocusPass,
+) -> Option<Id> {
+    context.ui.ctx().viewport(|viewport| {
+        let widgets = match pass {
+            FocusPass::Previous => &viewport.prev_pass.widgets,
+            FocusPass::Current => &viewport.this_pass.widgets,
         };
-        target = next;
-    }
-    context.ui.memory_mut(|memory| {
-        if memory.focused() != Some(focused) {
-            return false;
-        }
-        memory.move_focus(FocusDirection::None);
-        memory.request_focus(target);
-        true
+        let (layer, index) = widgets.order(current)?;
+        let focusable = |widget: &&egui::WidgetRect| widget.enabled && widget.sense.is_focusable();
+        let adjacent = match direction {
+            FocusDirection::Previous => widgets
+                .get_layer(layer)
+                .take(index)
+                .filter(focusable)
+                .last(),
+            FocusDirection::Next => widgets.get_layer(layer).skip(index + 1).find(focusable),
+            _ => return None,
+        }?;
+        Some(adjacent.id)
     })
 }
 
@@ -388,12 +474,14 @@ fn group_for_widget(
                                 })
                             }
                         };
-                        (context.panes.focus_state(pane.item(), context.ui.ctx())
-                            == PaneFocusState::Focused
+                        (context.ui.memory(egui::Memory::focused) == Some(focused)
+                            && context.panes.focus_state(pane.item(), context.ui.ctx())
+                                == PaneFocusState::Focused
                             && bounds
                                 .is_some_and(|bounds| bounds.contains_rect(widget.interact_rect)))
                         .then(|| pane.tab_bar_visual_id())
                         .flatten()
+                        .inspect(|_| control = FocusedControl::Pane(pane.item()))
                     }
                     Operation::Tab(tab) => {
                         if focused
@@ -439,6 +527,7 @@ fn prepare_navigation(
     context: &RenderContext<'_, '_, '_>,
     group: FocusedGroup,
     inputs: &[TabKeyInput],
+    selection: Option<(DockspaceVisualId, TabKey)>,
 ) -> Option<dockspace::runtime::PreparedSurfaceAction> {
     let first = inputs.first()?;
     let mut source = group.control.header();
@@ -468,11 +557,16 @@ fn prepare_navigation(
         .ok()?;
     let source = source?;
     let start = if first.selected_start {
-        selected?
+        selection
+            .filter(|(visual, _)| *visual == group.visual)
+            .map(|(_, tab)| tab)
+            .or(selected)?
     } else {
         group.control.header()?
     };
-    context
-        .plan
-        .prepare_tab_input_sequence(source, start, inputs.iter().map(|input| input.input))
+    context.plan.prepare_tab_input_sequence(
+        source,
+        start,
+        inputs.iter().filter_map(|input| input.input),
+    )
 }

@@ -276,12 +276,17 @@ That prevents a title or group click from clearing its own request. A different
 focus chosen by the callback remains authoritative, and presentation retries do
 not reapply the side effect.
 
-`tab_shortcuts` captures the remaining header keys and configured cycling keys
-after pane widgets have processed input. It preserves event order and folds the
-batch through `SurfacePaintPlan::prepare_tab_input_sequence`, publishing one
-selection with the final focus purpose. The action keeps its visible receiver
-separate from a possibly clipped destination. Accessibility Focus uses
-`prepare_tab_focus`; it must not enter content as Click does.
+Tab headers and close buttons route navigation, traversal and activation in
+event order. Consecutive navigation uses `SurfacePaintPlan::prepare_tab_input_sequence`
+with a visible receiver and a destination that may be clipped. Accessibility
+Focus uses `prepare_tab_focus` and leaves focus on the header.
+
+A focused pane can consume a configured cycling shortcut. The renderer holds
+the keyboard events after that shortcut until the pane has had its turn. An
+activation from the header holds its tail until a matching core focus request
+is published and the content widget takes focus. The handoff belongs to one
+viewport and workspace lifetime, and delivers its input once across egui
+retries. A newer focus owner or workspace replacement invalidates the handoff.
 
 Escape dismisses an open tab-list menu and returns keyboard focus to its owning
 tab-list button when that button remains enabled and visible. Repeated encoding

@@ -1,7 +1,7 @@
 //! Opaque framework gesture preparation over one exact paint plan.
 
 use crate::geometry::LogicalPoint;
-use crate::ids::{FloatingPresentationId, TabKey};
+use crate::ids::{FloatingPresentationId, ItemId, TabKey};
 use crate::interaction::{
     FrozenTabListMenuBackdropClick, FrozenTabListMenuRowClick, FrozenTabStripControlClick,
 };
@@ -372,6 +372,23 @@ impl SurfacePaintPlan<'_> {
                 target: *current.id(),
             },
         ))
+    }
+
+    /// Returns the pane a tab activation would ask the host to focus.
+    ///
+    /// Hosts can retain keyboard input for this pane until they receive a matching
+    /// focus request. This lookup does not select the tab or authorize delivery.
+    /// A layout tab resolves to its first active pane, including when the tab is
+    /// currently unselected or clipped.
+    #[must_use]
+    pub fn tab_content_focus_target(self, key: TabKey) -> Option<ItemId> {
+        let tab = self
+            .plan
+            .tab_bar_records()
+            .iter()
+            .flat_map(|bar| bar.members())
+            .find(|member| member.tab().tab == key)?;
+        self.candidate.tab_content_focus_target(tab.tab())
     }
 
     /// Folds ordered tab inputs into one action against this exact candidate.

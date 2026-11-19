@@ -133,7 +133,11 @@ pub(crate) fn paint_pane(
                 .pane_focus_request
                 .filter(|request| request.item() == Some(item))
                 .filter(|_| {
-                    context.pointer_authority.supports_preview_gestures()
+                    (context.pointer_authority.supports_preview_gestures()
+                        || context
+                            .pane_input
+                            .as_ref()
+                            .is_some_and(|input| input.targets(item)))
                         && effective_enabled(child_ui, true)
                         && !*context.pane_focus_target_requested
                 });
@@ -156,6 +160,15 @@ pub(crate) fn paint_pane(
                 }
                 _ => false,
             };
+            let replay = super::tab_shortcuts::PaneInputDelivery::take_for(
+                &mut context.pane_input,
+                child_ui,
+                pane,
+            )
+            .map(|delivery| delivery.replay(child_ui.ctx()));
+            let keyboard = replay
+                .as_ref()
+                .map(|_| super::tab_shortcuts::TabKeyboard::for_replayed_pane(context, pane));
             let pane_response = context.panes.ui(item, child_ui);
             let registered_target = context.panes.focus_target(item).filter(|target| {
                 child_ui.ctx().viewport(|viewport| {
@@ -206,6 +219,10 @@ pub(crate) fn paint_pane(
                     *context.pane_focus_target = Some(target);
                 }
             }
+            if let Some(keyboard) = keyboard {
+                keyboard.capture(context);
+            }
+            drop(replay);
             if let Some(receiver) = pane_receiver
                 && pane_rect.is_finite()
                 && pane_rect.is_positive()
