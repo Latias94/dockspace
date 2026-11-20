@@ -7,9 +7,10 @@ use crate::ids::{ItemId, NodeId, RootId, TabKey};
 use crate::interaction::targeting::targets::SceneLayerKey;
 use crate::policy::TabBarInteraction;
 use crate::presentation::hit::region::HitRegion;
+use crate::presentation::manifest::TabListMenuMetrics;
 use crate::presentation::tab_strip::{
-    PopupRoutingRevision, TabListMenuSessionId, TabStripControlId, reveal_tab_range,
-    tab_local_range,
+    PopupRoutingRevision, TabListMenuSessionId, TabStripControlId, reveal_scroll_offset,
+    reveal_scroll_range, tab_local_range,
 };
 
 /// Owned label facts retained with one immutable root projection.
@@ -570,7 +571,7 @@ impl TabBarRecord {
         );
         range.map_or(self.scroll_offset, |(start, end)| {
             let clipped_left = self.viewport.x() - self.layout_viewport.x();
-            reveal_tab_range(
+            reveal_scroll_offset(
                 self.scroll_offset,
                 self.maximum_scroll_offset,
                 self.viewport.width(),
@@ -864,6 +865,7 @@ pub struct TabListMenuRecord {
     viewport: LogicalRect,
     scroll_offset: f64,
     maximum_scroll_offset: f64,
+    metrics: TabListMenuMetrics,
     rows: Vec<TabListMenuRowRecord>,
     layer: SceneLayerKey,
 }
@@ -916,6 +918,7 @@ impl TabListMenuRecord {
         viewport: LogicalRect,
         scroll_offset: f64,
         maximum_scroll_offset: f64,
+        metrics: TabListMenuMetrics,
         rows: Vec<TabListMenuRowRecord>,
         layer: SceneLayerKey,
     ) -> Self {
@@ -926,6 +929,7 @@ impl TabListMenuRecord {
             viewport,
             scroll_offset,
             maximum_scroll_offset,
+            metrics,
             rows,
             layer,
         }
@@ -965,6 +969,21 @@ impl TabListMenuRecord {
     #[must_use]
     pub fn rows(&self) -> &[TabListMenuRowRecord] {
         &self.rows
+    }
+
+    pub(crate) fn row_reveal_scroll_range(&self, row: TabListMenuRowRecord) -> (f64, f64) {
+        let start = self.metrics.row_offset(row.ordinal());
+        reveal_scroll_range(
+            self.maximum_scroll_offset,
+            self.viewport.height(),
+            start,
+            start + self.metrics.row_height(),
+        )
+    }
+
+    pub(crate) fn reveal_row_scroll_offset(&self, row: TabListMenuRowRecord) -> f64 {
+        let (start, end) = self.row_reveal_scroll_range(row);
+        self.scroll_offset.clamp(start, end)
     }
 
     #[must_use]

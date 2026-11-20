@@ -32,6 +32,31 @@ impl RetainedTabStrip {
         DockspaceVisualId(VisualIdentity::TabBar(self.bar))
     }
 
+    /// Checks whether a retained keyboard sequence can use this replacement strip.
+    ///
+    /// Selection and scrolling can produce a new output for the same strip.
+    /// The session, layout epoch, surface, policy, presentation configuration,
+    /// coordinate authority, and popup state must still match. The host must
+    /// independently verify focus, the expected workspace version, and that the
+    /// replacement output has actually presented before resolving queued input.
+    #[must_use]
+    pub fn same_navigation_scope(&self, previous: &Self) -> bool {
+        let current = self.witness.stamp().requirement();
+        let previous_ticket = previous.witness.stamp().requirement();
+        self.bar == previous.bar
+            && current.authority_domain() == previous_ticket.authority_domain()
+            && current.workspace_epoch() == previous_ticket.workspace_epoch()
+            && current.surface() == previous_ticket.surface()
+            && current.policy() == previous_ticket.policy()
+            && current.config() == previous_ticket.config()
+            && self
+                .witness
+                .coordinate_capture()
+                .same_projection_authority(previous.witness.coordinate_capture())
+            && self.witness.plan().bounds() == previous.witness.plan().bounds()
+            && self.witness.plan().popup() == previous.witness.plan().popup()
+    }
+
     /// Resolves inputs from an operable `receiver` in the original output.
     ///
     /// `start` can name a different member of the same strip, including one

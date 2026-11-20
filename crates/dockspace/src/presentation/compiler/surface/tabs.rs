@@ -786,13 +786,21 @@ fn compile_tab_list_menu(
     if popup_width <= 0.0 {
         return Ok(());
     }
-    let x = (anchor.max().x() - popup_width).clamp(bounds.x(), bounds.max().x() - popup_width);
+    // Clamp in popup-plane coordinates so a full-width menu has exactly zero travel.
+    let x = bounds.x()
+        + (anchor.max().x() - bounds.x() - popup_width).clamp(0.0, bounds.width() - popup_width);
     let y = if opens_below {
         anchor.max().y()
     } else {
-        anchor.y() - popup_height
+        (anchor.y() - popup_height).max(bounds.y())
     };
-    let popup = LogicalRect::new(x, y, popup_width, popup_height)?;
+    let popup = LogicalRect::from_min_max(
+        LogicalPoint::new(x, y)?,
+        LogicalPoint::new(
+            (x + popup_width).min(bounds.max().x()),
+            (y + popup_height).min(bounds.max().y()),
+        )?,
+    )?;
     let viewport_width = (popup.width()
         - horizontal_padding
         - if needs_scrollbar {
@@ -813,10 +821,10 @@ fn compile_tab_list_menu(
     )?;
     let maximum_scroll = (rows_height - viewport.height()).max(0.0);
     let scroll = active_menu.scroll_offset().clamp(0.0, maximum_scroll);
-    let mut cursor = viewport.y() - scroll;
     let mut rows = Vec::with_capacity(items.len());
     for (ordinal, item) in items.iter().copied().enumerate() {
-        let row = LogicalRect::new(viewport.x(), cursor, viewport.width(), metrics.row_height())?;
+        let y = viewport.y() + (metrics.row_offset(ordinal) - scroll);
+        let row = LogicalRect::new(viewport.x(), y, viewport.width(), metrics.row_height())?;
         let hit = intersect_rect(row, viewport)?.map(HitRegion::new);
         rows.push(TabListMenuRowRecord::new(
             TabSceneId {
@@ -830,7 +838,6 @@ fn compile_tab_list_menu(
             selected == Some(item),
             active_menu.focus() == item,
         ));
-        cursor += metrics.row_height() + metrics.row_spacing();
     }
     ready.push_tab_list_menu_record(TabListMenuRecord::new(
         active_menu.session(),
@@ -839,6 +846,7 @@ fn compile_tab_list_menu(
         viewport,
         scroll,
         maximum_scroll,
+        metrics,
         rows,
         layer,
     ));

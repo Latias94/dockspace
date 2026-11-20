@@ -680,10 +680,9 @@ impl FrozenPiecewiseAxis {
                             .zip(&tracks.tracks)
                             .any(|(extent, track)| *extent != track.extent);
                         let key = (root.source.root(), id);
-                        if moved || (!drivers.is_empty() && tracks.grid.is_none()) {
-                            let update = tracks
-                                .update(self.axis, &extents)
-                                .ok_or(SampleError::Invalid)?;
+                        if (moved || (!drivers.is_empty() && tracks.grid.is_none()))
+                            && let Some(update) = tracks.update(self.axis, &extents)?
+                        {
                             sample.updates.insert(key, update);
                         }
                         for &(child, track) in tracks.children.iter().rev() {
@@ -842,7 +841,7 @@ impl FrozenTracks {
         })
     }
 
-    fn update(&self, axis: Axis, extents: &[f64]) -> Option<TrackResize> {
+    fn update(&self, axis: Axis, extents: &[f64]) -> Result<Option<TrackResize>, SampleError> {
         let unchanged = extents
             .iter()
             .zip(&self.tracks)
@@ -860,10 +859,11 @@ impl FrozenTracks {
                 .iter()
                 .any(|track| track.visible && track.extent == 0.0)
             {
-                weights_with_zero_tracks(&self.weights, &self.tracks, extents, self.central)?
+                weights_with_zero_tracks(&self.weights, &self.tracks, extents, self.central)
             } else {
-                super::weights_for_extents(&self.weights, &original, extents, self.central)?
+                super::weights_for_extents(&self.weights, &original, extents, self.central)
             }
+            .ok_or(SampleError::Invalid)?
         };
         // A cap may round the projected split one ULP inside its limit.
         // If reaching that limit only rounds the stored shares, keep the
@@ -871,7 +871,12 @@ impl FrozenTracks {
         if !unchanged && self.rounded_contact(extents, &weights) {
             weights.clone_from(&self.weights);
         }
-        Some(if let Some((basis, grid)) = &self.grid {
+        Ok(Some(if let Some((basis, grid)) = &self.grid {
+            // An ancestor can change a grid's extent without editing its shares.
+            // Defaults from a temporary Auto shape must never replace stored shares.
+            if weights == self.weights {
+                return Ok(None);
+            }
             let shares = match axis {
                 Axis::Horizontal => {
                     DockspaceGridShares::from_normalized(grid.row_weights().to_vec(), weights)
@@ -880,11 +885,11 @@ impl FrozenTracks {
                     DockspaceGridShares::from_normalized(weights, grid.column_weights().to_vec())
                 }
             }
-            .ok()?;
+            .map_err(|_| SampleError::Invalid)?;
             TrackResize::grid_resolved(self.source.clone(), basis.clone(), shares)
         } else {
             TrackResize::split(self.source.clone(), weights)
-        })
+        }))
     }
 
     fn rounded_contact(&self, extents: &[f64], weights: &[SplitWeight]) -> bool {

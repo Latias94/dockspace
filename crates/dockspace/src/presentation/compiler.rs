@@ -73,7 +73,7 @@ pub(crate) use surface::{
 };
 
 #[cfg(test)]
-use crate::presentation::tab_strip::reveal_tab_range;
+use crate::presentation::tab_strip::reveal_scroll_offset;
 #[cfg(test)]
 use surface::{edge_preview, rect_contains, tab_strip_control_layout};
 

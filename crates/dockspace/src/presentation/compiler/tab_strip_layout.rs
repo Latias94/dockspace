@@ -7,7 +7,7 @@ use crate::geometry::{GeometryError, LogicalPoint, LogicalRect};
 use crate::graph::{Node, Workspace};
 use crate::ids::{NodeId, RootId, SurfaceId};
 use crate::presentation::config::DockPresentationConfig;
-use crate::presentation::tab_strip::{reveal_tab_range, tab_local_range};
+use crate::presentation::tab_strip::{reveal_scroll_offset, tab_local_range};
 
 pub(crate) struct TabLeafBounds {
     pub(crate) bounds: LogicalRect,
@@ -132,7 +132,7 @@ impl TabStripFlow {
         if reveal_selected
             && let Some((start, end)) = selected.and_then(|index| self.tab_range(index))
         {
-            reveal_tab_range(requested, maximum, viewport_width, start, end)
+            reveal_scroll_offset(requested, maximum, viewport_width, start, end)
         } else {
             requested
         }

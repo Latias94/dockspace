@@ -47,24 +47,6 @@ pub(super) fn aligned_tab_strip_scroll_offset(
     }
 }
 
-fn reveal_scroll_offset(
-    current: f64,
-    maximum: f64,
-    item_start: f64,
-    item_end: f64,
-    viewport_start: f64,
-    viewport_end: f64,
-) -> f64 {
-    let requested = if item_start < viewport_start {
-        current + item_start - viewport_start
-    } else if item_end > viewport_end {
-        current + item_end - viewport_end
-    } else {
-        current
-    };
-    requested.clamp(0.0, maximum)
-}
-
 fn scroll_offset_preserving_ranges(
     requested: f64,
     maximum: f64,
@@ -81,23 +63,6 @@ fn scroll_offset_preserving_ranges(
         }
     }
     requested.clamp(minimum, upper)
-}
-
-fn fully_visible_scroll_range(
-    start: f64,
-    end: f64,
-    viewport_extent: f64,
-    maximum: f64,
-) -> (f64, f64) {
-    if end - start <= viewport_extent {
-        (
-            (end - viewport_extent).clamp(0.0, maximum),
-            start.clamp(0.0, maximum),
-        )
-    } else {
-        let aligned = start.clamp(0.0, maximum);
-        (aligned, aligned)
-    }
 }
 
 fn operable_tab_scroll_range(
@@ -1011,15 +976,7 @@ impl DockEngine {
         };
         match &adjustment.0 {
             TabScrollAdjustmentKind::RevealTab(item) => {
-                let row = row(*item)?;
-                Ok(reveal_scroll_offset(
-                    record.scroll_offset(),
-                    record.maximum_scroll_offset(),
-                    row.bounds().y(),
-                    row.bounds().max().y(),
-                    record.viewport().y(),
-                    record.viewport().max().y(),
-                ))
+                Ok(record.reveal_row_scroll_offset(row(*item)?))
             }
             TabScrollAdjustmentKind::ScrollByPreserving {
                 delta,
@@ -1031,15 +988,7 @@ impl DockEngine {
                     .map(row)
                     .collect::<Result<Vec<_>, _>>()?
                     .into_iter()
-                    .map(|row| {
-                        let bounds = row.bounds();
-                        fully_visible_scroll_range(
-                            bounds.y() - record.viewport().y() + record.scroll_offset(),
-                            bounds.max().y() - record.viewport().y() + record.scroll_offset(),
-                            record.viewport().height(),
-                            record.maximum_scroll_offset(),
-                        )
-                    });
+                    .map(|row| record.row_reveal_scroll_range(row));
                 Ok(scroll_offset_preserving_ranges(
                     (record.scroll_offset() + *delta).clamp(0.0, record.maximum_scroll_offset()),
                     record.maximum_scroll_offset(),
@@ -1086,13 +1035,6 @@ impl DockEngine {
                 session,
                 item: target,
             })?;
-        Ok(reveal_scroll_offset(
-            record.scroll_offset(),
-            record.maximum_scroll_offset(),
-            row.bounds().y(),
-            row.bounds().max().y(),
-            record.viewport().y(),
-            record.viewport().max().y(),
-        ))
+        Ok(record.reveal_row_scroll_offset(*row))
     }
 }

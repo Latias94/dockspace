@@ -598,6 +598,15 @@ impl TabListMenuMetrics {
         self.scrollbar_extent
     }
 
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "menu compilation bounds row ordinals to u32"
+    )]
+    pub(crate) fn row_offset(self, ordinal: usize) -> f64 {
+        let ordinal = ordinal as f64;
+        ordinal * self.row_height + ordinal * self.row_spacing
+    }
+
     pub(crate) const fn can_allocate(self) -> bool {
         self.row_height > 0.0 && self.maximum_height > 0.0
     }

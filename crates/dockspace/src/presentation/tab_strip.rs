@@ -27,19 +27,29 @@ impl TabNavigation {
     }
 }
 
-pub(crate) fn reveal_tab_range(
+pub(crate) fn reveal_scroll_offset(
     requested: f64,
     maximum: f64,
     viewport_extent: f64,
     start: f64,
     end: f64,
 ) -> f64 {
+    let (minimum, maximum) = reveal_scroll_range(maximum, viewport_extent, start, end);
+    requested.clamp(minimum, maximum)
+}
+
+pub(crate) fn reveal_scroll_range(
+    maximum: f64,
+    viewport_extent: f64,
+    start: f64,
+    end: f64,
+) -> (f64, f64) {
     let start_offset = start.clamp(0.0, maximum);
     if end - start > viewport_extent {
-        return start_offset;
+        return (start_offset, start_offset);
     }
     let end_offset = (end - viewport_extent).clamp(0.0, start_offset);
-    requested.clamp(end_offset, start_offset)
+    (end_offset, start_offset)
 }
 
 pub(crate) fn tab_local_range(

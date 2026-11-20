@@ -16,7 +16,7 @@ use crate::presentation::manifest::{
 };
 use crate::presentation::scene::{PresentationPlan, TabBarSceneId};
 use crate::presentation::tab_strip::{
-    TabStripStateKey, TabStripStateStore, reveal_tab_range, tab_local_range,
+    TabStripStateKey, TabStripStateStore, reveal_scroll_offset, tab_local_range,
 };
 
 pub(super) struct RootLayoutMeasurement<'workspace> {
@@ -424,7 +424,7 @@ pub(crate) fn selection_geometry_unchanged(
                 )
             })
             .map_or(requested, |(start, end)| {
-                reveal_tab_range(
+                reveal_scroll_offset(
                     requested,
                     record.maximum_scroll_offset(),
                     record.layout_viewport().width(),

@@ -1305,11 +1305,11 @@ fn contained_presentation_menu_anchor_owns_the_title_partition_exclusively() {
 
 #[test]
 fn selected_tab_reveal_preserves_visible_offsets_and_moves_only_as_needed() {
-    assert_eq!(reveal_tab_range(40.0, 200.0, 100.0, 50.0, 90.0), 40.0);
-    assert_eq!(reveal_tab_range(80.0, 200.0, 100.0, 20.0, 60.0), 20.0);
-    assert_eq!(reveal_tab_range(20.0, 200.0, 100.0, 120.0, 160.0), 60.0);
+    assert_eq!(reveal_scroll_offset(40.0, 200.0, 100.0, 50.0, 90.0), 40.0);
+    assert_eq!(reveal_scroll_offset(80.0, 200.0, 100.0, 20.0, 60.0), 20.0);
+    assert_eq!(reveal_scroll_offset(20.0, 200.0, 100.0, 120.0, 160.0), 60.0);
     assert_eq!(
-        reveal_tab_range(40.0, 200.0, 100.0, 50.0, 180.0),
+        reveal_scroll_offset(40.0, 200.0, 100.0, 50.0, 180.0),
         50.0,
         "an oversized selected tab aligns its leading edge"
     );

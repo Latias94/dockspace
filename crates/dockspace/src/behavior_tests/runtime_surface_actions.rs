@@ -30,6 +30,7 @@ mod composable_resize;
 mod contained_resize_sequence;
 mod splitter_equalization;
 mod splitter_preferences;
+mod tab_list_menu;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const TARGET_SURFACE: SurfaceId = SurfaceId::new(2);

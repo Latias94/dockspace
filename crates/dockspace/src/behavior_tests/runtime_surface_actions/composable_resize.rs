@@ -269,6 +269,69 @@ fn auto_grid_reversal_materializes_the_current_shape_before_returning_to_the_old
 }
 
 #[test]
+fn ancestor_splitter_round_trip_preserves_auto_grid_shares_across_reflow() {
+    use SurfaceSplitterAdjustment::{Decrement, Increment};
+
+    let grid_items = [SECOND, THIRD, FOURTH, FIFTH];
+    let grid = DockspaceNode::grid_with_shares(
+        DockspaceGridShape::Auto,
+        grid_items.map(DockspaceNode::pane),
+        DockspaceGridShares::new([1.0, 3.0], [3.0, 1.0]).unwrap(),
+    )
+    .unwrap();
+    let content = DockspaceNode::equal_split(
+        DockspaceAxis::Horizontal,
+        [DockspaceNode::pane(FIRST), grid],
+    )
+    .unwrap();
+    let offered = LogicalRect::new(0.0, 0.0, 401.0, 428.0).unwrap();
+    let resize = |session: &mut DockspaceSession, steps: &[SurfaceSplitterAdjustment]| {
+        let mut frame = session.begin_host_frame().unwrap();
+        let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+        let outer = plan
+            .splitters()
+            .filter(|splitter| splitter.axis() == DockspaceAxis::Horizontal)
+            .min_by(|a, b| a.draw_bounds().x().total_cmp(&b.draw_bounds().x()))
+            .unwrap();
+        let action = plan
+            .prepare_splitter_adjustment_sequence(outer.visual_id(), steps.iter().copied())
+            .unwrap();
+        frame.submit_surface_action(action).unwrap();
+        measure(&mut frame, offered, &[]);
+        frame.commit().unwrap();
+    };
+    let mut stepwise = session_with_config(
+        content.clone(),
+        offered,
+        DockPresentationConfig::default(),
+        &[],
+    );
+    resize(&mut stepwise, &[Increment]);
+    assert!(
+        bounds(&mut stepwise)
+            .into_iter()
+            .all(|(item, rect)| { item == FIRST || rect.width() == 184.0 })
+    );
+    resize(&mut stepwise, &[Decrement]);
+    let expected = bounds(&mut stepwise);
+    for (item, height) in grid_items.into_iter().zip([99.75, 99.75, 299.25, 299.25]) {
+        assert_eq!(
+            expected
+                .iter()
+                .find(|(id, _)| *id == item)
+                .unwrap()
+                .1
+                .height(),
+            height
+        );
+    }
+
+    let mut batched = session_with_config(content, offered, DockPresentationConfig::default(), &[]);
+    resize(&mut batched, &[Increment, Decrement]);
+    assert_eq!(bounds(&mut batched), expected);
+}
+
+#[test]
 fn presented_grid_junction_commits_both_shared_axes_and_cancel_preserves_the_graph() {
     let offered = LogicalRect::new(0.0, 0.0, 404.0, 232.0).unwrap();
     for cancel in [false, true] {
