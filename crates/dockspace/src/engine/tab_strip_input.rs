@@ -9,6 +9,11 @@ pub(super) enum TabListMenuActivation {
     Journal(FocusCausalStamp),
 }
 
+enum TabListScroll {
+    Offset(f64),
+    Reveal(TabKey),
+}
+
 pub(super) fn aligned_tab_strip_scroll_offset(
     plan: &PresentationPlan,
     key: TabStripStateKey,
@@ -763,20 +768,25 @@ impl DockEngine {
         expected_record: &TabListMenuRecord,
         adjustment: &TabScrollAdjustment,
     ) -> Result<InteractionOutcome, EngineError> {
-        let offset = match self.resolve_tab_list_menu_scroll(
+        let scroll = match self.resolve_tab_list_menu_scroll(
             plan,
             session,
             revision,
             expected_record,
             adjustment,
         ) {
-            Ok(offset) => offset,
+            Ok(scroll) => scroll,
             Err(rejection) => return Ok(InteractionOutcome::Rejected(rejection)),
         };
         let mut states = self.presentation_authority.tab_strip_states.clone();
-        let delta = states
-            .set_active_menu_scroll_offset(session, offset)
-            .map_err(|source| Self::tab_strip_state_invariant(cause, source))?;
+        let (offset, delta) = match scroll {
+            TabListScroll::Offset(offset) => (
+                Some(offset),
+                states.set_active_menu_scroll_offset(session, offset),
+            ),
+            TabListScroll::Reveal(tab) => (None, states.reveal_active_menu_row(session, tab)),
+        };
+        let delta = delta.map_err(|source| Self::tab_strip_state_invariant(cause, source))?;
         let changed = delta.state_changed();
         if changed {
             self.presentation_authority.tab_strip_states = states;
@@ -798,22 +808,17 @@ impl DockEngine {
         expected_record: &TabListMenuRecord,
         target: TabKey,
     ) -> Result<InteractionOutcome, EngineError> {
-        let offset = match self.resolve_tab_list_menu_navigation(
-            plan,
-            session,
-            revision,
-            expected_record,
-            target,
-        ) {
-            Ok(offset) => offset,
-            Err(rejection) => return Ok(InteractionOutcome::Rejected(rejection)),
-        };
+        if let Err(rejection) =
+            self.validate_tab_list_menu_navigation(plan, session, revision, expected_record, target)
+        {
+            return Ok(InteractionOutcome::Rejected(rejection));
+        }
         let mut states = self.presentation_authority.tab_strip_states.clone();
         let focus_delta = states
             .set_active_menu_focus(session, target)
             .map_err(|source| Self::tab_strip_state_invariant(cause, source))?;
         let scroll_delta = states
-            .set_active_menu_scroll_offset(session, offset)
+            .reveal_active_menu_row(session, target)
             .map_err(|source| Self::tab_strip_state_invariant(cause, source))?;
         let delta = focus_delta.merge(scroll_delta);
         let changed = delta.state_changed();
@@ -824,7 +829,6 @@ impl DockEngine {
         Ok(InteractionOutcome::TabListMenuFocusMoved {
             session,
             tab: target,
-            offset,
             changed,
         })
     }
@@ -948,7 +952,7 @@ impl DockEngine {
         revision: PopupRoutingRevision,
         expected_record: &TabListMenuRecord,
         adjustment: &TabScrollAdjustment,
-    ) -> Result<f64, InteractionRejection> {
+    ) -> Result<TabListScroll, InteractionRejection> {
         self.validate_tab_list_menu_popup(plan, session, revision)?;
         let record = plan
             .tab_list_menu_records()
@@ -976,7 +980,8 @@ impl DockEngine {
         };
         match &adjustment.0 {
             TabScrollAdjustmentKind::RevealTab(item) => {
-                Ok(record.reveal_row_scroll_offset(row(*item)?))
+                row(*item)?;
+                Ok(TabListScroll::Reveal(*item))
             }
             TabScrollAdjustmentKind::ScrollByPreserving {
                 delta,
@@ -989,23 +994,23 @@ impl DockEngine {
                     .collect::<Result<Vec<_>, _>>()?
                     .into_iter()
                     .map(|row| record.row_reveal_scroll_range(row));
-                Ok(scroll_offset_preserving_ranges(
+                Ok(TabListScroll::Offset(scroll_offset_preserving_ranges(
                     (record.scroll_offset() + *delta).clamp(0.0, record.maximum_scroll_offset()),
                     record.maximum_scroll_offset(),
                     ranges,
-                ))
+                )))
             }
         }
     }
 
-    fn resolve_tab_list_menu_navigation(
+    fn validate_tab_list_menu_navigation(
         &self,
         plan: &PresentationPlan,
         session: crate::presentation::tab_strip::TabListMenuSessionId,
         revision: PopupRoutingRevision,
         expected_record: &TabListMenuRecord,
         target: TabKey,
-    ) -> Result<f64, InteractionRejection> {
+    ) -> Result<(), InteractionRejection> {
         self.validate_tab_list_menu_popup(plan, session, revision)?;
         let record = plan
             .tab_list_menu_records()
@@ -1027,7 +1032,7 @@ impl DockEngine {
                 item: target,
             });
         }
-        let row = record
+        record
             .rows()
             .iter()
             .find(|row| row.tab().tab == target)
@@ -1035,6 +1040,6 @@ impl DockEngine {
                 session,
                 item: target,
             })?;
-        Ok(record.reveal_row_scroll_offset(*row))
+        Ok(())
     }
 }

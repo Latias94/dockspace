@@ -188,7 +188,11 @@ window still owns keyboard focus and that the expected workspace version is
 current before resolving the queued input.
 
 Retain a popup once with `SurfacePaintPlan::retain_tab_list_menu`. Resolve row
-navigation, activation, and dismissal when the UI delivers input. Lay out row
+navigation, activation, and dismissal using the row's `input_id()` when the UI
+delivers input. Pass the returned row ID into the next navigation step. Use
+`visual_id()` to identify retained controls and `can_continue_from()` before
+resuming queued input on a new presentation. Keyboard navigation reveals its
+target in the current viewport until manual scrolling takes over. Lay out row
 content in `bounds()` and clip it to `interaction_bounds()`, skipping rows
 without a visible intersection. Answer `TabIntrinsic` requests with
 `SurfaceMeasurementAnswer::TabIntrinsicWithMenuWidth` when the menu displays

@@ -981,11 +981,6 @@ impl TabListMenuRecord {
         )
     }
 
-    pub(crate) fn reveal_row_scroll_offset(&self, row: TabListMenuRowRecord) -> f64 {
-        let (start, end) = self.row_reveal_scroll_range(row);
-        self.scroll_offset.clamp(start, end)
-    }
-
     #[must_use]
     pub const fn layer(&self) -> SceneLayerKey {
         self.layer

@@ -820,23 +820,22 @@ fn compile_tab_list_menu(
         viewport_height,
     )?;
     let maximum_scroll = (rows_height - viewport.height()).max(0.0);
-    let scroll = active_menu.scroll_offset().map_or_else(
-        || {
-            items
-                .iter()
-                .position(|&item| item == active_menu.focus())
-                .map_or(0.0, |ordinal| {
-                    let start = metrics.row_offset(ordinal);
-                    crate::presentation::tab_strip::reveal_scroll_offset(
-                        0.0,
-                        maximum_scroll,
-                        viewport.height(),
-                        start,
-                        start + metrics.row_height(),
-                    )
-                })
+    let offset = active_menu.scroll_offset().unwrap_or_default();
+    let reveal = active_menu
+        .reveal()
+        .and_then(|tab| items.iter().position(|&item| item == tab));
+    let scroll = reveal.map_or_else(
+        || offset.clamp(0.0, maximum_scroll),
+        |ordinal| {
+            let start = metrics.row_offset(ordinal);
+            crate::presentation::tab_strip::reveal_scroll_offset(
+                offset,
+                maximum_scroll,
+                viewport.height(),
+                start,
+                start + metrics.row_height(),
+            )
         },
-        |offset| offset.clamp(0.0, maximum_scroll),
     );
     let mut rows = Vec::with_capacity(items.len());
     for (ordinal, item) in items.iter().copied().enumerate() {

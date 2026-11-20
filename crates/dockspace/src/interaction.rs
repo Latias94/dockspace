@@ -1447,9 +1447,9 @@ pub enum InteractionOutcome {
     TabListMenuScrolled {
         /// Exact popup session whose offset was adjusted.
         session: TabListMenuSessionId,
-        /// Resulting core-clamped logical offset.
-        offset: f64,
-        /// Whether the core-owned offset changed.
+        /// Resulting offset for direct scrolling. Reveals resolve at layout time.
+        offset: Option<f64>,
+        /// Whether the core-owned scroll state changed.
         changed: bool,
     },
     /// One exact menu navigation atomically updated focus and reveal scroll.
@@ -1458,9 +1458,7 @@ pub enum InteractionOutcome {
         session: TabListMenuSessionId,
         /// Resulting core-owned focus item.
         tab: TabKey,
-        /// Resulting core-clamped logical scroll offset.
-        offset: f64,
-        /// Whether focus or scroll state changed.
+        /// Whether focus or reveal state changed.
         changed: bool,
     },
     /// A new drag generation was armed.

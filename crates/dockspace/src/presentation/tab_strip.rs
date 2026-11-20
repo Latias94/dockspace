@@ -325,6 +325,7 @@ pub(crate) struct ActiveTabListMenu {
     session: TabListMenuSessionId,
     focus: TabKey,
     scroll_offset: Option<f64>,
+    reveal: Option<TabKey>,
     tabs: Vec<TabKey>,
 }
 
@@ -343,6 +344,10 @@ impl ActiveTabListMenu {
 
     pub(crate) const fn scroll_offset(&self) -> Option<f64> {
         self.scroll_offset
+    }
+
+    pub(crate) const fn reveal(&self) -> Option<TabKey> {
+        self.reveal
     }
 
     pub(crate) fn tabs(&self) -> &[TabKey] {
@@ -524,6 +529,7 @@ impl TabStripStateStore {
             session,
             focus,
             scroll_offset: None,
+            reveal: Some(focus),
             tabs: tabs.clone(),
         };
 
@@ -630,7 +636,6 @@ impl TabStripStateStore {
         if active.focus == focus {
             return Ok(TabStripStateDelta::unchanged());
         }
-        let active = self.active_menu_mut(session)?;
         active.focus = focus;
         Ok(TabStripStateDelta::new(
             true,
@@ -649,6 +654,24 @@ impl TabStripStateStore {
             return Ok(TabStripStateDelta::unchanged());
         }
         active.scroll_offset = Some(offset);
+        active.reveal = None;
+        Ok(TabStripStateDelta::new(
+            true,
+            TabStripInfluenceDomain::Popup(BTreeSet::new()),
+        ))
+    }
+
+    /// Keeps a row visible in the actual viewport until the user scrolls.
+    pub(crate) fn reveal_active_menu_row(
+        &mut self,
+        session: TabListMenuSessionId,
+        tab: TabKey,
+    ) -> Result<TabStripStateDelta, TabStripStateError> {
+        let active = self.active_menu_mut(session)?;
+        if active.reveal == Some(tab) {
+            return Ok(TabStripStateDelta::unchanged());
+        }
+        active.reveal = Some(tab);
         Ok(TabStripStateDelta::new(
             true,
             TabStripInfluenceDomain::Popup(BTreeSet::new()),
@@ -754,7 +777,13 @@ impl TabStripStateStore {
             return false;
         }
 
-        active.focus = restored_menu_focus(&active.tabs, active.focus, tabs, fallback_focus);
+        let previous_focus = active.focus;
+        active.focus = restored_menu_focus(&active.tabs, previous_focus, tabs, fallback_focus);
+        if active.reveal == Some(previous_focus) {
+            active.reveal = Some(active.focus);
+        } else if active.reveal.is_some_and(|tab| !tabs.contains(&tab)) {
+            active.reveal = None;
+        }
         active.tabs.clone_from(tabs);
         true
     }

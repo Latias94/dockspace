@@ -152,11 +152,15 @@ impl SurfacePaintPlan<'_> {
         self,
         row: TabListMenuRowPaintRecord,
     ) -> Option<PreparedSurfaceAction> {
+        if !std::ptr::eq(self.plan, row.plan) {
+            return None;
+        }
+        let session = row.session();
         let menu = self
             .plan
             .tab_list_menu_records()
             .iter()
-            .find(|menu| menu.session() == row.session)?;
+            .find(|menu| menu.session() == session)?;
         let record = *menu
             .rows()
             .get(row.record.ordinal())
@@ -167,7 +171,7 @@ impl SurfacePaintPlan<'_> {
             self.scene,
             self.frozen_action_witness()?,
             crate::engine::LocalTabChromeAction::ActivateMenuRow(FrozenTabListMenuRowClick {
-                session: row.session,
+                session,
                 record,
                 revision: self.plan.popup().revision(),
             }),
@@ -279,9 +283,12 @@ impl SurfacePaintPlan<'_> {
         self,
         row: TabListMenuRowPaintRecord,
     ) -> Option<PreparedSurfaceAction> {
+        if !std::ptr::eq(self.plan, row.plan) {
+            return None;
+        }
         let menu = self
             .tab_list_menus()
-            .find(|menu| menu.record.session() == row.session)?;
+            .find(|menu| menu.record.session() == row.session())?;
         self.prepare_tab_list_menu_scroll(
             menu,
             crate::engine::TabScrollAdjustment::reveal_tab(row.key()),

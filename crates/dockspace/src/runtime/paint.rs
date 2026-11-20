@@ -69,7 +69,7 @@ pub use guides::{
 pub use preview_tabs::{DockspacePreviewTabBarPaintRecord, DockspacePreviewTabPaintRecord};
 pub use splitter_range::SurfaceSplitterRange;
 pub use tab_chrome::{
-    RetainedTabListMenu, TabListMenuBackdropPaintRecord, TabListMenuPaintRecord,
+    RetainedTabListMenu, TabListMenuBackdropPaintRecord, TabListMenuPaintRecord, TabListMenuRowId,
     TabListMenuRowPaintRecord, TabStripControlKind, TabStripControlPaintRecord,
 };
 pub use tab_input::RetainedTabStrip;
@@ -1930,6 +1930,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
                     record,
                     plan: self.plan,
                     surface: self.surface,
+                    scope: tab_chrome::MenuInputScope::from_plan(self, backdrop),
                     backdrop,
                 };
                 let paint = paint_disposition(self.drag_decoration, menu.visual_id());
@@ -2486,6 +2487,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
                     record,
                     plan: self.plan,
                     surface,
+                    scope: tab_chrome::MenuInputScope::from_plan(&self, backdrop),
                     backdrop,
                 })
             })
@@ -2700,7 +2702,10 @@ impl<'frame> SurfacePaintPlan<'frame> {
         &self,
         row: TabListMenuRowPaintRecord,
     ) -> Option<DockspaceReceiverDescriptor> {
-        let session = row.session;
+        if !std::ptr::eq(self.plan, row.plan) {
+            return None;
+        }
+        let session = row.session();
         let tab = row.record.tab();
         self.receiver(PresentationHitRegionKind::TabListMenuRow { menu: session, tab })
     }

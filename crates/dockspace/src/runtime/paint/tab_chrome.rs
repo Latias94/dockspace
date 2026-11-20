@@ -4,17 +4,77 @@ use std::sync::Arc;
 
 use crate::engine::LocalTabChromeAction;
 use crate::geometry::LogicalRect;
-use crate::ids::{ItemId, RootId, SurfaceId, TabKey};
+use crate::ids::{EngineAuthorityDomainId, ItemId, RootId, SurfaceId, TabKey, WorkspaceEpoch};
 use crate::interaction::FrozenTabListMenuRowClick;
 use crate::model::WorkspaceVersion;
 use crate::presentation::scene::{
     SurfacePlanScene, TabListMenuBackdropRecord, TabListMenuRecord, TabListMenuRowRecord,
-    TabStripControlRecord,
+    TabSceneId, TabStripControlRecord,
 };
-use crate::presentation::tab_strip::{TabListMenuSessionId, TabStripControlId};
+use crate::presentation::tab_strip::{
+    PopupRoutingRevision, TabListMenuSessionId, TabStripControlId,
+};
 use crate::runtime::{DeferredSurfaceAction, PreparedSurfaceAction, SurfaceTabListInput};
 
 use super::{DockspacePaintLayer, DockspaceVisualId, SurfacePaintPlan, VisualIdentity};
+
+/// Input identity of one row in a core-issued tab-list menu instance.
+///
+/// Stable across geometry changes to the same menu. It expires after a session
+/// or layout replacement, reopening the menu, or changing its ordered roster.
+/// Use [`Self::visual_id`] for rendering identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TabListMenuRowId {
+    scope: MenuInputScope,
+    key: TabKey,
+    ordinal: usize,
+}
+
+impl TabListMenuRowId {
+    /// Returns the row's visual identity for the host's retained controls.
+    #[must_use]
+    pub const fn visual_id(self) -> DockspaceVisualId {
+        let bar = self.scope.session.key().bar();
+        DockspaceVisualId(VisualIdentity::TabListMenuRow {
+            session: self.scope.session,
+            tab: TabSceneId {
+                root: bar.root,
+                tabs: bar.tabs,
+                tab: self.key,
+            },
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct MenuInputScope {
+    domain: EngineAuthorityDomainId,
+    epoch: WorkspaceEpoch,
+    session: TabListMenuSessionId,
+    revision: PopupRoutingRevision,
+}
+
+impl MenuInputScope {
+    pub(super) fn from_plan(
+        plan: &SurfacePaintPlan<'_>,
+        backdrop: TabListMenuBackdropRecord,
+    ) -> Self {
+        Self {
+            domain: plan.authority_domain,
+            epoch: plan.version.epoch(),
+            session: backdrop.session(),
+            revision: backdrop.revision(),
+        }
+    }
+
+    const fn row(self, record: TabListMenuRowRecord) -> TabListMenuRowId {
+        TabListMenuRowId {
+            scope: self,
+            key: record.tab().tab,
+            ordinal: record.ordinal(),
+        }
+    }
+}
 
 /// Shared keyboard authority for one tab-list menu from an exact output.
 ///
@@ -24,6 +84,7 @@ use super::{DockspacePaintLayer, DockspaceVisualId, SurfacePaintPlan, VisualIden
 pub struct RetainedTabListMenu {
     witness: Arc<SurfacePlanScene>,
     version: WorkspaceVersion,
+    scope: MenuInputScope,
     record: TabListMenuRecord,
     backdrop: TabListMenuBackdropRecord,
 }
@@ -35,46 +96,36 @@ impl RetainedTabListMenu {
     /// The host still validates the expected workspace version and focus claim.
     #[must_use]
     pub fn can_continue_from(&self, previous: &Self) -> bool {
-        self.record.session() == previous.record.session()
+        self.scope == previous.scope
             && super::tab_input::same_keyboard_authority(&self.witness, &previous.witness)
-            && self.record.rows().iter().map(|row| row.tab()).eq(previous
-                .record
-                .rows()
-                .iter()
-                .map(|row| row.tab()))
     }
 
     /// Resolves one input and returns its resulting row identity and action.
     ///
-    /// The host supplies the current cursor or the destination of the previous
-    /// key in a batch. The row may be scrolled out of view. Row identities from
-    /// a different menu session are rejected.
+    /// Start with [`TabListMenuRowPaintRecord::input_id`] or the destination of
+    /// the previous key in a batch. The row may be scrolled out of view. Use
+    /// [`Self::can_continue_from`] when resuming pending keys on a later output.
     #[must_use]
     pub fn resolve(
         &self,
-        row: DockspaceVisualId,
+        row: TabListMenuRowId,
         input: SurfaceTabListInput,
-    ) -> Option<(DockspaceVisualId, DeferredSurfaceAction)> {
-        let session = self.record.session();
-        let VisualIdentity::TabListMenuRow {
-            session: owner,
-            tab,
-        } = row.0
-        else {
-            return None;
-        };
-        if owner != session {
+    ) -> Option<(TabListMenuRowId, DeferredSurfaceAction)> {
+        if row.scope != self.scope {
             return None;
         }
         let rows = self.record.rows();
-        let start = rows.iter().find(|row| row.tab() == tab)?;
+        let start = rows
+            .get(row.ordinal)
+            .filter(|start| start.tab().tab == row.key)?;
         let target = match input {
             SurfaceTabListInput::Navigate(navigation) => {
                 &rows[navigation.destination(start.ordinal(), rows.len() - 1)]
             }
             _ => start,
         };
-        let revision = self.backdrop.revision();
+        let session = self.scope.session;
+        let revision = self.scope.revision;
         let action = match input {
             SurfaceTabListInput::Focus | SurfaceTabListInput::Navigate(_) => {
                 LocalTabChromeAction::NavigateMenu {
@@ -106,13 +157,7 @@ impl RetainedTabListMenu {
             Arc::clone(&self.witness),
             action,
         );
-        Some((
-            DockspaceVisualId(VisualIdentity::TabListMenuRow {
-                session,
-                tab: target.tab(),
-            }),
-            action.into_deferred(),
-        ))
+        Some((self.scope.row(*target), action.into_deferred()))
     }
 }
 
@@ -129,6 +174,7 @@ impl SurfacePaintPlan<'_> {
         Some(RetainedTabListMenu {
             witness: self.frozen_action_witness()?,
             version: self.version,
+            scope: menu.scope,
             record: menu.record.clone(),
             backdrop: menu.backdrop,
         })
@@ -212,17 +258,24 @@ impl TabStripControlPaintRecord {
 #[derive(Debug, Clone, Copy)]
 pub struct TabListMenuRowPaintRecord<'plan> {
     pub(super) plan: &'plan crate::presentation::scene::PresentationPlan,
-    pub(super) session: TabListMenuSessionId,
+    scope: MenuInputScope,
     pub(super) record: TabListMenuRowRecord,
 }
 
 impl<'plan> TabListMenuRowPaintRecord<'plan> {
+    /// Returns the row's identity for use with [`RetainedTabListMenu::resolve`].
+    #[must_use]
+    pub const fn input_id(self) -> TabListMenuRowId {
+        self.scope.row(self.record)
+    }
+
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
-        DockspaceVisualId(VisualIdentity::TabListMenuRow {
-            session: self.session,
-            tab: self.record.tab(),
-        })
+        self.input_id().visual_id()
+    }
+
+    pub(super) const fn session(self) -> TabListMenuSessionId {
+        self.scope.session
     }
 
     #[must_use]
@@ -283,6 +336,7 @@ pub struct TabListMenuPaintRecord<'plan> {
     pub(super) record: &'plan TabListMenuRecord,
     pub(super) plan: &'plan crate::presentation::scene::PresentationPlan,
     pub(super) surface: SurfaceId,
+    pub(super) scope: MenuInputScope,
     pub(super) backdrop: TabListMenuBackdropRecord,
 }
 
@@ -318,13 +372,12 @@ impl<'plan> TabListMenuPaintRecord<'plan> {
     }
 
     pub fn rows(self) -> impl ExactSizeIterator<Item = TabListMenuRowPaintRecord<'plan>> + 'plan {
-        let session = self.record.session();
         self.record
             .rows()
             .iter()
             .copied()
             .map(move |record| TabListMenuRowPaintRecord {
-                session,
+                scope: self.scope,
                 record,
                 plan: self.plan,
             })

@@ -969,7 +969,7 @@ fn prepared_menu_scroll_revalidates_popup_authority_and_dismisses_exactly() {
         InputOutcome::InteractionProcessed {
             outcome:
                 InteractionOutcome::TabListMenuScrolled {
-                    offset,
+                    offset: Some(offset),
                     changed: true,
                     ..
                 },
@@ -1032,7 +1032,7 @@ fn prepared_menu_scroll_revalidates_popup_authority_and_dismisses_exactly() {
         boundary.reduced_inputs()[0].outcome(),
         InputOutcome::InteractionProcessed {
             outcome: InteractionOutcome::TabListMenuScrolled {
-                offset,
+                offset: Some(offset),
                 changed: false,
                 ..
             },
@@ -1053,7 +1053,7 @@ fn prepared_menu_scroll_revalidates_popup_authority_and_dismisses_exactly() {
         revealed.reduced_inputs()[0].outcome(),
         InputOutcome::InteractionProcessed {
             outcome: InteractionOutcome::TabListMenuScrolled {
-                offset: 0.0,
+                offset: None,
                 changed: true,
                 ..
             },
@@ -1061,6 +1061,16 @@ fn prepared_menu_scroll_revalidates_popup_authority_and_dismisses_exactly() {
         }
     ));
     publish_tab_strip_reducer_projection(&mut fixture, host, true);
+    assert_eq!(
+        fixture
+            .engine
+            .interaction_projection(fixture.surface)
+            .unwrap()
+            .plan()
+            .tab_list_menu_records()[0]
+            .scroll_offset(),
+        0.0,
+    );
 
     let dismissed = submit_prepared_interaction(&mut fixture.engine, host, |view| {
         view.prepare_tab_list_menu_dismiss(fixture.surface, session)
@@ -1129,7 +1139,6 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
         InputOutcome::InteractionProcessed {
             outcome: InteractionOutcome::TabListMenuFocusMoved {
                 tab,
-                offset: 0.0,
                 changed: true,
                 ..
             },
@@ -1168,20 +1177,17 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
         )
         .map(|prepared| EngineInput::NavigateTabListMenu { prepared })
     });
-    let revealed_offset = match revealed.reduced_inputs()[0].outcome() {
+    assert!(matches!(revealed.reduced_inputs()[0].outcome(),
         InputOutcome::InteractionProcessed {
             outcome:
                 InteractionOutcome::TabListMenuFocusMoved {
                     tab,
-                    offset,
                     changed: true,
                     ..
                 },
             ..
-        } if *tab == items[3].into() => *offset,
-        outcome => panic!("focus and reveal must commit atomically: {outcome:?}"),
-    };
-    assert!(revealed_offset > 0.0);
+        } if *tab == items[3].into()
+    ));
     assert_eq!(
         fixture
             .engine
@@ -1199,7 +1205,7 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
         .active_menu()
         .expect("navigation keeps the menu open");
     assert_eq!(active.focus(), items[3].into());
-    assert_eq!(active.scroll_offset(), Some(revealed_offset));
+    assert_eq!(active.reveal(), Some(items[3].into()));
     assert!(fixture.engine.interaction_projection(surface).is_none());
 
     publish_tab_strip_reducer_projection(&mut fixture, host, true);
@@ -1213,6 +1219,8 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
         .iter()
         .find(|record| record.session() == session)
         .expect("republished plan carries the same menu session");
+    let revealed_offset = menu.scroll_offset();
+    assert!(revealed_offset > 0.0);
     let focused = menu
         .rows()
         .iter()
@@ -1230,12 +1238,11 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
         InputOutcome::InteractionProcessed {
             outcome: InteractionOutcome::TabListMenuFocusMoved {
                 tab,
-                offset,
                 changed: false,
                 ..
             },
             ..
-        } if *tab == items[3].into() && *offset == revealed_offset
+        } if *tab == items[3].into()
     ));
 }
 
