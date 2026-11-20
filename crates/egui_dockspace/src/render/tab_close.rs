@@ -52,7 +52,7 @@ pub(super) fn paint(
     let Some(rect) = tab.close_bounds().and_then(egui_rect) else {
         return;
     };
-    let id = id(context, tab.key());
+    let id = id(context, tab);
     let receiver = context.plan.receiver_for_tab_close(tab);
     let enabled = effective_enabled(context.ui, receiver.is_some());
     let close_label = if tab.key().is_layout() {
@@ -133,8 +133,8 @@ pub(super) fn paint(
     }
 }
 
-pub(super) fn id(context: &RenderContext<'_, '_, '_>, tab: dockspace::model::TabKey) -> egui::Id {
+pub(super) fn id(context: &RenderContext<'_, '_, '_>, tab: TabPaintRecord<'_>) -> egui::Id {
     context
         .ui
-        .make_persistent_id((context.instance_id, "tab-close", tab))
+        .make_persistent_id((context.instance_id, "tab-close", tab.input_id()))
 }

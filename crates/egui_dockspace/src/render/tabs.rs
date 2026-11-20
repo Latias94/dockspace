@@ -1,7 +1,7 @@
 //! Pane and tab rendering over opaque product paint records.
 
 use dockspace::runtime::{
-    DockspaceRuntimeError, DockspaceVisualId, PanePaintRecord, SurfacePaintDisposition,
+    DockspaceRuntimeError, PanePaintRecord, SurfacePaintDisposition, TabChromeInputId,
     TabGroupDragRegionKind, TabPaintRecord, TabsPaintRecord,
 };
 use egui::accesskit::{Action, Role};
@@ -322,7 +322,11 @@ fn publish_native_tab_strip_diagnostics(
             continue;
         };
         let title = resource.title.as_str();
-        let id = tab_id_for_visual(context.ui, context.instance_id, member.visual_id());
+        let id = context.ui.make_persistent_id((
+            context.instance_id,
+            "native-tab-diagnostic",
+            member.visual_id(),
+        ));
         context
             .ui
             .ctx()
@@ -467,7 +471,7 @@ pub(crate) fn paint_tab(
     let Some(drag) = egui_rect(tab.drag_bounds()) else {
         return Ok(());
     };
-    let id = tab_id(context.ui, context.instance_id, tab);
+    let id = tab_id(context.ui, context.instance_id, tab.input_id());
     let operable = effective_enabled(context.ui, tab.operable());
     // Policy-disabled tabs retain their visible hover and accessibility footprint.
     let response_bounds = if operable { drag } else { visible };
@@ -581,12 +585,8 @@ fn publish_native_tab_bounds_diagnostic(ui: &Ui, tab: Id, visible: egui::Rect, t
         });
 }
 
-fn tab_id(ui: &Ui, instance_id: Id, tab: TabPaintRecord<'_>) -> Id {
-    tab_id_for_visual(ui, instance_id, tab.visual_id())
-}
-
-pub(super) fn tab_id_for_visual(ui: &Ui, instance_id: Id, visual: DockspaceVisualId) -> Id {
-    ui.make_persistent_id((instance_id, "tab", visual))
+pub(super) fn tab_id(ui: &Ui, instance_id: Id, input: TabChromeInputId) -> Id {
+    ui.make_persistent_id((instance_id, "tab", input))
 }
 
 fn capture_tab_actions(

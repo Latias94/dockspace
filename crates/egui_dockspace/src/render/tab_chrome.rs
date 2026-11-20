@@ -1,7 +1,7 @@
 //! Tab-strip overflow controls and the core-owned tab-list popup.
 
 use dockspace::runtime::{
-    DockspaceVisualId, SurfacePaintDisposition, TabListMenuBackdropPaintRecord,
+    SurfacePaintDisposition, TabChromeInputId, TabListMenuBackdropPaintRecord,
     TabListMenuPaintRecord, TabListMenuRowPaintRecord, TabStripControlKind,
     TabStripControlPaintRecord,
 };
@@ -66,7 +66,7 @@ fn paint_control_records(
         if !paint_omitted {
             paint_control(context, control, bounds, &response, enabled);
         }
-        configure_control_accessibility(context, control, id, bounds, enabled);
+        configure_control_accessibility(context, control, id, response.interact_rect, enabled);
 
         if enabled
             && let Some(origin) =
@@ -82,21 +82,13 @@ pub(super) fn control_id(
     context: &RenderContext<'_, '_, '_>,
     control: TabStripControlPaintRecord,
 ) -> Id {
-    if control.kind() == TabStripControlKind::TabListMenu {
-        tab_list_menu_trigger_id(context, control.tab_bar_visual_id())
-    } else {
-        context.ui.make_persistent_id((
-            context.instance_id,
-            "tab-strip-control",
-            control.visual_id(),
-        ))
-    }
+    control_widget_id(context, control.input_id())
 }
 
-fn tab_list_menu_trigger_id(context: &RenderContext<'_, '_, '_>, tab_bar: DockspaceVisualId) -> Id {
+fn control_widget_id(context: &RenderContext<'_, '_, '_>, control: TabChromeInputId) -> Id {
     context
         .ui
-        .make_persistent_id((context.instance_id, "tab-list-menu-trigger", tab_bar))
+        .make_persistent_id((context.instance_id, "tab-strip-control", control))
 }
 
 fn paint_control(
@@ -196,7 +188,11 @@ fn configure_control_accessibility(
     let menu_open = control.kind() == TabStripControlKind::TabListMenu && control.menu_open();
     context.ui.ctx().accesskit_node_builder(id, |node| {
         node.set_role(Role::Button);
-        node.set_bounds(accesskit_bounds(bounds));
+        if bounds.is_positive() {
+            node.set_bounds(accesskit_bounds(bounds));
+        } else {
+            node.clear_bounds();
+        }
         node.set_label(match control.kind() {
             TabStripControlKind::ScrollBackward => "Scroll tabs backward",
             TabStripControlKind::ScrollForward => "Scroll tabs forward",
@@ -278,16 +274,12 @@ pub(crate) fn paint_menu(
     let frame_id =
         context
             .ui
-            .make_persistent_id((context.instance_id, "tab-list-menu", menu.visual_id()));
+            .make_persistent_id((context.instance_id, "tab-list-menu", menu.input_id()));
     let enabled = effective_enabled(context.ui, true);
     let frame_receiver = enabled
         .then(|| context.plan.receiver_for_tab_list_menu_frame(menu))
         .flatten();
-    let frame_scroll_id = context.ui.make_persistent_id((
-        context.instance_id,
-        "tab-list-menu-frame-scroll-blocker",
-        menu.visual_id(),
-    ));
+    let frame_scroll_id = frame_id.with("frame-scroll-blocker");
     // Keep the underlying scroll footprint even when a modal blocks this layer.
     context.register_scroll_receiver(
         frame_scroll_id,
@@ -326,11 +318,7 @@ pub(crate) fn paint_menu(
         }
     });
 
-    let scroll_id = context.ui.make_persistent_id((
-        context.instance_id,
-        "tab-list-menu-scroll",
-        menu.visual_id(),
-    ));
+    let scroll_id = frame_id.with("scroll");
     let scroll_receiver = context
         .ui
         .is_enabled()
@@ -338,25 +326,37 @@ pub(crate) fn paint_menu(
         .flatten();
     context.register_scroll_receiver(scroll_id, scroll_receiver);
 
-    let rows = menu.rows().collect::<Vec<_>>();
-    for row in rows.iter().copied() {
-        paint_menu_row(context, menu, row, paint);
+    let rows = menu
+        .rows()
+        .map(|record| MenuRow {
+            id: frame_id.with(("row", record.input_id())),
+            record,
+        })
+        .collect::<Vec<_>>();
+    for row in &rows {
+        paint_menu_row(context, row, paint);
     }
-    paint_scrollbar(context, menu, viewport, bounds, paint);
+    paint_scrollbar(
+        context,
+        menu,
+        frame_id.with("scrollbar"),
+        viewport,
+        bounds,
+        paint,
+    );
     let mut opening = false;
     if enabled {
         // One instance slot observes semantic focus edges, without retaining popup history.
         // Hand off focus after widgets have handled this pass's click-outside rules.
         let marker = context.instance_id.with("tab-list-menu-focus-edge");
         let edge = (
-            menu.visual_id(),
+            frame_id,
             rows.iter()
-                .copied()
-                .find(|row| row.focused())
-                .map(|row| tab_list_menu_row_id(context, row)),
+                .find(|row| row.record.focused())
+                .map(|row| row.id),
         );
         let previous = context.ui.ctx().data_mut(|data| {
-            let previous = data.get_temp::<(DockspaceVisualId, Option<Id>)>(marker);
+            let previous = data.get_temp::<(Id, Option<Id>)>(marker);
             if previous != Some(edge) {
                 data.insert_temp(marker, edge);
             }
@@ -380,25 +380,24 @@ pub(crate) fn paint_menu(
             }
         }
     }
-    keyboard::capture(context, menu, frame_id, &rows, opening);
+    let opener = control_widget_id(context, menu.opener_input_id());
+    keyboard::capture(context, menu, frame_id, opener, &rows, opening);
 }
 
-fn tab_list_menu_row_id(context: &RenderContext<'_, '_, '_>, row: TabListMenuRowPaintRecord) -> Id {
-    context
-        .ui
-        .make_persistent_id((context.instance_id, "tab-list-menu-row", row.input_id()))
+struct MenuRow<'plan> {
+    id: Id,
+    record: TabListMenuRowPaintRecord<'plan>,
 }
 
 fn paint_menu_row(
     context: &mut RenderContext<'_, '_, '_>,
-    menu: TabListMenuPaintRecord<'_>,
-    row: TabListMenuRowPaintRecord,
+    row: &MenuRow<'_>,
     paint: SurfacePaintDisposition,
 ) {
+    let MenuRow { id, record: row } = *row;
     let Some(bounds) = egui_rect(row.bounds()) else {
         return;
     };
-    let id = tab_list_menu_row_id(context, row);
     let enabled = effective_enabled(context.ui, true);
     let visible = row
         .interaction_bounds()
@@ -406,16 +405,15 @@ fn paint_menu_row(
         .map(|hit| hit.intersect(context.ui.clip_rect()))
         .filter(Rect::is_positive);
     let can_click = enabled && visible.is_some();
-    let (click, focus, reveal) = if enabled {
+    let (click, reveal) = if enabled {
         context.ui.input(|input| {
             (
                 can_click && input.has_accesskit_action_request(id, Action::Click),
-                input.has_accesskit_action_request(id, Action::Focus),
                 input.has_accesskit_action_request(id, Action::ScrollIntoView),
             )
         })
     } else {
-        (false, false, false)
+        (false, false)
     };
     let receiver = enabled
         .then(|| context.plan.receiver_for_tab_list_menu_row(row))
@@ -521,9 +519,6 @@ fn paint_menu_row(
         }
         return;
     }
-    if focus && let Some(action) = context.plan.prepare_tab_list_menu_focus(menu, row.key()) {
-        context.push_local_action(id.with("accesskit-focus"), action);
-    }
     if reveal && let Some(action) = context.plan.prepare_tab_list_menu_reveal(row) {
         context.push_local_action(id.with("accesskit-scroll-into-view"), action);
     }
@@ -532,6 +527,7 @@ fn paint_menu_row(
 fn paint_scrollbar(
     context: &mut RenderContext<'_, '_, '_>,
     menu: TabListMenuPaintRecord<'_>,
+    id: Id,
     viewport: Rect,
     bounds: Rect,
     paint: SurfacePaintDisposition,
@@ -543,11 +539,6 @@ fn paint_scrollbar(
     if !track.is_positive() {
         return;
     }
-    let id = context.ui.make_persistent_id((
-        context.instance_id,
-        "tab-list-menu-scrollbar",
-        menu.visual_id(),
-    ));
     let enabled = effective_enabled(context.ui, true);
     let receiver = enabled
         .then(|| context.plan.receiver_for_tab_list_menu_frame(menu))

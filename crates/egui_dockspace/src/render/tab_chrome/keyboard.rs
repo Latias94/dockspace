@@ -1,53 +1,29 @@
 //! Ordered tab-list commands retain one cursor and one final core action.
 
-use dockspace::runtime::{TabListMenuPaintRecord, TabListMenuRowPaintRecord};
+use dockspace::runtime::TabListMenuPaintRecord;
+use egui::accesskit::{Action, ActionRequest, NodeId, TreeId};
 use egui::{Event, EventFilter, Id, Key, PointerButton, Ui};
 
-use super::super::{
-    RenderContext,
-    actions::{effective_enabled, pointer_click_event},
-};
-use super::{tab_list_menu_row_id, tab_list_menu_trigger_id};
+use super::super::{RenderContext, actions::effective_enabled};
+use super::MenuRow;
 
 pub(super) fn capture(
     context: &mut RenderContext<'_, '_, '_>,
     menu: TabListMenuPaintRecord<'_>,
     id: Id,
-    rows: &[TabListMenuRowPaintRecord],
+    opener: Id,
+    rows: &[MenuRow<'_>],
     opening: bool,
 ) {
     if !effective_enabled(context.ui, true) {
         return;
     }
     let focused = context.ui.memory(egui::Memory::focused);
-    let focused_index = rows
-        .iter()
-        .position(|row| Some(tab_list_menu_row_id(context, *row)) == focused)
-        .or_else(|| {
-            // A newly focused row may not have installed its filter before
-            // egui processes Escape. Recover that packet's original owner only
-            // when no application widget has since taken focus.
-            (focused.is_none()
-                && context.ui.input(|input| {
-                    input.events.iter().any(|event| {
-                        matches!(event, Event::Key {
-                            key: Key::Escape, pressed: true, modifiers, ..
-                        } if modifiers.matches_logically(egui::Modifiers::NONE))
-                    })
-                }))
-            .then(|| {
-                rows.iter().position(|row| {
-                    context.ui.memory(|memory| {
-                        memory.had_focus_last_frame(tab_list_menu_row_id(context, *row))
-                    })
-                })
-            })
-            .flatten()
-        });
+    let focused_index = rows.iter().position(|row| Some(row.id) == focused);
     if let Some(row) = focused_index.and_then(|index| rows.get(index)) {
         context.ui.memory_mut(|memory| {
             memory.set_focus_lock_filter(
-                tab_list_menu_row_id(context, *row),
+                row.id,
                 EventFilter {
                     vertical_arrows: true,
                     escape: true,
@@ -57,21 +33,33 @@ pub(super) fn capture(
         });
     }
     let start = if opening {
-        let Some(start) = after_opening_click(context, menu) else {
+        let Some(start) = after_opening_click(context.ui, opener) else {
             return;
         };
         start
     } else {
         0
     };
-    if let Some(batch) = keyboard_batch(context.ui, focused_index, rows.len(), start) {
+    let initial = if !opening && passed_focus_change_to_egui(context.ui, focused) {
+        context.ui.memory(|memory| {
+            rows.iter()
+                .position(|row| memory.had_focus_last_frame(row.id))
+        })
+    } else {
+        focused_index
+    };
+    if let Some(batch) = keyboard_batch(context.ui, rows, initial, focused, start) {
         let action = match batch.outcome {
-            Outcome::Navigate(index) => rows
-                .get(index)
-                .and_then(|row| context.plan.prepare_tab_list_menu_focus(menu, row.key())),
-            Outcome::Activate(index) => rows
-                .get(index)
-                .and_then(|row| context.plan.prepare_tab_list_menu_row_activation(*row)),
+            Outcome::Navigate(index) => rows.get(index).and_then(|row| {
+                context
+                    .plan
+                    .prepare_tab_list_menu_focus(menu, row.record.key())
+            }),
+            Outcome::Activate(index) => rows.get(index).and_then(|row| {
+                context
+                    .plan
+                    .prepare_tab_list_menu_row_activation(row.record)
+            }),
             Outcome::Dismiss => context.plan.prepare_tab_list_menu_dismiss(menu.backdrop()),
         };
         let Some(action) = action else {
@@ -94,54 +82,95 @@ pub(super) fn capture(
             return;
         }
         match batch.outcome {
-            Outcome::Navigate(index) => {
+            Outcome::Navigate(index) if batch.retains_focus => {
                 if let Some(row) = rows.get(index) {
-                    let target = tab_list_menu_row_id(context, *row);
                     context.ui.memory_mut(|memory| {
                         memory.move_focus(egui::FocusDirection::None);
-                        memory.request_focus(target);
+                        if !memory.has_focus(row.id) {
+                            memory.request_focus(row.id);
+                        }
                     });
                 }
             }
-            Outcome::Dismiss => restore_trigger_focus(context, menu),
-            Outcome::Activate(_) => {}
+            Outcome::Dismiss if batch.retains_focus || focused.is_none() => {
+                restore_trigger_focus(context.ui, opener);
+            }
+            Outcome::Navigate(_) | Outcome::Dismiss | Outcome::Activate(_) => {}
         }
         context.push_local_action(id.with("keyboard-input"), action);
         return;
     }
     if let Some(row) = focused_index.and_then(|index| rows.get(index))
-        && !row.focused()
-        && let Some(action) = context.plan.prepare_tab_list_menu_focus(menu, row.key())
+        && !row.record.focused()
+        && let Some(action) = context
+            .plan
+            .prepare_tab_list_menu_focus(menu, row.record.key())
     {
-        let origin = tab_list_menu_row_id(context, *row).with("framework-focus");
-        context.push_local_action(origin, action);
+        context.push_local_action(row.id.with("framework-focus"), action);
     }
 }
 
-fn after_opening_click(
-    context: &RenderContext<'_, '_, '_>,
-    menu: TabListMenuPaintRecord<'_>,
-) -> Option<usize> {
-    let target = tab_list_menu_trigger_id(context, menu.tab_bar_visual_id());
-    let Some(trigger) = context
-        .ui
-        .ctx()
-        .read_response(target)
-        .filter(|trigger| trigger.clicked_by(PointerButton::Primary))
-    else {
+fn passed_focus_change_to_egui(ui: &Ui, focused: Option<Id>) -> bool {
+    ui.input(|input| {
+        input.events.iter().any(|event| match focused {
+            // egui applies AccessKit focus before widget registration. Rebuild
+            // the earlier owner so an Enter before that transfer keeps its target.
+            Some(id) => accesskit_focus_target(event) == Some(id.accesskit_id()),
+            // Escape can clear focus before a newly focused row has installed its filter.
+            None => matches!(event, Event::Key {
+                key: Key::Escape, pressed: true, modifiers, ..
+            } if modifiers.matches_logically(egui::Modifiers::NONE)),
+        })
+    })
+}
+
+fn after_opening_click(ui: &Ui, opener: Id) -> Option<usize> {
+    let Some(trigger) = ui.ctx().read_response(opener) else {
         return Some(0);
     };
-    // The core has already applied this packet's pointer edges. A newly opened
-    // menu receives only the keys after its opener's release. If that release
-    // cannot be identified in the remaining input, retain the current row.
-    let release = pointer_click_event(context.ui, &trigger, PointerButton::Primary)?;
-    context.ui.input(|input| {
-        input
-            .events
-            .iter()
-            .position(|event| *event == release)
-            .map(|index| index + 1)
+    // Use the opener registered for input. The response's aggregate pointer
+    // position can include a movement that occurred after the release.
+    let hit = ui.ctx().viewport(|viewport| {
+        viewport
+            .prev_pass
+            .widgets
+            .get(opener)
+            .map_or(trigger.interact_rect, |widget| widget.interact_rect)
+    });
+    let from_global = ui.ctx().layer_transform_from_global(trigger.layer_id);
+    let clicked = trigger.clicked_by(PointerButton::Primary);
+    ui.input(|input| {
+        let mut releases = input.events.iter().enumerate().filter_map(|(slot, event)| {
+            let Event::PointerButton {
+                button: PointerButton::Primary,
+                pressed: false,
+                pos,
+                ..
+            } = event
+            else {
+                return None;
+            };
+            let pos = from_global.map_or(*pos, |transform| transform * *pos);
+            hit.contains(pos).then_some(slot)
+        });
+        match releases.next() {
+            Some(release) => releases.next().is_none().then_some(release + 1),
+            None if clicked => None,
+            None => Some(0),
+        }
     })
+}
+
+fn accesskit_focus_target(event: &Event) -> Option<NodeId> {
+    match event {
+        Event::AccessKitActionRequest(ActionRequest {
+            action: Action::Focus,
+            target_node,
+            target_tree: TreeId::ROOT,
+            data: None,
+        }) => Some(*target_node),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -154,21 +183,34 @@ enum Outcome {
 struct KeyboardBatch {
     outcome: Outcome,
     events: Vec<(usize, Event)>,
+    retains_focus: bool,
 }
 
 fn keyboard_batch(
     ui: &Ui,
+    rows: &[MenuRow<'_>],
     mut cursor: Option<usize>,
-    row_count: usize,
+    focused: Option<Id>,
     start: usize,
 ) -> Option<KeyboardBatch> {
     ui.input(|input| {
         // Paint records retain the initial focus for the whole packet. Fold
         // commands over one cursor before publishing its final semantic action.
-        let last = row_count.checked_sub(1);
+        let last = rows.len().checked_sub(1);
         let mut outcome = None;
         let mut events = Vec::new();
         for (slot, event) in input.events.iter().enumerate().skip(start) {
+            if let Some(target) = accesskit_focus_target(event) {
+                if let Some(index) = rows.iter().position(|row| row.id.accesskit_id() == target) {
+                    cursor = Some(index);
+                    outcome = Some(Outcome::Navigate(index));
+                    events.push((slot, event.clone()));
+                } else if focused.is_some_and(|id| id.accesskit_id() == target) {
+                    // egui recognized a later transfer to an application widget.
+                    cursor = None;
+                }
+                continue;
+            }
             let Event::Key {
                 key,
                 modifiers,
@@ -207,20 +249,23 @@ fn keyboard_batch(
                 break;
             }
         }
-        outcome.map(|outcome| KeyboardBatch { outcome, events })
+        outcome.map(|outcome| KeyboardBatch {
+            outcome,
+            events,
+            retains_focus: cursor.is_some(),
+        })
     })
 }
 
-fn restore_trigger_focus(context: &RenderContext<'_, '_, '_>, menu: TabListMenuPaintRecord<'_>) {
-    let target = tab_list_menu_trigger_id(context, menu.tab_bar_visual_id());
-    if context.ui.ctx().viewport(|viewport| {
+fn restore_trigger_focus(ui: &Ui, target: Id) {
+    if ui.ctx().viewport(|viewport| {
         viewport
             .this_pass
             .widgets
             .get(target)
             .is_some_and(|widget| widget.enabled && widget.visible && widget.sense.is_focusable())
     }) {
-        context.ui.memory_mut(|memory| {
+        ui.memory_mut(|memory| {
             memory.move_focus(egui::FocusDirection::None);
             memory.request_focus(target);
         });

@@ -1,7 +1,7 @@
 use egui::accesskit::{Action, ActionRequest, Node, NodeId, Role, TreeId};
 use egui::{Context, Event, FullOutput, Key, Pos2, RawInput, Rect, Ui, WidgetText, vec2};
 use egui_dockspace::{
-    DockStyle, Dockspace, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
+    DockStyle, Dockspace, DockspaceLayout, DockspaceNode, DockspaceResponse, DockspaceRootLayout,
     DockspaceSurfaceLayout, ItemId, PaneResponse, PaneView, RootId, SurfaceId,
     SurfacePresentationResult, TabKey,
 };
@@ -112,15 +112,19 @@ impl Fixture {
     }
 
     fn run(&mut self, events: Vec<Event>) -> FullOutput {
+        self.run_with_response(events).0
+    }
+
+    fn run_with_response(&mut self, events: Vec<Event>) -> (FullOutput, DockspaceResponse) {
         let input = self.input(events, 200.0);
-        let (presented, _) = self
+        let (presented, response) = self
             .dock
             .run_single_surface(&self.context, input, SURFACE, &mut self.panes)
             .unwrap();
         let (mut output, receipt) = presented.into_parts();
         receipt.report(SurfacePresentationResult::Presented);
         output.textures_delta.clear();
-        output
+        (output, response)
     }
 
     fn run_embedded(&mut self, events: Vec<Event>) -> FullOutput {
@@ -133,6 +137,34 @@ impl Fixture {
                     self.dock
                         .show_single_surface(SURFACE, ui, &mut self.panes)
                         .unwrap();
+                });
+        })
+        .into_parts();
+        receipt.report(SurfacePresentationResult::Presented);
+        output.textures_delta.clear();
+        output
+    }
+
+    fn run_scrolled(&mut self, events: Vec<Event>) -> FullOutput {
+        let input = self.input(events, 320.0);
+        let (mut output, receipt) = egui_dockspace::run_ui(&self.context, input, |ui| {
+            egui::Panel::top("toolbar")
+                .exact_size(64.0)
+                .frame(egui::Frame::NONE)
+                .show(ui, |ui| {
+                    ui.label("Toolbar");
+                });
+            egui::ScrollArea::vertical()
+                .max_height(170.0)
+                .vertical_scroll_offset(8.0)
+                .show(ui, |ui| {
+                    let size = vec2(ui.available_width(), 280.0);
+                    let bounds = Rect::from_min_size(ui.next_widget_position(), size);
+                    let mut inside = ui.new_child(egui::UiBuilder::new().max_rect(bounds));
+                    self.dock
+                        .show_single_surface(SURFACE, &mut inside, &mut self.panes)
+                        .unwrap();
+                    ui.allocate_space(size);
                 });
         })
         .into_parts();
@@ -157,6 +189,16 @@ impl Fixture {
         }
         let (trigger, _) = node(&output, Role::Button, "List tabs");
         self.run(vec![accesskit(*trigger, Action::Click)]);
+        self.settle()
+    }
+
+    fn replace_workspace(&mut self, remount: bool) -> FullOutput {
+        if remount {
+            self.dock = make_dock();
+        } else {
+            self.dock.reset_layout(layout()).unwrap();
+        }
+        self.panes.title_prefix = Some("Replacement");
         self.settle()
     }
 }
@@ -262,13 +304,30 @@ fn pointer_open_keeps_menu_focus_for_the_next_key_packet() {
 
 #[test]
 fn menu_keys_follow_the_opening_release_in_batched_and_split_input() {
-    for keys_before_release in [true, false] {
-        for batched in [false, true] {
+    for (host, run) in [
+        (
+            "owned",
+            Fixture::run as fn(&mut Fixture, Vec<Event>) -> FullOutput,
+        ),
+        ("embedded", Fixture::run_embedded),
+    ] {
+        for (movement, keys_before_release, batched) in [
+            (vec2(1.0, 0.0), true, false),
+            (vec2(1.0, 0.0), true, true),
+            (vec2(1.0, 0.0), false, false),
+            (vec2(1.0, 0.0), false, true),
+            (vec2(-140.0, 80.0), false, true),
+        ] {
             let mut fixture = Fixture::new(Panes::default());
-            let point = trigger_center(&fixture.settle());
-            fixture.run(vec![Event::PointerMoved(point)]);
-            fixture.run(vec![pointer_button(point, true)]);
-            let release = vec![pointer_button(point, false)];
+            run(&mut fixture, Vec::new());
+            run(&mut fixture, Vec::new());
+            let point = trigger_center(&run(&mut fixture, Vec::new()));
+            run(&mut fixture, vec![Event::PointerMoved(point)]);
+            run(&mut fixture, vec![pointer_button(point, true)]);
+            let release = vec![
+                pointer_button(point, false),
+                Event::PointerMoved(point + movement),
+            ];
             let keys = vec![key(Key::End), key(Key::Enter)];
             let packets = if keys_before_release {
                 [keys, release]
@@ -276,15 +335,19 @@ fn menu_keys_follow_the_opening_release_in_batched_and_split_input() {
                 [release, keys]
             };
             if batched {
-                fixture.run(packets.into_iter().flatten().collect());
+                run(&mut fixture, packets.into_iter().flatten().collect());
             } else {
                 for events in packets {
-                    fixture.run(events);
+                    run(&mut fixture, events);
                 }
             }
-            let output = fixture.settle();
+            run(&mut fixture, Vec::new());
+            let output = run(&mut fixture, Vec::new());
             let expected = if keys_before_release { SELECTED } else { LAST };
-            assert!(fixture.dock.view().item(expected).unwrap().is_active());
+            assert!(
+                fixture.dock.view().item(expected).unwrap().is_active(),
+                "{host}, {movement:?}, keys before release: {keys_before_release}, batched: {batched}",
+            );
             assert_eq!(
                 nodes(&output)
                     .iter()
@@ -292,6 +355,148 @@ fn menu_keys_follow_the_opening_release_in_batched_and_split_input() {
                 keys_before_release,
             );
         }
+    }
+}
+
+#[test]
+fn menu_enter_respects_accesskit_focus_order_for_visible_and_offscreen_rows() {
+    let targets = [(ItemId::new(1), false), (ItemId::new(35), true)];
+    for (item, visible) in targets {
+        for focus_first in [true, false] {
+            for batched in [false, true] {
+                let mut fixture = Fixture::new(Panes::default());
+                let output = fixture.open_accessibly();
+                let (target, row) = node(&output, Role::MenuItem, &fixture.panes.label(item));
+                assert_eq!(row.bounds().is_some(), visible);
+                let focus = accesskit(*target, Action::Focus);
+                let enter = key(Key::Enter);
+                let events = if focus_first {
+                    [focus, enter]
+                } else {
+                    [enter, focus]
+                };
+                if batched {
+                    fixture.run(Vec::from(events));
+                } else {
+                    for event in events {
+                        fixture.run(vec![event]);
+                    }
+                }
+                let output = fixture.settle();
+                let expected = if focus_first { item } else { SELECTED };
+                assert!(
+                    fixture.dock.view().item(expected).unwrap().is_active(),
+                    "{item:?}, focus first: {focus_first}, batched: {batched}",
+                );
+                assert!(
+                    nodes(&output)
+                        .iter()
+                        .all(|(_, node)| node.role() != Role::Menu)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn old_list_button_nodes_cannot_toggle_the_replacement_menu() {
+    for remount in [false, true] {
+        let mut fixture = Fixture::new(Panes::default());
+        let output = fixture.open_accessibly();
+        let old = node(&output, Role::Button, "List tabs").0;
+        let output = fixture.replace_workspace(remount);
+        let (current, trigger) = node(&output, Role::Button, "List tabs");
+        let expanded = trigger.is_expanded().unwrap();
+        fixture.run(vec![accesskit(old, Action::Click)]);
+        let output = fixture.settle();
+        assert_eq!(
+            node(&output, Role::Button, "List tabs").1.is_expanded(),
+            Some(expanded)
+        );
+        fixture.run(vec![accesskit(*current, Action::Click)]);
+        let output = fixture.settle();
+        assert_eq!(
+            node(&output, Role::Button, "List tabs").1.is_expanded(),
+            Some(!expanded)
+        );
+    }
+}
+
+#[test]
+fn old_menu_scrollbar_nodes_cannot_scroll_the_replacement_menu() {
+    for remount in [false, true] {
+        let mut fixture = Fixture::new(Panes::default());
+        let menu = fixture.open_accessibly();
+        let old = node(&menu, Role::ScrollBar, "Open tabs scroll position").0;
+        fixture.replace_workspace(remount);
+        let menu = fixture.open_accessibly();
+        let (current, scrollbar) = node(&menu, Role::ScrollBar, "Open tabs scroll position");
+        let offset = scrollbar.numeric_value().unwrap();
+        assert!(offset > 0.0);
+        fixture.run(vec![accesskit(old, Action::Decrement)]);
+        let output = fixture.settle();
+        assert_eq!(
+            node(&output, Role::ScrollBar, "Open tabs scroll position")
+                .1
+                .numeric_value(),
+            Some(offset)
+        );
+        fixture.run(vec![accesskit(*current, Action::Decrement)]);
+        let output = fixture.settle();
+        assert!(
+            node(&output, Role::ScrollBar, "Open tabs scroll position")
+                .1
+                .numeric_value()
+                .unwrap()
+                < offset
+        );
+    }
+}
+
+#[test]
+fn old_tab_close_nodes_cannot_close_a_tab_in_the_replacement_workspace() {
+    for remount in [false, true] {
+        let mut fixture = Fixture::new(Panes::default());
+        let output = fixture.settle();
+        let original_close = node(
+            &output,
+            Role::Button,
+            &format!("Close {}", fixture.panes.label(SELECTED)),
+        )
+        .0;
+        let output = fixture.replace_workspace(remount);
+        let fresh_close = node(
+            &output,
+            Role::Button,
+            &format!("Close {}", fixture.panes.label(SELECTED)),
+        )
+        .0;
+        fixture.run(vec![accesskit(original_close, Action::Click)]);
+        let (_, response) = fixture.run_with_response(Vec::new());
+        assert!(response.close_requests().next().is_none());
+        fixture.run(vec![accesskit(fresh_close, Action::Click)]);
+        let (_, response) = fixture.run_with_response(Vec::new());
+        let mut close_requests = response.close_requests();
+        assert_eq!(close_requests.next().unwrap().items()[0].item(), SELECTED);
+        assert!(close_requests.next().is_none());
+    }
+}
+
+#[test]
+fn old_tab_nodes_cannot_select_a_tab_in_the_replacement_workspace() {
+    for remount in [false, true] {
+        let mut fixture = Fixture::new(Panes::default());
+        let item = ItemId::new(35);
+        let output = fixture.settle();
+        let old = node(&output, Role::Tab, &fixture.panes.label(item)).0;
+        let output = fixture.replace_workspace(remount);
+        let current = node(&output, Role::Tab, &fixture.panes.label(item)).0;
+        fixture.run(vec![accesskit(old, Action::Click)]);
+        fixture.settle();
+        assert!(fixture.dock.view().item(SELECTED).unwrap().is_active());
+        fixture.run(vec![accesskit(current, Action::Click)]);
+        fixture.settle();
+        assert!(fixture.dock.view().item(item).unwrap().is_active());
     }
 }
 
@@ -349,6 +554,33 @@ fn embedded_menu_reveals_and_activates_its_last_row_inside_the_parent_clip() {
     fixture.run_embedded(vec![accesskit(*target, Action::Click)]);
     fixture.run_embedded(Vec::new());
     assert!(fixture.dock.view().item(LAST).unwrap().is_active());
+}
+
+#[test]
+fn a_partially_clipped_opener_remains_usable_inside_a_scroll_area() {
+    let mut fixture = Fixture::new(Panes::default());
+    fixture.run_scrolled(Vec::new());
+    fixture.run_scrolled(Vec::new());
+    let output = fixture.run_scrolled(Vec::new());
+    let bounds = node(&output, Role::Button, "List tabs").1.bounds().unwrap();
+    assert_eq!((bounds.y0, bounds.y1), (64.0, 80.0));
+    let point = trigger_center(&output);
+    for event in [
+        Event::PointerMoved(point),
+        pointer_button(point, true),
+        pointer_button(point, false),
+    ] {
+        fixture.run_scrolled(vec![event]);
+    }
+    let output = fixture.run_scrolled(Vec::new());
+    let bounds = node(&output, Role::Menu, "Open tabs").1.bounds().unwrap();
+    assert!(bounds.y0 >= 80.0 && bounds.y1 <= 234.0);
+    let next = ItemId::new(SELECTED.get() - 1);
+    let (target, row) = node(&output, Role::MenuItem, &fixture.panes.label(next));
+    assert!(row.supports_action(Action::Click));
+    fixture.run_scrolled(vec![accesskit(*target, Action::Click)]);
+    fixture.run_scrolled(Vec::new());
+    assert!(fixture.dock.view().item(next).unwrap().is_active());
 }
 
 #[test]

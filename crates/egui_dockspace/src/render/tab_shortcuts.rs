@@ -184,8 +184,8 @@ fn route(
         if let Some((action, accepted)) = navigation_chunk(context, group, chunk, selection) {
             let first = &accepted[0];
             let last = &accepted[accepted.len() - 1];
-            if let Some((key, visual)) = action.tab_focus_target().zip(action.tab_focus_visual()) {
-                focused = super::tabs::tab_id_for_visual(context.ui, context.instance_id, visual);
+            if let Some((key, input)) = action.tab_focus_target().zip(action.tab_focus_input_id()) {
+                focused = super::tabs::tab_id(context.ui, context.instance_id, input);
                 focus = Some((focused, FocusDirection::None));
                 selection = Some((group.visual, key));
                 if last.input == Some(SurfaceTabInput::Activate) {
@@ -485,15 +485,11 @@ fn group_for_widget(
                     }
                     Operation::Tab(tab) => {
                         if focused
-                            == super::tabs::tab_id_for_visual(
-                                context.ui,
-                                context.instance_id,
-                                tab.visual_id(),
-                            )
+                            == super::tabs::tab_id(context.ui, context.instance_id, tab.input_id())
                         {
                             control = FocusedControl::Header(tab.key());
                             Some(tab.tab_bar_visual_id())
-                        } else if focused == super::tab_close::id(context, tab.key()) {
+                        } else if focused == super::tab_close::id(context, tab) {
                             control = FocusedControl::Close(tab.key());
                             Some(tab.tab_bar_visual_id())
                         } else {
