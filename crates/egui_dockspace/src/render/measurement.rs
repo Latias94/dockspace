@@ -13,7 +13,7 @@ use dockspace::runtime::{
     SurfaceMeasurementRequest, SurfaceWork, TabListMenuMetrics, TabStripControlMetric,
     TabStripControlMetrics, TabStripControlPlacement, TabStripMetrics,
 };
-use egui::{FontSelection, Galley, TextStyle, TextWrapMode, Ui};
+use egui::{Align, FontSelection, Galley, Pos2, Rect, TextStyle, TextWrapMode, Ui};
 
 use crate::error::DockspaceError;
 use crate::error_detail::DockspaceErrorSource;
@@ -29,12 +29,29 @@ pub(crate) struct TabPaintResource {
     pub(crate) galley: Arc<Galley>,
     pub(crate) missing: bool,
     pub(crate) content_width: f32,
+    unelided_menu_galley: Option<Arc<Galley>>,
 }
 
 impl TabPaintResource {
-    pub(crate) fn galley_for_width(&self, ui: &Ui, width: f32) -> Arc<Galley> {
-        galley_for_width(ui, &self.galley, width)
+    fn menu_galley(&self) -> &Arc<Galley> {
+        self.unelided_menu_galley.as_ref().unwrap_or(&self.galley)
     }
+
+    pub(super) fn layout_menu_title(&self, ui: &Ui, row: Rect) -> (Pos2, Arc<Galley>) {
+        let galley = galley_for_width(ui, self.menu_galley(), row.width());
+        let text = menu_title_bounds(&galley);
+        let x = match galley.job.halign {
+            Align::Min => row.left() - text.left(),
+            Align::Center => row.center().x - text.center().x,
+            Align::Max => row.right() - text.right(),
+        };
+        (egui::pos2(x, row.center().y - text.center().y), galley)
+    }
+}
+
+fn menu_title_bounds(galley: &Galley) -> Rect {
+    // Explicit line spacing can make the logical box shorter than the ink.
+    galley.rect.union(galley.mesh_bounds)
 }
 
 #[derive(Default)]
@@ -150,8 +167,19 @@ impl<'a> SurfaceMeasurementContext<'a> {
             logical_rect(dock_rect).map_err(|()| DockspaceErrorSource::InvalidMeasurement {
                 what: "dock bounds",
             })?;
-        let popup_bounds =
-            logical_rect(popup_rect).map_err(|()| DockspaceErrorSource::InvalidMeasurement {
+        let popup_clip = popup_rect.intersect(ui.clip_rect());
+        let popup_bounds = logical_rect(popup_rect)
+            .and_then(|bounds| {
+                if popup_clip == popup_rect {
+                    Ok(bounds)
+                } else if popup_clip.is_negative() {
+                    // Core closes a popup whose drawable plane has no area.
+                    logical_rect(Rect::from_min_max(popup_rect.min, popup_rect.min))
+                } else {
+                    logical_rect(popup_clip)
+                }
+            })
+            .map_err(|()| DockspaceErrorSource::InvalidMeasurement {
                 what: "popup plane bounds",
             })?;
         let popup_style = ui.style();
@@ -241,11 +269,12 @@ impl<'a> SurfaceMeasurementContext<'a> {
                 {
                     missing.insert(item);
                 }
+                let menu_title = menu_title_bounds(resource.menu_galley());
                 let row_height = f64::from(
                     ui.spacing()
                         .interact_size
                         .y
-                        .max(resource.galley.size().y + ui.spacing().button_padding.y * 2.0),
+                        .max(menu_title.height() + ui.spacing().button_padding.y * 2.0),
                 );
                 row_heights
                     .entry(bar)
@@ -253,7 +282,11 @@ impl<'a> SurfaceMeasurementContext<'a> {
                     .or_insert(row_height);
                 Ok(SurfaceMeasurementAnswer::TabIntrinsicWithMenuWidth {
                     tab_width: f64::from(resource.content_width),
-                    menu_width: f64::from(resource.galley.size().x),
+                    menu_width: f64::from(
+                        menu_title
+                            .width()
+                            .max(ui.spacing().interact_size.x.max(1.0)),
+                    ),
                 })
             }
             SurfaceMeasurementRequest::TabStrip { visual, visibility } => {
@@ -378,6 +411,12 @@ fn shape_tab(ui: &Ui, panes: &dyn PaneView, key: TabKey, label: TabLabel<'_>) ->
         f32::INFINITY,
         FontSelection::Style(TextStyle::Button),
     );
+    let unelided_menu_galley = galley.elided.then(|| {
+        let mut job = (*galley.job).clone();
+        job.wrap.max_width = f32::INFINITY;
+        job.wrap.max_rows = usize::MAX;
+        ui.fonts_mut(|fonts| fonts.layout_job(job))
+    });
     TabPaintResource {
         content_width: if missing {
             galley.size().x
@@ -387,5 +426,6 @@ fn shape_tab(ui: &Ui, panes: &dyn PaneView, key: TabKey, label: TabLabel<'_>) ->
         title,
         galley,
         missing,
+        unelided_menu_galley,
     }
 }

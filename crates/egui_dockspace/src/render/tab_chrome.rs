@@ -343,6 +343,7 @@ pub(crate) fn paint_menu(
         paint_menu_row(context, menu, row, paint);
     }
     paint_scrollbar(context, menu, viewport, bounds, paint);
+    let mut opening = false;
     if enabled {
         // One instance slot observes semantic focus edges, without retaining popup history.
         // Hand off focus after widgets have handled this pass's click-outside rules.
@@ -361,15 +362,16 @@ pub(crate) fn paint_menu(
             }
             previous
         });
+        opening = previous.is_none_or(|(menu, _)| menu != edge.0);
         if previous != Some(edge)
             && let Some(target) = edge.1
         {
             let can_retarget = context.ui.memory(|memory| {
                 let focused = memory.focused();
                 let newly_focused = focused.is_some_and(|id| !memory.had_focus_last_frame(id));
-                let still_on_previous = previous.is_none_or(|(menu_id, row_id)| {
-                    menu_id != edge.0 || focused.is_none() || focused == row_id
-                });
+                let still_on_previous = opening
+                    || focused.is_none()
+                    || previous.is_some_and(|(_, row_id)| focused == row_id);
                 !newly_focused && still_on_previous
             });
             if can_retarget {
@@ -378,13 +380,13 @@ pub(crate) fn paint_menu(
             }
         }
     }
-    keyboard::capture(context, menu, frame_id, &rows);
+    keyboard::capture(context, menu, frame_id, &rows, opening);
 }
 
 fn tab_list_menu_row_id(context: &RenderContext<'_, '_, '_>, row: TabListMenuRowPaintRecord) -> Id {
     context
         .ui
-        .make_persistent_id((context.instance_id, "tab-list-menu-row", row.visual_id()))
+        .make_persistent_id((context.instance_id, "tab-list-menu-row", row.input_id()))
 }
 
 fn paint_menu_row(
@@ -456,8 +458,7 @@ fn paint_menu_row(
         let painter = context.ui.painter_at(clip);
         painter.rect_filled(bounds, 0.0, fill);
         if let Some(resource) = context.resources.tab(row.key()) {
-            let galley = resource.galley_for_width(context.ui, bounds.width());
-            let text_pos = pos2(bounds.min.x, bounds.center().y - galley.size().y * 0.5);
+            let (text_pos, galley) = resource.layout_menu_title(context.ui, bounds);
             context.paint_tab_title(
                 &painter,
                 text_pos,

@@ -617,7 +617,8 @@ pub fn stage_touch_context_menu(
 /// Supplies the egui measurements required to compile the next core surface
 /// contribution. This is intentionally separate from painting: a native host
 /// can paint a previously accepted plan and acknowledge its output while a
-/// later frame measures the next plan.
+/// later frame measures the next plan. The tab-list popup uses the intersection
+/// of `popup_rect` and the supplied UI's paint clip.
 pub fn measure_surface(
     frame: &mut DockspaceHostFrame<'_>,
     surface: SurfaceId,

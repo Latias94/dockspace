@@ -25,6 +25,7 @@ impl Dockspace {
     /// enter one frame before measurement and encoding. This callback publishes
     /// once. UI actions discovered while encoding enter a bounded queue for the
     /// next original egui run; repeated passes never replay those actions.
+    /// The tab-list popup fits inside the supplied UI's paint clip.
     /// If the application skips this Dockspace while processing egui input, the
     /// next committed callback cancels the old gesture and preserves the layout.
     /// Recreating a viewport also retires its output and pending touch menus.

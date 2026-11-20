@@ -82,12 +82,18 @@ pub(super) fn unambiguous_pointer_click(
     response: &Response,
     button: PointerButton,
 ) -> bool {
+    pointer_click_event(ui, response, button).is_some()
+}
+
+pub(super) fn pointer_click_event(
+    ui: &Ui,
+    response: &Response,
+    button: PointerButton,
+) -> Option<Event> {
     if pointer_click_scope(ui).cancelled[button as usize] || !response.clicked_by(button) {
-        return false;
+        return None;
     }
-    let Some(position) = response.interact_pointer_pos() else {
-        return false;
-    };
+    let position = response.interact_pointer_pos()?;
     let from_global = ui.ctx().layer_transform_from_global(response.layer_id);
     ui.input(|input| {
         if [
@@ -100,7 +106,7 @@ pub(super) fn unambiguous_pointer_click(
         .into_iter()
         .any(|other| other != button && input.pointer.button_down(other))
         {
-            return false;
+            return None;
         }
         let mut release = None;
         for event in &input.raw.events {
@@ -112,14 +118,14 @@ pub(super) fn unambiguous_pointer_click(
             } = event
                 && (*source != button
                     || (*pressed && release.is_some())
-                    || (!*pressed && release.replace(*pos).is_some()))
+                    || (!*pressed && release.replace((event, *pos)).is_some()))
             {
-                return false;
+                return None;
             }
         }
-        release.is_some_and(|release| {
-            let release = from_global.map_or(release, |transform| transform * release);
-            release == position && response.interact_rect.contains(release)
+        release.and_then(|(event, pos)| {
+            let pos = from_global.map_or(pos, |transform| transform * pos);
+            (pos == position && response.interact_rect.contains(pos)).then(|| event.clone())
         })
     })
 }

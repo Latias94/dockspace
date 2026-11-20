@@ -1,9 +1,12 @@
 //! Ordered tab-list commands retain one cursor and one final core action.
 
 use dockspace::runtime::{TabListMenuPaintRecord, TabListMenuRowPaintRecord};
-use egui::{Event, EventFilter, Id, Key, Ui};
+use egui::{Event, EventFilter, Id, Key, PointerButton, Ui};
 
-use super::super::{RenderContext, actions::effective_enabled};
+use super::super::{
+    RenderContext,
+    actions::{effective_enabled, pointer_click_event},
+};
 use super::{tab_list_menu_row_id, tab_list_menu_trigger_id};
 
 pub(super) fn capture(
@@ -11,6 +14,7 @@ pub(super) fn capture(
     menu: TabListMenuPaintRecord<'_>,
     id: Id,
     rows: &[TabListMenuRowPaintRecord],
+    opening: bool,
 ) {
     if !effective_enabled(context.ui, true) {
         return;
@@ -52,7 +56,15 @@ pub(super) fn capture(
             );
         });
     }
-    if let Some(batch) = keyboard_batch(context.ui, focused_index, rows.len()) {
+    let start = if opening {
+        let Some(start) = after_opening_click(context, menu) else {
+            return;
+        };
+        start
+    } else {
+        0
+    };
+    if let Some(batch) = keyboard_batch(context.ui, focused_index, rows.len(), start) {
         let action = match batch.outcome {
             Outcome::Navigate(index) => rows
                 .get(index)
@@ -106,6 +118,32 @@ pub(super) fn capture(
     }
 }
 
+fn after_opening_click(
+    context: &RenderContext<'_, '_, '_>,
+    menu: TabListMenuPaintRecord<'_>,
+) -> Option<usize> {
+    let target = tab_list_menu_trigger_id(context, menu.tab_bar_visual_id());
+    let Some(trigger) = context
+        .ui
+        .ctx()
+        .read_response(target)
+        .filter(|trigger| trigger.clicked_by(PointerButton::Primary))
+    else {
+        return Some(0);
+    };
+    // The core has already applied this packet's pointer edges. A newly opened
+    // menu receives only the keys after its opener's release. If that release
+    // cannot be identified in the remaining input, retain the current row.
+    let release = pointer_click_event(context.ui, &trigger, PointerButton::Primary)?;
+    context.ui.input(|input| {
+        input
+            .events
+            .iter()
+            .position(|event| *event == release)
+            .map(|index| index + 1)
+    })
+}
+
 #[derive(Clone, Copy)]
 enum Outcome {
     Navigate(usize),
@@ -118,14 +156,19 @@ struct KeyboardBatch {
     events: Vec<(usize, Event)>,
 }
 
-fn keyboard_batch(ui: &Ui, mut cursor: Option<usize>, row_count: usize) -> Option<KeyboardBatch> {
+fn keyboard_batch(
+    ui: &Ui,
+    mut cursor: Option<usize>,
+    row_count: usize,
+    start: usize,
+) -> Option<KeyboardBatch> {
     ui.input(|input| {
         // Paint records retain the initial focus for the whole packet. Fold
         // commands over one cursor before publishing its final semantic action.
         let last = row_count.checked_sub(1);
         let mut outcome = None;
         let mut events = Vec::new();
-        for (slot, event) in input.events.iter().enumerate() {
+        for (slot, event) in input.events.iter().enumerate().skip(start) {
             let Event::Key {
                 key,
                 modifiers,
