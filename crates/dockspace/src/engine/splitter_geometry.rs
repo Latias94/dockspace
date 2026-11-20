@@ -394,6 +394,7 @@ pub(super) fn resize_axis_group_updates(
     }
     let mut axes = BTreeSet::new();
     let mut updates = BTreeMap::new();
+    let mut reflow = Vec::new();
     for group in groups {
         if !axes.insert(group.axis) {
             return None;
@@ -404,8 +405,8 @@ pub(super) fn resize_axis_group_updates(
         };
         let shared = requested.clamp(group.common_delta.minimum, group.common_delta.maximum);
         if let Some(piecewise) = &group.piecewise {
-            for update in piecewise.updates(shared)? {
-                let key = (update.source().root(), update.source().node());
+            let (delta, sampled_updates) = piecewise.track_updates(shared)?;
+            for (key, update) in sampled_updates {
                 if let Some(previous) = updates.remove(&key) {
                     // Orthogonal Grid axes share one actual owner and commit both
                     // track vectors in the same graph update.
@@ -438,6 +439,7 @@ pub(super) fn resize_axis_group_updates(
                     updates.insert(key, update);
                 }
             }
+            reflow.push((piecewise.as_ref(), delta));
             continue;
         }
         for split in group.splits.iter().filter(|split| split.axis == group.axis) {
@@ -450,7 +452,7 @@ pub(super) fn resize_axis_group_updates(
             }
         }
     }
-    validate_auto_reflow(groups, delta, &updates)?;
+    finish_auto_reflow(&reflow, &mut updates)?;
     Some(updates.into_values().collect())
 }
 
@@ -472,45 +474,89 @@ pub(super) fn resize_axis_group_adjustment_updates(
     )
 }
 
-fn validate_auto_reflow(
-    groups: &[FrozenResizeAxisGroup],
-    delta: [f64; 2],
-    updates: &BTreeMap<(RootId, NodeId), TrackResize>,
+fn finish_auto_reflow(
+    samples: &[(&FrozenPiecewiseAxis, f64)],
+    updates: &mut BTreeMap<(RootId, NodeId), TrackResize>,
 ) -> Option<()> {
     let mut checked = BTreeSet::new();
-    for frozen in groups.iter().filter_map(|group| group.piecewise.as_ref()) {
+    for (frozen, _) in samples {
         for (root, node, layout) in frozen.auto_reflow_roots() {
             if !checked.insert(root) {
                 continue;
             }
-            let weights = updates
+            let mut weights = updates
                 .iter()
                 .filter_map(|(&(owner_root, node), update)| {
                     (owner_root == root).then_some((node, update.weights().clone()))
                 })
-                .collect();
+                .collect::<BTreeMap<_, _>>();
             let projection = layout.project(&weights).ok()?;
-            let geometry = crate::presentation::layout::measure_resize_geometry(
-                &projection,
-                layout.splitter_thickness(),
-            );
-            if !geometry.root_is_feasible(node) {
+            let feasible = |projection: &LayoutProjection| {
+                crate::presentation::layout::measure_resize_geometry(
+                    projection,
+                    layout.splitter_thickness(),
+                )
+                .root_is_feasible(node)
+                    && samples.iter().all(|(frozen, delta)| {
+                        frozen.reflow_preserves_drivers(root, projection, *delta)
+                    })
+            };
+            let mut retained = weights.clone();
+            for (frozen, _) in samples {
+                frozen.retain_inherited_grid_shares(root, &projection, &mut retained);
+            }
+            // Changing weights can affect provisional Auto shape resolution.
+            // Retain original shares only when the resulting layout agrees.
+            if retained != weights
+                && let Ok(candidate) = layout.project(&retained)
+                && same_grid_allocation(&projection, &candidate)
+                && feasible(&candidate)
+            {
+                weights = retained;
+            } else if !feasible(&projection) {
                 return None;
             }
-            for group in groups {
-                let frozen = group.piecewise.as_ref()?;
-                let requested = match group.axis {
-                    Axis::Horizontal => delta[0],
-                    Axis::Vertical => delta[1],
+            updates.retain(|&(owner, node), update| {
+                if owner != root {
+                    return true;
                 }
-                .clamp(group.common_delta.minimum, group.common_delta.maximum);
-                if !frozen.reflow_preserves_drivers(root, &projection, requested) {
-                    return None;
+                let Some(weights) = weights.get(&node) else {
+                    return false;
+                };
+                if let TrackWeights::Grid(shares) = weights
+                    && let Some(basis) = update.grid_basis()
+                    && weights != update.weights()
+                {
+                    *update = TrackResize::grid_resolved(
+                        update.source().clone(),
+                        basis.clone(),
+                        shares.clone(),
+                    );
                 }
-            }
+                true
+            });
         }
     }
     Some(())
+}
+
+fn same_grid_allocation(first: &LayoutProjection, second: &LayoutProjection) -> bool {
+    first.grids.iter().all(|(node, first)| {
+        second.grids.get(node).is_some_and(|second| {
+            first.shape == second.shape
+                && [Axis::Horizontal, Axis::Vertical].into_iter().all(|axis| {
+                    first
+                        .axis(axis)
+                        .tracks
+                        .iter()
+                        .zip(&second.axis(axis).tracks)
+                        .all(|(first, second)| {
+                            (first.extent - second.extent).abs()
+                                <= tolerance(first.extent, second.extent)
+                        })
+                })
+        })
+    })
 }
 
 fn merge_edge(edge: &mut Option<f64>, movement: f64) -> Option<()> {

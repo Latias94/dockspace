@@ -109,10 +109,7 @@ impl DockEngine {
                 step,
             );
             let Some(delta) = delta else {
-                if auto {
-                    continue;
-                }
-                return None;
+                continue;
             };
             let updates = resize_axis_group_adjustment_updates(
                 std::slice::from_ref(&group),
@@ -120,10 +117,9 @@ impl DockEngine {
                 ResizeAdjustment::new(delta),
             );
             let Some(updates) = updates else {
-                if auto {
-                    continue;
-                }
-                return None;
+                // This step has no feasible displacement. Keep the accepted
+                // allocation as the starting point for the next key.
+                continue;
             };
             let changed =
                 crate::graph::operation::validate_track_resizes(&self.workspace, policy, &updates)

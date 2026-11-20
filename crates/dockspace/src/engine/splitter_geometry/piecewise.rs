@@ -502,7 +502,7 @@ impl FrozenPiecewiseAxis {
         &self,
         root: RootId,
         projection: &LayoutProjection,
-        requested: f64,
+        delta: f64,
     ) -> bool {
         let Some(frozen) = self
             .roots
@@ -510,9 +510,6 @@ impl FrozenPiecewiseAxis {
             .find(|frozen| frozen.source.root() == root)
         else {
             return true;
-        };
-        let Some((delta, _)) = self.sample_clamped(requested) else {
-            return false;
         };
         frozen.drivers.iter().all(|(owner, drivers)| {
             let Some(node) = frozen.nodes.get(owner) else {
@@ -577,6 +574,80 @@ impl FrozenPiecewiseAxis {
         self.sources.iter()
     }
 
+    /// Preserves shares when the exact, remeasured constraints can produce the
+    /// requested inherited track extents without replacing them.
+    pub(super) fn retain_inherited_grid_shares(
+        &self,
+        root: RootId,
+        projection: &LayoutProjection,
+        weights: &mut BTreeMap<NodeId, TrackWeights>,
+    ) {
+        let Some(frozen) = self.roots.iter().find(|owner| owner.source.root() == root) else {
+            return;
+        };
+        for (&node, entry) in &frozen.nodes {
+            if frozen.drivers.contains_key(&node) {
+                continue;
+            }
+            let FrozenKind::Tracks(FrozenTracks {
+                grid: Some((_, original)),
+                ..
+            }) = &entry.kind
+            else {
+                continue;
+            };
+            let (Some(TrackWeights::Grid(proposed)), Some(grid)) =
+                (weights.get(&node), projection.grids.get(&node))
+            else {
+                continue;
+            };
+            let axis = grid.axis(self.axis);
+            let old = match self.axis {
+                Axis::Horizontal => original.column_weights(),
+                Axis::Vertical => original.row_weights(),
+            };
+            if old == axis.weights || old.len() != axis.tracks.len() {
+                continue;
+            }
+            let extents = axis
+                .tracks
+                .iter()
+                .map(|track| track.extent)
+                .collect::<Vec<_>>();
+            if !grid_shares_match_extents(
+                old,
+                &extents,
+                axis.tracks
+                    .iter()
+                    .map(|track| (track.minimum, track.maximum)),
+                axis.central_index,
+                self.overflow_policy,
+            ) {
+                continue;
+            }
+            let (rows, columns) = match self.axis {
+                Axis::Horizontal => (proposed.row_weights(), old),
+                Axis::Vertical => (old, proposed.column_weights()),
+            };
+            if rows == original.row_weights() && columns == original.column_weights() {
+                weights.remove(&node);
+            } else if let Ok(shares) =
+                DockspaceGridShares::from_normalized(rows.to_vec(), columns.to_vec())
+            {
+                weights.insert(node, TrackWeights::Grid(shares));
+            }
+        }
+    }
+
+    pub(super) fn track_updates(
+        &self,
+        delta: f64,
+    ) -> Option<(f64, BTreeMap<(RootId, NodeId), TrackResize>)> {
+        let (delta, sample) = self.sample_clamped(delta)?;
+        Some((delta, sample.updates))
+    }
+
+    #[cfg(test)]
     pub(super) fn updates(&self, delta: f64) -> Option<Vec<TrackResize>> {
         Some(
             self.sample_clamped(delta)?
@@ -686,7 +757,7 @@ impl FrozenPiecewiseAxis {
                             && let Some(update) = tracks.update(
                                 self.axis,
                                 &extents,
-                                drivers.is_empty(),
+                                drivers.is_empty() && root.auto_reflow.is_none(),
                                 self.overflow_policy,
                             )?
                         {
@@ -852,7 +923,7 @@ impl FrozenTracks {
         &self,
         axis: Axis,
         extents: &[f64],
-        inherited: bool,
+        constraints_frozen: bool,
         overflow_policy: PaneOverflowPolicy,
     ) -> Result<Option<TrackResize>, SampleError> {
         let unchanged = extents
@@ -889,22 +960,16 @@ impl FrozenTracks {
             // inherited resize, retain the original shares if they still
             // produce these tracks under the same constraints.
             if weights == self.weights
-                || (inherited
-                    && solve_grid_axis(
-                        extents.iter().sum(),
+                || (constraints_frozen
+                    && grid_shares_match_extents(
                         &self.weights,
+                        extents,
                         self.tracks
                             .iter()
                             .map(|track| (track.minimum, track.maximum)),
                         self.central,
                         overflow_policy,
-                    )
-                    .is_ok_and(|original| {
-                        original
-                            .iter()
-                            .zip(extents)
-                            .all(|(&old, &new)| (old - new).abs() <= tolerance(old, new))
-                    }))
+                    ))
             {
                 return Ok(None);
             }
@@ -933,6 +998,28 @@ impl FrozenTracks {
             .zip(&self.weights)
             .all(|(new, old)| new.get().to_bits().abs_diff(old.get().to_bits()) <= 1)
     }
+}
+
+fn grid_shares_match_extents(
+    weights: &[SplitWeight],
+    extents: &[f64],
+    constraints: impl IntoIterator<Item = (f64, f64)>,
+    central: Option<usize>,
+    overflow_policy: PaneOverflowPolicy,
+) -> bool {
+    solve_grid_axis(
+        extents.iter().sum(),
+        weights,
+        constraints,
+        central,
+        overflow_policy,
+    )
+    .is_ok_and(|solved| {
+        solved
+            .iter()
+            .zip(extents)
+            .all(|(&actual, &target)| (actual - target).abs() <= tolerance(actual, target))
+    })
 }
 
 fn weights_with_zero_tracks(

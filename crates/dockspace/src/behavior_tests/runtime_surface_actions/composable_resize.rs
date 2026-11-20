@@ -7,6 +7,7 @@ use crate::geometry::PaneSizing;
 use crate::model::{DockspaceGridShape, DockspaceGridShares};
 use crate::runtime::{DockPresentationConfig, DockspaceHostFrame, ResizePropagation};
 
+mod grid_commands;
 mod measurement_changes;
 
 fn config(propagation: ResizePropagation) -> DockPresentationConfig {

@@ -294,55 +294,43 @@ pub(crate) fn reprojected_resize_handles(
 
 fn splitter_hit_rects(
     children: &[ChildProjection],
-    axis: crate::graph::Axis,
+    axis: Axis,
     extent: f64,
     bounds: LogicalRect,
 ) -> Result<Vec<LogicalRect>, GeometryError> {
-    children
+    let interval = |rect: LogicalRect| match axis {
+        Axis::Horizontal => (rect.x(), rect.max().x()),
+        Axis::Vertical => (rect.y(), rect.max().y()),
+    };
+    let (bounds_min, bounds_max) = interval(bounds);
+    let mut gaps = children
         .iter()
-        .enumerate()
-        .filter_map(|(index, child)| child.following_gap.as_ref().map(|gap| (index, gap)))
-        .map(|(index, splitter)| {
-            let center = match axis {
-                crate::graph::Axis::Horizontal => splitter.x() + splitter.width() * 0.5,
-                crate::graph::Axis::Vertical => splitter.y() + splitter.height() * 0.5,
-            };
-            let coordinate = |rect: &LogicalRect| match axis {
-                crate::graph::Axis::Horizontal => rect.x() + rect.width() * 0.5,
-                crate::graph::Axis::Vertical => rect.y() + rect.height() * 0.5,
-            };
-            let axis_min = match axis {
-                crate::graph::Axis::Horizontal => bounds.x(),
-                crate::graph::Axis::Vertical => bounds.y(),
-            };
-            let axis_max = match axis {
-                crate::graph::Axis::Horizontal => bounds.max().x(),
-                crate::graph::Axis::Vertical => bounds.max().y(),
-            };
-            let cell_min = children[..index]
-                .iter()
-                .rev()
-                .find_map(|previous| previous.following_gap.as_ref())
-                .map_or(axis_min, |previous| (coordinate(previous) + center) * 0.5);
-            let cell_max = children
-                .get(index + 1..)
-                .and_then(|children| {
-                    children
-                        .iter()
-                        .find_map(|child| child.following_gap.as_ref())
-                })
-                .map_or(axis_max, |next| (center + coordinate(next)) * 0.5);
-            let hit_min = (center - extent * 0.5).max(cell_min);
-            let hit_max = (center + extent * 0.5).min(cell_max).max(hit_min);
-            let hit = match axis {
-                crate::graph::Axis::Horizontal => {
-                    LogicalRect::new(hit_min, splitter.y(), hit_max - hit_min, splitter.height())?
-                }
-                crate::graph::Axis::Vertical => {
-                    LogicalRect::new(splitter.x(), hit_min, splitter.width(), hit_max - hit_min)?
-                }
-            };
-            clip_rect(hit, bounds)
-        })
-        .collect()
+        .filter_map(|child| child.following_gap)
+        .peekable();
+    let mut result = Vec::new();
+    let mut cell_min = bounds_min;
+    while let Some(gap) = gaps.next() {
+        let (start, end) = interval(gap);
+        // Partition the space between the actual gap edges. If a track
+        // collapses, the two hit cells share that exact edge.
+        let cell_max = gaps
+            .peek()
+            .map_or(bounds_max, |next| end.midpoint(interval(*next).0));
+        let center = start.midpoint(end);
+        let hit_min = (center - extent * 0.5).max(cell_min).min(start);
+        let hit_max = (center + extent * 0.5).min(cell_max).max(end);
+        let (min, max) = match axis {
+            Axis::Horizontal => (
+                LogicalPoint::new(hit_min, gap.y())?,
+                LogicalPoint::new(hit_max, gap.max().y())?,
+            ),
+            Axis::Vertical => (
+                LogicalPoint::new(gap.x(), hit_min)?,
+                LogicalPoint::new(gap.max().x(), hit_max)?,
+            ),
+        };
+        result.push(clip_rect(LogicalRect::from_min_max(min, max)?, bounds)?);
+        cell_min = cell_max;
+    }
+    Ok(result)
 }

@@ -103,11 +103,13 @@ measurement changes. Late release cannot commit shares from a cancelled map.
 An ancestor resize may reflow Auto descendants while preserving every captured
 driver boundary. A direct Grid driver must retain its frozen dimensions and cell
 map. After both axes are merged, roots containing Auto reuse their immutable
-numeric compiler inputs for one exact projection. The proposed tree must remain
-feasible, and each direct boundary must equal its frozen position plus the
-accepted displacement. A changed direct Grid shape or a new minimum that moves a
-driver rejects the complete batch. This check adds no feedback solver or gesture
-authority. Ordinary and Fixed-only roots retain no additional input snapshot.
+numeric compiler inputs to project the proposed layout. The final track
+constraints determine whether an inherited resize needs new shares. Reusing
+existing shares must preserve the projected allocation and Auto shape. The
+proposed tree must remain feasible, and each direct boundary must equal its
+frozen position plus the accepted displacement. A changed direct Grid shape or
+a new minimum that moves a driver rejects that sample. Ordinary and Fixed-only
+roots retain no additional input snapshot.
 
 Old-shape intervals remain conservative; the evaluator does not discover extra
 space made available by reflow. A public Auto resize range is returned only when
@@ -120,12 +122,11 @@ plan. A cap may transfer outward capacity to a farther track, so the ordinary
 half-difference formula is valid only on the linear path. A junction requires
 every incident pair on one axis to choose the same displacement.
 
-An ordered Auto keyboard batch checks each trial against the common evaluator.
+An ordered keyboard batch checks each trial against the common evaluator.
 A geometrically infeasible atom retains the last accepted displacement; reversal
-continues from that displacement. A single infeasible Auto action is unavailable.
-Source or policy failure aborts preparation rather than retaining an earlier
-step. A pointer release that retains an earlier accepted sample must revalidate
-its source, policy and coordinate authority before delivery.
+continues from that displacement. Source or policy failure aborts preparation.
+A pointer release that retains an earlier accepted sample must revalidate its
+source, policy and coordinate authority before delivery.
 
 The ordinary flat Tabs/Split path retains its selection and linear-resize fast
 paths. A composed motion transition without exact intermediate receiver geometry

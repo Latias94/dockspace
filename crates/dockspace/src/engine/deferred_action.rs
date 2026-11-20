@@ -426,18 +426,12 @@ impl DockEngine {
                 &self.workspace,
             )
             || !plan
-                .pane_records()
+                .tabs_records()
                 .iter()
-                .filter(|pane| pane.id().root == splitter.root)
-                .all(|pane| {
-                    self.workspace.item_is_active(pane.item())
-                        && self
-                            .workspace
-                            .locate_item_by_id(pane.item())
-                            .is_some_and(|location| {
-                                location.root == pane.id().root
-                                    && location.owner_node() == pane.owner_node()
-                            })
+                .filter(|tabs| tabs.id().root == splitter.root)
+                .all(|tabs| {
+                    let node = tabs.id().tabs;
+                    plan.selected_in_tabs(node) == self.workspace.visible_tab_selection(node)
                 })
         {
             return false;
