@@ -324,7 +324,7 @@ impl TabStripState {
 pub(crate) struct ActiveTabListMenu {
     session: TabListMenuSessionId,
     focus: TabKey,
-    scroll_offset: f64,
+    scroll_offset: Option<f64>,
     tabs: Vec<TabKey>,
 }
 
@@ -341,7 +341,7 @@ impl ActiveTabListMenu {
         self.focus
     }
 
-    pub(crate) const fn scroll_offset(&self) -> f64 {
+    pub(crate) const fn scroll_offset(&self) -> Option<f64> {
         self.scroll_offset
     }
 
@@ -523,7 +523,7 @@ impl TabStripStateStore {
         let active = ActiveTabListMenu {
             session,
             focus,
-            scroll_offset: 0.0,
+            scroll_offset: None,
             tabs: tabs.clone(),
         };
 
@@ -644,14 +644,25 @@ impl TabStripStateStore {
         offset: f64,
     ) -> Result<TabStripStateDelta, TabStripStateError> {
         validate_offset("tab-list menu scroll offset", offset)?;
-        if self.active_menu_mut(session)?.scroll_offset == offset {
+        let active = self.active_menu_mut(session)?;
+        if active.scroll_offset == Some(offset) {
             return Ok(TabStripStateDelta::unchanged());
         }
-        self.active_menu_mut(session)?.scroll_offset = offset;
+        active.scroll_offset = Some(offset);
         Ok(TabStripStateDelta::new(
             true,
             TabStripInfluenceDomain::Popup(BTreeSet::new()),
         ))
+    }
+
+    pub(crate) fn adopt_resolved_menu_scroll_offset(
+        &mut self,
+        session: TabListMenuSessionId,
+        offset: f64,
+    ) -> Result<(), TabStripStateError> {
+        validate_offset("tab-list menu scroll offset", offset)?;
+        self.active_menu_mut(session)?.scroll_offset = Some(offset);
+        Ok(())
     }
 
     fn active_menu_mut(
@@ -1155,7 +1166,7 @@ mod tests {
         let active = states.active_menu().expect("the live menu remains active");
         assert_eq!(active.focus(), initial[2]);
         assert_eq!(active.tabs(), removed_focus);
-        assert_eq!(active.scroll_offset(), 18.0);
+        assert_eq!(active.scroll_offset(), Some(18.0));
 
         let removed_next_neighbor = [initial[0], initial[3]];
         assert!(

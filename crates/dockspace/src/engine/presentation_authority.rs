@@ -1533,6 +1533,10 @@ impl DockEngine {
                         )
                     })
                     .collect::<Vec<_>>();
+                let resolved_menu_offset = plan
+                    .tab_list_menu_records()
+                    .first()
+                    .map(|menu| (menu.session(), menu.scroll_offset()));
                 let output_serial = self.presentation_authority.issue_scene_output()?;
                 let (stamp, ticket) = self
                     .presentation_authority
@@ -1548,6 +1552,14 @@ impl DockEngine {
                     .tab_strip_states
                     .adopt_resolved_scroll_offsets(surface, resolved_tab_offsets)
                     .map_err(|source| Self::contribution_invariant(cause, source.to_string()))?;
+                if let Some((session, offset)) = resolved_menu_offset {
+                    self.presentation_authority
+                        .tab_strip_states
+                        .adopt_resolved_menu_scroll_offset(session, offset)
+                        .map_err(|source| {
+                            Self::contribution_invariant(cause, source.to_string())
+                        })?;
+                }
                 self.presentation_authority.last_presentation_output_serial = output_serial;
                 #[cfg(feature = "motion")]
                 match contribution.next_motion {

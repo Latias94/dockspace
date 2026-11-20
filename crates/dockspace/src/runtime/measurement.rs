@@ -120,6 +120,13 @@ pub enum SurfaceMeasurementAnswer {
     PaneSizing(PaneSizing),
     /// Text-and-icon content width for one tab request.
     TabIntrinsic(f64),
+    /// Independent content widths for one tab header and its tab-list row.
+    TabIntrinsicWithMenuWidth {
+        /// Width of the header before core padding.
+        tab_width: f64,
+        /// Width of the title or other row content before menu padding.
+        menu_width: f64,
+    },
     /// Renderer-owned tab-strip chrome measurements.
     TabStrip(TabStripMetrics),
     /// The adapter participated but could not authoritatively measure the value.
@@ -131,9 +138,10 @@ impl SurfaceMeasurementAnswer {
         match self {
             Self::Bounds(value) => Ok(Measurement::Measured(value)),
             Self::Unavailable(reason) => Ok(Measurement::Unavailable(reason.into())),
-            Self::PaneSizing(_) | Self::TabIntrinsic(_) | Self::TabStrip(_) => {
-                Err(DockspaceInteractionError::MeasurementAnswerMismatch)
-            }
+            Self::PaneSizing(_)
+            | Self::TabIntrinsic(_)
+            | Self::TabIntrinsicWithMenuWidth { .. }
+            | Self::TabStrip(_) => Err(DockspaceInteractionError::MeasurementAnswerMismatch),
         }
     }
 
@@ -141,15 +149,23 @@ impl SurfaceMeasurementAnswer {
         match self {
             Self::PaneSizing(value) => Ok(Measurement::Measured(value)),
             Self::Unavailable(reason) => Ok(Measurement::Unavailable(reason.into())),
-            Self::Bounds(_) | Self::TabIntrinsic(_) | Self::TabStrip(_) => {
-                Err(DockspaceInteractionError::MeasurementAnswerMismatch)
-            }
+            Self::Bounds(_)
+            | Self::TabIntrinsic(_)
+            | Self::TabIntrinsicWithMenuWidth { .. }
+            | Self::TabStrip(_) => Err(DockspaceInteractionError::MeasurementAnswerMismatch),
         }
     }
 
     fn into_tab_intrinsic(self) -> Result<Measurement<TabIntrinsic>, DockspaceInteractionError> {
         match self {
             Self::TabIntrinsic(content_width) => TabIntrinsic::new(content_width)
+                .map(Measurement::Measured)
+                .map_err(|_| DockspaceInteractionError::InvalidMeasurementProfile),
+            Self::TabIntrinsicWithMenuWidth {
+                tab_width,
+                menu_width,
+            } => TabIntrinsic::new(tab_width)
+                .and_then(|intrinsic| intrinsic.with_menu_content_width(menu_width))
                 .map(Measurement::Measured)
                 .map_err(|_| DockspaceInteractionError::InvalidMeasurementProfile),
             Self::Unavailable(reason) => Ok(Measurement::Unavailable(reason.into())),
@@ -163,7 +179,10 @@ impl SurfaceMeasurementAnswer {
         match self {
             Self::TabStrip(value) => Ok(Measurement::Measured(value)),
             Self::Unavailable(reason) => Ok(Measurement::Unavailable(reason.into())),
-            Self::Bounds(_) | Self::PaneSizing(_) | Self::TabIntrinsic(_) => {
+            Self::Bounds(_)
+            | Self::PaneSizing(_)
+            | Self::TabIntrinsic(_)
+            | Self::TabIntrinsicWithMenuWidth { .. } => {
                 Err(DockspaceInteractionError::MeasurementAnswerMismatch)
             }
         }

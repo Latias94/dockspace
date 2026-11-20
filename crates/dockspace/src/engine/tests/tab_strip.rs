@@ -918,7 +918,7 @@ fn only_an_installed_ready_plan_silently_adopts_its_resolved_scroll_offset() {
 
 #[test]
 fn prepared_menu_scroll_revalidates_popup_authority_and_dismisses_exactly() {
-    let mut fixture = tab_strip_reducer_fixture(DockPolicy::default());
+    let mut fixture = tab_strip_reducer_fixture_with_selection(DockPolicy::default(), 0);
     let host = fixture
         .engine
         .create_presentation_host()
@@ -1199,7 +1199,7 @@ fn prepared_menu_navigation_atomically_moves_focus_reveals_and_clamps() {
         .active_menu()
         .expect("navigation keeps the menu open");
     assert_eq!(active.focus(), items[3].into());
-    assert_eq!(active.scroll_offset(), revealed_offset);
+    assert_eq!(active.scroll_offset(), Some(revealed_offset));
     assert!(fixture.engine.interaction_projection(surface).is_none());
 
     publish_tab_strip_reducer_projection(&mut fixture, host, true);

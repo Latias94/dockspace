@@ -66,6 +66,30 @@ pub enum SurfaceTabListNavigation {
     Last,
 }
 
+impl SurfaceTabListNavigation {
+    pub(super) const fn destination(self, current: usize, last: usize) -> usize {
+        match self {
+            Self::Previous => current.saturating_sub(1),
+            Self::Next if current < last => current + 1,
+            Self::Next | Self::Last => last,
+            Self::First => 0,
+        }
+    }
+}
+
+/// One keyboard input addressed to a row of a retained tab-list menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SurfaceTabListInput {
+    /// Focus the addressed row, revealing it if needed.
+    Focus,
+    /// Move focus from the addressed row.
+    Navigate(SurfaceTabListNavigation),
+    /// Select the addressed tab and request focus for its content.
+    Activate,
+    /// Dismiss the menu and leave the selected tab unchanged.
+    Dismiss,
+}
+
 /// Product-facing adjustment of one exact splitter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SurfaceSplitterAdjustment {

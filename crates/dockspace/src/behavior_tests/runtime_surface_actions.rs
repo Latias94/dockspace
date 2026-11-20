@@ -1207,6 +1207,33 @@ fn retained_tab_input_resolves_clipped_members_and_rejects_an_old_strip_order() 
 }
 
 #[test]
+fn retained_tab_navigation_survives_resize_below_an_unchanged_strip() {
+    let mut session = session();
+    let capture_strip = |session: &mut DockspaceSession, height| {
+        let mut frame = session.begin_host_frame().unwrap();
+        let metrics = UniformSurfaceMetrics::new(
+            LogicalRect::new(0.0, 0.0, 800.0, height).unwrap(),
+            LogicalSize::new(64.0, 48.0).unwrap(),
+            96.0,
+        )
+        .unwrap();
+        frame.measure_surface(SURFACE, metrics).unwrap();
+        let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+        let strip = plan
+            .retain_tab_strip(plan.tab_bars().next().unwrap())
+            .unwrap();
+        frame.commit().unwrap();
+        strip
+    };
+    let previous = capture_strip(&mut session, 600.0);
+    let current = capture_strip(&mut session, 601.0);
+    assert_eq!(
+        current.continuation_receiver(&previous, FIRST.into()),
+        Some(FIRST.into())
+    );
+}
+
+#[test]
 fn retained_activation_keeps_the_provenance_of_pending_navigation() {
     let mut session = overflow_session();
     install_overflow_candidate(&mut session);

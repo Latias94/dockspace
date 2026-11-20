@@ -36,25 +36,56 @@ impl RetainedTabStrip {
     ///
     /// Selection and scrolling can produce a new output for the same strip.
     /// The session, layout epoch, surface, policy, presentation configuration,
-    /// coordinate authority, and popup state must still match. The host must
-    /// independently verify focus, the expected workspace version, and that the
-    /// replacement output has actually presented before resolving queued input.
+    /// coordinate authority, popup state, and strip allocation must match. The
+    /// host must independently verify focus, the expected workspace version,
+    /// and that the replacement output has presented before resolving queued input.
     #[must_use]
     pub fn same_navigation_scope(&self, previous: &Self) -> bool {
-        let current = self.witness.stamp().requirement();
-        let previous_ticket = previous.witness.stamp().requirement();
         self.bar == previous.bar
-            && current.authority_domain() == previous_ticket.authority_domain()
-            && current.workspace_epoch() == previous_ticket.workspace_epoch()
-            && current.surface() == previous_ticket.surface()
-            && current.policy() == previous_ticket.policy()
-            && current.config() == previous_ticket.config()
-            && self
-                .witness
-                .coordinate_capture()
-                .same_projection_authority(previous.witness.coordinate_capture())
-            && self.witness.plan().bounds() == previous.witness.plan().bounds()
-            && self.witness.plan().popup() == previous.witness.plan().popup()
+            && same_keyboard_authority(&self.witness, &previous.witness)
+            && tab_bar(self.witness.plan(), self.bar)
+                .zip(tab_bar(previous.witness.plan(), previous.bar))
+                .is_some_and(|(current, previous)| {
+                    current.viewport() == previous.viewport()
+                        && current.layout_viewport() == previous.layout_viewport()
+                        && current
+                            .members()
+                            .iter()
+                            .map(|member| (member.tab(), member.allocated_width()))
+                            .eq(previous
+                                .members()
+                                .iter()
+                                .map(|member| (member.tab(), member.allocated_width())))
+                })
+    }
+
+    /// Chooses the exact receiver for queued keys after a committed navigation.
+    ///
+    /// The committed tab must still be selected. If scrolling clips its body,
+    /// another operable header in the same strip can receive navigation. A body
+    /// covered by a higher layer cannot lend its continuation to another tab.
+    /// Use the returned key as `receiver` when calling [`Self::resolve`].
+    #[must_use]
+    pub fn continuation_receiver(&self, previous: &Self, committed: TabKey) -> Option<TabKey> {
+        let plan = self.witness.plan();
+        if !self.same_navigation_scope(previous)
+            || plan.selected_in_tabs(self.bar.tabs) != Some(committed)
+        {
+            return None;
+        }
+        let bar = tab_bar(plan, self.bar)?;
+        let mut tabs = plan
+            .tab_records()
+            .iter()
+            .filter(|tab| owner(tab) == self.bar);
+        if let Some(tab) = tabs.clone().find(|tab| tab.id().tab == committed) {
+            let bounds = tab.drag_hit().rect();
+            if bounds.width() > 0.0 && bounds.height() > 0.0 {
+                return operable(plan, bar, tab).then_some(committed);
+            }
+        }
+        tabs.find(|tab| operable(plan, bar, tab))
+            .map(|tab| tab.id().tab)
     }
 
     /// Resolves inputs from an operable `receiver` in the original output.
@@ -90,6 +121,23 @@ impl RetainedTabStrip {
             .into_deferred(),
         )
     }
+}
+
+pub(super) fn same_keyboard_authority(
+    current: &SurfacePlanScene,
+    previous: &SurfacePlanScene,
+) -> bool {
+    let ticket = current.stamp().requirement();
+    let before = previous.stamp().requirement();
+    ticket.authority_domain() == before.authority_domain()
+        && ticket.workspace_epoch() == before.workspace_epoch()
+        && ticket.surface() == before.surface()
+        && ticket.policy() == before.policy()
+        && ticket.config() == before.config()
+        && current
+            .coordinate_capture()
+            .same_projection_authority(previous.coordinate_capture())
+        && current.plan().popup() == previous.plan().popup()
 }
 
 impl SurfacePaintPlan<'_> {

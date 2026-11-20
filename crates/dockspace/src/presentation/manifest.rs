@@ -304,6 +304,7 @@ impl<T> Measurement<T> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TabIntrinsic {
     content_width: f64,
+    menu_content_width: Option<f64>,
 }
 
 impl TabIntrinsic {
@@ -314,7 +315,23 @@ impl TabIntrinsic {
     /// Returns [`MeasurementValueError`] when `content_width` is non-finite or negative.
     pub fn new(content_width: f64) -> Result<Self, MeasurementValueError> {
         validate_non_negative("tab content width", content_width)?;
-        Ok(Self { content_width })
+        Ok(Self {
+            content_width,
+            menu_content_width: None,
+        })
+    }
+
+    pub(crate) fn with_menu_content_width(
+        mut self,
+        width: f64,
+    ) -> Result<Self, MeasurementValueError> {
+        validate_non_negative("tab-list row content width", width)?;
+        self.menu_content_width = Some(width);
+        Ok(self)
+    }
+
+    pub(crate) fn menu_content_width(self) -> f64 {
+        self.menu_content_width.unwrap_or(self.content_width)
     }
 
     /// Returns the measured text-and-icon content width before core padding.

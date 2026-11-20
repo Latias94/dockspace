@@ -649,7 +649,9 @@ impl DockEngine {
                         .iter()
                         .find(|record| record.session() == active.session())
                         .is_some_and(|record| {
-                            record.scroll_offset() == active.scroll_offset()
+                            active
+                                .scroll_offset()
+                                .is_none_or(|offset| offset == record.scroll_offset())
                                 && record
                                     .rows()
                                     .iter()

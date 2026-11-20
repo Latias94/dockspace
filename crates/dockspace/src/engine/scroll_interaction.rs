@@ -1223,7 +1223,7 @@ impl DockEngine {
                 .tab_strip_states
                 .active_menu()
                 .filter(|menu| menu.session() == session)
-                .map(|menu| menu.scroll_offset())
+                .and_then(|menu| menu.scroll_offset())
                 .ok_or_else(|| scroll_invariant(cause, "tab-list scroll state is unavailable"))?,
         };
         let offset = (old_offset + requested_delta).clamp(0.0, owner.geometry.maximum_offset());

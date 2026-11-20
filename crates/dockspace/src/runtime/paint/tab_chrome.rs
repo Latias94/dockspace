@@ -1,13 +1,139 @@
 //! Tab-strip controls and popup paint records.
 
+use std::sync::Arc;
+
+use crate::engine::LocalTabChromeAction;
 use crate::geometry::LogicalRect;
 use crate::ids::{ItemId, RootId, SurfaceId, TabKey};
+use crate::interaction::FrozenTabListMenuRowClick;
+use crate::model::WorkspaceVersion;
 use crate::presentation::scene::{
-    TabListMenuBackdropRecord, TabListMenuRecord, TabListMenuRowRecord, TabStripControlRecord,
+    SurfacePlanScene, TabListMenuBackdropRecord, TabListMenuRecord, TabListMenuRowRecord,
+    TabStripControlRecord,
 };
 use crate::presentation::tab_strip::{TabListMenuSessionId, TabStripControlId};
+use crate::runtime::{DeferredSurfaceAction, PreparedSurfaceAction, SurfaceTabListInput};
 
-use super::{DockspacePaintLayer, DockspaceVisualId, VisualIdentity};
+use super::{DockspacePaintLayer, DockspaceVisualId, SurfacePaintPlan, VisualIdentity};
+
+/// Shared keyboard authority for one tab-list menu from an exact output.
+///
+/// Keep one copy with the rendered menu. Resolve a key only after the host
+/// delivers it to that output. Core revalidates the deferred action on submit.
+#[derive(Debug, Clone)]
+pub struct RetainedTabListMenu {
+    witness: Arc<SurfacePlanScene>,
+    version: WorkspaceVersion,
+    record: TabListMenuRecord,
+    backdrop: TabListMenuBackdropRecord,
+}
+
+impl RetainedTabListMenu {
+    /// Tests whether a later presented menu can continue this menu's keyboard input.
+    ///
+    /// The popup session, ordered roster and keyboard authority must match.
+    /// The host still validates the expected workspace version and focus claim.
+    #[must_use]
+    pub fn can_continue_from(&self, previous: &Self) -> bool {
+        self.record.session() == previous.record.session()
+            && super::tab_input::same_keyboard_authority(&self.witness, &previous.witness)
+            && self.record.rows().iter().map(|row| row.tab()).eq(previous
+                .record
+                .rows()
+                .iter()
+                .map(|row| row.tab()))
+    }
+
+    /// Resolves one input and returns its resulting row identity and action.
+    ///
+    /// The host supplies the current cursor or the destination of the previous
+    /// key in a batch. The row may be scrolled out of view. Row identities from
+    /// a different menu session are rejected.
+    #[must_use]
+    pub fn resolve(
+        &self,
+        row: DockspaceVisualId,
+        input: SurfaceTabListInput,
+    ) -> Option<(DockspaceVisualId, DeferredSurfaceAction)> {
+        let session = self.record.session();
+        let VisualIdentity::TabListMenuRow {
+            session: owner,
+            tab,
+        } = row.0
+        else {
+            return None;
+        };
+        if owner != session {
+            return None;
+        }
+        let rows = self.record.rows();
+        let start = rows.iter().find(|row| row.tab() == tab)?;
+        let target = match input {
+            SurfaceTabListInput::Navigate(navigation) => {
+                &rows[navigation.destination(start.ordinal(), rows.len() - 1)]
+            }
+            _ => start,
+        };
+        let revision = self.backdrop.revision();
+        let action = match input {
+            SurfaceTabListInput::Focus | SurfaceTabListInput::Navigate(_) => {
+                LocalTabChromeAction::NavigateMenu {
+                    session,
+                    revision,
+                    record: self.record.clone(),
+                    target: target.tab().tab,
+                }
+            }
+            SurfaceTabListInput::Activate => {
+                LocalTabChromeAction::ActivateMenuRow(FrozenTabListMenuRowClick {
+                    session,
+                    record: *target,
+                    revision,
+                })
+            }
+            SurfaceTabListInput::Dismiss => LocalTabChromeAction::DismissMenu {
+                session,
+                revision,
+                record: self.record.clone(),
+                backdrop: self.backdrop,
+            },
+        };
+        let stamp = self.witness.stamp();
+        let action = PreparedSurfaceAction::tab_chrome(
+            stamp.requirement().authority_domain(),
+            self.version,
+            stamp,
+            Arc::clone(&self.witness),
+            action,
+        );
+        Some((
+            DockspaceVisualId(VisualIdentity::TabListMenuRow {
+                session,
+                tab: target.tab(),
+            }),
+            action.into_deferred(),
+        ))
+    }
+}
+
+impl SurfacePaintPlan<'_> {
+    /// Captures one menu for retained keyboard and accessibility delivery.
+    #[must_use]
+    pub fn retain_tab_list_menu(
+        self,
+        menu: TabListMenuPaintRecord<'_>,
+    ) -> Option<RetainedTabListMenu> {
+        if !std::ptr::eq(self.plan, menu.plan) {
+            return None;
+        }
+        Some(RetainedTabListMenu {
+            witness: self.frozen_action_witness()?,
+            version: self.version,
+            record: menu.record.clone(),
+            backdrop: menu.backdrop,
+        })
+    }
+}
 
 /// Product-facing class of one core-owned tab-strip control.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

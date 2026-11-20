@@ -89,7 +89,8 @@ pub use interaction::{
 use local_action::PreparedSurfaceActionAuthorityMismatch;
 pub use local_action::{
     DeferredSurfaceAction, PreparedSurfaceAction, SurfaceContainedResizeAdjustment,
-    SurfaceSplitterAdjustment, SurfaceTabInput, SurfaceTabListNavigation, SurfaceTabNavigation,
+    SurfaceSplitterAdjustment, SurfaceTabInput, SurfaceTabListInput, SurfaceTabListNavigation,
+    SurfaceTabNavigation,
 };
 pub use measurement::{
     MeasurementValueError, SurfaceMeasurementAnswer, SurfaceMeasurementRequest, TabListMenuMetrics,
@@ -138,14 +139,15 @@ pub use paint::{
     DropAffordanceClusterPaintRecord, DropAffordancePaintRecord, DropAffordanceTargetPaintRecord,
     DropGuidePaintRecord, DropGuideTargetPaintRecord, DropTargetPaintRecord, PaneContentGeometry,
     PanePaintRecord, PresentationCommandPaintRecord, PresentationMenuAnchorPaintRecord,
-    RetainedTabStrip, SplitterJunctionPaintRecord, SplitterPaintRecord, SurfaceMeasurementRefresh,
-    SurfacePaintDisposition, SurfacePaintPlan, SurfacePaintProgramOperation,
-    SurfacePaintProgramRoot, SurfacePaintProgramRootKind, SurfacePaintProgramStep,
-    SurfacePaintProgramVisitError, SurfaceProgramExecutionReceipt, SurfaceSplitterRange,
-    SurfaceWork, SurfaceWorkDeferred, TabBarPaintRecord, TabGroupDragRegionKind,
-    TabGroupDragRegionPaintRecord, TabListMenuBackdropPaintRecord, TabListMenuPaintRecord,
-    TabListMenuRowPaintRecord, TabPaintRecord, TabStripControlKind, TabStripControlPaintRecord,
-    TabStripMemberPaintRecord, TabStripMemberVisibility, TabsPaintRecord,
+    RetainedTabListMenu, RetainedTabStrip, SplitterJunctionPaintRecord, SplitterPaintRecord,
+    SurfaceMeasurementRefresh, SurfacePaintDisposition, SurfacePaintPlan,
+    SurfacePaintProgramOperation, SurfacePaintProgramRoot, SurfacePaintProgramRootKind,
+    SurfacePaintProgramStep, SurfacePaintProgramVisitError, SurfaceProgramExecutionReceipt,
+    SurfaceSplitterRange, SurfaceWork, SurfaceWorkDeferred, TabBarPaintRecord,
+    TabGroupDragRegionKind, TabGroupDragRegionPaintRecord, TabListMenuBackdropPaintRecord,
+    TabListMenuPaintRecord, TabListMenuRowPaintRecord, TabPaintRecord, TabStripControlKind,
+    TabStripControlPaintRecord, TabStripMemberPaintRecord, TabStripMemberVisibility,
+    TabsPaintRecord,
 };
 #[cfg(feature = "serde")]
 pub use persistence::{

@@ -157,11 +157,10 @@ impl SurfacePaintPlan<'_> {
             .tab_list_menu_records()
             .iter()
             .find(|menu| menu.session() == row.session)?;
-        let record = menu
+        let record = *menu
             .rows()
-            .iter()
-            .copied()
-            .find(|record| *record == row.record)?;
+            .get(row.record.ordinal())
+            .filter(|&record| *record == row.record)?;
         Some(PreparedSurfaceAction::tab_chrome(
             self.authority_domain,
             self.version,
@@ -300,12 +299,7 @@ impl SurfacePaintPlan<'_> {
         let rows = record.rows();
         let current = rows.iter().position(|row| row.focused())?;
         let last = rows.len().checked_sub(1)?;
-        let target = match navigation {
-            SurfaceTabListNavigation::Previous => rows[current.saturating_sub(1)].tab().tab,
-            SurfaceTabListNavigation::Next => rows[current.saturating_add(1).min(last)].tab().tab,
-            SurfaceTabListNavigation::First => rows[0].tab().tab,
-            SurfaceTabListNavigation::Last => rows[last].tab().tab,
-        };
+        let target = rows[navigation.destination(current, last)].tab().tab;
         self.prepare_tab_list_menu_focus(menu, target)
     }
 
@@ -627,11 +621,7 @@ impl SurfacePaintPlan<'_> {
         self,
         menu: TabListMenuPaintRecord<'_>,
     ) -> Option<crate::presentation::scene::TabListMenuRecord> {
-        self.plan
-            .tab_list_menu_records()
-            .iter()
-            .find(|record| *record == menu.record)
-            .cloned()
+        std::ptr::eq(self.plan, menu.plan).then(|| menu.record.clone())
     }
 }
 

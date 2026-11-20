@@ -866,7 +866,7 @@ pub struct TabListMenuRecord {
     scroll_offset: f64,
     maximum_scroll_offset: f64,
     metrics: TabListMenuMetrics,
-    rows: Vec<TabListMenuRowRecord>,
+    rows: Arc<[TabListMenuRowRecord]>,
     layer: SceneLayerKey,
 }
 
@@ -930,7 +930,7 @@ impl TabListMenuRecord {
             scroll_offset,
             maximum_scroll_offset,
             metrics,
-            rows,
+            rows: rows.into(),
             layer,
         }
     }

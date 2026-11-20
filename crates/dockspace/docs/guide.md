@@ -182,6 +182,18 @@ scrolled out of view. Route events through the original presentation before
 submitting. Immediate renderers can use `prepare_tab_input_sequence` during
 the paint pass with the same navigation rules.
 
+To continue queued navigation after a selection presents, ask the new strip
+for `continuation_receiver(previous, committed_tab)`. Also check that the
+window still owns keyboard focus and that the expected workspace version is
+current before resolving the queued input.
+
+Retain a popup once with `SurfacePaintPlan::retain_tab_list_menu`. Resolve row
+navigation, activation, and dismissal when the UI delivers input. Lay out row
+content in `bounds()` and clip it to `interaction_bounds()`, skipping rows
+without a visible intersection. Answer `TabIntrinsic` requests with
+`SurfaceMeasurementAnswer::TabIntrinsicWithMenuWidth` when the menu displays
+content of a different width from the tab header.
+
 Application commands submitted through a host frame return a
 `DockspaceSubmittedAction`. Keep each identity when batching commands, then use
 `HostFrameReport::submitted_action_outcome` to obtain its exact committed result.

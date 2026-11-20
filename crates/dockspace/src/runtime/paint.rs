@@ -69,8 +69,8 @@ pub use guides::{
 pub use preview_tabs::{DockspacePreviewTabBarPaintRecord, DockspacePreviewTabPaintRecord};
 pub use splitter_range::SurfaceSplitterRange;
 pub use tab_chrome::{
-    TabListMenuBackdropPaintRecord, TabListMenuPaintRecord, TabListMenuRowPaintRecord,
-    TabStripControlKind, TabStripControlPaintRecord,
+    RetainedTabListMenu, TabListMenuBackdropPaintRecord, TabListMenuPaintRecord,
+    TabListMenuRowPaintRecord, TabStripControlKind, TabStripControlPaintRecord,
 };
 pub use tab_input::RetainedTabStrip;
 pub use tabs::{
