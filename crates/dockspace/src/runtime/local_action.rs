@@ -416,6 +416,18 @@ impl PreparedSurfaceAction {
         }
     }
 
+    /// Returns the widget identity to focus, including a tab revealed by navigation.
+    #[must_use]
+    pub const fn tab_focus_input_id(&self) -> Option<super::TabChromeInputId> {
+        match self.action {
+            SurfaceAction::SelectTab { scene, selection } => Some(super::TabChromeInputId::new(
+                scene,
+                super::DockspaceVisualId::from_tab_scene(selection.target()),
+            )),
+            _ => None,
+        }
+    }
+
     pub(super) fn into_engine_input(
         self,
         authority_domain: EngineAuthorityDomainId,
@@ -579,6 +591,12 @@ impl DeferredSurfaceAction {
     #[must_use]
     pub const fn tab_focus_visual(&self) -> Option<super::DockspaceVisualId> {
         self.0.tab_focus_visual()
+    }
+
+    /// Returns the widget identity to focus, including a tab revealed by navigation.
+    #[must_use]
+    pub const fn tab_focus_input_id(&self) -> Option<super::TabChromeInputId> {
+        self.0.tab_focus_input_id()
     }
 
     /// Compares semantics within one adapter event slot, ignoring scene and version.

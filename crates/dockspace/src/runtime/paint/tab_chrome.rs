@@ -18,7 +18,7 @@ use crate::runtime::{DeferredSurfaceAction, PreparedSurfaceAction, SurfaceTabLis
 
 use super::{
     DockspacePaintLayer, DockspaceSemanticOutput, DockspaceVisualId, SurfacePaintPlan,
-    VisualIdentity,
+    TabChromeInputId, VisualIdentity,
 };
 
 /// Input identity of one row in a core-issued tab-list menu instance.
@@ -194,14 +194,37 @@ pub enum TabStripControlKind {
     RevealTabBar,
 }
 
-/// Read-only geometry and state for one tab-strip control.
+/// Read-only geometry and state for one tab-strip control from an exact output.
 #[derive(Debug, Clone, Copy)]
 pub struct TabStripControlPaintRecord {
     pub(super) record: TabStripControlRecord,
-    pub(super) menu_open: bool,
+    output: DockspaceSemanticOutput,
+    menu_open: bool,
 }
 
 impl TabStripControlPaintRecord {
+    pub(super) const fn new(
+        plan: &SurfacePaintPlan<'_>,
+        record: TabStripControlRecord,
+        menu_open: bool,
+    ) -> Self {
+        Self {
+            record,
+            output: plan.semantic_output(),
+            menu_open,
+        }
+    }
+
+    pub(super) fn belongs_to(self, plan: &SurfacePaintPlan<'_>) -> bool {
+        self.output == plan.semantic_output()
+    }
+
+    /// Returns the input identity for widget and accessibility registration.
+    #[must_use]
+    pub const fn input_id(self) -> TabChromeInputId {
+        self.output.tab_input_id(self.visual_id())
+    }
+
     #[must_use]
     pub const fn root(self) -> RootId {
         self.record.id().bar().root
@@ -356,6 +379,21 @@ impl<'plan> TabListMenuPaintRecord<'plan> {
             scope: MenuInputScope::from_plan(plan, backdrop),
             backdrop: TabListMenuBackdropPaintRecord::new(plan, backdrop),
         }
+    }
+
+    /// Returns the input identity shared by this popup's frame and scrollbar.
+    #[must_use]
+    pub const fn input_id(self) -> TabChromeInputId {
+        self.backdrop.output.tab_input_id(self.backdrop.visual_id())
+    }
+
+    /// Returns the same input identity used by the list button.
+    #[must_use]
+    pub const fn opener_input_id(self) -> TabChromeInputId {
+        let opener = TabStripControlId::TabListMenu(self.record.bar());
+        self.backdrop
+            .output
+            .tab_input_id(DockspaceVisualId(VisualIdentity::TabStripControl(opener)))
     }
 
     #[must_use]

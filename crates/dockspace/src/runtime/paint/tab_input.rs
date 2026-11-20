@@ -146,9 +146,7 @@ impl SurfacePaintPlan<'_> {
     /// Returns `None` for a foreign record or a strip with disabled interaction.
     #[must_use]
     pub fn retain_tab_strip(self, bar: TabBarPaintRecord<'_>) -> Option<RetainedTabStrip> {
-        if !std::ptr::eq(bar.plan, self.plan)
-            || bar.record.interaction() != TabBarInteraction::Enabled
-        {
+        if !bar.belongs_to(&self) || bar.record.interaction() != TabBarInteraction::Enabled {
             return None;
         }
         Some(RetainedTabStrip {

@@ -26,13 +26,7 @@ impl SurfacePaintPlan<'_> {
         tab: TabPaintRecord<'_>,
         kind: Kind,
     ) -> Result<Option<PresentationCommandPaintRecord>, DockspaceRuntimeError> {
-        if !self
-            .plan
-            .tab_records()
-            .iter()
-            .any(|row| std::ptr::eq(row, tab.record))
-            || !self.tab_is_operable(tab.record)
-        {
+        if !tab.belongs_to(&self) || !tab.operable() {
             return Ok(None);
         }
         let id = *tab.record.id();

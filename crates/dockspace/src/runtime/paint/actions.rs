@@ -83,12 +83,8 @@ impl SurfacePaintPlan<'_> {
         self,
         control: TabStripControlPaintRecord,
     ) -> Option<PreparedSurfaceAction> {
-        let record = self
-            .plan
-            .tab_strip_control_records()
-            .iter()
-            .copied()
-            .find(|record| *record == control.record && record.enabled())?;
+        (control.belongs_to(&self) && control.enabled()).then_some(())?;
+        let record = control.record;
         let key = TabStripStateKey::new(self.surface, record.id().bar());
         Some(PreparedSurfaceAction::tab_chrome(
             self.authority_domain,
@@ -121,12 +117,7 @@ impl SurfacePaintPlan<'_> {
         {
             return None;
         }
-        let record = self
-            .plan
-            .tab_bar_records()
-            .iter()
-            .find(|record| *record == bar.record)
-            .cloned()?;
+        let record = bar.record.clone();
         let adjustment = crate::engine::TabScrollAdjustment::scroll_by(delta).ok()?;
         let target = (record.scroll_offset() + delta).clamp(0.0, record.maximum_scroll_offset());
         if target == record.scroll_offset() {

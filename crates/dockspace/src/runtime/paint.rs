@@ -94,6 +94,10 @@ impl DockspaceSemanticOutput {
     pub const fn surface(self) -> SurfaceId {
         self.ticket.surface()
     }
+
+    const fn tab_input_id(self, target: DockspaceVisualId) -> TabChromeInputId {
+        TabChromeInputId::new(self.ticket.scene_stamp(), target)
+    }
 }
 
 impl fmt::Debug for DockspaceSemanticOutput {
@@ -108,6 +112,34 @@ impl fmt::Debug for DockspaceSemanticOutput {
 /// Stable renderer identity whose structural storage remains core-private.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DockspaceVisualId(VisualIdentity);
+
+/// Host widget and accessibility identity for an interactive tab control.
+///
+/// It remains stable across repainting and expires after a session or layout
+/// replacement. Popup controls also expire with their menu instance and roster.
+/// Core actions still require a record from the current output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TabChromeInputId {
+    domain: crate::ids::EngineAuthorityDomainId,
+    epoch: crate::ids::WorkspaceEpoch,
+    surface: SurfaceId,
+    target: DockspaceVisualId,
+}
+
+impl TabChromeInputId {
+    pub(super) const fn new(
+        scene: crate::presentation::scene::SurfaceSceneStamp,
+        target: DockspaceVisualId,
+    ) -> Self {
+        let requirement = scene.requirement();
+        Self {
+            domain: requirement.authority_domain(),
+            epoch: requirement.workspace_epoch(),
+            surface: scene.surface(),
+            target,
+        }
+    }
+}
 
 /// Content identity preserved across docking within one session and workspace epoch.
 ///
@@ -2017,19 +2049,10 @@ impl<'frame> SurfacePaintPlan<'frame> {
                 SurfacePaintProgramOperation::Tabs(TabsPaintRecord { record })
             }
             ResolvedSurfaceProgramOperation::TabBar(record) => {
-                SurfacePaintProgramOperation::TabBar(TabBarPaintRecord {
-                    record,
-                    plan: self.plan,
-                    selected: self.plan.selected_in_tabs(record.id().tabs),
-                })
+                SurfacePaintProgramOperation::TabBar(TabBarPaintRecord::new(self, record))
             }
             ResolvedSurfaceProgramOperation::Tab(record) => {
-                SurfacePaintProgramOperation::Tab(TabPaintRecord {
-                    record,
-                    plan: self.plan,
-                    selected: self.plan.tab_selected(record),
-                    operable: self.tab_is_operable(record),
-                })
+                SurfacePaintProgramOperation::Tab(TabPaintRecord::new(self, record))
             }
             ResolvedSurfaceProgramOperation::Splitter(record) => {
                 SurfacePaintProgramOperation::Splitter(SplitterPaintRecord { record })
@@ -2040,10 +2063,11 @@ impl<'frame> SurfacePaintPlan<'frame> {
                 })
             }
             ResolvedSurfaceProgramOperation::TabStripControl(record) => {
-                SurfacePaintProgramOperation::TabStripControl(TabStripControlPaintRecord {
-                    record: *record,
-                    menu_open: menu_open_bars.contains(&record.id().bar()),
-                })
+                SurfacePaintProgramOperation::TabStripControl(TabStripControlPaintRecord::new(
+                    self,
+                    *record,
+                    menu_open_bars.contains(&record.id().bar()),
+                ))
             }
             ResolvedSurfaceProgramOperation::ContainedControls(record) => {
                 SurfacePaintProgramOperation::ContainedControls(ContainedPaintRecord {
@@ -2412,12 +2436,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self.plan
             .tab_records()
             .iter()
-            .map(move |record| TabPaintRecord {
-                record,
-                plan: self.plan,
-                selected: self.plan.tab_selected(record),
-                operable: self.tab_is_operable(record),
-            })
+            .map(move |record| TabPaintRecord::new(&self, record))
     }
 
     #[cfg(test)]
@@ -2425,11 +2444,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self.plan
             .tab_bar_records()
             .iter()
-            .map(|record| TabBarPaintRecord {
-                record,
-                plan: self.plan,
-                selected: self.plan.selected_in_tabs(record.id().tabs),
-            })
+            .map(move |record| TabBarPaintRecord::new(&self, record))
     }
 
     /// Returns one exact core-selected presentation menu anchor per visible root.
@@ -2460,9 +2475,12 @@ impl<'frame> SurfacePaintPlan<'frame> {
             .tab_strip_control_records()
             .iter()
             .copied()
-            .map(move |record| TabStripControlPaintRecord {
-                menu_open: menu_open_bars.contains(&record.id().bar()),
-                record,
+            .map(move |record| {
+                TabStripControlPaintRecord::new(
+                    &self,
+                    record,
+                    menu_open_bars.contains(&record.id().bar()),
+                )
             })
     }
 
@@ -2625,23 +2643,24 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self.receiver(PresentationHitRegionKind::PaneBody(pane_id))
     }
 
-    /// Returns the exact receiver for one painted tab body.
+    /// Returns the exact receiver for a tab body from this output.
     #[must_use]
     pub fn receiver_for_tab_body(
         &self,
-        tab: TabPaintRecord<'frame>,
+        tab: TabPaintRecord<'_>,
     ) -> Option<DockspaceReceiverDescriptor> {
-        tab.operable().then_some(())?;
+        (tab.belongs_to(self) && tab.operable()).then_some(())?;
         let tab_id = *tab.record.id();
         self.receiver(PresentationHitRegionKind::TabBody(tab_id))
     }
 
-    /// Returns the exact receiver for one painted tab close control.
+    /// Returns the exact receiver for a tab close control from this output.
     #[must_use]
     pub fn receiver_for_tab_close(
         &self,
-        tab: TabPaintRecord<'frame>,
+        tab: TabPaintRecord<'_>,
     ) -> Option<DockspaceReceiverDescriptor> {
+        tab.belongs_to(self).then_some(())?;
         let close_bounds = tab.record.close_bounds()?;
         self.plan
             .region_is_operable(close_bounds, tab.record.layer())
@@ -2650,34 +2669,37 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self.receiver(PresentationHitRegionKind::TabClose(tab_id))
     }
 
-    /// Returns the exact receiver for one core-compiled group-drag region.
+    /// Returns the exact receiver for a group-drag region from this output.
     #[must_use]
     pub fn receiver_for_tab_group_drag_region(
         &self,
         region: TabGroupDragRegionPaintRecord,
     ) -> Option<DockspaceReceiverDescriptor> {
+        region.belongs_to(self).then_some(())?;
         self.receiver(PresentationHitRegionKind::TabGroupDrag {
             bar: region.bar,
             region: region.record.kind(),
         })
     }
 
-    /// Returns the scroll receiver covering one overflowing tab-strip viewport.
+    /// Returns the scroll receiver for an overflowing tab strip from this output.
     #[must_use]
     pub fn receiver_for_tab_strip_scroll(
         &self,
-        bar: TabBarPaintRecord<'frame>,
+        bar: TabBarPaintRecord<'_>,
     ) -> Option<DockspaceReceiverDescriptor> {
+        bar.belongs_to(self).then_some(())?;
         let bar_id = *bar.record.id();
         self.receiver(PresentationHitRegionKind::TabStripScroll(bar_id))
     }
 
-    /// Returns the exact receiver for one core-owned tab-strip control.
+    /// Returns the exact receiver for a tab-strip control from this output.
     #[must_use]
     pub fn receiver_for_tab_strip_control(
         &self,
         control: TabStripControlPaintRecord,
     ) -> Option<DockspaceReceiverDescriptor> {
+        control.belongs_to(self).then_some(())?;
         let control_id = control.record.id();
         self.receiver(PresentationHitRegionKind::TabStripControl(control_id))
     }

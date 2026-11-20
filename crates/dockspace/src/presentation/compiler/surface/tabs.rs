@@ -319,9 +319,16 @@ fn compile_tab_strip(
     let layout_viewport = chrome.viewport;
     let viewport = clip_rect(layout_viewport, visible_bar)?;
     let viewport_width = layout_viewport.width();
-    let control_rects = chrome
-        .controls
-        .map(|layout| layout.rects.map(|bounds| bounds.filter(visible_button)));
+    let control_rects = if let Some(layout) = chrome.controls {
+        let [backward, forward, menu] = layout.rects;
+        Some([
+            backward.filter(visible_button),
+            forward.filter(visible_button),
+            clip_slot(menu)?,
+        ])
+    } else {
+        None
+    };
     let menu_geometry = if control_rects
         .as_ref()
         .is_some_and(|rects| rects[2].is_some())
@@ -723,9 +730,8 @@ fn compile_tab_list_menu(
     let bounds = ready
         .popup_plane_bounds()
         .ok_or(SceneCompilationError::PopupPlaneStateMismatch)?;
-    if !rect_contains(bounds, anchor) {
-        return Err(SceneCompilationError::TabListMenuAnchorOutsidePopupPlane { key });
-    }
+    let anchor = intersect_rect(anchor, bounds)?
+        .ok_or(SceneCompilationError::TabListMenuAnchorOutsidePopupPlane { key })?;
     let row_gap_count = u32::try_from(items.len().saturating_sub(1))
         .map_err(|_| SceneCompilationError::GeometryCountOverflow)?;
     let row_heights = checked_sum(

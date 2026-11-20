@@ -182,6 +182,12 @@ scrolled out of view. Route events through the original presentation before
 submitting. Immediate renderers can use `prepare_tab_input_sequence` during
 the paint pass with the same navigation rules.
 
+Register actionable tab headers, close buttons, and strip controls using the
+record's `input_id()`. Add a widget role when several controls share an identity,
+such as a header and its close button. `tab_focus_input_id()` gives a navigation
+action's destination even when the header will first appear in the next output.
+Use the current paint record to prepare an action or declare its receiver.
+
 To continue queued navigation after a selection presents, ask the new strip
 for `continuation_receiver(previous, committed_tab)`. Also check that the
 window still owns keyboard focus and that the expected workspace version is
@@ -189,9 +195,10 @@ current before resolving the queued input.
 
 Retain a popup once with `SurfacePaintPlan::retain_tab_list_menu`. Resolve row
 navigation, activation, and dismissal using the row's `input_id()` when the UI
-delivers input. Pass the returned row ID into the next navigation step. Use
-`visual_id()` to identify retained controls and `can_continue_from()` before
-resuming queued input on a new presentation. Keyboard navigation reveals its
+delivers input. Pass the returned row ID into the next navigation step. Use the
+menu's `input_id()` for its frame and scrollbar, and `opener_input_id()` to return
+focus to the button. Check `can_continue_from()` before resuming queued input on
+a new presentation. Keyboard navigation reveals its
 target in the current viewport until manual scrolling takes over. Lay out row
 content in `bounds()` and clip it to `interaction_bounds()`, skipping rows
 without a visible intersection. Answer `TabIntrinsic` requests with

@@ -89,6 +89,10 @@ impl SurfacePresentationOutputTicket {
         self.serial.0 > floor.0
     }
 
+    pub(crate) const fn scene_stamp(self) -> SurfaceSceneStamp {
+        self.scene
+    }
+
     #[cfg(test)]
     pub(crate) const fn serial(self) -> PresentationOutputSerial {
         self.serial

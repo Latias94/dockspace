@@ -1798,7 +1798,8 @@ fn validate_tab_strip_controls_and_menu(
         && bar.menu_geometry_availability().is_available()
         && menu.layer() == bar.layer()
         && menu.session().key() == TabStripStateKey::new(ready.surface, id)
-        && menu_control.is_some_and(|control| rect_contains(popup_plane_bounds, control.bounds()))
+        && menu_control
+            .is_some_and(|control| rects_overlap_with_area(popup_plane_bounds, control.bounds()))
         && rect_has_area(menu.bounds())
         && rect_contains(popup_plane_bounds, menu.bounds())
         && rect_has_area(menu.viewport())

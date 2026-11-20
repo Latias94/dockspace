@@ -21,14 +21,13 @@ impl<'frame> SurfacePaintPlan<'frame> {
     /// Returns whether this exact group-menu anchor has authoritative visible area.
     #[must_use]
     pub fn tabs_group_menu_operable(self, bar: TabBarPaintRecord<'_>) -> bool {
-        self.plan.tab_bar_records().iter().any(|record| {
-            std::ptr::eq(record, bar.record)
-                && !record.members().is_empty()
-                && record.interaction() == TabBarInteraction::Enabled
-                && record
-                    .group_menu_bounds()
-                    .is_some_and(|bounds| self.plan.region_is_operable(bounds, record.layer()))
-        })
+        let record = bar.record;
+        bar.belongs_to(&self)
+            && !record.members().is_empty()
+            && record.interaction() == TabBarInteraction::Enabled
+            && record
+                .group_menu_bounds()
+                .is_some_and(|bounds| self.plan.region_is_operable(bounds, record.layer()))
     }
 
     /// Prepares one atomic close request for this exact captured group.
@@ -77,11 +76,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self,
         bar: TabBarPaintRecord<'_>,
     ) -> Option<crate::model::TabLabel<'frame>> {
-        self.plan
-            .tab_bar_records()
-            .iter()
-            .any(|record| std::ptr::eq(record, bar.record))
-            .then_some(())?;
+        bar.belongs_to(&self).then_some(())?;
         self.plan
             .node_label(bar.record.id().root, bar.record.id().tabs)
     }
@@ -103,11 +98,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
             return Ok(None);
         };
         if source.visual_id() == target.visual_id()
-            || !self
-                .plan
-                .tab_bar_records()
-                .iter()
-                .any(|record| std::ptr::eq(record, target.record))
+            || !target.belongs_to(&self)
             || target.record.interaction() != TabBarInteraction::Enabled
             || !self
                 .plan

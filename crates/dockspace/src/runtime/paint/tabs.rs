@@ -9,7 +9,10 @@ use crate::presentation::scene::{
     TabStripMemberVisibility as CoreTabStripMemberVisibility, TabsRecord,
 };
 
-use super::{DockspacePaintLayer, DockspaceVisualId, VisualIdentity};
+use super::{
+    DockspacePaintLayer, DockspaceSemanticOutput, DockspaceVisualId, SurfacePaintPlan,
+    TabChromeInputId, VisualIdentity,
+};
 
 /// The allocation and clip for mounting application content in a pane.
 ///
@@ -123,12 +126,33 @@ impl TabsPaintRecord<'_> {
 #[derive(Debug, Clone, Copy)]
 pub struct TabPaintRecord<'plan> {
     pub(super) record: &'plan TabRecord,
-    pub(super) plan: &'plan PresentationPlan,
-    pub(super) selected: bool,
-    pub(super) operable: bool,
+    plan: &'plan PresentationPlan,
+    output: DockspaceSemanticOutput,
+    selected: bool,
+    operable: bool,
 }
 
 impl<'plan> TabPaintRecord<'plan> {
+    pub(super) fn new(plan: &SurfacePaintPlan<'plan>, record: &'plan TabRecord) -> Self {
+        Self {
+            record,
+            plan: plan.plan,
+            output: plan.semantic_output(),
+            selected: plan.plan.tab_selected(record),
+            operable: plan.tab_is_operable(record),
+        }
+    }
+
+    pub(super) fn belongs_to(self, plan: &SurfacePaintPlan<'_>) -> bool {
+        self.output == plan.semantic_output()
+    }
+
+    /// Returns the widget namespace shared by this tab body and close control.
+    #[must_use]
+    pub const fn input_id(self) -> TabChromeInputId {
+        self.output.tab_input_id(self.visual_id())
+    }
+
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::Tab(*self.record.id()))
@@ -302,8 +326,9 @@ impl<'plan> TabStripMemberPaintRecord<'plan> {
 #[derive(Debug, Clone, Copy)]
 pub struct TabBarPaintRecord<'plan> {
     pub(super) record: &'plan TabBarRecord,
-    pub(super) plan: &'plan PresentationPlan,
-    pub(super) selected: Option<TabKey>,
+    plan: &'plan PresentationPlan,
+    output: DockspaceSemanticOutput,
+    selected: Option<TabKey>,
 }
 
 /// Read-only geometry and identity for one whole-group drag region.
@@ -311,9 +336,14 @@ pub struct TabBarPaintRecord<'plan> {
 pub struct TabGroupDragRegionPaintRecord {
     pub(super) bar: TabBarSceneId,
     pub(super) record: TabGroupDragRegionRecord,
+    output: DockspaceSemanticOutput,
 }
 
 impl TabGroupDragRegionPaintRecord {
+    pub(super) fn belongs_to(self, plan: &SurfacePaintPlan<'_>) -> bool {
+        self.output == plan.semantic_output()
+    }
+
     /// Returns a stable identity distinct from every other region of this bar.
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
@@ -337,6 +367,19 @@ impl TabGroupDragRegionPaintRecord {
 }
 
 impl<'plan> TabBarPaintRecord<'plan> {
+    pub(super) fn new(plan: &SurfacePaintPlan<'plan>, record: &'plan TabBarRecord) -> Self {
+        Self {
+            record,
+            plan: plan.plan,
+            output: plan.semantic_output(),
+            selected: plan.plan.selected_in_tabs(record.id().tabs),
+        }
+    }
+
+    pub(super) fn belongs_to(self, plan: &SurfacePaintPlan<'_>) -> bool {
+        self.output == plan.semantic_output()
+    }
+
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::TabBar(*self.record.id()))
@@ -434,7 +477,11 @@ impl<'plan> TabBarPaintRecord<'plan> {
             .group_drag()
             .into_iter()
             .flat_map(|record| record.regions())
-            .map(move |record| TabGroupDragRegionPaintRecord { bar, record })
+            .map(move |record| TabGroupDragRegionPaintRecord {
+                bar,
+                record,
+                output: self.output,
+            })
     }
 
     /// Returns one exact whole-group drag region by semantic role.
@@ -446,6 +493,7 @@ impl<'plan> TabBarPaintRecord<'plan> {
         Some(TabGroupDragRegionPaintRecord {
             bar: *self.record.id(),
             record: self.record.group_drag()?.region(kind)?,
+            output: self.output,
         })
     }
 

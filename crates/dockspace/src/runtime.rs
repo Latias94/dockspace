@@ -143,7 +143,7 @@ pub use paint::{
     SurfaceMeasurementRefresh, SurfacePaintDisposition, SurfacePaintPlan,
     SurfacePaintProgramOperation, SurfacePaintProgramRoot, SurfacePaintProgramRootKind,
     SurfacePaintProgramStep, SurfacePaintProgramVisitError, SurfaceProgramExecutionReceipt,
-    SurfaceSplitterRange, SurfaceWork, SurfaceWorkDeferred, TabBarPaintRecord,
+    SurfaceSplitterRange, SurfaceWork, SurfaceWorkDeferred, TabBarPaintRecord, TabChromeInputId,
     TabGroupDragRegionKind, TabGroupDragRegionPaintRecord, TabListMenuBackdropPaintRecord,
     TabListMenuPaintRecord, TabListMenuRowId, TabListMenuRowPaintRecord, TabPaintRecord,
     TabStripControlKind, TabStripControlPaintRecord, TabStripMemberPaintRecord,
