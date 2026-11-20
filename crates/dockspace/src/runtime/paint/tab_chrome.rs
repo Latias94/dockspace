@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::engine::LocalTabChromeAction;
 use crate::geometry::LogicalRect;
-use crate::ids::{EngineAuthorityDomainId, ItemId, RootId, SurfaceId, TabKey, WorkspaceEpoch};
+use crate::ids::{EngineAuthorityDomainId, ItemId, RootId, TabKey, WorkspaceEpoch};
 use crate::interaction::FrozenTabListMenuRowClick;
 use crate::model::WorkspaceVersion;
 use crate::presentation::scene::{
@@ -16,7 +16,10 @@ use crate::presentation::tab_strip::{
 };
 use crate::runtime::{DeferredSurfaceAction, PreparedSurfaceAction, SurfaceTabListInput};
 
-use super::{DockspacePaintLayer, DockspaceVisualId, SurfacePaintPlan, VisualIdentity};
+use super::{
+    DockspacePaintLayer, DockspaceSemanticOutput, DockspaceVisualId, SurfacePaintPlan,
+    VisualIdentity,
+};
 
 /// Input identity of one row in a core-issued tab-list menu instance.
 ///
@@ -47,7 +50,7 @@ impl TabListMenuRowId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) struct MenuInputScope {
+struct MenuInputScope {
     domain: EngineAuthorityDomainId,
     epoch: WorkspaceEpoch,
     session: TabListMenuSessionId,
@@ -55,10 +58,7 @@ pub(super) struct MenuInputScope {
 }
 
 impl MenuInputScope {
-    pub(super) fn from_plan(
-        plan: &SurfacePaintPlan<'_>,
-        backdrop: TabListMenuBackdropRecord,
-    ) -> Self {
+    fn from_plan(plan: &SurfacePaintPlan<'_>, backdrop: TabListMenuBackdropRecord) -> Self {
         Self {
             domain: plan.authority_domain,
             epoch: plan.version.epoch(),
@@ -168,7 +168,7 @@ impl SurfacePaintPlan<'_> {
         self,
         menu: TabListMenuPaintRecord<'_>,
     ) -> Option<RetainedTabListMenu> {
-        if !std::ptr::eq(self.plan, menu.plan) {
+        if !menu.backdrop.belongs_to(&self) {
             return None;
         }
         Some(RetainedTabListMenu {
@@ -176,7 +176,7 @@ impl SurfacePaintPlan<'_> {
             version: self.version,
             scope: menu.scope,
             record: menu.record.clone(),
-            backdrop: menu.backdrop,
+            backdrop: menu.backdrop.record,
         })
     }
 }
@@ -257,12 +257,17 @@ impl TabStripControlPaintRecord {
 /// Read-only row within one core-owned tab-list popup.
 #[derive(Debug, Clone, Copy)]
 pub struct TabListMenuRowPaintRecord<'plan> {
-    pub(super) plan: &'plan crate::presentation::scene::PresentationPlan,
+    plan: &'plan crate::presentation::scene::PresentationPlan,
+    output: DockspaceSemanticOutput,
     scope: MenuInputScope,
     pub(super) record: TabListMenuRowRecord,
 }
 
 impl<'plan> TabListMenuRowPaintRecord<'plan> {
+    pub(super) fn belongs_to(self, plan: &SurfacePaintPlan<'_>) -> bool {
+        self.output == plan.semantic_output()
+    }
+
     /// Returns the row's identity for use with [`RetainedTabListMenu::resolve`].
     #[must_use]
     pub const fn input_id(self) -> TabListMenuRowId {
@@ -334,13 +339,25 @@ impl<'plan> TabListMenuRowPaintRecord<'plan> {
 #[derive(Debug, Clone, Copy)]
 pub struct TabListMenuPaintRecord<'plan> {
     pub(super) record: &'plan TabListMenuRecord,
-    pub(super) plan: &'plan crate::presentation::scene::PresentationPlan,
-    pub(super) surface: SurfaceId,
-    pub(super) scope: MenuInputScope,
-    pub(super) backdrop: TabListMenuBackdropRecord,
+    plan: &'plan crate::presentation::scene::PresentationPlan,
+    scope: MenuInputScope,
+    backdrop: TabListMenuBackdropPaintRecord,
 }
 
 impl<'plan> TabListMenuPaintRecord<'plan> {
+    pub(super) fn new(
+        plan: &SurfacePaintPlan<'plan>,
+        record: &'plan TabListMenuRecord,
+        backdrop: TabListMenuBackdropRecord,
+    ) -> Self {
+        Self {
+            record,
+            plan: plan.plan,
+            scope: MenuInputScope::from_plan(plan, backdrop),
+            backdrop: TabListMenuBackdropPaintRecord::new(plan, backdrop),
+        }
+    }
+
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::TabListMenu(self.record.session()))
@@ -380,6 +397,7 @@ impl<'plan> TabListMenuPaintRecord<'plan> {
                 scope: self.scope,
                 record,
                 plan: self.plan,
+                output: self.backdrop.output,
             })
     }
 
@@ -391,25 +409,36 @@ impl<'plan> TabListMenuPaintRecord<'plan> {
     /// Returns the exact full-surface backdrop paired with this menu.
     #[must_use]
     pub const fn backdrop(self) -> TabListMenuBackdropPaintRecord {
-        TabListMenuBackdropPaintRecord {
-            surface: self.surface,
-            record: self.backdrop,
-        }
+        self.backdrop
     }
 }
 
-/// Read-only full-surface popup backdrop geometry.
+/// Read-only full-surface popup backdrop geometry from one exact paint output.
 #[derive(Debug, Clone, Copy)]
 pub struct TabListMenuBackdropPaintRecord {
-    pub(super) surface: SurfaceId,
+    output: DockspaceSemanticOutput,
     pub(super) record: TabListMenuBackdropRecord,
 }
 
 impl TabListMenuBackdropPaintRecord {
+    pub(super) const fn new(
+        plan: &SurfacePaintPlan<'_>,
+        record: TabListMenuBackdropRecord,
+    ) -> Self {
+        Self {
+            output: plan.semantic_output(),
+            record,
+        }
+    }
+
+    pub(super) fn belongs_to(self, plan: &SurfacePaintPlan<'_>) -> bool {
+        self.output == plan.semantic_output()
+    }
+
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::TabListMenuBackdrop {
-            surface: self.surface,
+            surface: self.output.surface(),
             session: self.record.session(),
             revision: self.record.revision(),
         })

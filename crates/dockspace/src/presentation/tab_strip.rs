@@ -647,10 +647,13 @@ impl TabStripStateStore {
         &mut self,
         session: TabListMenuSessionId,
         offset: f64,
+        moved_during_sequence: bool,
     ) -> Result<TabStripStateDelta, TabStripStateError> {
         validate_offset("tab-list menu scroll offset", offset)?;
         let active = self.active_menu_mut(session)?;
-        if active.scroll_offset == Some(offset) {
+        let changed_offset = active.scroll_offset != Some(offset);
+        let released_reveal = moved_during_sequence && active.reveal.is_some();
+        if !changed_offset && !released_reveal {
             return Ok(TabStripStateDelta::unchanged());
         }
         active.scroll_offset = Some(offset);
@@ -1156,7 +1159,7 @@ mod tests {
             .expect("the live strip can open its menu");
         let routing_before_scroll = states.popup_requirement().revision();
         let scroll_delta = states
-            .set_active_menu_scroll_offset(session, 18.0)
+            .set_active_menu_scroll_offset(session, 18.0, false)
             .expect("the active menu accepts a valid offset");
         assert!(scroll_delta.state_changed());
         assert_eq!(

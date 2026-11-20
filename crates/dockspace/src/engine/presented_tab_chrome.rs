@@ -92,6 +92,7 @@ impl DockEngine {
             super::TabScrollAdjustmentKind::ScrollByPreserving { keep_visible, .. } => {
                 keep_visible.as_slice()
             }
+            super::TabScrollAdjustmentKind::ScrollTo { .. } => &[],
             super::TabScrollAdjustmentKind::RevealTab(item) => std::slice::from_ref(item),
         };
         if let Some(item) = requested.iter().copied().find(|item| {

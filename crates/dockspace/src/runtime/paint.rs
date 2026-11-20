@@ -1913,12 +1913,11 @@ impl<'frame> SurfacePaintPlan<'frame> {
             ResolvedSurfaceProgramStep::RootEnd(root) => Some(SurfacePaintProgramStep::RootEnd(
                 self.resolve_surface_program_root(root),
             )),
-            ResolvedSurfaceProgramStep::PopupBackdrop(record) => Some(
-                SurfacePaintProgramStep::PopupBackdrop(TabListMenuBackdropPaintRecord {
-                    surface: self.surface,
-                    record: *record,
-                }),
-            ),
+            ResolvedSurfaceProgramStep::PopupBackdrop(record) => {
+                Some(SurfacePaintProgramStep::PopupBackdrop(
+                    TabListMenuBackdropPaintRecord::new(self, *record),
+                ))
+            }
             ResolvedSurfaceProgramStep::PopupMenu(record) => {
                 let backdrop = *self
                     .plan
@@ -1926,13 +1925,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
                     .iter()
                     .find(|backdrop| backdrop.session() == record.session())
                     .ok_or(())?;
-                let menu = TabListMenuPaintRecord {
-                    record,
-                    plan: self.plan,
-                    surface: self.surface,
-                    scope: tab_chrome::MenuInputScope::from_plan(self, backdrop),
-                    backdrop,
-                };
+                let menu = TabListMenuPaintRecord::new(self, record, backdrop);
                 let paint = paint_disposition(self.drag_decoration, menu.visual_id());
                 Some(SurfacePaintProgramStep::PopupMenu { menu, paint })
             }
@@ -2474,7 +2467,6 @@ impl<'frame> SurfacePaintPlan<'frame> {
     }
 
     pub(crate) fn tab_list_menus(self) -> impl Iterator<Item = TabListMenuPaintRecord<'frame>> {
-        let surface = self.surface;
         let plan = self.plan;
         plan.tab_list_menu_records()
             .iter()
@@ -2483,13 +2475,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
                     .tab_list_menu_backdrop_records()
                     .iter()
                     .find(|backdrop| backdrop.session() == record.session())?;
-                Some(TabListMenuPaintRecord {
-                    record,
-                    plan: self.plan,
-                    surface,
-                    scope: tab_chrome::MenuInputScope::from_plan(&self, backdrop),
-                    backdrop,
-                })
+                Some(TabListMenuPaintRecord::new(&self, record, backdrop))
             })
     }
 
@@ -2696,46 +2682,47 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self.receiver(PresentationHitRegionKind::TabStripControl(control_id))
     }
 
-    /// Returns the exact receiver for one visible tab-list menu row.
+    /// Returns the exact receiver for one visible tab-list row from this output.
     #[must_use]
     pub fn receiver_for_tab_list_menu_row(
         &self,
         row: TabListMenuRowPaintRecord,
     ) -> Option<DockspaceReceiverDescriptor> {
-        if !std::ptr::eq(self.plan, row.plan) {
-            return None;
-        }
+        row.belongs_to(self).then_some(())?;
         let session = row.session();
         let tab = row.record.tab();
         self.receiver(PresentationHitRegionKind::TabListMenuRow { menu: session, tab })
     }
 
-    /// Returns the blocker receiver covering one open tab-list menu frame.
+    /// Returns the blocker receiver for an open menu frame from this output.
     #[must_use]
     pub fn receiver_for_tab_list_menu_frame(
         &self,
         menu: TabListMenuPaintRecord<'frame>,
     ) -> Option<DockspaceReceiverDescriptor> {
+        menu.backdrop().belongs_to(self).then_some(())?;
         let session = menu.record.session();
         self.receiver(PresentationHitRegionKind::TabListMenuBlocker(session))
     }
 
-    /// Returns the scroll receiver for one open tab-list menu.
+    /// Returns the scroll receiver for an open menu from this output.
     #[must_use]
     pub fn receiver_for_tab_list_menu_scroll(
         &self,
         menu: TabListMenuPaintRecord<'frame>,
     ) -> Option<DockspaceReceiverDescriptor> {
+        menu.backdrop().belongs_to(self).then_some(())?;
         let session = menu.record.session();
         self.receiver(PresentationHitRegionKind::TabListMenuScroll(session))
     }
 
-    /// Returns the full-surface backdrop receiver for one open tab-list menu.
+    /// Returns the full-surface backdrop receiver for a menu from this output.
     #[must_use]
     pub fn receiver_for_tab_list_menu_backdrop(
         &self,
         backdrop: TabListMenuBackdropPaintRecord,
     ) -> Option<DockspaceReceiverDescriptor> {
+        backdrop.belongs_to(self).then_some(())?;
         let session = backdrop.record.session();
         self.receiver(PresentationHitRegionKind::TabListMenuBackdrop(session))
     }

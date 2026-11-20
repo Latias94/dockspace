@@ -916,6 +916,7 @@ impl<'frame> HostFrameView<'frame> {
         }
         let requested_items: &[TabKey] = match &adjustment.0 {
             TabScrollAdjustmentKind::ScrollByPreserving { keep_visible, .. } => keep_visible,
+            TabScrollAdjustmentKind::ScrollTo { .. } => &[],
             TabScrollAdjustmentKind::RevealTab(item) => std::slice::from_ref(item),
         };
         if let Some(item) = requested_items.iter().copied().find(|item| {

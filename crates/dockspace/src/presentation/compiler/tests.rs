@@ -2315,7 +2315,7 @@ fn overflowing_tab_strip_fixture_with_geometry(
             .open_tab_list_menu(state_key, Some(items[2].into()))
             .expect("the live strip can open its menu");
         states
-            .set_active_menu_scroll_offset(menu, 12.0)
+            .set_active_menu_scroll_offset(menu, 12.0, false)
             .expect("menu scroll should be valid");
     }
     let manifest = draft

@@ -121,6 +121,10 @@ pub(super) enum TabScrollAdjustmentKind {
         delta: f64,
         keep_visible: Vec<TabKey>,
     },
+    ScrollTo {
+        offset: f64,
+        moved_during_sequence: bool,
+    },
     RevealTab(TabKey),
 }
 
@@ -129,6 +133,26 @@ impl TabScrollAdjustment {
     /// end of the ordered roster.
     pub fn scroll_by(delta: f64) -> Result<Self, TabScrollAdjustmentError> {
         Self::scroll_by_preserving(delta, std::iter::empty::<TabKey>())
+    }
+
+    pub(crate) fn menu_scroll_sequence(
+        initial: f64,
+        maximum: f64,
+        deltas: impl IntoIterator<Item = f64>,
+    ) -> Option<Self> {
+        let mut deltas = deltas.into_iter().peekable();
+        deltas.peek()?;
+        let (offset, moved_during_sequence) =
+            deltas.try_fold((initial, false), |(offset, moved), delta| {
+                delta.is_finite().then(|| {
+                    let next = (offset + delta).clamp(0.0, maximum);
+                    (next, moved || next != offset)
+                })
+            })?;
+        Some(Self(TabScrollAdjustmentKind::ScrollTo {
+            offset,
+            moved_during_sequence,
+        }))
     }
 
     /// Creates one signed delta while preserving the largest compatible

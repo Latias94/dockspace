@@ -10,7 +10,10 @@ pub(super) enum TabListMenuActivation {
 }
 
 enum TabListScroll {
-    Offset(f64),
+    Offset {
+        offset: f64,
+        moved_during_sequence: bool,
+    },
     Reveal(TabKey),
 }
 
@@ -780,9 +783,12 @@ impl DockEngine {
         };
         let mut states = self.presentation_authority.tab_strip_states.clone();
         let (offset, delta) = match scroll {
-            TabListScroll::Offset(offset) => (
+            TabListScroll::Offset {
+                offset,
+                moved_during_sequence,
+            } => (
                 Some(offset),
-                states.set_active_menu_scroll_offset(session, offset),
+                states.set_active_menu_scroll_offset(session, offset, moved_during_sequence),
             ),
             TabListScroll::Reveal(tab) => (None, states.reveal_active_menu_row(session, tab)),
         };
@@ -916,6 +922,9 @@ impl DockEngine {
             TabScrollAdjustmentKind::RevealTab(item) => {
                 Ok(record.reveal_scroll_offset(member(*item)?))
             }
+            TabScrollAdjustmentKind::ScrollTo { offset, .. } => {
+                Ok(offset.clamp(0.0, record.maximum_scroll_offset()))
+            }
             TabScrollAdjustmentKind::ScrollByPreserving {
                 delta,
                 keep_visible,
@@ -983,6 +992,13 @@ impl DockEngine {
                 row(*item)?;
                 Ok(TabListScroll::Reveal(*item))
             }
+            TabScrollAdjustmentKind::ScrollTo {
+                offset,
+                moved_during_sequence,
+            } => Ok(TabListScroll::Offset {
+                offset: offset.clamp(0.0, record.maximum_scroll_offset()),
+                moved_during_sequence: *moved_during_sequence,
+            }),
             TabScrollAdjustmentKind::ScrollByPreserving {
                 delta,
                 keep_visible,
@@ -994,11 +1010,15 @@ impl DockEngine {
                     .collect::<Result<Vec<_>, _>>()?
                     .into_iter()
                     .map(|row| record.row_reveal_scroll_range(row));
-                Ok(TabListScroll::Offset(scroll_offset_preserving_ranges(
+                let offset = scroll_offset_preserving_ranges(
                     (record.scroll_offset() + *delta).clamp(0.0, record.maximum_scroll_offset()),
                     record.maximum_scroll_offset(),
                     ranges,
-                )))
+                );
+                Ok(TabListScroll::Offset {
+                    offset,
+                    moved_during_sequence: false,
+                })
             }
         }
     }

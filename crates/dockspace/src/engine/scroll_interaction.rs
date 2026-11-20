@@ -1239,7 +1239,7 @@ impl DockEngine {
             ScrollReceiverGeometry::TabListMenu { session, .. } => self
                 .presentation_authority
                 .tab_strip_states
-                .set_active_menu_scroll_offset(session, offset)
+                .set_active_menu_scroll_offset(session, offset, false)
                 .map_err(|source| Self::tab_strip_state_invariant(cause, source))?,
         };
         self.consume_tab_strip_state_delta(cause, &state_delta)?;

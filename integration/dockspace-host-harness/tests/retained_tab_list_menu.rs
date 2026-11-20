@@ -198,6 +198,95 @@ fn retained_menu_rows_expire_across_session_epoch_roster_and_popup_changes() {
 }
 
 #[test]
+fn menu_records_cannot_be_rebound_to_another_output() {
+    let mut original = session();
+    let mut foreign = session();
+    let foreign_open = open_action(&mut foreign, 80.0);
+    with_menu(&mut foreign, 80.0, Some(foreign_open), |_, _| {});
+    let open = open_action(&mut original, 80.0);
+    let backdrop = with_menu(
+        &mut original,
+        80.0,
+        Some(open),
+        |original_plan, old_menu| {
+            let old_backdrop = old_menu.backdrop();
+            assert!(
+                original_plan
+                    .receiver_for_tab_list_menu_frame(old_menu)
+                    .is_some()
+            );
+            assert!(
+                original_plan
+                    .receiver_for_tab_list_menu_scroll(old_menu)
+                    .is_some()
+            );
+            assert!(
+                original_plan
+                    .receiver_for_tab_list_menu_backdrop(old_backdrop)
+                    .is_some()
+            );
+            with_menu(&mut foreign, 80.0, None, |plan, menu| {
+                assert_eq!(old_menu.visual_id(), menu.visual_id());
+                assert_eq!(old_backdrop.visual_id(), menu.backdrop().visual_id());
+                assert!(plan.receiver_for_tab_list_menu_frame(old_menu).is_none());
+                assert!(plan.receiver_for_tab_list_menu_scroll(old_menu).is_none());
+                assert!(
+                    plan.receiver_for_tab_list_menu_backdrop(old_backdrop)
+                        .is_none()
+                );
+                assert!(plan.prepare_tab_list_menu_dismiss(old_backdrop).is_none());
+            });
+            old_backdrop
+        },
+    );
+
+    let discarded_backdrop = {
+        let mut frame = original.begin_host_frame().unwrap();
+        measure(&mut frame, 40.0);
+        let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+        let mut backdrop = None;
+        plan.visit_surface_program(|step| {
+            if let Step::PopupBackdrop(record) = step {
+                backdrop = Some(record);
+            }
+            Ok::<_, Infallible>(())
+        })
+        .unwrap();
+        backdrop.unwrap()
+    };
+    with_menu(&mut original, 40.0, None, |plan, menu| {
+        assert_eq!(menu.backdrop().visual_id(), backdrop.visual_id());
+        assert_eq!(menu.backdrop().visual_id(), discarded_backdrop.visual_id());
+        assert!(plan.receiver_for_tab_list_menu_backdrop(backdrop).is_none());
+        assert!(plan.prepare_tab_list_menu_dismiss(backdrop).is_none());
+        assert!(
+            plan.prepare_tab_list_menu_dismiss(discarded_backdrop)
+                .is_none()
+        );
+        assert!(
+            plan.prepare_tab_list_menu_dismiss(menu.backdrop())
+                .is_some()
+        );
+    });
+
+    let reset = original.prepare_layout_reset(layout()).unwrap();
+    original
+        .begin_layout_reset_frame(&reset)
+        .unwrap()
+        .commit()
+        .unwrap();
+    with_menu(&mut original, 80.0, None, |plan, menu| {
+        assert_eq!(menu.backdrop().visual_id(), backdrop.visual_id());
+        assert!(plan.receiver_for_tab_list_menu_backdrop(backdrop).is_none());
+        assert!(plan.prepare_tab_list_menu_dismiss(backdrop).is_none());
+        assert!(
+            plan.prepare_tab_list_menu_dismiss(menu.backdrop())
+                .is_some()
+        );
+    });
+}
+
+#[test]
 fn menu_keyboard_reveal_uses_the_actual_viewport_and_preserves_manual_scroll() {
     for split_frames in [false, true] {
         let mut session = session();
@@ -243,6 +332,49 @@ fn menu_keyboard_reveal_uses_the_actual_viewport_and_preserves_manual_scroll() {
             assert_eq!(menu.scroll_offset(), 0.0);
         });
         assert!(session.view().item(FIRST).unwrap().is_active());
+    }
+}
+
+#[test]
+fn scrolling_away_and_back_releases_keyboard_reveal_in_any_batching() {
+    for (batches, expected_offset) in [
+        (&[][..], 440.0),
+        (&[&[0.0][..]][..], 440.0),
+        (&[&[40.0][..]][..], 440.0),
+        (&[&[-40.0, 40.0][..]][..], 400.0),
+        (&[&[-40.0][..], &[40.0][..]][..], 400.0),
+    ] {
+        let mut session = session();
+        let open = open_action(&mut session, 80.0);
+        let mut action = Some(with_menu(&mut session, 80.0, Some(open), |plan, menu| {
+            plan.prepare_tab_list_menu_navigation(menu, Navigation::Last)
+                .unwrap()
+                .into_deferred()
+        }));
+        for batch in batches {
+            action = Some(with_menu(
+                &mut session,
+                80.0,
+                action.take(),
+                |plan, menu| {
+                    plan.prepare_tab_list_menu_scroll_sequence(menu, batch.iter().copied())
+                        .unwrap()
+                        .into_deferred()
+                },
+            ));
+        }
+        with_menu(&mut session, 80.0, action, |_, menu| {
+            assert_eq!(menu.scroll_offset(), 400.0, "{batches:?}");
+        });
+        with_menu(&mut session, 40.0, None, |_, menu| {
+            assert_eq!(menu.scroll_offset(), expected_offset, "{batches:?}");
+            let last = menu.rows().last().unwrap();
+            assert!(last.focused());
+            assert_eq!(
+                last.interaction_bounds().is_some(),
+                expected_offset == 440.0
+            );
+        });
     }
 }
 

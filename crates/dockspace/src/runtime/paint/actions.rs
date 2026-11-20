@@ -152,9 +152,7 @@ impl SurfacePaintPlan<'_> {
         self,
         row: TabListMenuRowPaintRecord,
     ) -> Option<PreparedSurfaceAction> {
-        if !std::ptr::eq(self.plan, row.plan) {
-            return None;
-        }
+        row.belongs_to(&self).then_some(())?;
         let session = row.session();
         let menu = self
             .plan
@@ -184,12 +182,8 @@ impl SurfacePaintPlan<'_> {
         self,
         backdrop: TabListMenuBackdropPaintRecord,
     ) -> Option<PreparedSurfaceAction> {
-        let projected = self
-            .plan
-            .tab_list_menu_backdrop_records()
-            .iter()
-            .copied()
-            .find(|record| *record == backdrop.record)?;
+        backdrop.belongs_to(&self).then_some(())?;
+        let projected = backdrop.record;
         let action = self
             .plan
             .tab_list_menu_records()
@@ -235,24 +229,20 @@ impl SurfacePaintPlan<'_> {
     /// Folds ordered logical scroll deltas into one exact tab-list menu action.
     ///
     /// Every step clamps to this menu's current scroll range before the next
-    /// delta is applied. A round trip remains a handled action even when its
-    /// final offset is unchanged. Empty sequences and non-finite deltas return
-    /// `None` without preparing a partial action.
+    /// delta is applied. Moving away from the current offset releases row
+    /// reveal even if a later step returns to that offset. Empty sequences
+    /// and non-finite deltas return `None` without preparing a partial action.
     #[must_use]
     pub fn prepare_tab_list_menu_scroll_sequence(
         self,
         menu: TabListMenuPaintRecord<'_>,
         deltas: impl IntoIterator<Item = f64>,
     ) -> Option<PreparedSurfaceAction> {
-        let mut deltas = deltas.into_iter().peekable();
-        deltas.peek()?;
-        let target = deltas.try_fold(menu.scroll_offset(), |offset, delta| {
-            delta
-                .is_finite()
-                .then(|| (offset + delta).clamp(0.0, menu.maximum_scroll_offset()))
-        })?;
-        let adjustment =
-            crate::engine::TabScrollAdjustment::scroll_by(target - menu.scroll_offset()).ok()?;
+        let adjustment = crate::engine::TabScrollAdjustment::menu_scroll_sequence(
+            menu.scroll_offset(),
+            menu.maximum_scroll_offset(),
+            deltas,
+        )?;
         self.prepare_tab_list_menu_scroll(menu, adjustment)
     }
 
@@ -283,9 +273,7 @@ impl SurfacePaintPlan<'_> {
         self,
         row: TabListMenuRowPaintRecord,
     ) -> Option<PreparedSurfaceAction> {
-        if !std::ptr::eq(self.plan, row.plan) {
-            return None;
-        }
+        row.belongs_to(&self).then_some(())?;
         let menu = self
             .tab_list_menus()
             .find(|menu| menu.record.session() == row.session())?;
@@ -628,7 +616,9 @@ impl SurfacePaintPlan<'_> {
         self,
         menu: TabListMenuPaintRecord<'_>,
     ) -> Option<crate::presentation::scene::TabListMenuRecord> {
-        std::ptr::eq(self.plan, menu.plan).then(|| menu.record.clone())
+        menu.backdrop()
+            .belongs_to(&self)
+            .then(|| menu.record.clone())
     }
 }
 
