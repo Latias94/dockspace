@@ -52,7 +52,9 @@ async function startDrag(page, label, destination) {
   await expect.poll(async () => (await state(page)).frames).toBeGreaterThan(before);
   await page.mouse.down();
   await presentedPointer(page, source, true);
-  await page.mouse.move(destination.x, destination.y, { steps: 12 });
+  await page.mouse.move((source.x + destination.x) / 2, (source.y + destination.y) / 2);
+  await expect.poll(async () => (await state(page)).activeGesture).toBe(true);
+  await page.mouse.move(destination.x, destination.y);
   await presentedPointer(page, destination, true);
   await expect.poll(async () => (await state(page)).activeGesture).toBe(true);
 }
@@ -65,7 +67,7 @@ async function mergeLeft(page, label, expected) {
   const guides = (await state(page)).centerGuides;
   const guide = guides.sort((a, b) => a.rect[0] - b.rect[0])[0];
   const target = await point(page, guide.rect);
-  await page.mouse.move(target.x, target.y, { steps: 6 });
+  await page.mouse.move(target.x, target.y);
   await presentedPointer(page, target, true);
   await page.mouse.up();
   await presentedPointer(page, target, false);
