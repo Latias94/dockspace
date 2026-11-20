@@ -339,9 +339,13 @@ pub(crate) fn paint_menu(
     context.register_scroll_receiver(scroll_id, scroll_receiver);
 
     let rows = menu.rows().collect::<Vec<_>>();
+    for row in rows.iter().copied() {
+        paint_menu_row(context, menu, row, paint);
+    }
+    paint_scrollbar(context, menu, viewport, bounds, paint);
     if enabled {
         // One instance slot observes semantic focus edges, without retaining popup history.
-        // Ordinary passes must leave Tab traversal and external focus intact.
+        // Hand off focus after widgets have handled this pass's click-outside rules.
         let marker = context.instance_id.with("tab-list-menu-focus-edge");
         let edge = (
             menu.visual_id(),
@@ -374,10 +378,6 @@ pub(crate) fn paint_menu(
             }
         }
     }
-    for row in rows.iter().copied() {
-        paint_menu_row(context, menu, row, viewport, paint);
-    }
-    paint_scrollbar(context, menu, viewport, bounds, paint);
     keyboard::capture(context, menu, frame_id, &rows);
 }
 
@@ -391,7 +391,6 @@ fn paint_menu_row(
     context: &mut RenderContext<'_, '_, '_>,
     menu: TabListMenuPaintRecord<'_>,
     row: TabListMenuRowPaintRecord,
-    viewport: Rect,
     paint: SurfacePaintDisposition,
 ) {
     let Some(bounds) = egui_rect(row.bounds()) else {
@@ -399,10 +398,16 @@ fn paint_menu_row(
     };
     let id = tab_list_menu_row_id(context, row);
     let enabled = effective_enabled(context.ui, true);
+    let visible = row
+        .interaction_bounds()
+        .and_then(egui_rect)
+        .map(|hit| hit.intersect(context.ui.clip_rect()))
+        .filter(Rect::is_positive);
+    let can_click = enabled && visible.is_some();
     let (click, focus, reveal) = if enabled {
         context.ui.input(|input| {
             (
-                input.has_accesskit_action_request(id, Action::Click),
+                can_click && input.has_accesskit_action_request(id, Action::Click),
                 input.has_accesskit_action_request(id, Action::Focus),
                 input.has_accesskit_action_request(id, Action::ScrollIntoView),
             )
@@ -414,7 +419,7 @@ fn paint_menu_row(
         .then(|| context.plan.receiver_for_tab_list_menu_row(row))
         .flatten();
     let pointer_operable = receiver.is_some();
-    let response = row.interaction_bounds().and_then(egui_rect).map(|hit| {
+    let response = visible.map(|hit| {
         let response = context.interact_receiver(
             hit,
             id,
@@ -431,55 +436,55 @@ fn paint_menu_row(
             response
         }
     });
-    let paint_omitted = paint.is_source_gap();
-    let fill = if row.focused() {
-        context
-            .style
-            .visuals
-            .tab_hover_fill
-            .unwrap_or(context.ui.visuals().widgets.active.weak_bg_fill)
-    } else if let Some(response) = response
+    let emphasized = response
         .as_ref()
-        .filter(|response| enabled && RenderContext::response_emphasized(response))
-    {
-        context.interaction_fill(response)
-    } else if row.selected() {
-        context.ui.visuals().selection.bg_fill
-    } else {
-        context.visuals.popup_fill
-    };
-    let painter = context.ui.painter_at(viewport);
-    if !paint_omitted {
+        .filter(|response| enabled && RenderContext::response_emphasized(response));
+    if let Some(clip) = visible.filter(|_| !paint.is_source_gap()) {
+        let fill = if row.focused() {
+            context
+                .style
+                .visuals
+                .tab_hover_fill
+                .unwrap_or(context.ui.visuals().widgets.active.weak_bg_fill)
+        } else if let Some(response) = emphasized {
+            context.interaction_fill(response)
+        } else if row.selected() {
+            context.ui.visuals().selection.bg_fill
+        } else {
+            context.visuals.popup_fill
+        };
+        let painter = context.ui.painter_at(clip);
         painter.rect_filled(bounds, 0.0, fill);
-    }
-    if !paint_omitted && let Some(resource) = context.resources.tab(row.key()) {
-        let galley = resource.galley_for_width(context.ui, bounds.width());
-        let text_pos = pos2(bounds.min.x, bounds.center().y - galley.size().y * 0.5);
-        context.paint_tab_title(
-            &painter,
-            text_pos,
-            galley,
-            row.selected(),
-            if row.selected() {
-                context
-                    .style
-                    .visuals
-                    .tab_active_text_color
-                    .or(context.ui.visuals().override_text_color)
-                    .unwrap_or(context.ui.visuals().selection.stroke.color)
-            } else if let Some(response) = response
-                .as_ref()
-                .filter(|response| enabled && RenderContext::response_emphasized(response))
-            {
-                context.interaction_text_color(response, context.style.visuals.tab_text_color)
-            } else {
-                context.visuals.tab_text_color
-            },
-        );
+        if let Some(resource) = context.resources.tab(row.key()) {
+            let galley = resource.galley_for_width(context.ui, bounds.width());
+            let text_pos = pos2(bounds.min.x, bounds.center().y - galley.size().y * 0.5);
+            context.paint_tab_title(
+                &painter,
+                text_pos,
+                galley,
+                row.selected(),
+                if row.selected() {
+                    context
+                        .style
+                        .visuals
+                        .tab_active_text_color
+                        .or(context.ui.visuals().override_text_color)
+                        .unwrap_or(context.ui.visuals().selection.stroke.color)
+                } else if let Some(response) = emphasized {
+                    context.interaction_text_color(response, context.style.visuals.tab_text_color)
+                } else {
+                    context.visuals.tab_text_color
+                },
+            );
+        }
     }
     context.ui.ctx().accesskit_node_builder(id, |node| {
         node.set_role(Role::MenuItem);
-        node.set_bounds(accesskit_bounds(bounds));
+        if let Some(visible) = visible {
+            node.set_bounds(accesskit_bounds(visible));
+        } else {
+            node.clear_bounds();
+        }
         node.set_label(
             context
                 .resources
@@ -487,8 +492,12 @@ fn paint_menu_row(
                 .map_or_else(|| "Layout".to_owned(), |item| item.title.clone()),
         );
         node.set_selected(row.selected());
-        if enabled {
+        if can_click {
             node.add_action(Action::Click);
+        } else {
+            node.remove_action(Action::Click);
+        }
+        if enabled {
             node.add_action(Action::Focus);
             node.add_action(Action::ScrollIntoView);
         } else {

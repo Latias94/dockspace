@@ -251,9 +251,10 @@ impl<'a> SurfaceMeasurementContext<'a> {
                     .entry(bar)
                     .and_modify(|current| *current = current.max(row_height))
                     .or_insert(row_height);
-                Ok(SurfaceMeasurementAnswer::TabIntrinsic(f64::from(
-                    resource.content_width,
-                )))
+                Ok(SurfaceMeasurementAnswer::TabIntrinsicWithMenuWidth {
+                    tab_width: f64::from(resource.content_width),
+                    menu_width: f64::from(resource.galley.size().x),
+                })
             }
             SurfaceMeasurementRequest::TabStrip { visual, visibility } => {
                 let layout = if visibility == TabBarVisibility::Visible {

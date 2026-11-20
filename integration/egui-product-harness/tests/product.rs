@@ -2175,20 +2175,19 @@ fn partially_clipped_menu_row_scroll_into_view_reaches_core_before_interact_cons
     let mut rows = tree
         .nodes
         .iter()
-        .filter(|(_, node)| node.role() == Role::MenuItem)
+        .filter(|(_, node)| node.role() == Role::MenuItem && node.bounds().is_some())
         .map(|(id, node)| (*id, accesskit_node_rect(node)))
         .collect::<Vec<_>>();
     rows.sort_by(|(_, left), (_, right)| left.min.y.total_cmp(&right.min.y));
     let first_row = rows.first().expect("the long menu exposes its first row").1;
     let vertical_padding = first_row.min.y - menu_rect.min.y;
     let viewport_max_y = menu_rect.max.y - vertical_padding;
-    let (partial_row, partial_rect) = rows
-        .iter()
-        .copied()
-        .find(|(_, rect)| rect.min.y < viewport_max_y && rect.max.y > viewport_max_y)
-        .expect("the long menu has one bottom-edge partially clipped row");
+    let (partial_row, partial_rect) = *rows
+        .last()
+        .expect("the long menu exposes its last visible row");
     assert!(partial_rect.min.y < viewport_max_y);
-    assert!(partial_rect.max.y > viewport_max_y);
+    assert_eq!(partial_rect.max.y, viewport_max_y);
+    assert!(partial_rect.height() < first_row.height());
     let (_, scrollbar) = accesskit_node(&menu.output, Role::ScrollBar, "Open tabs scroll position");
     let before = scrollbar
         .numeric_value()
@@ -2213,6 +2212,17 @@ fn partially_clipped_menu_row_scroll_into_view_reaches_core_before_interact_cons
             > before,
         "ScrollIntoView must reveal the clipped remainder through core-owned menu scroll",
     );
+    let (_, revealed) = settled
+        .output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(id, _)| *id == partial_row)
+        .unwrap();
+    assert_eq!(accesskit_node_rect(revealed).height(), first_row.height());
 }
 
 #[test]
