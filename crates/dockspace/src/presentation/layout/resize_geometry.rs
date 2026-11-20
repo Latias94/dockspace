@@ -136,8 +136,8 @@ pub(crate) fn measure_resize_geometry(
                         grid_tracks.insert(node.id, visible);
                         [Axis::Horizontal, Axis::Vertical].into_iter().all(|axis| {
                             let tracks = grid.axis(axis);
-                            tracks.overflow == 0.0
-                                && tracks.unallocated <= coordinate_tolerance(result.rect, axis)
+                            let tolerance = coordinate_tolerance(result.rect, axis);
+                            tracks.overflow <= tolerance && tracks.unallocated <= tolerance
                         })
                     });
                 }

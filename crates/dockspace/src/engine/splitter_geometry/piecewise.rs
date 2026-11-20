@@ -85,9 +85,9 @@ impl Scalar {
     }
 }
 
-struct Sample {
-    updates: BTreeMap<(RootId, NodeId), TrackResize>,
-    tracks: BTreeMap<(RootId, NodeId), Vec<f64>>,
+pub(super) struct Sample {
+    pub(super) updates: BTreeMap<(RootId, NodeId), TrackResize>,
+    pub(super) tracks: BTreeMap<(RootId, NodeId), Vec<f64>>,
 }
 
 #[derive(Debug)]
@@ -574,77 +574,27 @@ impl FrozenPiecewiseAxis {
         self.sources.iter()
     }
 
-    /// Preserves shares when the exact, remeasured constraints can produce the
-    /// requested inherited track extents without replacing them.
-    pub(super) fn retain_inherited_grid_shares(
+    pub(super) fn inherited_grid_weights(
         &self,
         root: RootId,
-        projection: &LayoutProjection,
-        weights: &mut BTreeMap<NodeId, TrackWeights>,
-    ) {
-        let Some(frozen) = self.roots.iter().find(|owner| owner.source.root() == root) else {
-            return;
-        };
-        for (&node, entry) in &frozen.nodes {
-            if frozen.drivers.contains_key(&node) {
-                continue;
-            }
-            let FrozenKind::Tracks(FrozenTracks {
-                grid: Some((_, original)),
-                ..
-            }) = &entry.kind
-            else {
-                continue;
-            };
-            let (Some(TrackWeights::Grid(proposed)), Some(grid)) =
-                (weights.get(&node), projection.grids.get(&node))
-            else {
-                continue;
-            };
-            let axis = grid.axis(self.axis);
-            let old = match self.axis {
-                Axis::Horizontal => original.column_weights(),
-                Axis::Vertical => original.row_weights(),
-            };
-            if old == axis.weights || old.len() != axis.tracks.len() {
-                continue;
-            }
-            let extents = axis
-                .tracks
-                .iter()
-                .map(|track| track.extent)
-                .collect::<Vec<_>>();
-            if !grid_shares_match_extents(
-                old,
-                &extents,
-                axis.tracks
-                    .iter()
-                    .map(|track| (track.minimum, track.maximum)),
-                axis.central_index,
-                self.overflow_policy,
-            ) {
-                continue;
-            }
-            let (rows, columns) = match self.axis {
-                Axis::Horizontal => (proposed.row_weights(), old),
-                Axis::Vertical => (old, proposed.column_weights()),
-            };
-            if rows == original.row_weights() && columns == original.column_weights() {
-                weights.remove(&node);
-            } else if let Ok(shares) =
-                DockspaceGridShares::from_normalized(rows.to_vec(), columns.to_vec())
-            {
-                weights.insert(node, TrackWeights::Grid(shares));
-            }
+        node: NodeId,
+    ) -> Option<(&[SplitWeight], PaneOverflowPolicy)> {
+        let frozen = self
+            .roots
+            .iter()
+            .find(|frozen| frozen.source.root() == root)?;
+        if frozen.auto_reflow.is_none() || frozen.drivers.contains_key(&node) {
+            return None;
         }
+        let FrozenKind::Tracks(tracks) = &frozen.nodes.get(&node)?.kind else {
+            return None;
+        };
+        tracks.grid.as_ref()?;
+        Some((&tracks.weights, self.overflow_policy))
     }
 
-    pub(super) fn track_updates(
-        &self,
-        delta: f64,
-    ) -> Option<(f64, BTreeMap<(RootId, NodeId), TrackResize>)> {
-        let (delta, sample) = self.sample_clamped(delta)?;
-        Some((delta, sample.updates))
+    pub(super) fn track_sample(&self, delta: f64) -> Option<(f64, Sample)> {
+        self.sample_clamped(delta)
     }
 
     #[cfg(test)]
@@ -1000,7 +950,7 @@ impl FrozenTracks {
     }
 }
 
-fn grid_shares_match_extents(
+pub(super) fn grid_shares_match_extents(
     weights: &[SplitWeight],
     extents: &[f64],
     constraints: impl IntoIterator<Item = (f64, f64)>,

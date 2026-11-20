@@ -734,11 +734,7 @@ fn ancestor_resize_reflows_auto_grid_with_the_same_candidate_and_committed_geome
     };
     for (adjustment, expected_widths, expected_height) in [
         (SurfaceSplitterAdjustment::Increment, [198.0; 4], 100.0),
-        (
-            SurfaceSplitterAdjustment::Decrement,
-            [182.0, 102.0, 102.0, 102.0],
-            204.0,
-        ),
+        (SurfaceSplitterAdjustment::Decrement, [122.0; 4], 204.0),
     ] {
         for _ in 0..5 {
             apply(&mut separate, &[adjustment]);

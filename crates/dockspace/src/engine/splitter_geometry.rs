@@ -12,7 +12,9 @@ use crate::interaction::{
 use crate::presentation::layout::{LayoutProjection, SplitProjection};
 use crate::presentation::scene::{PresentationLayoutFacts, PresentationPlan, SplitterRecord};
 
+mod auto_reflow;
 pub(crate) mod piecewise;
+use auto_reflow::{InheritedGridTransfer, finish_auto_reflow};
 pub(crate) use piecewise::FrozenPiecewiseAxis;
 
 #[derive(Clone, Copy)]
@@ -395,6 +397,7 @@ pub(super) fn resize_axis_group_updates(
     let mut axes = BTreeSet::new();
     let mut updates = BTreeMap::new();
     let mut reflow = Vec::new();
+    let mut inherited = Vec::new();
     for group in groups {
         if !axes.insert(group.axis) {
             return None;
@@ -405,38 +408,20 @@ pub(super) fn resize_axis_group_updates(
         };
         let shared = requested.clamp(group.common_delta.minimum, group.common_delta.maximum);
         if let Some(piecewise) = &group.piecewise {
-            let (delta, sampled_updates) = piecewise.track_updates(shared)?;
-            for (key, update) in sampled_updates {
-                if let Some(previous) = updates.remove(&key) {
-                    // Orthogonal Grid axes share one actual owner and commit both
-                    // track vectors in the same graph update.
-                    let previous: TrackResize = previous;
-                    if previous.grid_basis() != update.grid_basis() {
-                        return None;
-                    }
-                    let previous_grid = previous.grid_shares()?;
-                    let grid = update.grid_shares()?;
-                    let shares = match group.axis {
-                        Axis::Horizontal => crate::model::DockspaceGridShares::from_normalized(
-                            previous_grid.row_weights().to_vec(),
-                            grid.column_weights().to_vec(),
-                        ),
-                        Axis::Vertical => crate::model::DockspaceGridShares::from_normalized(
-                            grid.row_weights().to_vec(),
-                            previous_grid.column_weights().to_vec(),
-                        ),
-                    }
-                    .ok()?;
-                    updates.insert(
-                        key,
-                        TrackResize::grid_resolved(
-                            update.source().clone(),
-                            update.grid_basis()?.clone(),
-                            shares,
-                        ),
-                    );
+            let (delta, mut sample) = piecewise.track_sample(shared)?;
+            for (key, update) in sample.updates {
+                if let Some((original, overflow_policy)) =
+                    piecewise.inherited_grid_weights(key.0, key.1)
+                {
+                    inherited.push(InheritedGridTransfer {
+                        axis: group.axis,
+                        expected: sample.tracks.remove(&key)?,
+                        original,
+                        overflow_policy,
+                        update,
+                    });
                 } else {
-                    updates.insert(key, update);
+                    merge_axis_update(&mut updates, key, group.axis, update)?;
                 }
             }
             reflow.push((piecewise.as_ref(), delta));
@@ -452,8 +437,37 @@ pub(super) fn resize_axis_group_updates(
             }
         }
     }
-    finish_auto_reflow(&reflow, &mut updates)?;
+    finish_auto_reflow(&reflow, &inherited, &mut updates)?;
     Some(updates.into_values().collect())
+}
+
+fn merge_axis_update<Key: Ord>(
+    updates: &mut BTreeMap<Key, TrackResize>,
+    key: Key,
+    axis: Axis,
+    mut update: TrackResize,
+) -> Option<()> {
+    if let Some(previous) = updates.get(&key) {
+        // A junction can change both axes of one Grid in one graph update.
+        let basis = update.grid_basis()?;
+        if previous.grid_basis()? != basis {
+            return None;
+        }
+        let previous = previous.grid_shares()?;
+        let shares = update.grid_shares()?;
+        let (rows, columns) = match axis {
+            Axis::Horizontal => (previous.row_weights(), shares.column_weights()),
+            Axis::Vertical => (shares.row_weights(), previous.column_weights()),
+        };
+        update = TrackResize::grid_resolved(
+            update.source().clone(),
+            basis.clone(),
+            crate::model::DockspaceGridShares::from_normalized(rows.to_vec(), columns.to_vec())
+                .ok()?,
+        );
+    }
+    updates.insert(key, update);
+    Some(())
 }
 
 pub(super) fn resize_axis_group_adjustment_updates(
@@ -472,91 +486,6 @@ pub(super) fn resize_axis_group_adjustment_updates(
             Axis::Vertical => [0.0, delta],
         },
     )
-}
-
-fn finish_auto_reflow(
-    samples: &[(&FrozenPiecewiseAxis, f64)],
-    updates: &mut BTreeMap<(RootId, NodeId), TrackResize>,
-) -> Option<()> {
-    let mut checked = BTreeSet::new();
-    for (frozen, _) in samples {
-        for (root, node, layout) in frozen.auto_reflow_roots() {
-            if !checked.insert(root) {
-                continue;
-            }
-            let mut weights = updates
-                .iter()
-                .filter_map(|(&(owner_root, node), update)| {
-                    (owner_root == root).then_some((node, update.weights().clone()))
-                })
-                .collect::<BTreeMap<_, _>>();
-            let projection = layout.project(&weights).ok()?;
-            let feasible = |projection: &LayoutProjection| {
-                crate::presentation::layout::measure_resize_geometry(
-                    projection,
-                    layout.splitter_thickness(),
-                )
-                .root_is_feasible(node)
-                    && samples.iter().all(|(frozen, delta)| {
-                        frozen.reflow_preserves_drivers(root, projection, *delta)
-                    })
-            };
-            let mut retained = weights.clone();
-            for (frozen, _) in samples {
-                frozen.retain_inherited_grid_shares(root, &projection, &mut retained);
-            }
-            // Changing weights can affect provisional Auto shape resolution.
-            // Retain original shares only when the resulting layout agrees.
-            if retained != weights
-                && let Ok(candidate) = layout.project(&retained)
-                && same_grid_allocation(&projection, &candidate)
-                && feasible(&candidate)
-            {
-                weights = retained;
-            } else if !feasible(&projection) {
-                return None;
-            }
-            updates.retain(|&(owner, node), update| {
-                if owner != root {
-                    return true;
-                }
-                let Some(weights) = weights.get(&node) else {
-                    return false;
-                };
-                if let TrackWeights::Grid(shares) = weights
-                    && let Some(basis) = update.grid_basis()
-                    && weights != update.weights()
-                {
-                    *update = TrackResize::grid_resolved(
-                        update.source().clone(),
-                        basis.clone(),
-                        shares.clone(),
-                    );
-                }
-                true
-            });
-        }
-    }
-    Some(())
-}
-
-fn same_grid_allocation(first: &LayoutProjection, second: &LayoutProjection) -> bool {
-    first.grids.iter().all(|(node, first)| {
-        second.grids.get(node).is_some_and(|second| {
-            first.shape == second.shape
-                && [Axis::Horizontal, Axis::Vertical].into_iter().all(|axis| {
-                    first
-                        .axis(axis)
-                        .tracks
-                        .iter()
-                        .zip(&second.axis(axis).tracks)
-                        .all(|(first, second)| {
-                            (first.extent - second.extent).abs()
-                                <= tolerance(first.extent, second.extent)
-                        })
-                })
-        })
-    })
 }
 
 fn merge_edge(edge: &mut Option<f64>, movement: f64) -> Option<()> {
