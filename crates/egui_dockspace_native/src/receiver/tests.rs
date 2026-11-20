@@ -866,11 +866,8 @@ fn front_contained_chrome_blocks_a_background_tab_strip_control() {
                 "the foreground contained window must cover the background control"
             );
             control_point = logical_pos(point);
-            background_control_id = Some(ui.make_persistent_id((
-                instance_id,
-                "tab-strip-control",
-                control.visual_id(),
-            )));
+            background_control_id =
+                Some(ui.make_persistent_id((instance_id, "tab-strip-control", control.input_id())));
             let mut register_scroll_candidate = |ui: &Ui, rect: Rect, id: Id| {
                 let identity = ui.register_scroll_hit_candidate(rect, id);
                 (identity.id(), identity.layer_id())
@@ -1093,7 +1090,7 @@ fn overflow_controls_block_disabled_click_and_drag_without_selecting_underlying_
                                 assert_eq!(tab.full_bounds().width(), 400.0);
                                 tab_bounds.push((
                                     tab.item().expect("fixture tabs contain application items"),
-                                    ui.make_persistent_id((instance_id, "tab", tab.visual_id())),
+                                    ui.make_persistent_id((instance_id, "tab", tab.input_id())),
                                     tab.drag_bounds(),
                                 ));
                             }
@@ -1104,7 +1101,7 @@ fn overflow_controls_block_disabled_click_and_drag_without_selecting_underlying_
                                 control_id = Some(ui.make_persistent_id((
                                     instance_id,
                                     "tab-strip-control",
-                                    control.visual_id(),
+                                    control.input_id(),
                                 )));
                                 control_descriptor = plan.receiver_for_tab_strip_control(control);
                             }
