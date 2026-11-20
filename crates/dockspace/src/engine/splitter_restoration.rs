@@ -107,7 +107,13 @@ impl DockEngine {
                 &group,
                 step_size,
                 step,
-            )?;
+            );
+            let Some(delta) = delta else {
+                if auto {
+                    continue;
+                }
+                return None;
+            };
             let updates = resize_axis_group_adjustment_updates(
                 std::slice::from_ref(&group),
                 axis,
@@ -170,7 +176,13 @@ impl DockEngine {
             if active.is_empty() || active.iter().any(|(_, record)| !record.operable()) {
                 break;
             }
-            let groups = prepare_projected_resize_axis_groups(&self.workspace, layout, &active)?;
+            let Some(groups) =
+                prepare_projected_resize_axis_groups(&self.workspace, layout, &active)
+            else {
+                // The current grid may have no feasible continuation after a
+                // reflow (for example, the new incident track is fixed).
+                break;
+            };
             Self::authorize_resize_axis_groups(&self.workspace, policy, &groups).ok()?;
             group = groups.into_iter().find(|group| group.axis == axis)?;
             projected = Some(projection);
@@ -275,6 +287,18 @@ impl DockEngine {
             ));
         };
         let target = SplitterResizeTarget::Handle(splitter);
+        if witness
+            .plan()
+            .splitter_record(splitter)
+            .and_then(SplitterRecord::grid)
+            != plan
+                .splitter_record(splitter)
+                .and_then(SplitterRecord::grid)
+        {
+            return Ok(InteractionOutcome::Rejected(
+                InteractionRejection::StaleScene,
+            ));
+        }
         let adjustment = plan.splitter_record(splitter).and_then(|record| {
             (record.operable() && plan.region_is_operable(record.hit().rect(), record.layer()))
                 .then_some(())?;

@@ -6,14 +6,15 @@ use std::sync::Arc;
 use super::*;
 use crate::graph::command::GridResizeBasis;
 use crate::model::DockspaceGridShares;
-use crate::presentation::config::ResizePropagation;
-use crate::presentation::layout::{FrozenRootLayout, NodeResult};
+use crate::presentation::config::{PaneOverflowPolicy, ResizePropagation};
+use crate::presentation::layout::{FrozenRootLayout, NodeResult, solve_grid_axis};
 use crate::presentation::scene::SplitterOwner;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FrozenPiecewiseAxis {
     axis: Axis,
     propagation: ResizePropagation,
+    overflow_policy: PaneOverflowPolicy,
     roots: Vec<FrozenRoot>,
     sources: Vec<NodeSource>,
 }
@@ -174,6 +175,7 @@ pub(super) fn prepare(
             let mut frozen = FrozenPiecewiseAxis {
                 axis,
                 propagation: facts.config().resize_propagation(),
+                overflow_policy: facts.config().pane_overflow_policy(),
                 roots: Vec::new(),
                 sources: Vec::new(),
             };
@@ -681,7 +683,12 @@ impl FrozenPiecewiseAxis {
                             .any(|(extent, track)| *extent != track.extent);
                         let key = (root.source.root(), id);
                         if (moved || (!drivers.is_empty() && tracks.grid.is_none()))
-                            && let Some(update) = tracks.update(self.axis, &extents)?
+                            && let Some(update) = tracks.update(
+                                self.axis,
+                                &extents,
+                                drivers.is_empty(),
+                                self.overflow_policy,
+                            )?
                         {
                             sample.updates.insert(key, update);
                         }
@@ -841,7 +848,13 @@ impl FrozenTracks {
         })
     }
 
-    fn update(&self, axis: Axis, extents: &[f64]) -> Result<Option<TrackResize>, SampleError> {
+    fn update(
+        &self,
+        axis: Axis,
+        extents: &[f64],
+        inherited: bool,
+        overflow_policy: PaneOverflowPolicy,
+    ) -> Result<Option<TrackResize>, SampleError> {
         let unchanged = extents
             .iter()
             .zip(&self.tracks)
@@ -872,9 +885,27 @@ impl FrozenTracks {
             weights.clone_from(&self.weights);
         }
         Ok(Some(if let Some((basis, grid)) = &self.grid {
-            // An ancestor can change a grid's extent without editing its shares.
-            // Defaults from a temporary Auto shape must never replace stored shares.
-            if weights == self.weights {
+            // Caps break the inverse from allocated pixels to shares. For an
+            // inherited resize, retain the original shares if they still
+            // produce these tracks under the same constraints.
+            if weights == self.weights
+                || (inherited
+                    && solve_grid_axis(
+                        extents.iter().sum(),
+                        &self.weights,
+                        self.tracks
+                            .iter()
+                            .map(|track| (track.minimum, track.maximum)),
+                        self.central,
+                        overflow_policy,
+                    )
+                    .is_ok_and(|original| {
+                        original
+                            .iter()
+                            .zip(extents)
+                            .all(|(&old, &new)| (old - new).abs() <= tolerance(old, new))
+                    }))
+            {
                 return Ok(None);
             }
             let shares = match axis {

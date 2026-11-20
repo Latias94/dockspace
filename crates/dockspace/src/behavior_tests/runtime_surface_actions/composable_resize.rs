@@ -331,6 +331,200 @@ fn ancestor_splitter_round_trip_preserves_auto_grid_shares_across_reflow() {
     assert_eq!(bounds(&mut batched), expected);
 }
 
+fn six_pane_auto_grid(rows: [f64; 2], columns: [f64; 3]) -> DockspaceNode {
+    let grid = DockspaceNode::grid_with_shares(
+        DockspaceGridShape::Auto,
+        [SECOND, THIRD, FOURTH, FIFTH, SIXTH, SEVENTH].map(DockspaceNode::pane),
+        DockspaceGridShares::new(rows, columns).unwrap(),
+    )
+    .unwrap();
+    DockspaceNode::equal_split(
+        DockspaceAxis::Horizontal,
+        [DockspaceNode::pane(FIRST), grid],
+    )
+    .unwrap()
+}
+
+fn adjust_outer_splitter(
+    session: &mut DockspaceSession,
+    offered: LogicalRect,
+    hints: &[(ItemId, PaneSizing)],
+    keys: &[SurfaceSplitterAdjustment],
+) -> bool {
+    let mut frame = session.begin_host_frame().unwrap();
+    let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+    let outer = plan
+        .splitters()
+        .filter(|splitter| splitter.axis() == DockspaceAxis::Horizontal)
+        .min_by(|a, b| a.draw_bounds().x().total_cmp(&b.draw_bounds().x()))
+        .unwrap();
+    if let Some(action) =
+        plan.prepare_splitter_adjustment_sequence(outer.visual_id(), keys.iter().copied())
+    {
+        frame.submit_surface_action(action).unwrap();
+    }
+    measure(&mut frame, offered, hints);
+    frame.commit().unwrap().workspace_changed()
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn capped_auto_grid_keeps_latent_shares_after_ancestor_resize_and_reopen() {
+    use crate::runtime::{DockspaceDocumentBootstrap, DockspaceDocumentId};
+    use SurfaceSplitterAdjustment::{Decrement, Increment};
+
+    let offered = LogicalRect::new(0.0, 0.0, 604.0, 508.0).unwrap();
+    let short = LogicalRect::new(0.0, 0.0, 604.0, 228.0).unwrap();
+    let hints = [THIRD, FIFTH, SEVENTH].map(|item| {
+        (
+            item,
+            PaneSizing::builder().fixed_width(80.0).build().unwrap(),
+        )
+    });
+    for propagation in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
+        for batches in [
+            &[&[Increment, Decrement][..]][..],
+            &[&[Increment][..], &[Decrement][..]][..],
+        ] {
+            let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+                SURFACE,
+                DockspaceRootLayout::new(ROOT, six_pane_auto_grid([1.0, 3.0], [1.0, 2.0, 1.0])),
+            )])
+            .unwrap();
+            let mut bootstrap =
+                DockspaceDocumentBootstrap::new(DockspaceDocumentId::from_bytes([4; 16]));
+            for index in 1..=7 {
+                assert_eq!(
+                    bootstrap.ensure_item(format!("pane-{index}")).unwrap(),
+                    ItemId::new(index)
+                );
+            }
+            let config = config(propagation);
+            let mut session = DockspaceSession::from_persistent_layout_with_presentation_config(
+                layout,
+                DockPolicy::default(),
+                config.clone(),
+                bootstrap,
+            )
+            .unwrap();
+            let initial = measured_bounds(&mut session, offered, &hints);
+            for batch in batches {
+                adjust_outer_splitter(&mut session, offered, &hints, batch);
+            }
+            assert_eq!(bounds(&mut session), initial);
+            let document = session.save_document_json().unwrap();
+            let mut reopened = DockspaceSession::from_document_json_with_presentation_config(
+                &document,
+                DockPolicy::default(),
+                config,
+                |_, _| true,
+            )
+            .unwrap();
+            let unconstrained = measured_bounds(&mut reopened, offered, &[]);
+            assert_eq!(unconstrained[1].1.width(), 148.0);
+            assert_eq!(unconstrained[2].1.width(), 148.0);
+            let original_shape = measured_bounds(&mut reopened, short, &[]);
+            assert_eq!(original_shape[1].1.height(), 49.0);
+            assert_eq!(original_shape[4].1.height(), 147.0);
+        }
+    }
+}
+
+#[test]
+fn a_capped_reflow_preserves_the_accepted_splitter_batch_prefix() {
+    use SurfaceSplitterAdjustment::{Decrement, Increment};
+
+    let offered = LogicalRect::new(0.0, 0.0, 424.0, 228.0).unwrap();
+    let hints = [SECOND, FOURTH, SIXTH].map(|item| {
+        (
+            item,
+            PaneSizing::builder().fixed_width(40.0).build().unwrap(),
+        )
+    });
+    let content = six_pane_auto_grid([1.0; 2], [1.0; 3]);
+    for last in [Increment, Decrement] {
+        let mut separate = session(
+            content.clone(),
+            offered,
+            ResizePropagation::Adjacent,
+            &hints,
+        );
+        assert!(adjust_outer_splitter(
+            &mut separate,
+            offered,
+            &hints,
+            &[Increment]
+        ));
+        assert!(!adjust_outer_splitter(
+            &mut separate,
+            offered,
+            &hints,
+            &[last]
+        ));
+        let expected = bounds(&mut separate);
+        assert!((expected[0].1.width() - 230.0).abs() < 1e-8);
+
+        let mut batched = session(
+            content.clone(),
+            offered,
+            ResizePropagation::Adjacent,
+            &hints,
+        );
+        assert!(adjust_outer_splitter(
+            &mut batched,
+            offered,
+            &hints,
+            &[Increment, last]
+        ));
+        assert_eq!(bounds(&mut batched), expected);
+    }
+}
+
+#[test]
+fn a_deferred_grid_reset_recomputes_current_weights_only_for_the_captured_cell_map() {
+    use SurfaceSplitterAdjustment::{Equalize, Increment, Preferred};
+
+    for (width, reflowed) in [(424.0, true), (524.0, false)] {
+        let offered = LogicalRect::new(0.0, 0.0, width, 228.0).unwrap();
+        for reset in [Equalize, Preferred] {
+            let mut session = session(
+                six_pane_auto_grid([1.0, 3.0], [1.0, 2.0, 1.0]),
+                offered,
+                ResizePropagation::Adjacent,
+                &[],
+            );
+            let action = inspect_surface(&mut session, |plan| {
+                let mut dividers = plan
+                    .splitters()
+                    .filter(|splitter| splitter.axis() == DockspaceAxis::Horizontal)
+                    .collect::<Vec<_>>();
+                dividers.sort_by(|a, b| a.draw_bounds().x().total_cmp(&b.draw_bounds().x()));
+                plan.prepare_splitter_adjustment(dividers[1].visual_id(), reset)
+                    .unwrap()
+                    .into_deferred()
+            });
+            assert!(adjust_outer_splitter(
+                &mut session,
+                offered,
+                &[],
+                &[Increment, Increment]
+            ));
+            let before = bounds(&mut session);
+            let mut frame = session.begin_host_frame().unwrap();
+            frame.submit_deferred_surface_action(action).unwrap();
+            measure(&mut frame, offered, &[]);
+            let report = frame.commit().unwrap();
+            assert_eq!(report.workspace_changed(), !reflowed);
+            let after = bounds(&mut session);
+            if reflowed {
+                assert_eq!(after, before);
+            } else {
+                assert!((after[1].1.width() - after[2].1.width()).abs() < 1e-8);
+            }
+        }
+    }
+}
+
 #[test]
 fn presented_grid_junction_commits_both_shared_axes_and_cancel_preserves_the_graph() {
     let offered = LogicalRect::new(0.0, 0.0, 404.0, 232.0).unwrap();

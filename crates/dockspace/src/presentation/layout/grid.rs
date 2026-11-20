@@ -42,6 +42,33 @@ pub struct GridAxisProjection {
     pub unallocated: f64,
 }
 
+pub(crate) fn solve_grid_axis(
+    extent: f64,
+    weights: &[SplitWeight],
+    constraints: impl IntoIterator<Item = (f64, f64)>,
+    central_index: Option<usize>,
+    overflow_policy: PaneOverflowPolicy,
+) -> Result<Vec<f64>, LayoutError> {
+    let constraints = constraints
+        .into_iter()
+        .map(|(min, max)| AxisConstraint { min, max })
+        .collect::<Vec<_>>();
+    let mut sizes = vec![0.0; weights.len()];
+    solve_axis_into(
+        extent,
+        &weights
+            .iter()
+            .map(|weight| weight.get())
+            .collect::<Vec<_>>(),
+        &constraints,
+        central_index,
+        &mut sizes,
+        &mut Vec::new(),
+        overflow_policy,
+    )?;
+    Ok(sizes)
+}
+
 /// Frozen dimensions, actual cell owners, and both shared axes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GridProjection {

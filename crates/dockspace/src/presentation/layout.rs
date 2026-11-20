@@ -23,6 +23,7 @@ pub use projection::{
     ChildProjection, LayoutProjection, NodeMap, NodeResult, SplitMap, SplitProjection,
 };
 mod grid;
+pub(crate) use grid::solve_grid_axis;
 pub use grid::{GridMap, GridProjection, ResolvedGridShape};
 mod reflow;
 pub(crate) use reflow::FrozenRootLayout;
