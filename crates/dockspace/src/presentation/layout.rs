@@ -27,6 +27,8 @@ pub(crate) use grid::solve_grid_axis;
 pub use grid::{GridMap, GridProjection, ResolvedGridShape};
 mod reflow;
 pub(crate) use reflow::FrozenRootLayout;
+#[cfg(test)]
+pub(crate) use reflow::auto_reflow_projection_count;
 
 mod resize_geometry;
 mod topology;

@@ -105,6 +105,158 @@ fn dragging_an_outer_split_preserves_a_capped_far_grid_track() {
     }
 }
 
+#[test]
+fn a_parent_grid_settles_before_measuring_its_nested_grid_transfer() {
+    let offered = LogicalRect::new(0.0, 0.0, 812.0, 96.0).unwrap();
+    let auto = grid(
+        DockspaceGridShape::Auto,
+        (3..=8).map(pane),
+        [1.0, 2.0],
+        [1.0, 2.0, 1.0],
+    );
+    let child = grid(fixed(1, 2), [pane(2), auto], [1.0], [2.0, 1.0]);
+    let parent = grid(fixed(1, 2), [child, pane(9)], [1.0], [1.0, 1.0]);
+    let content = DockspaceNode::equal_split(DockspaceAxis::Horizontal, [pane(1), parent]).unwrap();
+    let hints = (3..=8)
+        .map(|id| {
+            (
+                ItemId::new(id),
+                PaneSizing::builder().fixed_width(40.0).build().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    for propagation in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
+        let mut session = session(content.clone(), offered, propagation, &hints);
+        let before = bounds(&mut session);
+        assert_eq!(pane_bounds(&before, 1).width(), 404.0);
+        assert_eq!(pane_bounds(&before, 3).x(), 524.0);
+        assert_eq!(pane_bounds(&before, 9).x(), 612.0);
+
+        let resized = drag_outer_splitter(&mut session, offered, &hints, 44.0);
+        assert_eq!(pane_bounds(&resized, 1).width(), 424.0);
+        assert_eq!(pane_bounds(&resized, 2).width(), 92.0);
+        assert_eq!(pane_bounds(&resized, 3).x(), 524.0);
+        assert_eq!(pane_bounds(&resized, 9).x(), 612.0);
+    }
+}
+
+#[test]
+fn independent_grid_transfers_share_projection_passes() {
+    use crate::presentation::layout::auto_reflow_projection_count;
+
+    let sample = |count: u64| {
+        let grids = (0..count).map(|index| {
+            let first = 2 + 3 * index;
+            let inner = grid(
+                fixed(1, 2),
+                [pane(first), pane(first + 1)],
+                [1.0],
+                [1.0, 3.0],
+            );
+            grid(fixed(1, 2), [inner, pane(first + 2)], [1.0], [1.0, 1.0])
+        });
+        let left = DockspaceNode::grid(DockspaceGridShape::Auto, [pane(1)]).unwrap();
+        let right = DockspaceNode::equal_split(DockspaceAxis::Vertical, grids).unwrap();
+        let content = DockspaceNode::equal_split(DockspaceAxis::Horizontal, [left, right]).unwrap();
+        let fixed_width = PaneSizing::builder().fixed_width(50.0).build().unwrap();
+        let hints = (0..count)
+            .map(|index| (ItemId::new(3 + 3 * index), fixed_width))
+            .collect::<Vec<_>>();
+        let offered = LogicalRect::new(0.0, 0.0, 412.0, 28.0 + count as f64 * 64.0).unwrap();
+        let mut session = session(content, offered, ResizePropagation::Adjacent, &hints);
+
+        inspect_surface(&mut session, |plan| {
+            let divider = plan
+                .splitters()
+                .filter(|divider| divider.axis() == DockspaceAxis::Horizontal)
+                .min_by(|a, b| a.draw_bounds().x().total_cmp(&b.draw_bounds().x()))
+                .expect("outer split is the first horizontal divider");
+            let before = auto_reflow_projection_count();
+            assert!(
+                plan.prepare_splitter_adjustment(
+                    divider.visual_id(),
+                    SurfaceSplitterAdjustment::Increment
+                )
+                .is_some()
+            );
+            auto_reflow_projection_count() - before
+        })
+    };
+    let narrow = sample(4);
+    let wide = sample(32);
+    assert_eq!(narrow, wide);
+    assert!(
+        wide <= 3,
+        "{wide} full-root projections for two nested tiers"
+    );
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn resizing_a_neighbor_keeps_stationary_grid_tracks_after_reopening() {
+    use crate::runtime::{DockspaceDocumentBootstrap, DockspaceDocumentId};
+
+    let offered = LogicalRect::new(0.0, 0.0, 504.0, 78.0).unwrap();
+    let auto = DockspaceNode::grid(DockspaceGridShape::Auto, (4..=9).map(pane)).unwrap();
+    let far = grid(fixed(1, 2), [pane(3), auto], [1.0], [1.0, 1.0]);
+    let content = DockspaceNode::split(
+        DockspaceAxis::Horizontal,
+        [(pane(1), 2.0), (pane(2), 2.0), (far, 1.0)],
+    )
+    .unwrap();
+    let hints = [(3, 20.0), (4, 40.0), (7, 40.0)].map(|(id, width)| {
+        (
+            ItemId::new(id),
+            PaneSizing::builder().min_width(width).build().unwrap(),
+        )
+    });
+    for propagation in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
+        let mut bootstrap =
+            DockspaceDocumentBootstrap::new(DockspaceDocumentId::from_bytes([5; 16]));
+        for id in 1..=9 {
+            assert_eq!(
+                bootstrap.ensure_item(format!("pane-{id}")).unwrap(),
+                ItemId::new(id)
+            );
+        }
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(ROOT, content.clone()),
+        )])
+        .unwrap();
+        let mut session = DockspaceSession::from_persistent_layout_with_presentation_config(
+            layout,
+            DockPolicy::default(),
+            config(propagation),
+            bootstrap,
+        )
+        .unwrap();
+        let before = measured_bounds(&mut session, offered, &hints);
+        assert_eq!(pane_bounds(&before, 4).x(), 420.0);
+
+        let resized = drag_outer_splitter(&mut session, offered, &hints, 44.0);
+        let document = session.save_document_json().unwrap();
+        let mut reopened = DockspaceSession::from_document_json_with_presentation_config(
+            &document,
+            DockPolicy::default(),
+            config(propagation),
+            |_, _| true,
+        )
+        .unwrap();
+        for bounds in [resized, measured_bounds(&mut reopened, offered, &hints)] {
+            for (item, width) in [(1, 214.0), (2, 174.0), (3, 20.0)] {
+                let pane = pane_bounds(&bounds, item);
+                assert!(
+                    (pane.width() - width).abs() < 1e-8,
+                    "{propagation:?}: pane {item} expected width {width}, got {pane:?}"
+                );
+            }
+            assert!((pane_bounds(&bounds, 4).x() - 420.0).abs() < 1e-8);
+        }
+    }
+}
+
 #[cfg(feature = "serde")]
 #[test]
 fn dragging_an_outer_split_does_not_store_the_auto_grids_temporary_columns() {

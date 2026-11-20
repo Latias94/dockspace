@@ -132,6 +132,11 @@ fn prepare_linear_resize_axis_groups(
             }
         }
         let projection = layout.projection(id.root)?;
+        // Reprojection can change constraints in an Auto branch even when
+        // neither of its edges moves in the frozen linear frontier.
+        if projection.auto_reflow().is_some() {
+            return None;
+        }
         let Node::Split {
             axis,
             children,
@@ -408,22 +413,26 @@ pub(super) fn resize_axis_group_updates(
         };
         let shared = requested.clamp(group.common_delta.minimum, group.common_delta.maximum);
         if let Some(piecewise) = &group.piecewise {
-            let (delta, mut sample) = piecewise.track_sample(shared)?;
+            let (delta, sample) = piecewise.track_sample(shared)?;
             for (key, update) in sample.updates {
-                if let Some((original, overflow_policy)) =
-                    piecewise.inherited_grid_weights(key.0, key.1)
-                {
-                    inherited.push(InheritedGridTransfer {
-                        axis: group.axis,
-                        expected: sample.tracks.remove(&key)?,
-                        original,
-                        overflow_policy,
-                        update,
-                    });
-                } else {
-                    merge_axis_update(&mut updates, key, group.axis, update)?;
-                }
+                merge_axis_update(&mut updates, key, group.axis, update)?;
             }
+            inherited.extend(
+                sample
+                    .tracks
+                    .into_iter()
+                    .filter_map(|((root, node), expected)| {
+                        let (tracks, overflow_policy) = piecewise.inherited_grid(root, node)?;
+                        Some(InheritedGridTransfer {
+                            root,
+                            node,
+                            axis: group.axis,
+                            expected,
+                            tracks,
+                            overflow_policy,
+                        })
+                    }),
+            );
             reflow.push((piecewise.as_ref(), delta));
             continue;
         }
@@ -494,6 +503,13 @@ fn merge_edge(edge: &mut Option<f64>, movement: f64) -> Option<()> {
     }
     *edge = Some(movement);
     Some(())
+}
+
+fn rect_start(rect: LogicalRect, axis: Axis) -> f64 {
+    match axis {
+        Axis::Horizontal => rect.x(),
+        Axis::Vertical => rect.y(),
+    }
 }
 
 fn rect_extent(rect: LogicalRect, axis: Axis) -> f64 {

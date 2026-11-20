@@ -105,14 +105,16 @@ driver boundary. A direct Grid driver must retain its frozen dimensions and cell
 map. After both axes are merged, roots containing Auto reuse their immutable
 numeric compiler inputs to project the proposed layout. The final track
 allocation starts with the stored Grid shares. A Grid that keeps its cell map
-must realize the touching-frontier allocation. Each inherited axis writes shares
-only when the existing shares fail to realize that allocation. If Auto resolves
-to another map, the old map's sample leaves its stored shares intact. This lets
-the same shares apply when that map returns. The proposed tree must remain
-feasible, and each direct boundary must equal its frozen position plus the
-accepted displacement. A changed direct Grid shape or a new minimum that moves a
-driver rejects that sample. Ordinary and Fixed-only roots retain no additional
-input snapshot.
+must realize the touching-frontier allocation, including stationary tracks.
+The solver settles parent shares before deciding what their descendants need.
+Independent branches contribute their shares in the same projection pass.
+Each inherited axis writes shares only when the existing shares fail to realize
+the required allocation. If Auto resolves to another map, the old map's sample
+leaves its stored shares intact so they apply when that map returns. The proposed
+tree must remain feasible, and each direct boundary must equal its frozen
+position plus the accepted displacement. A changed direct Grid shape or a new
+minimum that moves a driver rejects that sample. Ordinary and Fixed-only roots
+retain no additional input snapshot.
 
 Old-shape intervals remain conservative; the evaluator does not discover extra
 space made available by reflow. A public Auto resize range is returned only when

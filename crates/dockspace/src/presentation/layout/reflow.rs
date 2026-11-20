@@ -2,6 +2,16 @@
 
 use super::*;
 
+#[cfg(test)]
+thread_local! {
+    static AUTO_REFLOW_PROJECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn auto_reflow_projection_count() -> usize {
+    AUTO_REFLOW_PROJECTIONS.get()
+}
+
 /// Immutable numeric inputs, without workspace or gesture authority.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FrozenRootLayout {
@@ -19,6 +29,10 @@ struct RootLayoutInput {
 }
 
 impl FrozenRootLayout {
+    pub(crate) fn topology(&self) -> &RootStructure {
+        &self.input.nodes.topology
+    }
+
     pub(crate) fn splitter_thickness(&self) -> f64 {
         self.input.basis.metrics.splitter_thickness()
     }
@@ -63,6 +77,8 @@ impl FrozenRootLayout {
         &self,
         overrides: &BTreeMap<NodeId, TrackWeights>,
     ) -> Result<LayoutProjection, LayoutError> {
+        #[cfg(test)]
+        AUTO_REFLOW_PROJECTIONS.set(AUTO_REFLOW_PROJECTIONS.get() + 1);
         let mut weights = self.weights.clone();
         weights.extend(
             overrides

@@ -42,7 +42,7 @@ enum FrozenKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct FrozenTracks {
+pub(super) struct FrozenTracks {
     source: NodeSource,
     frame_extent: f64,
     children: Vec<(NodeId, usize)>,
@@ -87,7 +87,12 @@ impl Scalar {
 
 pub(super) struct Sample {
     pub(super) updates: BTreeMap<(RootId, NodeId), TrackResize>,
-    pub(super) tracks: BTreeMap<(RootId, NodeId), Vec<f64>>,
+    pub(super) tracks: BTreeMap<(RootId, NodeId), TrackAllocation>,
+}
+
+pub(super) struct TrackAllocation {
+    pub(super) origin: f64,
+    pub(super) extents: Vec<f64>,
 }
 
 #[derive(Debug)]
@@ -574,11 +579,11 @@ impl FrozenPiecewiseAxis {
         self.sources.iter()
     }
 
-    pub(super) fn inherited_grid_weights(
+    pub(super) fn inherited_grid(
         &self,
         root: RootId,
         node: NodeId,
-    ) -> Option<(&[SplitWeight], PaneOverflowPolicy)> {
+    ) -> Option<(&FrozenTracks, PaneOverflowPolicy)> {
         let frozen = self
             .roots
             .iter()
@@ -590,7 +595,7 @@ impl FrozenPiecewiseAxis {
             return None;
         };
         tracks.grid.as_ref()?;
-        Some((&tracks.weights, self.overflow_policy))
+        Some((tracks, self.overflow_policy))
     }
 
     pub(super) fn track_sample(&self, delta: f64) -> Option<(f64, Sample)> {
@@ -609,7 +614,13 @@ impl FrozenPiecewiseAxis {
     }
 
     pub(crate) fn track_extents(&self, root: RootId, node: NodeId, delta: f64) -> Option<Vec<f64>> {
-        self.sample_clamped(delta)?.1.tracks.remove(&(root, node))
+        Some(
+            self.sample_clamped(delta)?
+                .1
+                .tracks
+                .remove(&(root, node))?
+                .extents,
+        )
     }
 
     fn sample_clamped(&self, requested: f64) -> Option<(f64, Sample)> {
@@ -703,11 +714,15 @@ impl FrozenPiecewiseAxis {
                             .zip(&tracks.tracks)
                             .any(|(extent, track)| *extent != track.extent);
                         let key = (root.source.root(), id);
-                        if (moved || (!drivers.is_empty() && tracks.grid.is_none()))
+                        let inherited_grid = tracks.grid.is_some() && drivers.is_empty();
+                        // Auto reflow decides inherited Grid writes from the settled
+                        // parent allocation, including tracks that do not move.
+                        if !(inherited_grid && root.auto_reflow.is_some())
+                            && (moved || (!drivers.is_empty() && tracks.grid.is_none()))
                             && let Some(update) = tracks.update(
                                 self.axis,
                                 &extents,
-                                drivers.is_empty() && root.auto_reflow.is_none(),
+                                inherited_grid,
                                 self.overflow_policy,
                             )?
                         {
@@ -723,7 +738,13 @@ impl FrozenPiecewiseAxis {
                                 },
                             ));
                         }
-                        sample.tracks.insert(key, extents);
+                        sample.tracks.insert(
+                            key,
+                            TrackAllocation {
+                                origin: origin.value,
+                                extents,
+                            },
+                        );
                     }
                 }
             }
@@ -733,6 +754,25 @@ impl FrozenPiecewiseAxis {
 }
 
 impl FrozenTracks {
+    pub(super) fn grid_basis(&self) -> Option<&GridResizeBasis> {
+        self.grid.as_ref().map(|(basis, _)| basis)
+    }
+
+    pub(super) fn weights(&self) -> &[SplitWeight] {
+        &self.weights
+    }
+
+    pub(super) fn resize_inherited_grid(
+        &self,
+        axis: Axis,
+        allocation: &TrackAllocation,
+    ) -> Option<TrackResize> {
+        let weights = self.weights_for_allocation(&allocation.extents)?;
+        (weights != self.weights)
+            .then(|| self.grid_update(axis, weights))
+            .flatten()
+    }
+
     fn allocate(
         &self,
         origin: Scalar,
@@ -883,21 +923,8 @@ impl FrozenTracks {
         let mut weights = if unchanged {
             self.weights.clone()
         } else {
-            let original = self
-                .tracks
-                .iter()
-                .map(|track| track.extent)
-                .collect::<Vec<_>>();
-            if self
-                .tracks
-                .iter()
-                .any(|track| track.visible && track.extent == 0.0)
-            {
-                weights_with_zero_tracks(&self.weights, &self.tracks, extents, self.central)
-            } else {
-                super::weights_for_extents(&self.weights, &original, extents, self.central)
-            }
-            .ok_or(SampleError::Invalid)?
+            self.weights_for_allocation(extents)
+                .ok_or(SampleError::Invalid)?
         };
         // A cap may round the projected split one ULP inside its limit.
         // If reaching that limit only rounds the stored shares, keep the
@@ -905,7 +932,7 @@ impl FrozenTracks {
         if !unchanged && self.rounded_contact(extents, &weights) {
             weights.clone_from(&self.weights);
         }
-        Ok(Some(if let Some((basis, grid)) = &self.grid {
+        Ok(Some(if self.grid.is_some() {
             // Caps break the inverse from allocated pixels to shares. For an
             // inherited resize, retain the original shares if they still
             // produce these tracks under the same constraints.
@@ -923,19 +950,46 @@ impl FrozenTracks {
             {
                 return Ok(None);
             }
-            let shares = match axis {
-                Axis::Horizontal => {
-                    DockspaceGridShares::from_normalized(grid.row_weights().to_vec(), weights)
-                }
-                Axis::Vertical => {
-                    DockspaceGridShares::from_normalized(weights, grid.column_weights().to_vec())
-                }
-            }
-            .map_err(|_| SampleError::Invalid)?;
-            TrackResize::grid_resolved(self.source.clone(), basis.clone(), shares)
+            self.grid_update(axis, weights)
+                .ok_or(SampleError::Invalid)?
         } else {
             TrackResize::split(self.source.clone(), weights)
         }))
+    }
+
+    fn weights_for_allocation(&self, extents: &[f64]) -> Option<Vec<SplitWeight>> {
+        if self
+            .tracks
+            .iter()
+            .any(|track| track.visible && track.extent == 0.0)
+        {
+            weights_with_zero_tracks(&self.weights, &self.tracks, extents, self.central)
+        } else {
+            let original = self
+                .tracks
+                .iter()
+                .map(|track| track.extent)
+                .collect::<Vec<_>>();
+            super::weights_for_extents(&self.weights, &original, extents, self.central)
+        }
+    }
+
+    fn grid_update(&self, axis: Axis, weights: Vec<SplitWeight>) -> Option<TrackResize> {
+        let (basis, grid) = self.grid.as_ref()?;
+        let shares = match axis {
+            Axis::Horizontal => {
+                DockspaceGridShares::from_normalized(grid.row_weights().to_vec(), weights)
+            }
+            Axis::Vertical => {
+                DockspaceGridShares::from_normalized(weights, grid.column_weights().to_vec())
+            }
+        }
+        .ok()?;
+        Some(TrackResize::grid_resolved(
+            self.source.clone(),
+            basis.clone(),
+            shares,
+        ))
     }
 
     fn rounded_contact(&self, extents: &[f64], weights: &[SplitWeight]) -> bool {
@@ -1064,13 +1118,6 @@ fn limit_at(value: Scalar, endpoint: f64, delta: f64) -> Result<(), SampleError>
     }
     let intercept = (-value.slope).mul_add(delta, value.value);
     Err(SampleError::Limit((endpoint - intercept) / value.slope))
-}
-
-fn rect_start(rect: LogicalRect, axis: Axis) -> f64 {
-    match axis {
-        Axis::Horizontal => rect.x(),
-        Axis::Vertical => rect.y(),
-    }
 }
 
 #[cfg(test)]
