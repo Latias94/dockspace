@@ -47,14 +47,18 @@ impl FrozenRootLayout {
         leaf_sizing: Option<&BTreeMap<NodeId, PaneSizing>>,
         weights: &BTreeMap<NodeId, TrackWeights>,
     ) -> Option<Arc<Self>> {
+        // A single structural cell always resolves to 1×1. It cannot change
+        // the measured track topology as its ancestors resize.
         topology
             .grid_rows
             .iter()
             .any(|&row| {
                 matches!(
                     &topology.nodes[row].kind,
-                    RootNodeKind::Grid { payload, .. }
+                    RootNodeKind::Grid { payload, children }
                         if payload.shape() == crate::model::DockspaceGridShape::Auto
+                            && values[row].visible
+                            && children.len() > 1
                 )
             })
             .then(|| {

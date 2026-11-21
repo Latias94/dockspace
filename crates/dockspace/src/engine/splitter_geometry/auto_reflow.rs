@@ -50,7 +50,7 @@ pub(super) fn finish_auto_reflow(
             project_inherited_transfers(layout, &direct, &mut transfers, feasible)?;
             for (node, axes) in transfers {
                 for transfer in axes {
-                    if let TransferState::Resize(update) = transfer.state {
+                    if let TransferState::Resize { update, .. } = transfer.state {
                         merge_axis_update(updates, (root, node), transfer.target.axis, update)?;
                     }
                 }
@@ -81,10 +81,15 @@ impl InheritedTrackTransfer<'_> {
     }
 
     fn extents_match(&self, extents: impl ExactSizeIterator<Item = f64>) -> bool {
+        let origin = self.expected.origin;
+        let end = origin + self.expected.slot_extent;
+        let coordinate_error = origin.abs().max(end.abs()) * (f64::EPSILON * 4.0);
         extents.len() == self.expected.extents.len()
             && extents
                 .zip(&self.expected.extents)
-                .all(|(actual, &expected)| (actual - expected).abs() <= tolerance(actual, expected))
+                .all(|(actual, &expected)| {
+                    (actual - expected).abs() <= tolerance(actual, expected).max(coordinate_error)
+                })
     }
 
     fn origin_matches(&self, node: &NodeResult) -> bool {
@@ -120,7 +125,10 @@ struct TrackTransfer<'a> {
 
 enum TransferState {
     Stored,
-    Resize(TrackResize),
+    Resize {
+        update: TrackResize,
+        preserves_offers: bool,
+    },
     Reflowed,
 }
 
@@ -136,7 +144,7 @@ fn project_inherited_transfers(
         let mut updates = direct.clone();
         for (&node, axes) in &*transfers {
             for transfer in axes {
-                if let TransferState::Resize(update) = &transfer.state {
+                if let TransferState::Resize { update, .. } = &transfer.state {
                     merge_axis_update(&mut updates, node, transfer.target.axis, update.clone())?;
                 }
             }
@@ -165,7 +173,7 @@ fn project_inherited_transfers(
                     // When an ancestor remaps, each child can still inherit the
                     // old transfer if it occupies the expected slot on this axis.
                     if map_changed || (remapped && !target.slot_matches(result)) {
-                        if matches!(transfer.state, TransferState::Resize(_)) {
+                        if matches!(transfer.state, TransferState::Resize { .. }) {
                             transfer.state = TransferState::Reflowed;
                             changed = true;
                         }
@@ -178,15 +186,30 @@ fn project_inherited_transfers(
                         target.extents_match(split.children.iter().map(|t| t.extent))
                     };
                     allocations_match &= extents_match && target.origin_matches(result);
-                    if !extents_match
-                        && matches!(transfer.state, TransferState::Stored)
-                        && !grid.is_some_and(|grid| target.can_reuse_grid_shares(grid))
-                        && let Some(update) = target
-                            .tracks
-                            .resize_inherited(target.axis, &target.expected)
-                    {
-                        transfer.state = TransferState::Resize(update);
-                        changed = true;
+                    if !extents_match {
+                        let preserve_offers = match transfer.state {
+                            TransferState::Stored
+                                if !grid.is_some_and(|grid| target.can_reuse_grid_shares(grid)) =>
+                            {
+                                false
+                            }
+                            TransferState::Resize {
+                                preserves_offers: false,
+                                ..
+                            } => true,
+                            _ => continue,
+                        };
+                        if let Some(update) = target.tracks.resize_inherited(
+                            target.axis,
+                            &target.expected,
+                            preserve_offers,
+                        ) {
+                            transfer.state = TransferState::Resize {
+                                update,
+                                preserves_offers: preserve_offers,
+                            };
+                            changed = true;
+                        }
                     }
                 }
             }

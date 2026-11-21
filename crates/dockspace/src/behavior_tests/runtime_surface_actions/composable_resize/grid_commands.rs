@@ -354,6 +354,99 @@ fn a_parent_grid_settles_before_measuring_its_nested_grid_transfer() {
 }
 
 #[test]
+fn moving_a_divider_accepts_rounding_in_small_stationary_tracks() {
+    let offered = LogicalRect::new(0.0, 0.0, 1024.0, 128.0).unwrap();
+    for auto_cells in [1, 2] {
+        let left =
+            DockspaceNode::grid(DockspaceGridShape::Auto, (1..=auto_cells).map(pane)).unwrap();
+        let right =
+            DockspaceNode::equal_split(DockspaceAxis::Horizontal, [pane(3), pane(4)]).unwrap();
+        let content = grid(
+            fixed(1, 3),
+            [left, pane(5), right],
+            [1.0],
+            [49.0, 49.0, 1.0],
+        );
+        let mut session = session(content, offered, ResizePropagation::Adjacent, &[]);
+        let original = bounds(&mut session);
+        let mut frame = session.begin_host_frame().unwrap();
+        let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+        let divider = plan
+            .splitters()
+            .find(|splitter| {
+                splitter.axis() == DockspaceAxis::Horizontal
+                    && (splitter.draw_bounds().max().x() - pane_bounds(&original, 5).x()).abs()
+                        < 1e-9
+            })
+            .unwrap();
+        let action = plan
+            .prepare_splitter_adjustment(divider.visual_id(), SurfaceSplitterAdjustment::Increment)
+            .unwrap();
+        frame.submit_surface_action(action).unwrap();
+        measure(&mut frame, offered, &[]);
+        assert!(frame.commit().unwrap().workspace_changed());
+        let resized = measured_bounds(&mut session, offered, &[]);
+        for item in [3, 4] {
+            let before = pane_bounds(&original, item);
+            let after = pane_bounds(&resized, item);
+            assert!((before.x() - after.x()).abs() < 1e-9);
+            assert!((before.width() - after.width()).abs() < 1e-9);
+        }
+        // The left grid can have two cells, so check the middle pane's boundary.
+        assert!((pane_bounds(&resized, 5).x() - pane_bounds(&original, 5).x() - 20.0).abs() < 1e-9);
+    }
+}
+
+#[test]
+fn capped_auto_grid_keeps_its_far_edge_when_a_parent_split_transfers_space() {
+    let offered = LogicalRect::new(0.0, 0.0, 404.0, 96.0).unwrap();
+    let hints = (3..=8)
+        .map(|id| {
+            (
+                ItemId::new(id),
+                PaneSizing::builder().fixed_width(16.0).build().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    for propagation in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
+        for weights in [[1.0, 1.0], [5.0, 3.0]] {
+            let auto = grid(
+                DockspaceGridShape::Auto,
+                (3..=8).map(pane),
+                [1.0, 1.0],
+                [1.0, 1.0, 1.0],
+            );
+            let near = DockspaceNode::split(
+                DockspaceAxis::Horizontal,
+                [(pane(2), weights[0]), (auto, weights[1])],
+            )
+            .unwrap();
+            let content = grid(fixed(1, 2), [pane(1), near], [1.0], [1.0, 1.0]);
+            let mut session = session(content, offered, propagation, &hints);
+            let initial = bounds(&mut session);
+            assert!(
+                adjust_outer_splitter(
+                    &mut session,
+                    offered,
+                    &hints,
+                    &[SurfaceSplitterAdjustment::Increment]
+                ),
+                "{propagation:?}, {weights:?}"
+            );
+            let resized = measured_bounds(&mut session, offered, &hints);
+            assert!((pane_bounds(&resized, 1).width() - 220.0).abs() < 1e-9);
+            assert!((pane_bounds(&resized, 2).width() - 120.0).abs() < 1e-9);
+            for item in 3..=8 {
+                let before = pane_bounds(&initial, item);
+                let after = pane_bounds(&resized, item);
+                assert!((before.x() - after.x()).abs() < 1e-9);
+                assert_eq!(before.y(), after.y());
+            }
+        }
+    }
+}
+
+#[test]
 fn independent_grid_transfers_share_projection_passes() {
     use crate::presentation::layout::auto_reflow_projection_count;
 
@@ -368,7 +461,8 @@ fn independent_grid_transfers_share_projection_passes() {
             );
             grid(fixed(1, 2), [inner, pane(first + 2)], [1.0], [1.0, 1.0])
         });
-        let left = DockspaceNode::grid(DockspaceGridShape::Auto, [pane(1)]).unwrap();
+        let left =
+            DockspaceNode::grid(DockspaceGridShape::Auto, [pane(1), pane(2 + 3 * count)]).unwrap();
         let right = DockspaceNode::equal_split(DockspaceAxis::Vertical, grids).unwrap();
         let content = DockspaceNode::equal_split(DockspaceAxis::Horizontal, [left, right]).unwrap();
         let fixed_width = PaneSizing::builder().fixed_width(50.0).build().unwrap();
@@ -402,6 +496,49 @@ fn independent_grid_transfers_share_projection_passes() {
         wide <= 3,
         "{wide} full-root projections for two nested tiers"
     );
+}
+
+#[test]
+fn one_cell_auto_grid_does_not_reproject_ancestor_transfers() {
+    use crate::presentation::layout::auto_reflow_projection_count;
+
+    for depth in [4, 8, 16] {
+        let mut branch = pane(2);
+        let mut span = 96.0;
+        for item in 3..3 + depth {
+            let split = DockspaceNode::split(
+                DockspaceAxis::Horizontal,
+                [(branch, span), (pane(item), 32.0)],
+            )
+            .unwrap();
+            // Keep the nested split from being flattened into its parent.
+            branch = DockspaceNode::grid(fixed(1, 1), [split]).unwrap();
+            span += 36.0;
+        }
+        let auto = DockspaceNode::grid(DockspaceGridShape::Auto, [pane(1)]).unwrap();
+        let content =
+            DockspaceNode::split(DockspaceAxis::Horizontal, [(auto, 120.0), (branch, span)])
+                .unwrap();
+        let offered = LogicalRect::new(0.0, 0.0, span + 124.0, 130.0).unwrap();
+        let mut session = session(content, offered, ResizePropagation::Adjacent, &[]);
+        let original = bounds(&mut session);
+        assert!((pane_bounds(&original, 1).width() - 120.0).abs() < 1e-9);
+        let before = auto_reflow_projection_count();
+        assert!(adjust_outer_splitter(
+            &mut session,
+            offered,
+            &[],
+            &[SurfaceSplitterAdjustment::Increment]
+        ));
+        assert_eq!(auto_reflow_projection_count(), before, "depth {depth}");
+        let resized = measured_bounds(&mut session, offered, &[]);
+        assert!((pane_bounds(&resized, 1).width() - 140.0).abs() < 1e-9);
+        for item in 3..3 + depth {
+            assert!(
+                (pane_bounds(&resized, item).x() - pane_bounds(&original, item).x()).abs() < 1e-9
+            );
+        }
+    }
 }
 
 #[cfg(feature = "serde")]

@@ -766,8 +766,13 @@ impl FrozenTracks {
         &self,
         axis: Axis,
         allocation: &TrackAllocation,
+        preserve_offers: bool,
     ) -> Option<TrackResize> {
-        let weights = self.weights_for_allocation(&allocation.extents)?;
+        let weights = if preserve_offers {
+            self.weights_preserving_capped_tracks(&allocation.extents)?
+        } else {
+            self.weights_for_allocation(&allocation.extents)?
+        };
         if weights == self.weights {
             return None;
         }
@@ -776,6 +781,55 @@ impl FrozenTracks {
         } else {
             Some(TrackResize::split(self.source.clone(), weights))
         }
+    }
+
+    fn weights_preserving_capped_tracks(&self, extents: &[f64]) -> Option<Vec<SplitWeight>> {
+        if self.central.is_some() {
+            return None;
+        }
+        let previous_extent: f64 = self.tracks.iter().map(|track| track.extent).sum();
+        let visible_share = crate::graph::normalized_weight_sum(
+            self.weights
+                .iter()
+                .zip(&self.tracks)
+                .filter_map(|(weight, track)| track.visible.then_some(weight.get())),
+        );
+        // The compiler chooses nested Auto shapes before imposing their track
+        // limits. Retain the offered space of stationary capped tracks through
+        // that first pass, then let the allocator distribute the excess.
+        let capped = self
+            .tracks
+            .iter()
+            .zip(&self.weights)
+            .zip(extents)
+            .map(|((track, weight), &extent)| {
+                let offer = previous_extent * (weight.get() / visible_share);
+                (track.visible
+                    && extent == track.extent
+                    && extent == track.maximum
+                    && offer > extent)
+                    .then_some(offer)
+            })
+            .collect::<Vec<_>>();
+        let used_by_caps: f64 = capped.iter().flatten().sum();
+        if used_by_caps == 0.0 {
+            return None;
+        }
+        let flexible: f64 = extents
+            .iter()
+            .zip(&capped)
+            .filter_map(|(&extent, cap)| cap.is_none().then_some(extent))
+            .sum();
+        let remaining = extents.iter().sum::<f64>() - used_by_caps;
+        if flexible <= 0.0 || remaining <= 0.0 {
+            return None;
+        }
+        let offers = capped
+            .into_iter()
+            .zip(extents)
+            .map(|(offer, &extent)| offer.unwrap_or(extent * (remaining / flexible)))
+            .collect::<Vec<_>>();
+        self.weights_for_allocation(&offers)
     }
 
     fn allocate(
