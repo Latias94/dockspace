@@ -8,8 +8,8 @@ use crate::engine::SurfaceContributionToken;
 use crate::geometry::{LogicalPoint, LogicalRect, LogicalSize, PhysicalRect};
 use crate::graph::Axis;
 use crate::ids::{
-    EngineAuthorityDomainId, FloatingPresentationId, HostPresentationAttemptId, ItemId, RootId,
-    SurfaceId, TabKey, WorkspaceEpoch, WorkspaceRevision,
+    EngineAuthorityDomainId, FloatingPresentationId, HostPresentationAttemptId, ItemId, NodeId,
+    RootId, SurfaceId, TabKey, WorkspaceEpoch, WorkspaceRevision,
 };
 use crate::interaction::targeting::guide::DropGuideClusterId;
 use crate::interaction::targeting::resolver::DropAffordance;
@@ -98,6 +98,11 @@ impl DockspaceSemanticOutput {
         self.ticket.surface()
     }
 
+    #[cfg(test)]
+    pub(crate) const fn scene_stamp(self) -> crate::presentation::scene::SurfaceSceneStamp {
+        self.ticket.scene_stamp()
+    }
+
     const fn control_id(self, target: DockspaceVisualId) -> DockspaceControlId {
         DockspaceControlId::new(self.ticket.scene_stamp(), target)
     }
@@ -163,27 +168,38 @@ enum ControlTarget {
     ContainedTitle(FloatingPresentationId, RootId),
     ContainedClose(FloatingPresentationId, RootId, WorkspaceRevision),
     ContainedResize(FloatingPresentationId, RootId, ContainedResizeDirection),
-    Splitter(SplitterSceneId, SplitterBoundary),
-    Junction(Arc<JunctionControlTarget>),
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct JunctionControlTarget {
-    id: SplitterJunctionId,
-    boundaries: [Option<SplitterBoundary>; 4],
+    Splitter(SplitterControlTarget),
+    Junction(Arc<[Option<SplitterControlTarget>; 4]>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct SplitterBoundary {
-    after_index: usize,
-    grid: Option<GridBoundaryProof>,
+enum SplitterControlTarget {
+    Split {
+        root: RootId,
+        node: NodeId,
+        axis: Axis,
+        children: [NodeId; 2],
+    },
+    Indexed {
+        id: SplitterSceneId,
+        grid: Option<GridBoundaryProof>,
+    },
 }
 
-impl SplitterBoundary {
+impl SplitterControlTarget {
     fn from_record(record: &SplitterRecord) -> Self {
-        Self {
-            after_index: record.after_index(),
-            grid: record.grid().cloned(),
+        let id = *record.id();
+        match record.split_children() {
+            Some(children) => Self::Split {
+                root: id.root,
+                node: id.node(),
+                axis: record.axis(),
+                children,
+            },
+            None => Self::Indexed {
+                id,
+                grid: record.grid().cloned(),
+            },
         }
     }
 }
@@ -666,10 +682,7 @@ impl SplitterPaintRecord<'_> {
     pub fn input_id(self) -> DockspaceControlId {
         DockspaceControlId(
             ControlScope::from_scene(self.output.ticket.scene_stamp()),
-            ControlTarget::Splitter(
-                *self.record.id(),
-                SplitterBoundary::from_record(self.record),
-            ),
+            ControlTarget::Splitter(SplitterControlTarget::from_record(self.record)),
         )
     }
 
@@ -778,11 +791,11 @@ impl SplitterJunctionPaintRecord<'_> {
         .map(|direction| {
             self.plan
                 .splitter_record(id.arm(direction)?)
-                .map(SplitterBoundary::from_record)
+                .map(SplitterControlTarget::from_record)
         });
         DockspaceControlId(
             ControlScope::from_scene(self.output.ticket.scene_stamp()),
-            ControlTarget::Junction(Arc::new(JunctionControlTarget { id, boundaries })),
+            ControlTarget::Junction(Arc::new(boundaries)),
         )
     }
 
@@ -1156,13 +1169,11 @@ pub enum DockspacePresentationCommandUnavailable {
     Action(DockspaceActionRejection),
 }
 
-/// One opaque root or captured-group command frozen from an exact paint candidate.
+/// One opaque layout command frozen from an exact paint candidate.
 #[derive(Clone, PartialEq)]
 pub struct PresentationCommandPaintRecord {
-    authority_domain: crate::ids::EngineAuthorityDomainId,
     version: crate::model::WorkspaceVersion,
-    scene: crate::presentation::scene::SurfaceSceneStamp,
-    surface: SurfaceId,
+    output: DockspaceSemanticOutput,
     root: RootId,
     kind: DockspacePresentationCommandKind,
     action: Option<ProductAction>,
@@ -1171,18 +1182,14 @@ pub struct PresentationCommandPaintRecord {
 
 impl PresentationCommandPaintRecord {
     fn ready(
-        authority_domain: crate::ids::EngineAuthorityDomainId,
-        version: crate::model::WorkspaceVersion,
-        scene: crate::presentation::scene::SurfaceSceneStamp,
+        plan: SurfacePaintPlan<'_>,
         root: RootId,
         kind: DockspacePresentationCommandKind,
         action: ProductAction,
     ) -> Self {
         Self {
-            authority_domain,
-            version,
-            scene,
-            surface: scene.surface(),
+            version: plan.version,
+            output: plan.semantic_output(),
             root,
             kind,
             action: Some(action),
@@ -1191,18 +1198,14 @@ impl PresentationCommandPaintRecord {
     }
 
     fn unavailable(
-        authority_domain: crate::ids::EngineAuthorityDomainId,
-        version: crate::model::WorkspaceVersion,
-        scene: crate::presentation::scene::SurfaceSceneStamp,
+        plan: SurfacePaintPlan<'_>,
         root: RootId,
         kind: DockspacePresentationCommandKind,
         reason: DockspacePresentationCommandUnavailable,
     ) -> Self {
         Self {
-            authority_domain,
-            version,
-            scene,
-            surface: scene.surface(),
+            version: plan.version,
+            output: plan.semantic_output(),
             root,
             kind,
             action: None,
@@ -1239,7 +1242,7 @@ impl fmt::Debug for PresentationCommandPaintRecord {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PresentationCommandPaintRecord")
-            .field("surface", &self.surface)
+            .field("surface", &self.output.surface())
             .field("root", &self.root)
             .field("kind", &self.kind)
             .field("ready", &self.is_ready())
@@ -2185,10 +2188,16 @@ impl<'frame> SurfacePaintPlan<'frame> {
     ) -> Option<SurfacePaintProgramOperation<'frame>> {
         Some(match operation {
             ResolvedSurfaceProgramOperation::Pane(record) => {
-                SurfacePaintProgramOperation::Pane(PanePaintRecord { record })
+                SurfacePaintProgramOperation::Pane(PanePaintRecord {
+                    record,
+                    output: self.semantic_output(),
+                })
             }
             ResolvedSurfaceProgramOperation::Tabs(record) => {
-                SurfacePaintProgramOperation::Tabs(TabsPaintRecord { record })
+                SurfacePaintProgramOperation::Tabs(TabsPaintRecord {
+                    record,
+                    output: self.semantic_output(),
+                })
             }
             ResolvedSurfaceProgramOperation::TabBar(record) => {
                 SurfacePaintProgramOperation::TabBar(TabBarPaintRecord::new(self, record))
@@ -2303,16 +2312,8 @@ impl<'frame> SurfacePaintPlan<'frame> {
             return Ok(None);
         }
 
-        let unavailable = |reason| {
-            PresentationCommandPaintRecord::unavailable(
-                self.authority_domain,
-                self.version,
-                self.scene,
-                root,
-                kind,
-                reason,
-            )
-        };
+        let unavailable =
+            |reason| PresentationCommandPaintRecord::unavailable(self, root, kind, reason);
         if kind == DockspacePresentationCommandKind::Float
             && matches!(
                 owner,
@@ -2412,31 +2413,20 @@ impl<'frame> SurfacePaintPlan<'frame> {
                 let (authority_domain, version, action, _) = prepared.into_parts();
                 debug_assert_eq!(authority_domain, self.authority_domain);
                 debug_assert_eq!(version, self.version);
-                PresentationCommandPaintRecord::ready(
-                    authority_domain,
-                    version,
-                    self.scene,
-                    root,
-                    kind,
-                    action,
-                )
+                PresentationCommandPaintRecord::ready(self, root, kind, action)
             }
             Err(reason) => unavailable(DockspacePresentationCommandUnavailable::Action(reason)),
         };
         Ok(Some(record))
     }
 
-    /// Prepares one exact scene-bound activation for a ready presentation command.
+    /// Prepares activation of a ready presentation command from this exact output.
     #[must_use]
     pub fn prepare_presentation_command(
         self,
         record: PresentationCommandPaintRecord,
     ) -> Option<super::PreparedSurfaceAction> {
-        (record.authority_domain == self.authority_domain
-            && record.version == self.version
-            && record.scene == self.scene
-            && record.surface == self.surface)
-            .then_some(())?;
+        (record.output == self.semantic_output() && record.version == self.version).then_some(())?;
         Some(super::PreparedSurfaceAction::presentation_command(
             self.authority_domain,
             self.version,
@@ -2582,7 +2572,10 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self.plan
             .pane_records()
             .iter()
-            .map(move |record| PanePaintRecord { record })
+            .map(move |record| PanePaintRecord {
+                record,
+                output: self.semantic_output(),
+            })
     }
 
     #[cfg(test)]
@@ -2700,7 +2693,10 @@ impl<'frame> SurfacePaintPlan<'frame> {
     #[must_use]
     fn drop_affordance(&self) -> Option<DropAffordancePaintRecord<'frame>> {
         self.drop_affordance
-            .map(|affordance| DropAffordancePaintRecord { affordance })
+            .map(|affordance| DropAffordancePaintRecord {
+                affordance,
+                output: self.semantic_output(),
+            })
     }
 
     /// Returns every active semantic receiver in deterministic hit-stack order.
@@ -2781,12 +2777,13 @@ impl<'frame> SurfacePaintPlan<'frame> {
         }
     }
 
-    /// Returns a container background receiver only when this Tabs has no active child.
+    /// Returns an empty Tabs container's background receiver from this output.
     #[must_use]
     pub fn receiver_for_tabs(
         &self,
         tabs: TabsPaintRecord<'frame>,
     ) -> Option<DockspaceReceiverDescriptor> {
+        (tabs.output == self.semantic_output()).then_some(())?;
         let id = tabs.record.id();
         if self.plan.selected_in_tabs(id.tabs).is_some() {
             return None;
@@ -2794,12 +2791,13 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self.receiver(PresentationHitRegionKind::TabsBackground(id))
     }
 
-    /// Returns the exact receiver for one painted pane body.
+    /// Returns the exact receiver for a pane body from this output.
     #[must_use]
     pub fn receiver_for_pane(
         &self,
         pane: PanePaintRecord<'frame>,
     ) -> Option<DockspaceReceiverDescriptor> {
+        (pane.output == self.semantic_output()).then_some(())?;
         let pane_id = pane.record.id();
         self.receiver(PresentationHitRegionKind::PaneBody(pane_id))
     }
@@ -3040,12 +3038,13 @@ impl<'frame> SurfacePaintPlan<'frame> {
         })
     }
 
-    /// Returns the exact receiver for one core-selected drop-guide target.
+    /// Returns the exact receiver for a core-selected drop-guide target from this output.
     #[must_use]
     pub fn receiver_for_drop_target(
         &self,
         target: DropAffordanceTargetPaintRecord<'frame>,
     ) -> Option<DockspaceReceiverDescriptor> {
+        (target.output == self.semantic_output()).then_some(())?;
         let target_id = target.target_id();
         self.receiver(PresentationHitRegionKind::DropTarget(target_id))
     }

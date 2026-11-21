@@ -4,7 +4,7 @@ use super::*;
 use crate::graph::command::TrackWeights;
 use crate::graph::{Axis, SplitWeight};
 use crate::presentation::layout::{ChildProjection, LayoutProjection, ResizeGeometryFacts};
-use crate::presentation::scene::{SplitterOwner, SplitterResizeTarget};
+use crate::presentation::scene::{GridBoundaryProof, SplitterOwner, SplitterResizeTarget};
 
 pub(super) struct RootBoundaries<'a> {
     pub(super) policy: &'a DockPolicySnapshot,
@@ -109,12 +109,13 @@ impl RootBoundaries<'_> {
                         self.layer,
                         operable && self.contacts.splitter_is_operable(node, before, after),
                     )
-                    .with_after_index(after_index);
+                    .with_split_proof(after_index, [before, after]);
                     publish(gap, Some(record))?;
                 }
             }
             Node::Grid { .. } => {
                 let grid = projection.grids.get(&node).ok_or_else(missing)?;
+                let mut proof = None;
                 for axis in [Axis::Horizontal, Axis::Vertical] {
                     let projection = grid.axis(axis);
                     let children = projection
@@ -180,8 +181,14 @@ impl RootBoundaries<'_> {
                                 && self.contacts.grid_splitter_is_operable(grid, axis, index),
                         )
                         .with_grid_proof(
-                            (grid.shape.rows, grid.shape.columns),
-                            Arc::clone(&grid.children),
+                            proof
+                                .get_or_insert_with(|| {
+                                    GridBoundaryProof::new(
+                                        (grid.shape.rows, grid.shape.columns),
+                                        Arc::clone(&grid.children),
+                                    )
+                                })
+                                .clone(),
                         );
                         publish(gap, Some(record))?;
                     }
@@ -291,9 +298,8 @@ pub(crate) fn reprojected_resize_handles(
         }
     }
     let same_boundaries = records.iter().all(|record| {
-        plan.splitter_record(*record.id()).is_some_and(|original| {
-            original.after_index() == record.after_index() && original.grid() == record.grid()
-        })
+        plan.splitter_record(*record.id())
+            .is_some_and(|original| original.same_boundary(record))
     });
     Ok((!records.is_empty() && same_boundaries).then_some(records))
 }

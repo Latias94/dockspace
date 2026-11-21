@@ -220,23 +220,20 @@ impl DockEngine {
             .presentation_authority
             .tab_strip_states
             .popup_requirement();
-        // Another surface's tab list leaves this displayed button's geometry
-        // and input authority intact. The exact retained output is still required.
-        let retained_sibling_opener = matches!(action,
-            LocalSurfaceAction::TabChrome { action: LocalTabChromeAction::ActivateControl(control), .. }
-                if matches!(control.record.id(), TabStripControlId::TabListMenu(_)))
-            && plan.popup().visual_for_surface(surface).is_none()
-            && popup.visual_for_surface(surface).is_none()
-            && self
-                .interaction_projection(surface)
-                .is_some_and(|current| current.output_ticket() == witness.output_ticket());
+        // A popup change on another surface leaves this output's receiver plane
+        // intact while the host still presents that exact output.
+        let popup_is_current = plan.popup() == popup
+            || (plan.popup().visual_for_surface(surface) == popup.visual_for_surface(surface)
+                && self
+                    .interaction_projection(surface)
+                    .is_some_and(|current| current.output_ticket() == witness.output_ticket()));
         if self.workspace.surface(surface).is_none()
             || self
                 .presentation_authority
                 .presentation_requirements
                 .surface(surface)
                 .is_none()
-            || (plan.popup() != popup && !retained_sibling_opener)
+            || !popup_is_current
             || !self.presented_layering_is_current(plan)
             || if matches!(action, LocalSurfaceAction::ResetSplitter { .. }) {
                 !self.presented_contained_geometry_is_current(plan)

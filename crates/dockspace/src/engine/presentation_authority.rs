@@ -288,7 +288,9 @@ impl DockEngine {
                             })
                         })
                         .filter(|previous| {
-                            previous.plan().contained_projection().is_none()
+                            // Rebinding selection keeps every popup fact from the old plan.
+                            previous.plan().popup() == requirements.popup()
+                                && previous.plan().contained_projection().is_none()
                                 && previous.plan().resize_projection().is_empty()
                                 // A sampled layout has no valid split partition
                                 // or docking targets until motion settles. It

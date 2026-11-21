@@ -1,5 +1,6 @@
 //! Splitter, structural gap, and junction presentation records.
 
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use crate::geometry::LogicalRect;
@@ -67,14 +68,26 @@ impl SplitterSceneId {
 }
 
 /// Exact resolved dimensions and structural cell map for a Grid boundary.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct GridBoundaryProof {
     rows: usize,
     columns: usize,
     children: Arc<[NodeId]>,
+    digest: u64,
 }
 
 impl GridBoundaryProof {
+    pub(crate) fn new(shape: (usize, usize), children: Arc<[NodeId]>) -> Self {
+        let mut hasher = DefaultHasher::new();
+        (shape, children.as_ref()).hash(&mut hasher);
+        Self {
+            rows: shape.0,
+            columns: shape.1,
+            children,
+            digest: hasher.finish(),
+        }
+    }
+
     /// Returns the frozen shared row count.
     #[must_use]
     pub const fn rows(&self) -> usize {
@@ -90,6 +103,19 @@ impl GridBoundaryProof {
     pub fn children(&self) -> &[NodeId] {
         &self.children
     }
+}
+
+impl Hash for GridBoundaryProof {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // All boundaries of a Grid share this digest. Equality still checks the exact roster.
+        self.digest.hash(state);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SplitterBoundaryProof {
+    Split([NodeId; 2]),
+    Grid(GridBoundaryProof),
 }
 
 /// Core-compiled draw, hit, and resize semantics for one splitter.
@@ -110,7 +136,7 @@ pub struct SplitterRecord {
     child_extents: Arc<[f64]>,
     central_index: Option<usize>,
     weights: Arc<[SplitWeight]>,
-    grid: Option<GridBoundaryProof>,
+    boundary: Option<SplitterBoundaryProof>,
     layer: SceneLayerKey,
     operable: bool,
 }
@@ -337,28 +363,45 @@ impl SplitterRecord {
             child_extents: child_extents.into(),
             central_index,
             weights: weights.into(),
-            grid: None,
+            boundary: None,
             layer,
             operable,
         }
     }
 
-    pub(crate) fn with_grid_proof(
-        mut self,
-        shape: (usize, usize),
-        children: Arc<[NodeId]>,
-    ) -> Self {
-        self.grid = Some(GridBoundaryProof {
-            rows: shape.0,
-            columns: shape.1,
-            children,
-        });
+    pub(crate) fn with_grid_proof(mut self, proof: GridBoundaryProof) -> Self {
+        self.boundary = Some(SplitterBoundaryProof::Grid(proof));
+        self
+    }
+
+    pub(crate) fn with_split_proof(mut self, after_index: usize, children: [NodeId; 2]) -> Self {
+        self.after_index = after_index;
+        self.boundary = Some(SplitterBoundaryProof::Split(children));
         self
     }
 
     /// Borrows the frozen shape and cell map for an actual Grid boundary.
     pub(crate) const fn grid(&self) -> Option<&GridBoundaryProof> {
-        self.grid.as_ref()
+        match &self.boundary {
+            Some(SplitterBoundaryProof::Grid(proof)) => Some(proof),
+            _ => None,
+        }
+    }
+
+    /// Returns both visible children adjacent to an ordinary Split boundary.
+    pub(crate) const fn split_children(&self) -> Option<[NodeId; 2]> {
+        match self.boundary {
+            Some(SplitterBoundaryProof::Split(children)) => Some(children),
+            _ => None,
+        }
+    }
+
+    /// Revalidates the indexed geometric boundary used by an in-progress action.
+    pub(crate) fn same_boundary(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.axis == other.axis
+            && self.after_index == other.after_index
+            && self.boundary == other.boundary
     }
 
     pub(crate) fn with_active_ancestry(mut self, ancestry: Option<usize>) -> Self {
@@ -369,6 +412,7 @@ impl SplitterRecord {
         self.active_ancestry
     }
 
+    #[cfg(test)]
     pub(crate) fn with_after_index(mut self, after_index: usize) -> Self {
         self.after_index = after_index;
         self

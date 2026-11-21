@@ -42,6 +42,7 @@ impl PaneContentGeometry {
 #[derive(Debug, Clone, Copy)]
 pub struct PanePaintRecord<'plan> {
     pub(super) record: &'plan PaneRecord,
+    pub(super) output: DockspaceSemanticOutput,
 }
 
 impl PanePaintRecord<'_> {
@@ -88,6 +89,7 @@ impl PanePaintRecord<'_> {
 #[derive(Debug, Clone, Copy)]
 pub struct TabsPaintRecord<'plan> {
     pub(super) record: &'plan TabsRecord,
+    pub(super) output: DockspaceSemanticOutput,
 }
 impl TabsPaintRecord<'_> {
     /// Returns this container's stable visual identity.

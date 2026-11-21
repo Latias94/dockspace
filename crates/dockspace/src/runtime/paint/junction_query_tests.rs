@@ -146,6 +146,85 @@ fn canonical_grid_junction_queries_match_frozen_scans_on_both_axes() {
 }
 
 #[test]
+fn grid_control_hash_work_is_bounded_per_handle_and_junction() {
+    use std::hash::{Hash, Hasher};
+    use std::num::NonZeroUsize;
+
+    use crate::model::{
+        DockspaceGridShape, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
+        DockspaceSurfaceLayout,
+    };
+
+    #[derive(Default)]
+    struct HashBytes(usize);
+
+    impl Hasher for HashBytes {
+        fn finish(&self) -> u64 {
+            self.0 as u64
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            self.0 += bytes.len();
+        }
+    }
+
+    let hash_size = |id: DockspaceControlId| {
+        let mut bytes = HashBytes::default();
+        id.hash(&mut bytes);
+        bytes.0
+    };
+    let bytes_for_grid = |side: usize| {
+        let tracks = NonZeroUsize::new(side).unwrap();
+        let content = DockspaceNode::grid(
+            DockspaceGridShape::Fixed {
+                rows: tracks,
+                columns: tracks,
+            },
+            (1..=side * side).map(|item| DockspaceNode::pane(ItemId::new(item as u64))),
+        )
+        .unwrap();
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(ROOT, content),
+        )])
+        .unwrap();
+        let mut session = DockspaceSession::from_layout(layout, Default::default()).unwrap();
+        let mut frame = session.begin_host_frame().unwrap();
+        frame
+            .measure_surface(
+                SURFACE,
+                UniformSurfaceMetrics::new(
+                    LogicalRect::new(0.0, 0.0, 2048.0, 2048.0).unwrap(),
+                    LogicalSize::new(32.0, 24.0).unwrap(),
+                    48.0,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+        let handles = plan.splitters().collect::<Vec<_>>();
+        let junctions = plan.splitter_junctions().collect::<Vec<_>>();
+        assert_eq!(handles.len(), 2 * (side - 1));
+        assert_eq!(junctions.len(), (side - 1).pow(2));
+        let handle = hash_size(handles[0].input_id());
+        let junction = hash_size(junctions[0].input_id());
+        assert!(
+            handles
+                .iter()
+                .all(|record| hash_size(record.input_id()) == handle)
+        );
+        assert!(
+            junctions
+                .iter()
+                .all(|record| hash_size(record.input_id()) == junction)
+        );
+        (handle, junction)
+    };
+
+    assert_eq!(bytes_for_grid(8), bytes_for_grid(16));
+}
+
+#[test]
 fn a_foreign_junction_cannot_use_current_receiver_or_axis_authority() {
     let mut origin = measured_grid(4, ROOT, [true, true]);
     let mut current = measured_grid(4, ROOT, [false, true]);

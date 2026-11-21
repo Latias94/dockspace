@@ -117,20 +117,16 @@ impl<'frame> SurfacePaintPlan<'frame> {
         Ok(Some(
             match self.candidate.prepare_product_action_if_available(action)? {
                 Ok(prepared) => {
-                    let (domain, version, action, _) = prepared.into_parts();
+                    let (_, _, action, _) = prepared.into_parts();
                     PresentationCommandPaintRecord::ready(
-                        domain,
-                        version,
-                        self.scene,
+                        self,
                         root,
                         DockspacePresentationCommandKind::DockCenter,
                         action,
                     )
                 }
                 Err(reason) => PresentationCommandPaintRecord::unavailable(
-                    self.authority_domain,
-                    self.version,
-                    self.scene,
+                    self,
                     root,
                     DockspacePresentationCommandKind::DockCenter,
                     DockspacePresentationCommandUnavailable::Action(reason),
@@ -165,9 +161,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         };
         let unavailable = |reason| {
             PresentationCommandPaintRecord::unavailable(
-                self.authority_domain,
-                self.version,
-                self.scene,
+                self,
                 root,
                 record_kind,
                 DockspacePresentationCommandUnavailable::Action(reason),
@@ -185,9 +179,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
                     .is_some_and(|record| record.node == bar.record.id().tabs)
                 {
                     return Ok(Some(PresentationCommandPaintRecord::unavailable(
-                        self.authority_domain,
-                        self.version,
-                        self.scene,
+                        self,
                         root,
                         record_kind,
                         DockspacePresentationCommandUnavailable::AlreadyContained,
@@ -208,9 +200,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
                         .is_some_and(|record| record.node == bar.record.id().tabs)
                 {
                     return Ok(Some(PresentationCommandPaintRecord::unavailable(
-                        self.authority_domain,
-                        self.version,
-                        self.scene,
+                        self,
                         root,
                         record_kind,
                         DockspacePresentationCommandUnavailable::AlreadyNative,
@@ -225,15 +215,8 @@ impl<'frame> SurfacePaintPlan<'frame> {
         Ok(Some(
             match self.candidate.prepare_product_action_if_available(action)? {
                 Ok(prepared) => {
-                    let (domain, version, action, _) = prepared.into_parts();
-                    PresentationCommandPaintRecord::ready(
-                        domain,
-                        version,
-                        self.scene,
-                        root,
-                        record_kind,
-                        action,
-                    )
+                    let (_, _, action, _) = prepared.into_parts();
+                    PresentationCommandPaintRecord::ready(self, root, record_kind, action)
                 }
                 Err(reason) => unavailable(reason),
             },

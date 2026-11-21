@@ -1988,6 +1988,192 @@ fn contained_receivers_reject_records_from_a_different_output() {
 }
 
 #[test]
+fn pane_and_empty_tabs_receivers_reject_records_from_a_different_output() {
+    use crate::runtime::{
+        PanePaintRecord, SurfacePaintProgramOperation as Operation, TabsPaintRecord,
+    };
+
+    fn records(plan: SurfacePaintPlan<'_>) -> (PanePaintRecord<'_>, TabsPaintRecord<'_>) {
+        let (mut pane, mut tabs) = (None, None);
+        plan.visit_surface_program(|step| {
+            if let SurfacePaintProgramStep::Operation { operation, .. } = step {
+                match operation {
+                    Operation::Pane(record) => pane = Some(record),
+                    Operation::Tabs(record) => tabs = Some(record),
+                    _ => {}
+                }
+            }
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+        (pane.unwrap(), tabs.unwrap())
+    }
+
+    let root = DockspaceNode::equal_split(
+        DockspaceAxis::Horizontal,
+        [DockspaceNode::pane(FIRST), DockspaceNode::central_tabs([])],
+    )
+    .unwrap();
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(ROOT, root),
+    )])
+    .unwrap();
+    let mut first = DockspaceSession::from_layout(layout.clone(), DockPolicy::default()).unwrap();
+    let mut second = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+    install_ready_candidate(&mut first);
+    install_ready_candidate(&mut second);
+    inspect_surface(&mut first, |original| {
+        let (old_pane, old_tabs) = records(original);
+        inspect_surface(&mut second, |plan| {
+            let (pane, tabs) = records(plan);
+            assert_eq!(old_pane.visual_id(), pane.visual_id());
+            assert_eq!(old_tabs.visual_id(), tabs.visual_id());
+            assert!(plan.receiver_for_pane(old_pane).is_none());
+            assert!(plan.receiver_for_tabs(old_tabs).is_none());
+            assert!(plan.prepare_pane_close(old_pane).is_none());
+            assert!(plan.receiver_for_pane(pane).is_some());
+            assert!(plan.receiver_for_tabs(tabs).is_some());
+            assert!(plan.prepare_pane_close(pane).is_some());
+        });
+    });
+}
+
+#[test]
+fn drop_guide_receivers_reject_targets_from_a_different_output() {
+    use crate::runtime::{DockspaceGuideScope, DropAffordanceTargetPaintRecord};
+
+    fn drag_to_guide(session: &mut DockspaceSession) -> DockspaceVisualId {
+        install_ready_candidate(session);
+        present_pointer_surface(session);
+        let (press, target, visual) = inspect_surface(session, |plan| {
+            let source = plan.tab_receiver(FIRST).unwrap();
+            let guide = plan
+                .drop_guides()
+                .find(|guide| guide.scope() == DockspaceGuideScope::Inner)
+                .unwrap()
+                .targets()
+                .next()
+                .unwrap();
+            let bounds = guide.hit_bounds();
+            let target = LogicalPoint::new(
+                bounds.x() + bounds.width() / 2.0,
+                bounds.y() + bounds.height() / 2.0,
+            )
+            .unwrap();
+            (source.center(), target, guide.visual_id())
+        });
+        submit_host_edges(
+            session,
+            &[
+                (
+                    SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary),
+                    Some(press),
+                ),
+                (SurfacePointerEvent::Moved, Some(target)),
+            ],
+        );
+        assert!(session.has_active_gesture());
+        visual
+    }
+
+    fn guide_target(
+        plan: SurfacePaintPlan<'_>,
+        visual: DockspaceVisualId,
+    ) -> DropAffordanceTargetPaintRecord<'_> {
+        let mut target = None;
+        plan.visit_surface_program(|step| {
+            if let SurfacePaintProgramStep::DropGuide {
+                affordance: Some(cluster),
+                ..
+            } = step
+                && let Some(found) = cluster
+                    .targets()
+                    .find(|target| target.visual_id() == visual)
+            {
+                target = Some(found);
+            }
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+        target.unwrap()
+    }
+
+    let mut first = session();
+    let mut second = session();
+    let visual = drag_to_guide(&mut first);
+    assert_eq!(visual, drag_to_guide(&mut second));
+    inspect_surface(&mut first, |original| {
+        let foreign = guide_target(original, visual);
+        inspect_surface(&mut second, |current| {
+            let local = guide_target(current, visual);
+            assert!(current.receiver_for_drop_target(local).is_some());
+            assert!(current.receiver_for_drop_target(foreign).is_none());
+        });
+    });
+}
+
+#[test]
+fn split_control_identity_follows_the_visible_pair_after_closing_a_sibling() {
+    let content = DockspaceNode::equal_split(
+        DockspaceAxis::Vertical,
+        [FIRST, SECOND, THIRD, FOURTH, FIFTH].map(DockspaceNode::pane),
+    )
+    .unwrap();
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(ROOT, content),
+    )])
+    .unwrap();
+    let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+    install_ready_candidate(&mut session);
+    let (before, late) = inspect_surface(&mut session, |plan| {
+        let boundary = plan.splitters().nth(1).unwrap();
+        let action = plan
+            .prepare_splitter_adjustment(boundary.visual_id(), SurfaceSplitterAdjustment::Increment)
+            .unwrap()
+            .into_deferred();
+        (
+            plan.splitters()
+                .map(|splitter| splitter.input_id())
+                .collect::<Vec<_>>(),
+            action,
+        )
+    });
+
+    let mut frame = session.begin_host_frame().unwrap();
+    frame.request_close_item_current(FIRST).unwrap();
+    let report = frame.commit().unwrap();
+    let [HostInputOutcome::CloseRequested { plan, .. }] = report.inputs() else {
+        panic!("closing the first pane must request approval: {report:?}");
+    };
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .resolve_close(
+            plan.request(),
+            plan.items()[0].token(),
+            crate::close::CloseDecision::Allow,
+        )
+        .unwrap();
+    frame.measure_surface(SURFACE, metrics()).unwrap();
+    assert!(frame.commit().unwrap().workspace_changed());
+
+    let after = inspect_surface(&mut session, |plan| {
+        plan.splitters()
+            .map(|splitter| splitter.input_id())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(after, before[1..]);
+    let mut frame = session.begin_host_frame().unwrap();
+    frame.submit_deferred_surface_action(late).unwrap();
+    let report = frame.commit().unwrap();
+    assert!(matches!(
+        report.inputs(),
+        [HostInputOutcome::StaleRejected { .. }]
+    ));
+}
+
+#[test]
 fn contained_release_commits_before_presentation_and_successor_disposition_cannot_undo_it() {
     for disposition in [
         SurfacePresentationResult::Presented,
@@ -2549,6 +2735,52 @@ fn candidate_bound_presentation_commands_report_truthful_availability_and_execut
             .contained()
             .any(|contained| contained.root().is_some_and(|root| root.id() == ROOT))
     );
+}
+
+#[test]
+fn a_presentation_command_cannot_rebind_after_its_candidate_is_discarded() {
+    let mut session = session();
+    let measure = |width| {
+        UniformSurfaceMetrics::new(
+            LogicalRect::new(0.0, 0.0, width, 500.0).unwrap(),
+            LogicalSize::new(20.0, 30.0).unwrap(),
+            100.0,
+        )
+        .unwrap()
+    };
+    let float = |plan: SurfacePaintPlan<'_>| {
+        let record = plan
+            .presentation_command(ROOT, DockspacePresentationCommandKind::Float)
+            .unwrap()
+            .unwrap();
+        assert!(record.is_ready());
+        record
+    };
+    let (discarded, old_output) = {
+        let mut frame = session.begin_host_frame().unwrap();
+        frame.measure_surface(SURFACE, measure(900.0)).unwrap();
+        let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+        (float(plan), plan.semantic_output())
+    };
+
+    let mut frame = session.begin_host_frame().unwrap();
+    frame.measure_surface(SURFACE, measure(400.0)).unwrap();
+    let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+    let new_output = plan.semantic_output();
+    assert_eq!(old_output.scene_stamp(), new_output.scene_stamp());
+    assert_ne!(old_output, new_output);
+    assert!(plan.prepare_presentation_command(discarded).is_none());
+    let action = plan.prepare_presentation_command(float(plan)).unwrap();
+    frame.commit().unwrap();
+
+    let mut frame = session.begin_host_frame().unwrap();
+    frame.submit_surface_action(action).unwrap();
+    assert!(matches!(
+        frame.commit().unwrap().inputs(),
+        [HostInputOutcome::ProductActionApplied(
+            crate::model::DockspaceActionOutcome::RootFloated { root: ROOT, .. }
+        )]
+    ));
 }
 
 #[test]

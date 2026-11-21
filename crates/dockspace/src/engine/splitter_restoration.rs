@@ -283,13 +283,11 @@ impl DockEngine {
             ));
         };
         let target = SplitterResizeTarget::Handle(splitter);
-        if witness
+        if !witness
             .plan()
             .splitter_record(splitter)
-            .and_then(SplitterRecord::grid)
-            != plan
-                .splitter_record(splitter)
-                .and_then(SplitterRecord::grid)
+            .zip(plan.splitter_record(splitter))
+            .is_some_and(|(frozen, current)| frozen.same_boundary(current))
         {
             return Ok(InteractionOutcome::Rejected(
                 InteractionRejection::StaleScene,
