@@ -168,6 +168,8 @@ impl SurfacePaintPlan<'_> {
     }
 
     /// Prepares dismissal of the exact open tab-list menu covered by `backdrop`.
+    /// The backdrop's authority covers the popup instance, independent of its
+    /// current focused row or scroll offset.
     #[must_use]
     pub fn prepare_tab_list_menu_dismiss(
         self,
@@ -175,35 +177,18 @@ impl SurfacePaintPlan<'_> {
     ) -> Option<PreparedSurfaceAction> {
         backdrop.belongs_to(&self).then_some(())?;
         let projected = backdrop.record;
-        let action = self
-            .plan
-            .tab_list_menu_records()
-            .iter()
-            .find(|record| record.session() == projected.session())
-            .cloned()
-            .map_or_else(
-                || {
-                    crate::engine::LocalTabChromeAction::DismissMenuFromBackdrop(
-                        FrozenTabListMenuBackdropClick {
-                            session: projected.session(),
-                            record: projected,
-                            revision: projected.revision(),
-                        },
-                    )
-                },
-                |record| crate::engine::LocalTabChromeAction::DismissMenu {
-                    session: projected.session(),
-                    revision: projected.revision(),
-                    record,
-                    backdrop: projected,
-                },
-            );
         Some(PreparedSurfaceAction::tab_chrome(
             self.authority_domain,
             self.version,
             self.scene,
             self.frozen_action_witness()?,
-            action,
+            crate::engine::LocalTabChromeAction::DismissMenuFromBackdrop(
+                FrozenTabListMenuBackdropClick {
+                    session: projected.session(),
+                    record: projected,
+                    revision: projected.revision(),
+                },
+            ),
         ))
     }
 

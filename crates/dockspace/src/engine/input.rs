@@ -268,7 +268,7 @@ pub(crate) enum LocalTabChromeAction {
         record: TabListMenuRecord,
         backdrop: TabListMenuBackdropRecord,
     },
-    /// Dismiss the active menu from a non-owner surface's backdrop.
+    /// Dismiss the exact active menu through its frozen backdrop.
     DismissMenuFromBackdrop(FrozenTabListMenuBackdropClick),
     /// Scroll the exact active tab-list menu.
     ScrollMenu {

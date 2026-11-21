@@ -447,6 +447,35 @@ fn retained_menu_rows_expire_across_session_epoch_roster_and_popup_changes() {
 }
 
 #[test]
+fn a_displayed_backdrop_can_dismiss_its_popup_after_the_focused_row_changes() {
+    let mut session = session();
+    let open = open_action(&mut session, 80.0);
+    let (focus, dismiss) = with_menu(&mut session, 80.0, Some(open), |plan, menu| {
+        let row = menu.rows().find(|row| row.focused()).unwrap().input_id();
+        let (_, focus) = plan
+            .retain_tab_list_menu(menu)
+            .unwrap()
+            .resolve(row, Input::Navigate(Navigation::Last))
+            .unwrap();
+        let dismiss = plan
+            .prepare_tab_list_menu_dismiss(menu.backdrop())
+            .unwrap()
+            .into_deferred();
+        (focus, dismiss)
+    });
+    with_menu(&mut session, 80.0, Some(focus), |_, menu| {
+        let focused = menu.rows().find(|row| row.focused()).unwrap();
+        assert_eq!(focused.item(), Some(LAST));
+    });
+    let mut has_popup = false;
+    present(&mut session, 80.0, Some(dismiss), |_, step| {
+        has_popup |= matches!(step, Step::PopupMenu { .. });
+    });
+    assert!(!has_popup);
+    assert!(session.view().item(FIRST).unwrap().is_active());
+}
+
+#[test]
 fn menu_records_cannot_be_rebound_to_another_output() {
     let mut original = session();
     let mut foreign = session();
