@@ -113,6 +113,11 @@ facts remain unknown or blocked. At a continuation deadline, sample current
 pointer, capture and receiver facts and drive the continuation; a timer does not
 prove motion or presentation.
 
+Register actionable widgets with the paint record's `DockspaceControlId` and
+keep the original output's input witness. For host-owned menus, issue fresh row
+IDs on each opening. Replay an old close activation after rebuilding a session
+or reopening a menu and check that the new pane roster remains intact.
+
 When the framework has proved that a pointer hit is unobstructed, use
 `HostPointerHit::unobstructed_receiver_facts` to retain its independent click and
 drag lanes and let core resolve the current hover target. The helper does not
