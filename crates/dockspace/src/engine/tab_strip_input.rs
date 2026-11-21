@@ -161,6 +161,13 @@ impl DockEngine {
         let presentation = snapshot
             .presentation(output, authority)
             .map_err(|source| Self::tab_strip_state_invariant(cause, source))?;
+        if matches!(delivery.click(), PointerReceiverDeliveryDisposition::Dock(region)
+            if matches!(region.kind(), PresentationHitRegionKind::TabStripControl(TabStripControlId::TabListMenu(_))))
+        {
+            // The other list button switches menus on release. Keep its
+            // press attached to the presented control through that release.
+            return Ok(None);
+        }
         if let Some(rejection) =
             self.journal_press_capture_rejection(owner, capture, presentation)?
         {
@@ -258,7 +265,8 @@ impl DockEngine {
                             ));
                         }
                     };
-                    match tab_strip_states.open_tab_list_menu(frozen.key, preferred) {
+                    match tab_strip_states.open_tab_list_menu(frozen.key, preferred, frozen.output)
+                    {
                         Ok((session, delta)) => (Some(session), delta),
                         Err(
                             TabStripStateError::UnknownTabStrip { .. }

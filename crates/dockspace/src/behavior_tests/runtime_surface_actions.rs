@@ -999,9 +999,9 @@ fn contained_resize_operability_honors_exact_root_item_and_surface_policy() {
             "{scope} policy denial must be frozen into every cardinal resize record",
         );
         assert!(
-            cardinal.iter().all(|resize| plan
-                .receiver_for_contained_resize(contained, *resize)
-                .is_none()),
+            cardinal
+                .iter()
+                .all(|resize| plan.receiver_for_contained_resize(*resize).is_none()),
             "{scope} policy denial must remove every cardinal resize receiver",
         );
         assert!(
@@ -1685,7 +1685,7 @@ fn fully_occluded_rear_contained_chrome_has_no_surface_action_authority() {
     assert!(plan.receiver_for_contained_close(rear).is_none());
     assert!(
         rear.resize()
-            .all(|resize| plan.receiver_for_contained_resize(rear, resize).is_none())
+            .all(|resize| plan.receiver_for_contained_resize(resize).is_none())
     );
     assert!(plan.prepare_contained_close(FLOATING).is_none());
     assert!(
@@ -1957,6 +1957,37 @@ fn contained_tab_exits_its_source_rect_then_redocks_through_the_pane_basin() {
 }
 
 #[test]
+fn contained_receivers_reject_records_from_a_different_output() {
+    let mut first = contained_session(DockPolicy::default());
+    let mut second = contained_session(DockPolicy::default());
+    install_ready_candidate(&mut first);
+    install_ready_candidate(&mut second);
+    inspect_surface(&mut first, |original| {
+        let old = original.contained().next().unwrap();
+        let old_edge = old
+            .resize()
+            .find(|edge| edge.direction() == ContainedResizeDirection::East)
+            .unwrap();
+        inspect_surface(&mut second, |plan| {
+            let current = plan.contained().next().unwrap();
+            assert_eq!(old.visual_id(), current.visual_id());
+            assert!(plan.receiver_for_contained_frame(old).is_none());
+            assert!(plan.receiver_for_contained_title(old).is_none());
+            assert!(plan.receiver_for_contained_close(old).is_none());
+            assert!(plan.receiver_for_contained_resize(old_edge).is_none());
+            assert!(plan.receiver_for_contained_frame(current).is_some());
+            assert!(plan.receiver_for_contained_title(current).is_some());
+            assert!(plan.receiver_for_contained_close(current).is_some());
+            let edge = current
+                .resize()
+                .find(|edge| edge.direction() == ContainedResizeDirection::East)
+                .unwrap();
+            assert!(plan.receiver_for_contained_resize(edge).is_some());
+        });
+    });
+}
+
+#[test]
 fn contained_release_commits_before_presentation_and_successor_disposition_cannot_undo_it() {
     for disposition in [
         SurfacePresentationResult::Presented,
@@ -1975,9 +2006,7 @@ fn contained_release_commits_before_presentation_and_successor_disposition_canno
                 .resize()
                 .find(|resize| resize.direction() == ContainedResizeDirection::East)
                 .unwrap();
-            plan.receiver_for_contained_resize(contained, east)
-                .unwrap()
-                .center()
+            plan.receiver_for_contained_resize(east).unwrap().center()
         });
         let moved = LogicalPoint::new(point.x() + 18.0, point.y()).unwrap();
         let expected = LogicalRect::new(
@@ -2057,7 +2086,7 @@ fn rear_contained_resize_press_raises_before_host_transform_motion() {
             .resize()
             .find(|resize| resize.direction() == ContainedResizeDirection::East)
             .expect("the east handle is painted");
-        plan.receiver_for_contained_resize(rear, east)
+        plan.receiver_for_contained_resize(east)
             .expect("the east handle has an exact receiver")
             .center()
     });

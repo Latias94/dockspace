@@ -461,6 +461,18 @@ impl DockEngine {
 }
 
 impl<'frame> HostFrameView<'frame> {
+    pub(crate) fn tab_list_opening_output(
+        &self,
+        session: TabListMenuSessionId,
+        revision: PopupRoutingRevision,
+    ) -> Option<SurfacePresentationOutputTicket> {
+        let states = &self.engine.presentation_authority.tab_strip_states;
+        let active = states.active_menu_for(session.key())?;
+        (active.session() == session && states.popup_requirement().revision() == revision)
+            .then_some(())?;
+        active.opening_output(revision)
+    }
+
     pub(crate) fn tab_content_focus_target(
         &self,
         tab: crate::presentation::scene::TabSceneId,

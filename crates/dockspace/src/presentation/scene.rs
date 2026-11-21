@@ -87,13 +87,14 @@ pub(crate) use self::records::{
 };
 pub use self::records::{
     ContainedMinimumMeasurement, ContainedRecord, ContainedResizeDirection, ContainedResizeRecord,
-    PaneRecord, PaneSceneId, PresentationMenuAnchorHost, PresentationMenuAnchorRecord,
-    SplitterGapPresentation, SplitterGapRecord, SplitterJunctionDirection, SplitterJunctionId,
-    SplitterJunctionRecord, SplitterOwner, SplitterRecord, SplitterResizeTarget, SplitterSceneId,
-    TabBarRecord, TabBarSceneId, TabGroupDragRecord, TabGroupDragRegionKind,
-    TabGroupDragRegionRecord, TabListMenuBackdropRecord, TabListMenuGeometryAvailability,
-    TabListMenuRecord, TabListMenuRowRecord, TabRecord, TabSceneId, TabStripControlRecord,
-    TabStripMemberRecord, TabStripMemberVisibility, TabsRecord,
+    GridBoundaryProof, PaneRecord, PaneSceneId, PresentationMenuAnchorHost,
+    PresentationMenuAnchorRecord, SplitterGapPresentation, SplitterGapRecord,
+    SplitterJunctionDirection, SplitterJunctionId, SplitterJunctionRecord, SplitterOwner,
+    SplitterRecord, SplitterResizeTarget, SplitterSceneId, TabBarRecord, TabBarSceneId,
+    TabGroupDragRecord, TabGroupDragRegionKind, TabGroupDragRegionRecord,
+    TabListMenuBackdropRecord, TabListMenuGeometryAvailability, TabListMenuRecord,
+    TabListMenuRowRecord, TabRecord, TabSceneId, TabStripControlRecord, TabStripMemberRecord,
+    TabStripMemberVisibility, TabsRecord,
 };
 pub use crate::interaction::targeting::targets::SceneLayerKey;
 

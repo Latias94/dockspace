@@ -2312,7 +2312,7 @@ fn overflowing_tab_strip_fixture_with_geometry(
         .expect("core scroll should be valid");
     if open_menu {
         let (menu, _) = states
-            .open_tab_list_menu(state_key, Some(items[2].into()))
+            .open_tab_list_menu(state_key, Some(items[2].into()), None)
             .expect("the live strip can open its menu");
         states
             .set_active_menu_scroll_offset(menu, 12.0, false)

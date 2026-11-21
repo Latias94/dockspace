@@ -310,6 +310,7 @@ impl DockEngine {
             region,
             point,
             policy,
+            Some(presentation.output_ticket()),
         ) {
             Ok(action) => action,
             Err(rejection) => return Ok(Some(InteractionOutcome::Rejected(rejection))),
@@ -350,6 +351,7 @@ impl DockEngine {
         region: PresentationHitRegionId,
         point: crate::geometry::LogicalPoint,
         policy: &DockPolicySnapshot,
+        output: Option<crate::presentation::observation::SurfacePresentationOutputTicket>,
     ) -> Result<FrozenClickAction, InteractionRejection> {
         match region.kind() {
             PresentationHitRegionKind::TabClose(tab) => self
@@ -387,7 +389,11 @@ impl DockEngine {
                     return Err(InteractionRejection::TabStripSourceUnavailable { key });
                 }
                 Ok(FrozenClickAction::TabStripControl(
-                    FrozenTabStripControlClick { key, record },
+                    FrozenTabStripControlClick {
+                        key,
+                        record,
+                        output,
+                    },
                 ))
             }
             PresentationHitRegionKind::TabListMenuRow { menu, tab } => {

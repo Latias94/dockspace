@@ -99,7 +99,7 @@ fn paint_frame(
                     .resize()
                     .find(|handle| handle.direction() == ContainedResizeDirection::SouthEast)
                     .unwrap();
-                resize = plan.receiver_for_contained_resize(contained, handle);
+                resize = plan.receiver_for_contained_resize(handle);
             }
             Step::Operation {
                 operation: Operation::Pane(pane),

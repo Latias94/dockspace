@@ -638,8 +638,7 @@ fn contained_resize_receiver(session: &mut DockspaceSession) -> PresentedReceive
             .resize()
             .find(|handle| handle.direction() == ContainedResizeDirection::East)
             .unwrap();
-        plan.receiver_for_contained_resize(contained, handle)
-            .unwrap()
+        plan.receiver_for_contained_resize(handle).unwrap()
     })
 }
 

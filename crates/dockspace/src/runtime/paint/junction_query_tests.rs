@@ -146,7 +146,7 @@ fn canonical_grid_junction_queries_match_frozen_scans_on_both_axes() {
 }
 
 #[test]
-fn foreign_junction_uses_current_plan_membership_and_axis_policy() {
+fn a_foreign_junction_cannot_use_current_receiver_or_axis_authority() {
     let mut origin = measured_grid(4, ROOT, [true, true]);
     let mut current = measured_grid(4, ROOT, [false, true]);
     let mut unrelated = measured_grid(4, RootId::new(99), [true, true]);
@@ -157,21 +157,18 @@ fn foreign_junction_uses_current_plan_membership_and_axis_policy() {
     let current = current_frame.paint_plan(SURFACE).unwrap().unwrap();
     let unrelated = unrelated_frame.paint_plan(SURFACE).unwrap().unwrap();
     let foreign = origin.splitter_junctions().next().unwrap();
+    let local = current.splitter_junctions().next().unwrap();
+    assert_eq!(foreign.visual_id(), local.visual_id());
     assert!(foreign.record.operable());
+    assert!(current.receiver_for_splitter_junction(foreign).is_none());
+    assert!(!current.splitter_junction_operable(foreign));
     for (axis, expected) in AXES.into_iter().zip([false, true]) {
+        assert!(!current.splitter_junction_axis_operable(foreign, axis));
         assert_eq!(
-            current.splitter_junction_axis_operable(foreign, axis),
+            current.splitter_junction_axis_operable(local, axis),
             expected
         );
-        assert_eq!(
-            current.splitter_junction_axis_operable(foreign, axis),
-            frozen_axis_operable(current, foreign, axis)
-        );
         assert!(!unrelated.splitter_junction_axis_operable(foreign, axis));
-        assert_eq!(
-            unrelated.splitter_junction_axis_operable(foreign, axis),
-            frozen_axis_operable(unrelated, foreign, axis)
-        );
     }
 }
 

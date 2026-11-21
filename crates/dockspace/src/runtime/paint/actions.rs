@@ -94,6 +94,7 @@ impl SurfacePaintPlan<'_> {
             crate::engine::LocalTabChromeAction::ActivateControl(FrozenTabStripControlClick {
                 key,
                 record,
+                output: Some(self.output),
             }),
         ))
     }

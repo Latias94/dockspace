@@ -545,7 +545,7 @@ fn armed_touch_splitter_and_contained_releases_deliver_once_before_presentation(
                                                 == ContainedResizeDirection::SouthEast
                                         })
                                         .unwrap();
-                                    plan.receiver_for_contained_resize(contained, handle)
+                                    plan.receiver_for_contained_resize(handle)
                                 }
                                 Gesture::Splitter => receiver,
                             };

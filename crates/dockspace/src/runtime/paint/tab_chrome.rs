@@ -7,6 +7,7 @@ use crate::geometry::LogicalRect;
 use crate::ids::{EngineAuthorityDomainId, ItemId, RootId, TabKey, WorkspaceEpoch};
 use crate::interaction::FrozenTabListMenuRowClick;
 use crate::model::WorkspaceVersion;
+use crate::presentation::observation::SurfacePresentationOutputTicket;
 use crate::presentation::scene::{
     SurfacePlanScene, TabBarSceneId, TabListMenuBackdropRecord, TabListMenuRecord,
     TabListMenuRowRecord, TabSceneId, TabStripControlRecord,
@@ -87,6 +88,7 @@ pub struct RetainedTabListMenu {
     scope: MenuInputScope,
     record: TabListMenuRecord,
     backdrop: TabListMenuBackdropRecord,
+    opening: Option<SurfacePresentationOutputTicket>,
 }
 
 /// The closed tab-list control that received an opening input.
@@ -110,7 +112,7 @@ impl RetainedTabListMenu {
         self.scope.session.key().bar() == opener.bar
             && self.version == opener.version
             && super::tab_input::same_surface_keyboard_authority(&self.witness, &opener.witness)
-            && opener.witness.plan().popup().revision().checked_next() == Some(self.scope.revision)
+            && self.opening == Some(opener.witness.output_ticket())
     }
 
     /// Tests whether a later presented menu can continue this menu's keyboard input.
@@ -219,6 +221,9 @@ impl SurfacePaintPlan<'_> {
             scope: menu.scope,
             record: menu.record.clone(),
             backdrop: menu.backdrop.record,
+            opening: self
+                .candidate
+                .tab_list_opening_output(menu.scope.session, menu.scope.revision),
         })
     }
 }

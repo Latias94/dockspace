@@ -30,7 +30,11 @@ impl DockEngine {
         }
         Ok(PreparedTabStripControlActivation {
             presentation: Self::freeze_interaction_projection(projection),
-            control: crate::interaction::FrozenTabStripControlClick { key, record },
+            control: crate::interaction::FrozenTabStripControlClick {
+                key,
+                record,
+                output: Some(projection.output_ticket()),
+            },
         })
     }
 

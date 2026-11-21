@@ -146,9 +146,7 @@ fn geometry(plan: SurfacePaintPlan<'_>) -> Geometry {
                         ));
                     }
                     for resize in contained.resize() {
-                        if let Some(receiver) =
-                            plan.receiver_for_contained_resize(contained, resize)
-                        {
+                        if let Some(receiver) = plan.receiver_for_contained_resize(resize) {
                             geometry.resizes.push((
                                 contained.floating(),
                                 resize.direction(),

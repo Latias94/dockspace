@@ -57,7 +57,8 @@ fn auto_hidden_single_bar_reveals_through_its_exact_presented_corner_control() {
                 record.bounds().y() + record.bounds().height() * 0.5
             )
             .unwrap(),
-            &engine.policy
+            &engine.policy,
+            Some(output),
         ),
         Ok(FrozenClickAction::TabStripControl(_))
     ));
@@ -117,7 +118,7 @@ fn becoming_auto_hidden_retires_an_open_overflow_popup_before_manifest_publicati
         .tab_strip_states
         .clone();
     states
-        .open_tab_list_menu(key, Some(fixture.items[0].into()))
+        .open_tab_list_menu(key, Some(fixture.items[0].into()), None)
         .unwrap();
     let mut builder = fixture.engine.workspace().clone().into_builder();
     builder
@@ -164,7 +165,7 @@ fn requirement_pipeline_reconciles_popup_before_finalizing_disabled_policy() {
         .engine
         .presentation_authority
         .tab_strip_states
-        .open_tab_list_menu(key, Some(fixture.items[2].into()))
+        .open_tab_list_menu(key, Some(fixture.items[2].into()), None)
         .expect("fresh engine must open a live strip without a prior revision");
     assert_eq!(session.key(), key);
     let mut disabled_replacement = DockPolicy::default();
@@ -241,6 +242,7 @@ fn requirement_pipeline_reconciles_popup_before_finalizing_disabled_policy() {
             region,
             point,
             &disabled.engine.policy,
+            None,
         ),
         Err(InteractionRejection::TabStripControlDisabled { control })
     );
@@ -2317,7 +2319,7 @@ fn menu_backdrop_rejects_stale_session_and_revision_without_dismissing_current_m
         .engine
         .presentation_authority
         .tab_strip_states
-        .open_tab_list_menu(key, Some(fixture.items[1].into()))
+        .open_tab_list_menu(key, Some(fixture.items[1].into()), None)
         .expect("the live strip must open a successor session");
     fixture
         .engine

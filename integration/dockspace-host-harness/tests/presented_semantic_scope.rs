@@ -104,7 +104,7 @@ fn emit(session: &mut DockspaceSession) -> (Receivers, PaintedSurfaceOutput) {
                 west_resize = contained
                     .resize()
                     .find(|handle| handle.direction() == ContainedResizeDirection::West)
-                    .and_then(|handle| plan.receiver_for_contained_resize(contained, handle));
+                    .and_then(|handle| plan.receiver_for_contained_resize(handle));
             }
             Step::Operation {
                 operation: Operation::Tab(tab),

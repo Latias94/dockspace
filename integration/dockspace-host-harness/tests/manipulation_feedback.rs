@@ -64,11 +64,7 @@ fn paint(
                 .resize()
                 .find(|handle| handle.direction() == ContainedResizeDirection::SouthEast)
                 .unwrap();
-            resize = Some(
-                plan.receiver_for_contained_resize(contained, handle)
-                    .unwrap()
-                    .center(),
-            );
+            resize = Some(plan.receiver_for_contained_resize(handle).unwrap().center());
         }
         Ok::<(), ()>(())
     })

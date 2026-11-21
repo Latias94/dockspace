@@ -15,8 +15,9 @@ pub use contained::{
 };
 pub use presentation::{PresentationMenuAnchorHost, PresentationMenuAnchorRecord};
 pub use splitter::{
-    SplitterGapPresentation, SplitterGapRecord, SplitterJunctionDirection, SplitterJunctionId,
-    SplitterJunctionRecord, SplitterOwner, SplitterRecord, SplitterResizeTarget, SplitterSceneId,
+    GridBoundaryProof, SplitterGapPresentation, SplitterGapRecord, SplitterJunctionDirection,
+    SplitterJunctionId, SplitterJunctionRecord, SplitterOwner, SplitterRecord,
+    SplitterResizeTarget, SplitterSceneId,
 };
 pub(crate) use tab::FrozenTabLabel;
 

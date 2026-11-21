@@ -2145,6 +2145,7 @@ fn frozen_control(
 ) -> FrozenTabStripControlClick {
     FrozenTabStripControlClick {
         key,
+        output: None,
         record: plan
             .tab_strip_control_records()
             .iter()

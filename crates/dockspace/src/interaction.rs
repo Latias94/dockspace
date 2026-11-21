@@ -48,7 +48,9 @@ use crate::policy::PolicyRevision;
 use crate::presentation::config::PresentationConfigRevision;
 use crate::presentation::hit::PresentationHitRegionId;
 use crate::presentation::manifest::{RequirementRevision, SurfaceMeasurementTicket};
-use crate::presentation::observation::PresentedSurfaceAuthority;
+use crate::presentation::observation::{
+    PresentedSurfaceAuthority, SurfacePresentationOutputTicket,
+};
 use crate::presentation::scene::{
     PresentationLayoutFacts, SplitterResizeTarget, SurfaceCoordinateCapture, SurfaceSceneStamp,
     TabBarSceneId, TabListMenuBackdropRecord, TabListMenuRecord, TabListMenuRowRecord, TabSceneId,
@@ -428,6 +430,7 @@ pub(crate) struct FrozenCloseClick {
 pub(crate) struct FrozenTabStripControlClick {
     pub(crate) key: TabStripStateKey,
     pub(crate) record: TabStripControlRecord,
+    pub(crate) output: Option<SurfacePresentationOutputTicket>,
 }
 
 /// Exact menu-row action frozen by an authoritative Click-lane press.
@@ -3733,6 +3736,7 @@ mod tests {
             FrozenTabStripControlClick {
                 key: TabStripStateKey::new(surface, bar),
                 record,
+                output: None,
             },
         ));
         (

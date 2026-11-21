@@ -116,10 +116,7 @@ pub(super) fn record(
                     Operation::ContainedControls(contained) => {
                         receiver(&mut draws, plan.receiver_for_contained_title(contained));
                         for resize in contained.resize() {
-                            receiver(
-                                &mut draws,
-                                plan.receiver_for_contained_resize(contained, resize),
-                            );
+                            receiver(&mut draws, plan.receiver_for_contained_resize(resize));
                         }
                         if !paint.is_source_gap() {
                             draws.push(Draw::ContainedTitle(

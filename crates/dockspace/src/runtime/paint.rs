@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 use std::fmt;
+use std::sync::Arc;
 
 use crate::engine::SurfaceContributionToken;
 use crate::geometry::{LogicalPoint, LogicalRect, LogicalSize, PhysicalRect};
@@ -26,11 +27,11 @@ use crate::presentation::observation::{
 };
 pub use crate::presentation::scene::TabGroupDragRegionKind;
 use crate::presentation::scene::{
-    ContainedLayoutOwner, ContainedRecord, ContainedResizeRecord, PresentationMenuAnchorHost,
-    PresentationMenuAnchorRecord, PresentationPlan, ResolvedSurfaceProgramOperation,
-    ResolvedSurfaceProgramRoot, ResolvedSurfaceProgramStep, SplitterJunctionDirection,
-    SplitterJunctionId, SplitterJunctionRecord, SplitterRecord, SplitterSceneId, SurfaceScene,
-    TabBarSceneId, TabSceneId,
+    ContainedLayoutOwner, ContainedRecord, ContainedResizeRecord, GridBoundaryProof,
+    PresentationMenuAnchorHost, PresentationMenuAnchorRecord, PresentationPlan,
+    ResolvedSurfaceProgramOperation, ResolvedSurfaceProgramRoot, ResolvedSurfaceProgramStep,
+    SplitterJunctionDirection, SplitterJunctionId, SplitterJunctionRecord, SplitterRecord,
+    SplitterSceneId, SurfaceScene, TabBarSceneId, TabSceneId,
 };
 #[cfg(test)]
 use crate::presentation::scene::{SurfaceProgramRootOperation, SurfaceProgramRootPresentation};
@@ -121,7 +122,7 @@ pub struct DockspaceVisualId(VisualIdentity);
 /// replacement. Controls with a narrower scope, such as a popup or an entire
 /// floating root's close button, can expire earlier. Prepare actions using the
 /// current paint record and its corresponding output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DockspaceControlId(ControlScope, ControlTarget);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -154,7 +155,7 @@ impl ControlScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum ControlTarget {
     Visual(DockspaceVisualId),
     TabClose(TabSceneId, Option<WorkspaceRevision>),
@@ -162,6 +163,29 @@ enum ControlTarget {
     ContainedTitle(FloatingPresentationId, RootId),
     ContainedClose(FloatingPresentationId, RootId, WorkspaceRevision),
     ContainedResize(FloatingPresentationId, RootId, ContainedResizeDirection),
+    Splitter(SplitterSceneId, SplitterBoundary),
+    Junction(Arc<JunctionControlTarget>),
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct JunctionControlTarget {
+    id: SplitterJunctionId,
+    boundaries: [Option<SplitterBoundary>; 4],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct SplitterBoundary {
+    after_index: usize,
+    grid: Option<GridBoundaryProof>,
+}
+
+impl SplitterBoundary {
+    fn from_record(record: &SplitterRecord) -> Self {
+        Self {
+            after_index: record.after_index(),
+            grid: record.grid().cloned(),
+        }
+    }
 }
 
 /// Content identity preserved across docking within one session and workspace epoch.
@@ -628,7 +652,7 @@ impl DockspaceContainedTransformPreview<'_> {
 #[derive(Debug, Clone, Copy)]
 pub struct SplitterPaintRecord<'plan> {
     record: &'plan SplitterRecord,
-    scope: ControlScope,
+    output: DockspaceSemanticOutput,
 }
 
 impl SplitterPaintRecord<'_> {
@@ -639,8 +663,14 @@ impl SplitterPaintRecord<'_> {
 
     /// Returns the host input identity for this splitter.
     #[must_use]
-    pub const fn input_id(self) -> DockspaceControlId {
-        DockspaceControlId(self.scope, ControlTarget::Visual(self.visual_id()))
+    pub fn input_id(self) -> DockspaceControlId {
+        DockspaceControlId(
+            ControlScope::from_scene(self.output.ticket.scene_stamp()),
+            ControlTarget::Splitter(
+                *self.record.id(),
+                SplitterBoundary::from_record(self.record),
+            ),
+        )
     }
 
     #[must_use]
@@ -707,7 +737,8 @@ impl SplitterPaintRecord<'_> {
 #[derive(Clone, Copy)]
 pub struct SplitterJunctionPaintRecord<'plan> {
     record: &'plan SplitterJunctionRecord,
-    scope: ControlScope,
+    plan: &'plan PresentationPlan,
+    output: DockspaceSemanticOutput,
 }
 
 impl fmt::Debug for SplitterJunctionPaintRecord<'_> {
@@ -736,8 +767,23 @@ impl SplitterJunctionPaintRecord<'_> {
 
     /// Returns the host input identity for this junction.
     #[must_use]
-    pub const fn input_id(self) -> DockspaceControlId {
-        DockspaceControlId(self.scope, ControlTarget::Visual(self.visual_id()))
+    pub fn input_id(self) -> DockspaceControlId {
+        let id = self.record.id();
+        let boundaries = [
+            SplitterJunctionDirection::North,
+            SplitterJunctionDirection::East,
+            SplitterJunctionDirection::South,
+            SplitterJunctionDirection::West,
+        ]
+        .map(|direction| {
+            self.plan
+                .splitter_record(id.arm(direction)?)
+                .map(SplitterBoundary::from_record)
+        });
+        DockspaceControlId(
+            ControlScope::from_scene(self.output.ticket.scene_stamp()),
+            ControlTarget::Junction(Arc::new(JunctionControlTarget { id, boundaries })),
+        )
     }
 
     #[must_use]
@@ -778,7 +824,7 @@ impl SplitterJunctionPaintRecord<'_> {
 pub struct ContainedResizePaintRecord {
     record: ContainedResizeRecord,
     operable: bool,
-    scope: ControlScope,
+    output: DockspaceSemanticOutput,
     floating: FloatingPresentationId,
     root: RootId,
 }
@@ -893,7 +939,7 @@ impl ContainedResizePaintRecord {
     #[must_use]
     pub const fn input_id(self) -> DockspaceControlId {
         DockspaceControlId(
-            self.scope,
+            ControlScope::from_scene(self.output.ticket.scene_stamp()),
             ControlTarget::ContainedResize(self.floating, self.root, self.direction()),
         )
     }
@@ -921,7 +967,7 @@ impl ContainedResizePaintRecord {
 pub struct ContainedPaintRecord<'plan> {
     record: &'plan ContainedRecord,
     plan: &'plan PresentationPlan,
-    scope: ControlScope,
+    output: DockspaceSemanticOutput,
     revision: WorkspaceRevision,
 }
 
@@ -942,7 +988,7 @@ impl<'plan> ContainedPaintRecord<'plan> {
         Self {
             record,
             plan: plan.plan,
-            scope: ControlScope::from_scene(plan.scene),
+            output: plan.semantic_output(),
             revision: plan.version.revision(),
         }
     }
@@ -956,7 +1002,7 @@ impl<'plan> ContainedPaintRecord<'plan> {
     #[must_use]
     pub const fn input_id(self) -> DockspaceControlId {
         DockspaceControlId(
-            self.scope,
+            ControlScope::from_scene(self.output.ticket.scene_stamp()),
             ControlTarget::ContainedTitle(self.floating(), self.root()),
         )
     }
@@ -968,7 +1014,7 @@ impl<'plan> ContainedPaintRecord<'plan> {
     #[must_use]
     pub const fn close_input_id(self) -> DockspaceControlId {
         DockspaceControlId(
-            self.scope,
+            ControlScope::from_scene(self.output.ticket.scene_stamp()),
             ControlTarget::ContainedClose(self.floating(), self.root(), self.revision),
         )
     }
@@ -1060,7 +1106,7 @@ impl<'plan> ContainedPaintRecord<'plan> {
             .map(move |record| ContainedResizePaintRecord {
                 operable: transform_operable && plan.region_is_operable(record.hit().rect(), layer),
                 record,
-                scope: self.scope,
+                output: self.output,
                 floating: self.floating(),
                 root: self.root(),
             })
@@ -1232,6 +1278,7 @@ pub struct SurfacePaintPlan<'frame> {
     pub(super) version: crate::model::WorkspaceVersion,
     pub(super) scene: crate::presentation::scene::SurfaceSceneStamp,
     pub(super) output: SurfacePresentationOutputTicket,
+    presented: bool,
     pub(super) contribution: SurfaceContributionToken,
     pub(super) interaction: HostInteractionPresentation,
     pub(super) plan: &'frame PresentationPlan,
@@ -1666,6 +1713,11 @@ impl DockspaceHostFrame<'_> {
             version,
             scene: candidate.stamp(),
             output: candidate.output_ticket(),
+            presented: self.presented_surface(surface).is_some_and(|presented| {
+                presented.matches_semantic_output(DockspaceSemanticOutput {
+                    ticket: candidate.output_ticket(),
+                })
+            }),
             contribution: view.begin_surface_contribution(surface)?,
             interaction: view
                 .presentation_interaction(surface)
@@ -2147,13 +2199,14 @@ impl<'frame> SurfacePaintPlan<'frame> {
             ResolvedSurfaceProgramOperation::Splitter(record) => {
                 SurfacePaintProgramOperation::Splitter(SplitterPaintRecord {
                     record,
-                    scope: ControlScope::from_scene(self.scene),
+                    output: self.semantic_output(),
                 })
             }
             ResolvedSurfaceProgramOperation::SplitterJunction(record) => {
                 SurfacePaintProgramOperation::SplitterJunction(SplitterJunctionPaintRecord {
                     record,
-                    scope: ControlScope::from_scene(self.scene),
+                    plan: self.plan,
+                    output: self.semantic_output(),
                 })
             }
             ResolvedSurfaceProgramOperation::TabStripControl(record) => {
@@ -2188,6 +2241,13 @@ impl<'frame> SurfacePaintPlan<'frame> {
         DockspaceSemanticOutput {
             ticket: self.output,
         }
+    }
+
+    /// Returns whether this semantic output has a current, accepted presentation.
+    /// Use a presented receiver to qualify pointer input.
+    #[must_use]
+    pub const fn is_presented(&self) -> bool {
+        self.presented
     }
 
     /// Returns the currently observed pane focus on this surface.
@@ -2599,7 +2659,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
             .iter()
             .map(move |record| SplitterPaintRecord {
                 record,
-                scope: ControlScope::from_scene(self.scene),
+                output: self.semantic_output(),
             })
     }
 
@@ -2611,7 +2671,8 @@ impl<'frame> SurfacePaintPlan<'frame> {
             .iter()
             .map(move |record| SplitterJunctionPaintRecord {
                 record,
-                scope: ControlScope::from_scene(self.scene),
+                plan: self.plan,
+                output: self.semantic_output(),
             })
     }
 
@@ -2855,6 +2916,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         &self,
         splitter: SplitterPaintRecord<'frame>,
     ) -> Option<DockspaceReceiverDescriptor> {
+        (splitter.output == self.semantic_output()).then_some(())?;
         let splitter_id = *splitter.record.id();
         self.receiver(PresentationHitRegionKind::SplitterHandle(splitter_id))
     }
@@ -2865,6 +2927,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         &self,
         junction: SplitterJunctionPaintRecord<'frame>,
     ) -> Option<DockspaceReceiverDescriptor> {
+        (junction.output == self.semantic_output()).then_some(())?;
         self.receiver(PresentationHitRegionKind::SplitterJunction(
             junction.record.id(),
         ))
@@ -2876,7 +2939,9 @@ impl<'frame> SurfacePaintPlan<'frame> {
         &self,
         junction: SplitterJunctionPaintRecord<'frame>,
     ) -> bool {
-        self.plan.partition_available(junction.record.id().root()) && junction.record.operable()
+        junction.output == self.semantic_output()
+            && self.plan.partition_available(junction.record.id().root())
+            && junction.record.operable()
     }
 
     /// Returns whether every incident splitter on one junction axis accepts a
@@ -2887,7 +2952,9 @@ impl<'frame> SurfacePaintPlan<'frame> {
         junction: SplitterJunctionPaintRecord<'frame>,
         axis: DockspaceAxis,
     ) -> bool {
-        if !self.plan.partition_available(junction.record.id().root()) {
+        if junction.output != self.semantic_output()
+            || !self.plan.partition_available(junction.record.id().root())
+        {
             return false;
         }
         let axis: Axis = axis.into();
@@ -2932,6 +2999,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         &self,
         contained: ContainedPaintRecord<'frame>,
     ) -> Option<DockspaceReceiverDescriptor> {
+        (contained.output == self.semantic_output()).then_some(())?;
         let floating = contained.record.floating();
         self.receiver(PresentationHitRegionKind::ContainedFrameBlocker(floating))
     }
@@ -2942,7 +3010,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         &self,
         contained: ContainedPaintRecord<'frame>,
     ) -> Option<DockspaceReceiverDescriptor> {
-        contained.title_operable().then_some(())?;
+        (contained.output == self.semantic_output() && contained.title_operable()).then_some(())?;
         let floating = contained.record.floating();
         self.receiver(PresentationHitRegionKind::ContainedTitle(floating))
     }
@@ -2953,23 +3021,21 @@ impl<'frame> SurfacePaintPlan<'frame> {
         &self,
         contained: ContainedPaintRecord<'frame>,
     ) -> Option<DockspaceReceiverDescriptor> {
-        contained.close_operable().then_some(())?;
+        (contained.output == self.semantic_output() && contained.close_operable()).then_some(())?;
         let floating = contained.record.floating();
         self.receiver(PresentationHitRegionKind::ContainedClose(floating))
     }
 
-    /// Returns the exact resize receiver for one contained floating edge.
+    /// Returns the exact receiver for this output's contained floating edge.
     #[must_use]
     pub fn receiver_for_contained_resize(
         &self,
-        contained: ContainedPaintRecord<'frame>,
         resize: ContainedResizePaintRecord,
     ) -> Option<DockspaceReceiverDescriptor> {
-        resize.operable().then_some(())?;
-        let floating = contained.record.floating();
+        (resize.output == self.semantic_output() && resize.operable()).then_some(())?;
         let direction = resize.record.direction();
         self.receiver(PresentationHitRegionKind::ContainedResize {
-            floating,
+            floating: resize.floating,
             direction,
         })
     }

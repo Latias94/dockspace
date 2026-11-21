@@ -216,17 +216,27 @@ impl DockEngine {
         {
             return Err(InteractionRejection::StaleScene);
         }
+        let popup = self
+            .presentation_authority
+            .tab_strip_states
+            .popup_requirement();
+        // Another surface's tab list leaves this displayed button's geometry
+        // and input authority intact. The exact retained output is still required.
+        let retained_sibling_opener = matches!(action,
+            LocalSurfaceAction::TabChrome { action: LocalTabChromeAction::ActivateControl(control), .. }
+                if matches!(control.record.id(), TabStripControlId::TabListMenu(_)))
+            && plan.popup().visual_for_surface(surface).is_none()
+            && popup.visual_for_surface(surface).is_none()
+            && self
+                .interaction_projection(surface)
+                .is_some_and(|current| current.output_ticket() == witness.output_ticket());
         if self.workspace.surface(surface).is_none()
             || self
                 .presentation_authority
                 .presentation_requirements
                 .surface(surface)
                 .is_none()
-            || plan.popup()
-                != self
-                    .presentation_authority
-                    .tab_strip_states
-                    .popup_requirement()
+            || (plan.popup() != popup && !retained_sibling_opener)
             || !self.presented_layering_is_current(plan)
             || if matches!(action, LocalSurfaceAction::ResetSplitter { .. }) {
                 !self.presented_contained_geometry_is_current(plan)

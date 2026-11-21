@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 use crate::ids::{SurfaceId, TabKey};
+use crate::presentation::observation::SurfacePresentationOutputTicket;
 use crate::presentation::scene::{PresentationPlan, TabBarSceneId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -323,6 +324,7 @@ impl TabStripState {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ActiveTabListMenu {
     session: TabListMenuSessionId,
+    opening: Option<(SurfacePresentationOutputTicket, PopupRoutingRevision)>,
     focus: TabKey,
     scroll_offset: Option<f64>,
     reveal: Option<TabKey>,
@@ -336,6 +338,15 @@ impl ActiveTabListMenu {
 
     pub(crate) const fn session(&self) -> TabListMenuSessionId {
         self.session
+    }
+
+    pub(crate) fn opening_output(
+        &self,
+        revision: PopupRoutingRevision,
+    ) -> Option<SurfacePresentationOutputTicket> {
+        self.opening
+            .filter(|&(_, opened)| opened == revision)
+            .map(|(output, _)| output)
     }
 
     pub(crate) const fn focus(&self) -> TabKey {
@@ -501,6 +512,7 @@ impl TabStripStateStore {
         &mut self,
         key: TabStripStateKey,
         preferred_focus: Option<TabKey>,
+        output: Option<SurfacePresentationOutputTicket>,
     ) -> Result<(TabListMenuSessionId, TabStripStateDelta), TabStripStateError> {
         let tabs = self
             .live_rosters
@@ -527,6 +539,7 @@ impl TabStripStateStore {
             .unwrap_or(first);
         let active = ActiveTabListMenu {
             session,
+            opening: output.map(|output| (output, routing_revision)),
             focus,
             scroll_offset: None,
             reveal: Some(focus),
@@ -999,7 +1012,7 @@ mod tests {
         states
             .reconcile_exact_for_surface_roster([(key, tabs.as_slice())], false)
             .unwrap();
-        states.open_tab_list_menu(key, Some(layout)).unwrap();
+        states.open_tab_list_menu(key, Some(layout), None).unwrap();
         let menu = states.active_menu_for(key).unwrap();
         assert_eq!(menu.tabs(), tabs);
         assert_eq!(menu.focus(), layout);
@@ -1098,7 +1111,7 @@ mod tests {
 
         let routing_before_first = states.popup_requirement().revision();
         let (first_session, first_delta) = states
-            .open_tab_list_menu(first, Some(first_items[1]))
+            .open_tab_list_menu(first, Some(first_items[1]), None)
             .expect("the live non-empty strip can open its menu");
         assert_ne!(states.popup_requirement().revision(), routing_before_first);
         assert_eq!(
@@ -1116,7 +1129,7 @@ mod tests {
 
         let routing_before_second = states.popup_requirement().revision();
         let (second_session, second_delta) = states
-            .open_tab_list_menu(second, None)
+            .open_tab_list_menu(second, None, None)
             .expect("opening another live menu replaces the first");
         assert_ne!(states.popup_requirement().revision(), routing_before_second);
         assert_eq!(
@@ -1155,7 +1168,7 @@ mod tests {
                 .state_changed()
         );
         let (session, _) = states
-            .open_tab_list_menu(key, Some(initial[1]))
+            .open_tab_list_menu(key, Some(initial[1]), None)
             .expect("the live strip can open its menu");
         let routing_before_scroll = states.popup_requirement().revision();
         let scroll_delta = states
@@ -1245,7 +1258,7 @@ mod tests {
             .set_scroll_offset(42.0)
             .expect("offset is valid");
         states
-            .open_tab_list_menu(key, Some(tabs[0]))
+            .open_tab_list_menu(key, Some(tabs[0]), None)
             .expect("the live strip can open its menu");
 
         assert!(
@@ -1267,7 +1280,7 @@ mod tests {
                 .state_changed()
         );
         states
-            .open_tab_list_menu(key, None)
+            .open_tab_list_menu(key, None, None)
             .expect("the repopulated strip can reopen");
         assert!(
             states
@@ -1300,14 +1313,14 @@ mod tests {
                 .state_changed()
         );
         states
-            .open_tab_list_menu(first, None)
+            .open_tab_list_menu(first, None, None)
             .expect("the first menu opens");
         states.last_menu_generation = TabListMenuGeneration(u64::MAX);
         let before = states.clone();
 
         assert_eq!(
             states
-                .open_tab_list_menu(second, None)
+                .open_tab_list_menu(second, None, None)
                 .map(|(session, _)| session),
             Err(TabStripStateError::MenuGenerationExhausted)
         );
@@ -1347,7 +1360,7 @@ mod tests {
 
         let routing_before_popup = states.popup_requirement().revision();
         let (_, popup) = states
-            .open_tab_list_menu(first, None)
+            .open_tab_list_menu(first, None, None)
             .expect("the live strip can own the popup plane");
         let absorbed = first_local.merge(popup);
         assert_ne!(states.popup_requirement().revision(), routing_before_popup);
@@ -1368,7 +1381,7 @@ mod tests {
             .expect("the live strip reconciles");
         let revision_before_open = states.popup_requirement().revision();
         let (session, open) = states
-            .open_tab_list_menu(key, None)
+            .open_tab_list_menu(key, None, None)
             .expect("the live strip can open");
         let revision_after_open = states.popup_requirement().revision();
         let close = states
@@ -1398,7 +1411,7 @@ mod tests {
         );
 
         states
-            .open_tab_list_menu(key, None)
+            .open_tab_list_menu(key, None, None)
             .expect("the same strip can open a new exact popup session");
         let revision_before_roster = states.popup_requirement().revision();
         let roster = states

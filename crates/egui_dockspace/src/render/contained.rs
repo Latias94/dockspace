@@ -241,11 +241,7 @@ pub(crate) fn paint_controls(
                 (false, _, _) => Sense::hover(),
             },
             drag_enabled
-                .then(|| {
-                    context
-                        .plan
-                        .receiver_for_contained_resize(contained, resize)
-                })
+                .then(|| context.plan.receiver_for_contained_resize(resize))
                 .flatten(),
         );
         let enabled = enabled && response.enabled();

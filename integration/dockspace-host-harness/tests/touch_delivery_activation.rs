@@ -138,7 +138,7 @@ fn paint(session: &mut DockspaceSession) -> (Recorded, PaintedSurfaceOutput) {
                         .resize()
                         .find(|handle| handle.direction() == ContainedResizeDirection::SouthEast)
                         .unwrap();
-                    rear_resize = plan.receiver_for_contained_resize(contained, handle);
+                    rear_resize = plan.receiver_for_contained_resize(handle);
                 }
             }
             _ => {}

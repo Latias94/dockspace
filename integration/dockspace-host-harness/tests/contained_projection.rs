@@ -141,8 +141,7 @@ fn paint(session: &mut DockspaceSession) -> (Recorded, PaintedSurfaceOutput) {
                 for handle in contained.resize() {
                     resize.push((
                         handle.direction(),
-                        plan.receiver_for_contained_resize(contained, handle)
-                            .unwrap(),
+                        plan.receiver_for_contained_resize(handle).unwrap(),
                     ));
                 }
             }

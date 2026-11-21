@@ -67,7 +67,7 @@ impl SplitterSceneId {
 }
 
 /// Exact resolved dimensions and structural cell map for a Grid boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GridBoundaryProof {
     rows: usize,
     columns: usize,
