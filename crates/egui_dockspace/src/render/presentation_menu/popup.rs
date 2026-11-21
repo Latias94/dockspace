@@ -276,6 +276,7 @@ pub(super) fn show(
                             }
                             let outcome = keyboard::capture(
                                 ui,
+                                run.row_namespace,
                                 anchor.id,
                                 &entries,
                                 &submenus,

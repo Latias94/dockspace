@@ -15,7 +15,7 @@ mod keyboard;
 mod local_pointer_tests;
 
 use super::RenderContext;
-use super::actions::{button_activation_origin, effective_enabled, unambiguous_pointer_click};
+use super::actions::{button_activation, effective_enabled, unambiguous_pointer_click};
 use super::geometry::{accesskit_bounds, egui_rect};
 
 pub(crate) fn paint_control_record(
@@ -69,19 +69,19 @@ fn paint_control_records(
         configure_control_accessibility(context, control, id, response.interact_rect, enabled);
 
         let activation = enabled
-            .then(|| button_activation_origin(context.ui, &response, context.pointer_authority))
+            .then(|| button_activation(context.ui, &response, context.pointer_authority))
             .flatten()
-            .and_then(|origin| {
+            .and_then(|activation| {
                 Some((
-                    origin,
+                    activation,
                     context.plan.prepare_tab_strip_control_activation(control)?,
                 ))
             });
-        if enabled && control.kind() == TabStripControlKind::TabListMenu && !control.menu_open() {
-            keyboard::register_opener(context, control, id, activation.is_some());
-        }
-        if let Some((origin, action)) = activation {
-            context.push_local_action(origin, action);
+        if let Some((activation, action)) = activation {
+            if control.kind() == TabStripControlKind::TabListMenu && !control.menu_open() {
+                keyboard::register_opening(context, control, id, activation.next_event);
+            }
+            context.push_local_action(activation.origin, action);
         }
     }
 }
@@ -356,6 +356,12 @@ pub(crate) fn paint_menu(
     let opening_input = enabled
         .then(|| keyboard::take_opening_input(context, menu, opener))
         .flatten();
+    if matches!(
+        opening_input,
+        Some(keyboard::OpeningInput::AwaitingPresentation)
+    ) {
+        return;
+    }
     let mut opening = false;
     if enabled {
         // One instance slot observes semantic focus edges, without retaining popup history.
@@ -379,7 +385,7 @@ pub(crate) fn paint_menu(
             && let Some(target) = edge.1
             && opening_input
                 .as_ref()
-                .is_none_or(|input| input.retains_focus)
+                .is_none_or(keyboard::OpeningInput::retains_focus)
         {
             let can_retarget = context.ui.memory(|memory| {
                 let focused = memory.focused();

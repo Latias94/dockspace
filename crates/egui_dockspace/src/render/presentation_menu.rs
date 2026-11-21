@@ -422,8 +422,15 @@ fn paint_menu(
             .data_mut(|data| data.insert_temp(page_id, page));
     }
     let mut go_back = false;
+    let mut retains_focus = true;
     let keyboard_activation = match popup.and_then(|popup| popup.inner) {
-        Some(keyboard::Outcome::Activate(target)) => Some(target),
+        Some(keyboard::Outcome::Activate {
+            target,
+            retains_focus: keep,
+        }) => {
+            retains_focus = keep;
+            Some(target)
+        }
         Some(keyboard::Outcome::Dismiss) => {
             context
                 .ui
@@ -474,7 +481,9 @@ fn paint_menu(
             }
             MenuAction::Custom(id) => {
                 Popup::close_id(context.ui.ctx(), popup_id);
-                response.request_focus();
+                if retains_focus {
+                    response.request_focus();
+                }
                 context.menu_action.get_or_insert(DockMenuAction {
                     context: menu_context,
                     id,
@@ -492,7 +501,9 @@ fn paint_menu(
                     );
                 });
                 Popup::open_id(context.ui.ctx(), popup_id);
-                response.request_focus();
+                if retains_focus {
+                    response.request_focus();
+                }
                 context.ui.ctx().request_repaint();
             }
             MenuAction::Back => {

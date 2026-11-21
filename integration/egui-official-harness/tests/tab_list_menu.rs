@@ -406,6 +406,7 @@ fn menu_keys_follow_accesskit_opener_activation_in_batched_and_split_input() {
                     }
                 }
                 run(&mut fixture, Vec::new());
+                run(&mut fixture, Vec::new());
                 let output = run(&mut fixture, Vec::new());
                 let expected = if click_first { LAST } else { SELECTED };
                 assert!(

@@ -2,14 +2,17 @@
 
 use egui::{Event, EventFilter, Id, Key, Ui};
 
+use crate::render::menu_input::{self, Intent, MenuKind, Navigation};
+
 pub(super) enum Outcome {
     Focus(Id),
-    Activate(Id),
+    Activate { target: Id, retains_focus: bool },
     Dismiss,
 }
 
 pub(super) fn capture(
     ui: &mut Ui,
+    id: Id,
     anchor: Id,
     entries: &[Id],
     submenus: &[Id],
@@ -67,6 +70,31 @@ pub(super) fn capture(
             );
         });
     }
+    if !ui.is_sizing_pass()
+        && let Some(routed) = menu_input::register(
+            ui,
+            id,
+            entries.iter().copied(),
+            MenuKind::Product {
+                anchor,
+                submenus: submenus.to_vec(),
+            },
+        )
+    {
+        let outcome = match routed.intent {
+            Intent::Focus(target) if target == anchor || entries.contains(&target) => {
+                Outcome::Focus(target)
+            }
+            Intent::Back(target) if target == anchor => Outcome::Focus(anchor),
+            Intent::Activate(target) if entries.contains(&target) => Outcome::Activate {
+                target,
+                retains_focus: routed.retains_focus,
+            },
+            Intent::Dismiss(_) => Outcome::Dismiss,
+            _ => return None,
+        };
+        return Some(apply(ui, anchor, outcome, routed.retains_focus));
+    }
     let (events, outcome) = ui.input(|input| {
         let mut events = Vec::new();
         let mut outcome = None;
@@ -89,17 +117,16 @@ pub(super) fn capture(
                 continue;
             }
             match key {
-                Key::ArrowDown | Key::ArrowUp if can_navigate && !entries.is_empty() => {
-                    let index = if *key == Key::ArrowDown {
-                        cursor
-                            .and_then(|index| index.checked_add(1))
-                            .filter(|index| *index < entries.len())
-                            .unwrap_or(0)
-                    } else {
-                        cursor
-                            .and_then(|index| index.checked_sub(1))
-                            .unwrap_or(entries.len() - 1)
+                Key::ArrowDown | Key::ArrowUp | Key::Home | Key::End
+                    if can_navigate && !entries.is_empty() =>
+                {
+                    let direction = match key {
+                        Key::ArrowDown => Navigation::Next,
+                        Key::ArrowUp => Navigation::Previous,
+                        Key::Home => Navigation::First,
+                        _ => Navigation::Last,
                     };
+                    let index = direction.wrapping_destination(cursor, entries.len() - 1);
                     cursor = Some(index);
                     outcome = Some(Outcome::Focus(entries[index]));
                 }
@@ -112,12 +139,18 @@ pub(super) fn capture(
                     if can_navigate
                         && cursor.is_some_and(|index| submenus.contains(&entries[index])) =>
                 {
-                    outcome = cursor.map(|index| Outcome::Activate(entries[index]));
+                    outcome = cursor.map(|index| Outcome::Activate {
+                        target: entries[index],
+                        retains_focus: true,
+                    });
                     events.push((slot, event.clone()));
                     break;
                 }
                 Key::Enter | Key::Space if can_navigate && cursor.is_some() => {
-                    outcome = cursor.map(|index| Outcome::Activate(entries[index]));
+                    outcome = cursor.map(|index| Outcome::Activate {
+                        target: entries[index],
+                        retains_focus: true,
+                    });
                     events.push((slot, event.clone()));
                     break;
                 }
@@ -147,24 +180,29 @@ pub(super) fn capture(
     }) {
         return None;
     }
-    ui.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
+    Some(apply(ui, anchor, outcome, can_dismiss || can_navigate))
+}
+
+fn apply(ui: &Ui, anchor: Id, outcome: Outcome, retains_focus: bool) -> Outcome {
+    if retains_focus {
+        ui.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
+    }
     match outcome {
         Outcome::Focus(target) => {
-            ui.memory_mut(|memory| memory.request_focus(target));
+            if retains_focus {
+                ui.memory_mut(|memory| memory.request_focus(target));
+            }
         }
-        Outcome::Activate(_) => {
+        Outcome::Activate { .. } => {
             ui.close();
         }
         Outcome::Dismiss => {
-            if focused.is_none()
-                || focused == Some(anchor)
-                || focused.is_some_and(|focused| entries.contains(&focused))
-            {
+            if retains_focus {
                 ui.memory_mut(|memory| memory.request_focus(anchor));
             }
             ui.close();
         }
     }
     ui.request_repaint();
-    Some(outcome)
+    outcome
 }

@@ -1,6 +1,6 @@
 //! Translation from current-pass egui responses into opaque core actions.
 
-use egui::accesskit::Action;
+use egui::accesskit::{Action, ActionRequest, TreeId};
 use egui::{Event, Id, Key, PointerButton, Response, Ui};
 
 use super::PointerActionAuthority;
@@ -85,9 +85,6 @@ pub(super) fn unambiguous_pointer_click(
     if pointer_click_scope(ui).cancelled[button as usize] || !response.clicked_by(button) {
         return false;
     }
-    let Some(position) = response.interact_pointer_pos() else {
-        return false;
-    };
     let from_global = ui.ctx().layer_transform_from_global(response.layer_id);
     ui.input(|input| {
         if [
@@ -119,9 +116,14 @@ pub(super) fn unambiguous_pointer_click(
         }
         release.is_some_and(|pos| {
             let pos = from_global.map_or(pos, |transform| transform * pos);
-            pos == position && response.interact_rect.contains(pos)
+            response.interact_rect.contains(pos)
         })
     })
+}
+
+pub(super) struct ButtonActivation {
+    pub(super) origin: Id,
+    pub(super) next_event: usize,
 }
 
 pub(super) fn button_activation_origin(
@@ -129,19 +131,71 @@ pub(super) fn button_activation_origin(
     response: &Response,
     pointer_authority: PointerActionAuthority,
 ) -> Option<Id> {
+    Some(button_activation(ui, response, pointer_authority)?.origin)
+}
+
+pub(super) fn button_activation(
+    ui: &Ui,
+    response: &Response,
+    pointer_authority: PointerActionAuthority,
+) -> Option<ButtonActivation> {
     if !effective_enabled(ui, response.enabled()) {
         return None;
     }
-    if response.has_focus()
-        && let Some(key) = ui.input_mut(|input| {
-            [Key::Enter, Key::Space]
-                .into_iter()
-                .find(|&key| input.consume_key(egui::Modifiers::NONE, key))
+    let focused_at_end = response.has_focus();
+    let focused_at_start = ui.memory(|memory| memory.had_focus_last_frame(response.id));
+    let pointer = pointer_authority.accepts_local_pointer_actions()
+        && unambiguous_pointer_click(ui, response, PointerButton::Primary);
+    ui.input_mut(|input| {
+        let has_focus_change = input
+            .events
+            .iter()
+            .any(|event| super::menu_input::accesskit_focus_target(event).is_some());
+        let mut focused = if has_focus_change {
+            focused_at_start
+        } else {
+            focused_at_end
+        };
+        let (index, origin, consume) =
+            input.events.iter().enumerate().find_map(|(index, event)| {
+                if let Some(target) = super::menu_input::accesskit_focus_target(event) {
+                    focused = target == response.id.accesskit_id();
+                    return None;
+                }
+                let (origin, consume) = match event {
+                    Event::Key {
+                        key: key @ (Key::Enter | Key::Space),
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if focused && modifiers.matches_logically(egui::Modifiers::NONE) => {
+                        (response.id.with(("keyboard-activate", key)), true)
+                    }
+                    Event::AccessKitActionRequest(ActionRequest {
+                        action: Action::Click,
+                        target_node,
+                        target_tree: TreeId::ROOT,
+                        data: None,
+                    }) if *target_node == response.id.accesskit_id() => {
+                        (response.id.with("accesskit-click"), false)
+                    }
+                    Event::PointerButton {
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        ..
+                    } if pointer => (response.id.with("pointer-click"), false),
+                    _ => return None,
+                };
+                Some((index, origin, consume))
+            })?;
+        if consume {
+            input.events.remove(index);
+        }
+        Some(ButtonActivation {
+            origin,
+            next_event: index + usize::from(!consume),
         })
-    {
-        return Some(response.id.with(("keyboard-activate", key)));
-    }
-    pointer_or_accesskit_activation_origin(ui, response, pointer_authority)
+    })
 }
 
 pub(super) fn pointer_or_accesskit_activation_origin(

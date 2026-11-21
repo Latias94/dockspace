@@ -182,6 +182,11 @@ passes may invoke it again; application-side mutations are not rolled back by
 a rejected final output. Collect command intents and apply them after success.
 The original `run_single_surface` delegates to this same driver with no panels.
 
+The composition callback runs before Dockspace validates a tab-list opener. A
+focused application widget can receive confirmation from the same input packet
+as that opener. Once Dockspace accepts the opener, it can capture subsequent
+packets for the menu while its first output awaits presentation.
+
 Pane callbacks run once per actual egui pass. Repeated passes re-encode the
 same accepted input candidate; only the intact terminal pass publishes. A failed
 run leaves core state and producer watermarks unchanged and never automatically

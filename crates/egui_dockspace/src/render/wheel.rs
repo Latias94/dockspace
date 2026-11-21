@@ -5,72 +5,123 @@ use dockspace::runtime::{
     PreparedSurfaceAction, SurfacePaintProgramOperation as Operation,
     SurfacePaintProgramStep as Step,
 };
-use egui::{Event, Id, Pos2, Ui, Vec2};
+use std::sync::Arc;
+
+use egui::{Event, Id, InputState, Pos2, RawInput, Ui, Vec2};
 
 use super::{RenderContext, actions::effective_enabled, geometry::egui_rect};
 
 /// Input ownership for one original egui run, without retaining scroll geometry.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct WheelClaim {
     first_pass: u64,
     last_pass: u64,
-    axes: [bool; 2],
-    owner: Option<(Id, Pos2)>,
+    owners: Vec<(Id, Pos2)>,
 }
 
-#[derive(Clone, Copy)]
 struct WheelLocation {
     pass: u64,
     cursor: Option<Pos2>,
-    sample: WheelSample,
+    streams: Vec<WheelStream>,
 }
 
-#[derive(Clone, Copy)]
-enum WheelSample {
-    None,
-    At(Pos2),
-    Ambiguous,
+struct WheelStream {
+    point: Pos2,
+    input: InputState,
+    fresh: bool,
 }
 
 impl WheelLocation {
-    fn for_pass(ui: &Ui) -> Self {
+    fn for_pass(ui: &Ui) -> Arc<Self> {
         let context = ui.ctx();
         let pass = context.cumulative_pass_nr();
         let id = Id::unique(("dockspace-wheel-location", context.viewport_id()));
-        let previous = context.data(|data| data.get_temp::<Self>(id));
-        if let Some(location) = previous.filter(|location| location.pass == pass) {
-            return location;
+        let previous = context.data(|data| data.get_temp::<Arc<Self>>(id));
+        if let Some(location) = previous.as_ref().filter(|location| location.pass == pass) {
+            return Arc::clone(location);
         }
-        let location = ui.input(|input| {
-            let mut point = previous
-                .filter(|location| location.pass.checked_add(1) == Some(pass))
-                .and_then(|location| location.cursor);
-            let mut sample = WheelSample::None;
-            for event in &input.raw.events {
-                match event {
-                    Event::PointerMoved(position) | Event::PointerButton { pos: position, .. } => {
-                        point = Some(*position);
+        let options = context.options(|options| options.input_options);
+        let previous = previous
+            .as_deref()
+            .filter(|location| location.pass.checked_add(1) == Some(pass));
+        let location = Arc::new(ui.input(|input| {
+            let mut cursor = previous.and_then(|location| location.cursor);
+            let focus_intact = input.focused
+                && !input
+                    .raw
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, Event::WindowFocused(false)));
+            let mut samples = Vec::<(Pos2, Vec<Event>)>::new();
+            if focus_intact {
+                for event in &input.raw.events {
+                    match event {
+                        Event::PointerMoved(point) | Event::PointerButton { pos: point, .. } => {
+                            cursor = Some(*point)
+                        }
+                        Event::PointerGone => cursor = None,
+                        Event::MouseWheel { .. } => {
+                            if let Some(point) = cursor {
+                                if let Some((_, events)) =
+                                    samples.iter_mut().find(|(at, _)| *at == point)
+                                {
+                                    events.push(event.clone());
+                                } else {
+                                    samples.push((point, vec![event.clone()]));
+                                }
+                            }
+                        }
+                        _ => {}
                     }
-                    Event::PointerGone => point = None,
-                    Event::MouseWheel { .. } => {
-                        // egui provides one smoothed delta for the pass. We can
-                        // attribute it only when all raw samples share one point.
-                        sample = match (sample, point) {
-                            (WheelSample::None, Some(point)) => WheelSample::At(point),
-                            (WheelSample::At(previous), Some(point)) if previous == point => sample,
-                            _ => WheelSample::Ambiguous,
-                        };
-                    }
-                    _ => {}
                 }
             }
+            let advance = |point, state: InputState, events: Vec<Event>| {
+                let fresh = !events.is_empty();
+                let input = state.begin_pass(
+                    RawInput {
+                        screen_rect: Some(input.viewport_rect()),
+                        time: Some(input.time),
+                        predicted_dt: input.stable_dt,
+                        events,
+                        ..Default::default()
+                    },
+                    false,
+                    input.pixels_per_point(),
+                    options,
+                );
+                WheelStream {
+                    point,
+                    input,
+                    fresh,
+                }
+            };
+            // Use egui's own wheel conversion and smoothing at each input point.
+            // The next wheel event must not move the tail from another receiver.
+            let mut streams = Vec::new();
+            if let Some(previous) = previous.filter(|_| focus_intact) {
+                for stream in &previous.streams {
+                    let events = samples
+                        .iter()
+                        .position(|(at, _)| *at == stream.point)
+                        .map_or_else(Vec::new, |index| samples.remove(index).1);
+                    streams.push(advance(stream.point, stream.input.clone(), events));
+                }
+            }
+            streams.extend(
+                samples
+                    .into_iter()
+                    .map(|(point, events)| advance(point, InputState::default(), events)),
+            );
+            streams.retain(|stream| {
+                stream.input.is_scrolling() || stream.input.smooth_scroll_delta() != Vec2::ZERO
+            });
             Self {
                 pass,
                 cursor: input.pointer.latest_pos(),
-                sample,
+                streams,
             }
-        });
-        context.data_mut(|data| data.insert_temp(id, location));
+        }));
+        context.data_mut(|data| data.insert_temp(id, Arc::clone(&location)));
         location
     }
 }
@@ -90,33 +141,47 @@ pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
         context.plan.surface(),
     ));
     let pass = context.ui.ctx().cumulative_pass_nr();
+    let location = WheelLocation::for_pass(context.ui);
     let first_pass = pass
         .saturating_sub(u64::try_from(context.ui.ctx().current_pass_index()).unwrap_or(u64::MAX));
     let previous = context
         .ui
         .ctx()
         .data(|data| data.get_temp::<WheelClaim>(id));
-    if let Some(claim) = previous.filter(|claim| claim.first_pass == first_pass) {
+    if let Some(claim) = previous
+        .as_ref()
+        .filter(|claim| claim.first_pass == first_pass)
+    {
         // egui may advance wheel smoothing during a layout retry. The original
         // run already owns its action, including when a later callback discards it.
-        consume(context, claim.axes);
+        let mut captured = Vec2::ZERO;
+        for stream in &location.streams {
+            let delta = stream.input.smooth_scroll_delta();
+            let Some(local) = point_in_surface(context, stream.point, stream.fresh) else {
+                continue;
+            };
+            if let Some((origin, _, axes)) = prepare(context, id, local, delta)
+                && claim.owners.contains(&(origin, stream.point))
+            {
+                add_captured(&mut captured, delta, axes);
+            }
+        }
+        consume(context, captured);
         context.ui.ctx().data_mut(|data| {
             data.insert_temp(
                 id,
                 WheelClaim {
                     last_pass: pass,
-                    ..claim
+                    ..claim.clone()
                 },
             );
         });
         return;
     }
-    let location = WheelLocation::for_pass(context.ui);
-    let previous_owner = previous
+    let previous_owners = previous
         .filter(|claim| claim.last_pass.checked_add(1) == Some(first_pass))
-        .and_then(|claim| claim.owner);
-    let smoothing_tail = matches!(location.sample, WheelSample::None);
-    if smoothing_tail && previous_owner.is_none() {
+        .map_or_else(Vec::new, |claim| claim.owners);
+    if location.streams.is_empty() && previous_owners.is_empty() {
         return;
     }
     // A fresh run starts without a claim. Even when application content owns
@@ -127,8 +192,7 @@ pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
             WheelClaim {
                 first_pass,
                 last_pass: pass,
-                axes: [false; 2],
-                owner: None,
+                owners: Vec::new(),
             },
         );
     });
@@ -143,59 +207,92 @@ pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
     {
         return;
     }
-    let Some(bounds) = egui_rect(context.plan.bounds()) else {
-        return;
-    };
-    let Some(global_point) = (match location.sample {
-        WheelSample::None => previous_owner.map(|(_, at)| at),
-        WheelSample::At(point) => Some(point),
-        WheelSample::Ambiguous => None,
-    }) else {
-        return;
-    };
-    let point = context
-        .ui
-        .ctx()
-        .layer_transform_from_global(context.ui.layer_id())
-        .map_or(global_point, |transform| transform * global_point);
-    let clip = context.ui.clip_rect().intersect(bounds);
-    if !clip.is_positive()
-        || !clip.contains(point)
-        || context.ui.ctx().layer_id_at(global_point) != Some(context.ui.layer_id())
-        || !owns_framework_hits(context, global_point, point)
-    {
-        return;
+    let mut owners = Vec::new();
+    let mut captured = Vec2::ZERO;
+    let mut commands = Vec::<(Id, LogicalPoint, Vec2, Option<PreparedSurfaceAction>)>::new();
+    for stream in &location.streams {
+        let delta = stream.input.smooth_scroll_delta();
+        if !delta.is_finite() {
+            continue;
+        }
+        if delta == Vec2::ZERO {
+            owners.extend(
+                previous_owners
+                    .iter()
+                    .copied()
+                    .filter(|(_, point)| *point == stream.point),
+            );
+            continue;
+        }
+        let Some(point) = point_in_surface(context, stream.point, stream.fresh) else {
+            continue;
+        };
+        let Some((origin, action, ownership)) = prepare(context, id, point, delta) else {
+            continue;
+        };
+        let owner = (origin, stream.point);
+        if !stream.fresh && !previous_owners.contains(&owner) {
+            continue;
+        }
+        owners.push(owner);
+        add_captured(&mut captured, delta, ownership);
+        if let Some(action) = action {
+            if let Some((_, _, previous, prepared)) =
+                commands.iter_mut().find(|(id, _, _, _)| *id == origin)
+            {
+                *previous += delta;
+                *prepared = None;
+            } else {
+                commands.push((origin, point, delta, Some(action)));
+            }
+        }
     }
-    let Ok(logical_point) = LogicalPoint::new(f64::from(point.x), f64::from(point.y)) else {
-        return;
-    };
-    let delta = context.ui.input(|input| input.smooth_scroll_delta());
-    if !delta.is_finite() || delta == Vec2::ZERO {
-        return;
-    }
-    let Some((origin, action, axes)) = prepare(context, id, logical_point, delta) else {
-        return;
-    };
-    let owner = (origin, global_point);
-    if smoothing_tail && previous_owner != Some(owner) {
-        return;
-    }
-    consume(context, axes);
+    consume(context, captured);
     context.ui.ctx().data_mut(|data| {
         data.insert_temp(
             id,
             WheelClaim {
                 first_pass,
                 last_pass: pass,
-                axes,
-                owner: Some(owner),
+                owners,
             },
         );
     });
-    if let Some(action) = action {
-        context.push_local_action(origin, action);
-        context.ui.ctx().request_repaint();
+    for (origin, point, delta, prepared) in commands {
+        if let Some(action) = prepared.or_else(|| prepare(context, id, point, delta)?.1) {
+            context.push_local_action(origin, action);
+            context.ui.ctx().request_repaint();
+        }
     }
+}
+
+fn point_in_surface(
+    context: &RenderContext<'_, '_, '_>,
+    global: Pos2,
+    fresh: bool,
+) -> Option<LogicalPoint> {
+    let layer = context.ui.layer_id();
+    let local = context
+        .ui
+        .ctx()
+        .layer_transform_from_global(layer)
+        .map_or(global, |transform| transform * global);
+    let clip = context
+        .ui
+        .clip_rect()
+        .intersect(egui_rect(context.plan.bounds())?);
+    if !clip.is_positive() || !clip.contains(local) {
+        return None;
+    }
+    // A tail stays with the receiver that already accepted this sample. Its
+    // new paint record still has to identify the same scroll target.
+    if fresh
+        && (context.ui.ctx().layer_id_at(global) != Some(layer)
+            || !owns_framework_hits(context, global, local))
+    {
+        return None;
+    }
+    LogicalPoint::new(f64::from(local.x), f64::from(local.y)).ok()
 }
 
 fn prepare(
@@ -318,11 +415,21 @@ fn consumed_axes(axis: usize, single_direction: bool) -> [bool; 2] {
     [single_direction || axis == 0, single_direction || axis == 1]
 }
 
-fn consume(context: &RenderContext<'_, '_, '_>, axes: [bool; 2]) {
+fn add_captured(captured: &mut Vec2, delta: Vec2, axes: [bool; 2]) {
+    for (axis, owned) in axes.into_iter().enumerate() {
+        if owned {
+            captured[axis] += delta[axis];
+        }
+    }
+}
+
+fn consume(context: &RenderContext<'_, '_, '_>, captured: Vec2) {
     context.ui.input_mut(|input| {
-        for (axis, consumed) in axes.into_iter().enumerate() {
-            if consumed {
-                input.smooth_scroll_delta[axis] = 0.0;
+        for axis in 0..2 {
+            let available = input.smooth_scroll_delta[axis];
+            if captured[axis].signum() == available.signum() {
+                input.smooth_scroll_delta[axis] -=
+                    captured[axis].clamp(-available.abs(), available.abs());
             }
         }
     });

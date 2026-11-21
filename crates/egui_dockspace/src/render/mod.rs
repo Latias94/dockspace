@@ -15,6 +15,7 @@ mod drop_feedback;
 mod geometry;
 mod guides;
 mod measurement;
+mod menu_input;
 #[cfg(feature = "motion")]
 mod motion;
 mod presentation_menu;

@@ -3,29 +3,43 @@
 use dockspace::runtime::{
     RetainedTabListOpener, TabListMenuPaintRecord, TabStripControlPaintRecord,
 };
-use egui::accesskit::{Action, ActionRequest, NodeId, TreeId};
 use egui::{Event, EventFilter, Id, Key, PointerButton, Ui};
 
-use super::super::{RenderContext, actions::effective_enabled};
+use super::super::menu_input::{self, Intent, MenuKey, MenuKind, accesskit_focus_target};
+use super::super::{
+    RenderContext,
+    actions::{effective_enabled, focus_uninterrupted},
+};
 use super::MenuRow;
-
-mod routing;
-
-use routing::{Intent, MenuKey};
 
 #[derive(Clone)]
 struct PendingOpening {
     frame: u64,
     id: Id,
     opener: RetainedTabListOpener,
-    input: OpeningInput,
-    prior_focus: Option<Id>,
+    keys: Vec<MenuKey>,
+    outcome: Option<Outcome>,
+    retains_focus: bool,
 }
 
-#[derive(Clone)]
-pub(super) struct OpeningInput {
-    keys: Vec<MenuKey>,
-    pub(super) retains_focus: bool,
+pub(super) enum OpeningInput {
+    AwaitingPresentation,
+    Ready {
+        outcome: Option<Outcome>,
+        retains_focus: bool,
+    },
+}
+
+impl OpeningInput {
+    pub(super) fn retains_focus(&self) -> bool {
+        matches!(
+            self,
+            Self::Ready {
+                retains_focus: true,
+                ..
+            }
+        )
+    }
 }
 
 fn opening_slot(context: &RenderContext<'_, '_, '_>) -> Id {
@@ -36,27 +50,87 @@ fn opening_slot(context: &RenderContext<'_, '_, '_>) -> Id {
     ))
 }
 
-pub(super) fn register_opener(
+pub(super) fn register_opening(
     context: &RenderContext<'_, '_, '_>,
     control: TabStripControlPaintRecord,
     id: Id,
-    activated: bool,
+    start: usize,
 ) {
-    if let Some(input) = routing::register_closed_opener(context.ui, id)
-        && activated
-        && let Some(opener) = context.plan.retain_tab_list_opener(control)
-    {
-        let context_ui = context.ui.ctx();
-        let pending = PendingOpening {
-            frame: context_ui.cumulative_frame_nr(),
-            id,
-            opener,
-            input,
-            prior_focus: context_ui.memory(egui::Memory::focused),
-        };
-        let slot = opening_slot(context);
-        context_ui.data_mut(|data| data.insert_temp(slot, pending));
+    let Some(opener) = context.plan.retain_tab_list_opener(control) else {
+        return;
+    };
+    let ui = &*context.ui;
+    let focused = ui.memory(egui::Memory::focused);
+    // An application widget already built in this pass may have seen Enter.
+    // Preserve that confirmation while the new opener takes the next packet.
+    let application_seen_key = focused
+        .filter(|&focused| focused != id)
+        .is_some_and(|focused| {
+            ui.ctx()
+                .viewport(|viewport| viewport.this_pass.widgets.get(focused).is_some())
+        });
+    let application_took_focus = application_seen_key
+        && focused.is_some_and(|focused| !ui.memory(|memory| memory.had_focus_last_frame(focused)));
+    let (keys, retains_focus) = ui.input_mut(|input| {
+        let mut keys = Vec::new();
+        let mut slots = Vec::new();
+        let mut retains_focus = !application_took_focus;
+        for (slot, event) in input.events.iter().enumerate().skip(start) {
+            if accesskit_focus_target(event).is_some()
+                || matches!(event, Event::PointerButton { pressed: true, .. })
+            {
+                retains_focus = false;
+                break;
+            }
+            if matches!(
+                event,
+                Event::Key {
+                    key: Key::Tab,
+                    pressed: true,
+                    ..
+                }
+            ) {
+                retains_focus = false;
+                break;
+            }
+            let Some(key) = MenuKey::from_event(event).filter(|key| key.is_tab_list()) else {
+                continue;
+            };
+            if application_seen_key && matches!(key, MenuKey::Activate) {
+                break;
+            }
+            keys.push(key);
+            slots.push(slot);
+            if key.is_terminal() {
+                break;
+            }
+        }
+        for slot in slots.into_iter().rev() {
+            input.events.remove(slot);
+        }
+        (keys, retains_focus)
+    });
+    if retains_focus {
+        ui.memory_mut(|memory| memory.request_focus(id));
+        if !keys.last().is_some_and(|key| key.is_terminal()) {
+            menu_input::expect_tab_list(ui, id);
+        }
     }
+    let slot = opening_slot(context);
+    let frame = ui.ctx().cumulative_frame_nr();
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            slot,
+            PendingOpening {
+                frame,
+                id,
+                opener,
+                keys,
+                outcome: None,
+                retains_focus,
+            },
+        );
+    });
 }
 
 pub(super) fn take_opening_input(
@@ -67,26 +141,59 @@ pub(super) fn take_opening_input(
     let ui = &*context.ui;
     let frame = ui.ctx().cumulative_frame_nr();
     let slot = opening_slot(context);
-    let pending = ui.ctx().data_mut(|data| {
-        let pending = data.get_temp::<PendingOpening>(slot)?;
-        if pending.frame == frame {
-            return None;
-        }
-        data.remove::<PendingOpening>(slot);
-        Some(pending)
-    })?;
-    if pending.frame.checked_add(1) != Some(frame)
+    let mut pending = ui
+        .ctx()
+        .data(|data| data.get_temp::<PendingOpening>(slot))?;
+    let consecutive = pending.frame == frame || pending.frame.checked_add(1) == Some(frame);
+    if !consecutive
         || pending.id != opener
-        || !context
+        || !focus_uninterrupted(ui)
+        || context
             .plan
-            .retain_tab_list_menu(menu)?
-            .can_continue_opening(&pending.opener)
+            .retain_tab_list_menu(menu)
+            .is_none_or(|menu| !menu.can_continue_opening(&pending.opener))
     {
+        ui.ctx()
+            .data_mut(|data| data.remove::<PendingOpening>(slot));
         return None;
     }
-    let mut input = pending.input;
-    input.retains_focus &= ui.memory(egui::Memory::focused) == pending.prior_focus;
-    Some(input)
+    if pending.frame != frame {
+        let (keys, retains_focus) = menu_input::take_opening_keys(ui, opener);
+        if !pending.outcome.is_some_and(Outcome::is_terminal) {
+            pending.keys.extend(keys);
+        }
+        pending.retains_focus &= retains_focus;
+        pending.frame = frame;
+    }
+    let mut cursor = match pending.outcome {
+        Some(Outcome::Navigate(index)) => Some(index),
+        _ => menu.rows().position(|row| row.focused()),
+    };
+    let last = menu.rows().len().checked_sub(1);
+    for key in pending.keys.drain(..) {
+        if let Some(outcome) = step(&mut cursor, last, key) {
+            pending.outcome = Some(outcome);
+            if outcome.is_terminal() {
+                break;
+            }
+        }
+    }
+    if context.pointer_authority.supports_preview_gestures() && !context.plan.is_presented() {
+        // The open intent owns these keys until a renderer accepts its menu.
+        if pending.retains_focus && !pending.outcome.is_some_and(Outcome::is_terminal) {
+            menu_input::expect_tab_list(ui, opener);
+        }
+        ui.ctx().data_mut(|data| data.insert_temp(slot, pending));
+        ui.ctx().request_repaint();
+        return Some(OpeningInput::AwaitingPresentation);
+    }
+    ui.ctx().data_mut(|data| {
+        data.remove::<PendingOpening>(slot);
+    });
+    Some(OpeningInput::Ready {
+        outcome: pending.outcome,
+        retains_focus: pending.retains_focus,
+    })
 }
 
 pub(super) fn capture(
@@ -103,7 +210,12 @@ pub(super) fn capture(
     }
     let focused = context.ui.memory(egui::Memory::focused);
     let focused_index = rows.iter().position(|row| Some(row.id) == focused);
-    let routed = routing::register(context.ui, id, rows);
+    let routed = menu_input::register(
+        context.ui,
+        id,
+        rows.iter().map(|row| row.id),
+        MenuKind::TabList,
+    );
     if let Some(row) = focused_index.and_then(|index| rows.get(index)) {
         context.ui.memory_mut(|memory| {
             memory.set_focus_lock_filter(
@@ -130,6 +242,7 @@ pub(super) fn capture(
                 .iter()
                 .any(|candidate| candidate.id == row)
                 .then_some(Outcome::Dismiss),
+            Intent::Back(_) => None,
         };
         if let Some(outcome) = outcome {
             apply(
@@ -145,14 +258,11 @@ pub(super) fn capture(
         }
         return;
     }
-    if let Some(input) = opening_input {
-        let mut cursor = rows.iter().position(|row| row.record.focused());
-        let mut outcome = None;
-        for key in input.keys {
-            if let Some(next) = step(&mut cursor, rows.len().checked_sub(1), key) {
-                outcome = Some(next);
-            }
-        }
+    if let Some(OpeningInput::Ready {
+        outcome,
+        retains_focus,
+    }) = opening_input
+    {
         if let Some(outcome) = outcome {
             apply(
                 context,
@@ -161,7 +271,7 @@ pub(super) fn capture(
                 opener,
                 rows,
                 outcome,
-                input.retains_focus,
+                retains_focus,
                 None,
             );
         }
@@ -321,23 +431,17 @@ fn after_opening_click(ui: &Ui, opener: Id) -> Option<usize> {
     })
 }
 
-fn accesskit_focus_target(event: &Event) -> Option<NodeId> {
-    match event {
-        Event::AccessKitActionRequest(ActionRequest {
-            action: Action::Focus,
-            target_node,
-            target_tree: TreeId::ROOT,
-            data: None,
-        }) => Some(*target_node),
-        _ => None,
-    }
-}
-
 #[derive(Clone, Copy)]
-enum Outcome {
+pub(super) enum Outcome {
     Navigate(usize),
     Activate(usize),
     Dismiss,
+}
+
+impl Outcome {
+    fn is_terminal(self) -> bool {
+        matches!(self, Self::Activate(_) | Self::Dismiss)
+    }
 }
 
 struct KeyboardBatch {
@@ -384,13 +488,13 @@ fn keyboard_batch(
                 }
                 continue;
             }
-            let Some(key) = MenuKey::from_event(event) else {
+            let Some(key) = MenuKey::from_event(event).filter(|key| key.is_tab_list()) else {
                 continue;
             };
             if let Some(next) = step(&mut cursor, last, key) {
                 outcome = Some(next);
                 events.push((slot, event.clone()));
-                if matches!(next, Outcome::Activate(_) | Outcome::Dismiss) {
+                if next.is_terminal() {
                     break;
                 }
             }
