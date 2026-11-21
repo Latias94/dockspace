@@ -233,7 +233,7 @@ impl PreparedMenu {
     pub(super) fn paint(
         mut self,
         ui: &mut Ui,
-        popup_id: Id,
+        row_namespace: Id,
         ui_enabled: bool,
         entries: &mut Vec<(Response, MenuAction)>,
     ) {
@@ -270,7 +270,7 @@ impl PreparedMenu {
             }
             let response = paint_item(
                 ui,
-                popup_id.with(item.kind()),
+                row_namespace.with(item.kind()),
                 &item,
                 action.as_ref(),
                 ui_enabled,

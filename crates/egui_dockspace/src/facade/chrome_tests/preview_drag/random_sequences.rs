@@ -1047,18 +1047,16 @@ fn shared_grid_row_resize_range_remains_available_after_consecutive_resizes() {
         &mut trace,
     );
     harness.assert_random_invariants();
-    let row = harness
-        .splitters
-        .iter()
-        .filter(|control| control.orientation == Orientation::Horizontal)
-        .max_by(|left, right| left.rect.width().total_cmp(&right.rect.width()))
-        .copied()
-        .expect("the shared Grid exposes its full-width row boundary");
-    let mut previous = row.value;
-    for (boundary, positive, prefer_layout) in
-        [(181, true, false), (25, true, true), (25, false, false)]
-    {
-        harness.random_resize(boundary, positive, &mut trace);
+    let mut previous_row = None;
+    for (delta, prefer_layout) in [(12.0, false), (12.0, true), (-12.0, false)] {
+        let (row, point) = harness.begin_grid_resize(Orientation::Horizontal);
+        let (id, previous) = previous_row.get_or_insert((row.id, row.value));
+        assert_eq!(*id, row.id);
+        let destination = point + vec2(0.0, delta);
+        trace.push(format!("resize: {row:?}, {point:?} -> {destination:?}"));
+        harness.run(vec![Event::PointerMoved(destination)]);
+        assert!(harness.dockspace.has_active_gesture());
+        harness.release(destination);
         harness.assert_random_invariants();
         let updated = harness
             .splitters
@@ -1069,12 +1067,16 @@ fn shared_grid_row_resize_range_remains_available_after_consecutive_resizes() {
             updated.minimum.is_finite() && updated.value.is_finite() && updated.maximum.is_finite()
         );
         assert!(updated.minimum < updated.value && updated.value < updated.maximum);
-        assert!(if positive {
-            updated.value > previous
-        } else {
-            updated.value < previous
-        });
-        previous = updated.value;
+        assert!(
+            if delta > 0.0 {
+                updated.value > *previous
+            } else {
+                updated.value < *previous
+            },
+            "the shared Grid row moves in the drag direction\n{}",
+            trace.join("\n"),
+        );
+        *previous = updated.value;
         harness.random_click(
             TabSelector {
                 prefer_layout,

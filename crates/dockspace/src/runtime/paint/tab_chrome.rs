@@ -17,8 +17,8 @@ use crate::presentation::tab_strip::{
 use crate::runtime::{DeferredSurfaceAction, PreparedSurfaceAction, SurfaceTabListInput};
 
 use super::{
-    DockspacePaintLayer, DockspaceSemanticOutput, DockspaceVisualId, SurfacePaintPlan,
-    TabChromeInputId, VisualIdentity,
+    DockspaceControlId, DockspacePaintLayer, DockspaceSemanticOutput, DockspaceVisualId,
+    SurfacePaintPlan, VisualIdentity,
 };
 
 /// Input identity of one row in a core-issued tab-list menu instance.
@@ -221,8 +221,8 @@ impl TabStripControlPaintRecord {
 
     /// Returns the input identity for widget and accessibility registration.
     #[must_use]
-    pub const fn input_id(self) -> TabChromeInputId {
-        self.output.tab_input_id(self.visual_id())
+    pub const fn input_id(self) -> DockspaceControlId {
+        self.output.control_id(self.visual_id())
     }
 
     #[must_use]
@@ -383,17 +383,17 @@ impl<'plan> TabListMenuPaintRecord<'plan> {
 
     /// Returns the input identity shared by this popup's frame and scrollbar.
     #[must_use]
-    pub const fn input_id(self) -> TabChromeInputId {
-        self.backdrop.output.tab_input_id(self.backdrop.visual_id())
+    pub const fn input_id(self) -> DockspaceControlId {
+        self.backdrop.output.control_id(self.backdrop.visual_id())
     }
 
     /// Returns the same input identity used by the list button.
     #[must_use]
-    pub const fn opener_input_id(self) -> TabChromeInputId {
+    pub const fn opener_input_id(self) -> DockspaceControlId {
         let opener = TabStripControlId::TabListMenu(self.record.bar());
         self.backdrop
             .output
-            .tab_input_id(DockspaceVisualId(VisualIdentity::TabStripControl(opener)))
+            .control_id(DockspaceVisualId(VisualIdentity::TabStripControl(opener)))
     }
 
     #[must_use]

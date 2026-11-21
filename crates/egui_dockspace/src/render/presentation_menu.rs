@@ -181,13 +181,17 @@ pub(super) fn paint_tab(
                 false
             }
         });
-    if touch
+    let open_requested = touch
         || accessible
         || keyboard
-        || unambiguous_pointer_click(context.ui, response, PointerButton::Secondary)
-    {
-        response.request_focus();
-        Popup::open_id(context.ui.ctx(), popup_id);
+        || unambiguous_pointer_click(context.ui, response, PointerButton::Secondary);
+    if open_requested || Popup::is_id_open(context.ui.ctx(), popup_id) {
+        let request = if open_requested {
+            popup::OpenRequest::Open
+        } else {
+            popup::OpenRequest::Keep
+        };
+        paint_menu(context, Scope::Tab(tab), response, request)?;
     }
     let menu_open = Popup::is_id_open(context.ui.ctx(), popup_id);
     context
@@ -202,9 +206,6 @@ pub(super) fn paint_tab(
             ));
             node.add_action(Action::ShowContextMenu);
         });
-    if menu_open {
-        paint_menu(context, Scope::Tab(tab), response, false)?;
-    }
     Ok(())
 }
 
@@ -214,10 +215,10 @@ fn paint_scoped(
     contained: Option<ContainedPaintRecord<'_>>,
     disposition: SurfacePaintDisposition,
 ) -> Result<(), DockspaceRuntimeError> {
-    let (bounds, visual, operable, touch_requested) = match scope {
+    let (bounds, input_id, operable, touch_requested) = match scope {
         Scope::Root(anchor) => (
             Some(anchor.bounds()),
-            anchor.visual_id(),
+            anchor.input_id(),
             anchor.operable(),
             take_touch_context_menu(
                 context.ui,
@@ -230,7 +231,7 @@ fn paint_scoped(
         ),
         Scope::Tabs(bar) => (
             bar.group_menu_bounds(),
-            bar.visual_id(),
+            bar.group_menu_input_id(),
             context.plan.tabs_group_menu_operable(bar),
             false,
         ),
@@ -241,7 +242,7 @@ fn paint_scoped(
     };
     let id = context
         .ui
-        .make_persistent_id((context.instance_id, scope.label(), visual));
+        .make_persistent_id((context.instance_id, input_id));
     let popup_id = id.with("popup");
     let ui_enabled = effective_enabled(context.ui, operable)
         && !disposition.is_source_gap()
@@ -262,10 +263,6 @@ fn paint_scoped(
     // Keep the button registered while unfocused: the first new press can
     // focus the host and hit its previously presented widget in one batch.
     let can_activate = ui_enabled && focus_uninterrupted(context.ui);
-    if can_activate && touch_requested {
-        response.request_focus();
-        Popup::open_id(context.ui.ctx(), popup_id);
-    }
     if !ui_enabled && Popup::is_id_open(context.ui.ctx(), popup_id) {
         Popup::close_id(context.ui.ctx(), popup_id);
     }
@@ -275,8 +272,13 @@ fn paint_scoped(
             data.remove::<MenuPage>(popup_id.with("page"));
         });
     }
-    if menu_open || (can_activate && response.clicked()) {
-        paint_menu(context, scope, &response, !touch_requested)?;
+    if menu_open || (can_activate && (touch_requested || response.clicked())) {
+        let request = if can_activate && touch_requested {
+            popup::OpenRequest::Open
+        } else {
+            popup::OpenRequest::ToggleOnClick
+        };
+        paint_menu(context, scope, &response, request)?;
     }
     let menu_open = Popup::is_id_open(context.ui.ctx(), popup_id);
     if !disposition.is_source_gap() {
@@ -335,7 +337,7 @@ fn paint_menu(
     context: &mut RenderContext<'_, '_, '_>,
     scope: Scope<'_>,
     response: &Response,
-    toggle_on_click: bool,
+    request: popup::OpenRequest,
 ) -> Result<(), DockspaceRuntimeError> {
     let popup_id = response.id.with("popup");
     let page_id = popup_id.with("page");
@@ -375,13 +377,13 @@ fn paint_menu(
         scope.visual(),
         popup_id,
         response,
-        toggle_on_click,
+        request,
         context.style,
-        |ui| {
+        |ui, row_namespace| {
             context.panes.customize_menu(&mut prepared.menu);
             prepared.paint(
                 ui,
-                popup_id.with(page.map(|page| page.kind)),
+                row_namespace.with(page.map(|page| page.kind)),
                 ui_enabled,
                 &mut entries,
             );

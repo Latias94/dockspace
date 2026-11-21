@@ -1,7 +1,7 @@
 //! Pane, tab, and tab-bar paint records.
 
 use crate::geometry::LogicalRect;
-use crate::ids::{ItemId, RootId, TabKey};
+use crate::ids::{ItemId, RootId, TabKey, WorkspaceRevision};
 use crate::policy::TabBarInteraction;
 use crate::presentation::scene::{
     PaneRecord, PresentationPlan, TabBarRecord, TabBarSceneId, TabGroupDragRegionKind,
@@ -10,8 +10,8 @@ use crate::presentation::scene::{
 };
 
 use super::{
-    DockspacePaintLayer, DockspaceSemanticOutput, DockspaceVisualId, SurfacePaintPlan,
-    TabChromeInputId, VisualIdentity,
+    ControlScope, ControlTarget, DockspaceControlId, DockspacePaintLayer, DockspaceSemanticOutput,
+    DockspaceVisualId, SurfacePaintPlan, VisualIdentity,
 };
 
 /// The allocation and clip for mounting application content in a pane.
@@ -128,6 +128,7 @@ pub struct TabPaintRecord<'plan> {
     pub(super) record: &'plan TabRecord,
     plan: &'plan PresentationPlan,
     output: DockspaceSemanticOutput,
+    revision: WorkspaceRevision,
     selected: bool,
     operable: bool,
 }
@@ -138,6 +139,7 @@ impl<'plan> TabPaintRecord<'plan> {
             record,
             plan: plan.plan,
             output: plan.semantic_output(),
+            revision: plan.version.revision(),
             selected: plan.plan.tab_selected(record),
             operable: plan.tab_is_operable(record),
         }
@@ -147,10 +149,27 @@ impl<'plan> TabPaintRecord<'plan> {
         self.output == plan.semantic_output()
     }
 
-    /// Returns the widget namespace shared by this tab body and close control.
+    /// Returns the host input identity for this tab header.
     #[must_use]
-    pub const fn input_id(self) -> TabChromeInputId {
-        self.output.tab_input_id(self.visual_id())
+    pub const fn input_id(self) -> DockspaceControlId {
+        self.output.control_id(self.visual_id())
+    }
+
+    /// Returns the host input identity for this tab's close button.
+    ///
+    /// A layout tab closes a subtree. Its close identity expires when the
+    /// workspace revision changes, while a pane tab keeps targeting one item.
+    #[must_use]
+    pub const fn close_input_id(self) -> DockspaceControlId {
+        let revision = if self.key().is_layout() {
+            Some(self.revision)
+        } else {
+            None
+        };
+        DockspaceControlId(
+            ControlScope::from_scene(self.output.ticket.scene_stamp()),
+            ControlTarget::TabClose(*self.record.id(), revision),
+        )
     }
 
     #[must_use]
@@ -383,6 +402,15 @@ impl<'plan> TabBarPaintRecord<'plan> {
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::TabBar(*self.record.id()))
+    }
+
+    /// Returns the host input identity for this group's command-menu opener.
+    #[must_use]
+    pub const fn group_menu_input_id(self) -> DockspaceControlId {
+        DockspaceControlId(
+            ControlScope::from_scene(self.output.ticket.scene_stamp()),
+            ControlTarget::TabGroupMenu(*self.record.id()),
+        )
     }
 
     /// Returns the independent Tabs container represented by this strip.

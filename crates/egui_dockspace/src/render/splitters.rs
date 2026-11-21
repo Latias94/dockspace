@@ -29,7 +29,7 @@ pub(crate) fn paint_splitter(
     };
     let id = context
         .ui
-        .make_persistent_id((context.instance_id, "splitter", splitter.visual_id()));
+        .make_persistent_id((context.instance_id, splitter.input_id()));
     let enabled = effective_enabled(context.ui, splitter.operable());
     let drag_enabled = enabled && context.pointer_authority.supports_preview_gestures();
     let double_click = enabled
@@ -160,11 +160,9 @@ pub(crate) fn paint_junction(
     let Some(hit) = egui_rect(junction.hit_bounds()) else {
         return;
     };
-    let id = context.ui.make_persistent_id((
-        context.instance_id,
-        "splitter-junction",
-        junction.visual_id(),
-    ));
+    let id = context
+        .ui
+        .make_persistent_id((context.instance_id, junction.input_id()));
     let core_operable = context.plan.splitter_junction_operable(junction);
     let operable = effective_enabled(context.ui, core_operable);
     let drag_operable = operable && context.pointer_authority.supports_preview_gestures();

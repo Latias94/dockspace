@@ -7,7 +7,8 @@ use crate::engine::SurfaceContributionToken;
 use crate::geometry::{LogicalPoint, LogicalRect, LogicalSize, PhysicalRect};
 use crate::graph::Axis;
 use crate::ids::{
-    FloatingPresentationId, HostPresentationAttemptId, ItemId, RootId, SurfaceId, TabKey,
+    EngineAuthorityDomainId, FloatingPresentationId, HostPresentationAttemptId, ItemId, RootId,
+    SurfaceId, TabKey, WorkspaceEpoch, WorkspaceRevision,
 };
 use crate::interaction::targeting::guide::DropGuideClusterId;
 use crate::interaction::targeting::resolver::DropAffordance;
@@ -95,8 +96,8 @@ impl DockspaceSemanticOutput {
         self.ticket.surface()
     }
 
-    const fn tab_input_id(self, target: DockspaceVisualId) -> TabChromeInputId {
-        TabChromeInputId::new(self.ticket.scene_stamp(), target)
+    const fn control_id(self, target: DockspaceVisualId) -> DockspaceControlId {
+        DockspaceControlId::new(self.ticket.scene_stamp(), target)
     }
 }
 
@@ -113,32 +114,53 @@ impl fmt::Debug for DockspaceSemanticOutput {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DockspaceVisualId(VisualIdentity);
 
-/// Host widget and accessibility identity for an interactive tab control.
+/// Host widget and accessibility identity for an interactive docking control.
 ///
-/// It remains stable across repainting and expires after a session or layout
-/// replacement. Popup controls also expire with their menu instance and roster.
-/// Core actions still require a record from the current output.
+/// It remains stable across ordinary repainting and expires on session or layout
+/// replacement. Controls with a narrower scope, such as a popup or an entire
+/// floating root's close button, can expire earlier. Prepare actions using the
+/// current paint record and its corresponding output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TabChromeInputId {
-    domain: crate::ids::EngineAuthorityDomainId,
-    epoch: crate::ids::WorkspaceEpoch,
+pub struct DockspaceControlId(ControlScope, ControlTarget);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct ControlScope {
+    domain: EngineAuthorityDomainId,
+    epoch: WorkspaceEpoch,
     surface: SurfaceId,
-    target: DockspaceVisualId,
 }
 
-impl TabChromeInputId {
+impl DockspaceControlId {
     pub(super) const fn new(
         scene: crate::presentation::scene::SurfaceSceneStamp,
         target: DockspaceVisualId,
     ) -> Self {
+        Self(
+            ControlScope::from_scene(scene),
+            ControlTarget::Visual(target),
+        )
+    }
+}
+
+impl ControlScope {
+    const fn from_scene(scene: crate::presentation::scene::SurfaceSceneStamp) -> Self {
         let requirement = scene.requirement();
         Self {
             domain: requirement.authority_domain(),
             epoch: requirement.workspace_epoch(),
             surface: scene.surface(),
-            target,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum ControlTarget {
+    Visual(DockspaceVisualId),
+    TabClose(TabSceneId, Option<WorkspaceRevision>),
+    TabGroupMenu(TabBarSceneId),
+    ContainedTitle(FloatingPresentationId, RootId),
+    ContainedClose(FloatingPresentationId, RootId, WorkspaceRevision),
+    ContainedResize(FloatingPresentationId, RootId, ContainedResizeDirection),
 }
 
 /// Content identity preserved across docking within one session and workspace epoch.
@@ -605,12 +627,19 @@ impl DockspaceContainedTransformPreview<'_> {
 #[derive(Debug, Clone, Copy)]
 pub struct SplitterPaintRecord<'plan> {
     record: &'plan SplitterRecord,
+    scope: ControlScope,
 }
 
 impl SplitterPaintRecord<'_> {
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::Splitter(*self.record.id()))
+    }
+
+    /// Returns the host input identity for this splitter.
+    #[must_use]
+    pub const fn input_id(self) -> DockspaceControlId {
+        DockspaceControlId(self.scope, ControlTarget::Visual(self.visual_id()))
     }
 
     #[must_use]
@@ -677,6 +706,7 @@ impl SplitterPaintRecord<'_> {
 #[derive(Clone, Copy)]
 pub struct SplitterJunctionPaintRecord<'plan> {
     record: &'plan SplitterJunctionRecord,
+    scope: ControlScope,
 }
 
 impl fmt::Debug for SplitterJunctionPaintRecord<'_> {
@@ -701,6 +731,12 @@ impl SplitterJunctionPaintRecord<'_> {
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::SplitterJunction(self.record.id()))
+    }
+
+    /// Returns the host input identity for this junction.
+    #[must_use]
+    pub const fn input_id(self) -> DockspaceControlId {
+        DockspaceControlId(self.scope, ControlTarget::Visual(self.visual_id()))
     }
 
     #[must_use]
@@ -741,6 +777,9 @@ impl SplitterJunctionPaintRecord<'_> {
 pub struct ContainedResizePaintRecord {
     record: ContainedResizeRecord,
     operable: bool,
+    scope: ControlScope,
+    floating: FloatingPresentationId,
+    root: RootId,
 }
 
 /// Product-facing chrome host of one root presentation command menu anchor.
@@ -760,6 +799,7 @@ pub struct PresentationMenuAnchorPaintRecord<'plan> {
     record: &'plan PresentationMenuAnchorRecord,
     bounds: LogicalRect,
     operable: bool,
+    scope: ControlScope,
 }
 
 impl fmt::Debug for PresentationMenuAnchorPaintRecord<'_> {
@@ -780,6 +820,12 @@ impl PresentationMenuAnchorPaintRecord<'_> {
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::PresentationMenuAnchor(self.record.root()))
+    }
+
+    /// Returns the host input identity for this root's command-menu opener.
+    #[must_use]
+    pub const fn input_id(self) -> DockspaceControlId {
+        DockspaceControlId(self.scope, ControlTarget::Visual(self.visual_id()))
     }
 
     /// Returns the stable root whose commands this anchor opens.
@@ -842,6 +888,15 @@ impl PresentationMenuAnchorPaintRecord<'_> {
 }
 
 impl ContainedResizePaintRecord {
+    /// Returns the host input identity for this exact contained resize edge.
+    #[must_use]
+    pub const fn input_id(self) -> DockspaceControlId {
+        DockspaceControlId(
+            self.scope,
+            ControlTarget::ContainedResize(self.floating, self.root, self.direction()),
+        )
+    }
+
     #[must_use]
     pub const fn direction(self) -> ContainedResizeDirection {
         ContainedResizeDirection::from_core(self.record.direction())
@@ -865,6 +920,8 @@ impl ContainedResizePaintRecord {
 pub struct ContainedPaintRecord<'plan> {
     record: &'plan ContainedRecord,
     plan: &'plan PresentationPlan,
+    scope: ControlScope,
+    revision: WorkspaceRevision,
 }
 
 impl fmt::Debug for ContainedPaintRecord<'_> {
@@ -880,9 +937,39 @@ impl fmt::Debug for ContainedPaintRecord<'_> {
 }
 
 impl<'plan> ContainedPaintRecord<'plan> {
+    fn new(plan: &SurfacePaintPlan<'plan>, record: &'plan ContainedRecord) -> Self {
+        Self {
+            record,
+            plan: plan.plan,
+            scope: ControlScope::from_scene(plan.scene),
+            revision: plan.version.revision(),
+        }
+    }
+
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::Contained(self.record.floating()))
+    }
+
+    /// Returns the host input identity for the contained title control.
+    #[must_use]
+    pub const fn input_id(self) -> DockspaceControlId {
+        DockspaceControlId(
+            self.scope,
+            ControlTarget::ContainedTitle(self.floating(), self.root()),
+        )
+    }
+
+    /// Returns the host input identity for closing the complete contained root.
+    ///
+    /// Workspace revisions invalidate this identity so a delayed activation
+    /// cannot close a different set of panes in the same floating window.
+    #[must_use]
+    pub const fn close_input_id(self) -> DockspaceControlId {
+        DockspaceControlId(
+            self.scope,
+            ControlTarget::ContainedClose(self.floating(), self.root(), self.revision),
+        )
     }
 
     /// Returns this root's frozen content or container descriptor.
@@ -972,6 +1059,9 @@ impl<'plan> ContainedPaintRecord<'plan> {
             .map(move |record| ContainedResizePaintRecord {
                 operable: transform_operable && plan.region_is_operable(record.hit().rect(), layer),
                 record,
+                scope: self.scope,
+                floating: self.floating(),
+                root: self.root(),
             })
     }
 
@@ -2022,10 +2112,9 @@ impl<'frame> SurfacePaintPlan<'frame> {
     ) -> SurfacePaintProgramRoot<'frame> {
         let kind = match root.contained_record() {
             None => SurfacePaintProgramRootKind::Main,
-            Some(record) => SurfacePaintProgramRootKind::Contained(ContainedPaintRecord {
-                record,
-                plan: self.plan,
-            }),
+            Some(record) => {
+                SurfacePaintProgramRootKind::Contained(ContainedPaintRecord::new(self, record))
+            }
         };
         SurfacePaintProgramRoot {
             root: root.root(),
@@ -2055,11 +2144,15 @@ impl<'frame> SurfacePaintPlan<'frame> {
                 SurfacePaintProgramOperation::Tab(TabPaintRecord::new(self, record))
             }
             ResolvedSurfaceProgramOperation::Splitter(record) => {
-                SurfacePaintProgramOperation::Splitter(SplitterPaintRecord { record })
+                SurfacePaintProgramOperation::Splitter(SplitterPaintRecord {
+                    record,
+                    scope: ControlScope::from_scene(self.scene),
+                })
             }
             ResolvedSurfaceProgramOperation::SplitterJunction(record) => {
                 SurfacePaintProgramOperation::SplitterJunction(SplitterJunctionPaintRecord {
                     record,
+                    scope: ControlScope::from_scene(self.scene),
                 })
             }
             ResolvedSurfaceProgramOperation::TabStripControl(record) => {
@@ -2070,10 +2163,9 @@ impl<'frame> SurfacePaintPlan<'frame> {
                 ))
             }
             ResolvedSurfaceProgramOperation::ContainedControls(record) => {
-                SurfacePaintProgramOperation::ContainedControls(ContainedPaintRecord {
-                    record,
-                    plan: self.plan,
-                })
+                SurfacePaintProgramOperation::ContainedControls(ContainedPaintRecord::new(
+                    self, record,
+                ))
             }
             ResolvedSurfaceProgramOperation::PresentationMenuAnchor(record) => {
                 let bounds = record.ready_bounds()?;
@@ -2082,6 +2174,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
                         record,
                         bounds,
                         operable: self.plan.region_is_operable(bounds, record.layer()),
+                        scope: ControlScope::from_scene(self.scene),
                     },
                 )
             }
@@ -2455,13 +2548,14 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self.plan
             .presentation_menu_anchor_records()
             .iter()
-            .filter_map(|record| {
+            .filter_map(move |record| {
                 record
                     .ready_bounds()
                     .map(|bounds| PresentationMenuAnchorPaintRecord {
                         record,
                         bounds,
                         operable: self.plan.region_is_operable(bounds, record.layer()),
+                        scope: ControlScope::from_scene(self.scene),
                     })
             })
     }
@@ -2502,7 +2596,10 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self.plan
             .splitter_records()
             .iter()
-            .map(|record| SplitterPaintRecord { record })
+            .map(move |record| SplitterPaintRecord {
+                record,
+                scope: ControlScope::from_scene(self.scene),
+            })
     }
 
     pub(crate) fn splitter_junctions(
@@ -2511,16 +2608,18 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self.plan
             .splitter_junction_records()
             .iter()
-            .map(|record| SplitterJunctionPaintRecord { record })
+            .map(move |record| SplitterJunctionPaintRecord {
+                record,
+                scope: ControlScope::from_scene(self.scene),
+            })
     }
 
     #[cfg(test)]
     pub(crate) fn contained(self) -> impl ExactSizeIterator<Item = ContainedPaintRecord<'frame>> {
-        let plan = self.plan;
         self.plan
             .contained_records()
             .iter()
-            .map(move |record| ContainedPaintRecord { record, plan })
+            .map(move |record| ContainedPaintRecord::new(&self, record))
     }
 
     #[cfg(test)]

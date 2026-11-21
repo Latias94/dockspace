@@ -136,5 +136,5 @@ pub(super) fn paint(
 pub(super) fn id(context: &RenderContext<'_, '_, '_>, tab: TabPaintRecord<'_>) -> egui::Id {
     context
         .ui
-        .make_persistent_id((context.instance_id, "tab-close", tab.input_id()))
+        .make_persistent_id((context.instance_id, tab.close_input_id()))
 }

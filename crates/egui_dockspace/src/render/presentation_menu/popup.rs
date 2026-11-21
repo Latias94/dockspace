@@ -21,14 +21,21 @@ struct MenuRun {
     surface: dockspace::model::SurfaceId,
     visual: DockspaceVisualId,
     toggled_in: Option<(ViewportId, u64)>,
-    visible_pass: u64,
+    visible_pass: Option<u64>,
+    row_namespace: Id,
     press_started_while_open: bool,
     focused_entry: Option<Id>,
 }
 
-fn run_id() -> Id {
-    // egui owns one open popup per context; this slot retains no popup history.
-    Id::unique("egui-dockspace-presentation-menu-run")
+pub(super) enum OpenRequest {
+    Keep,
+    Open,
+    ToggleOnClick,
+}
+
+fn run_id(viewport: ViewportId) -> Id {
+    // egui owns one open popup per viewport.
+    Id::unique("egui-dockspace-presentation-menu-run").with(viewport)
 }
 
 fn layer(instance: Id, surface: dockspace::model::SurfaceId) -> LayerId {
@@ -54,15 +61,17 @@ pub(super) fn source_available(ui: &Ui, instance: Id, popup: Id) -> bool {
     if !Popup::is_any_open(ui.ctx()) || Popup::is_id_open(ui.ctx(), popup) {
         return true;
     }
+    let run_id = run_id(ui.ctx().viewport_id());
     ui.ctx()
-        .data(|data| data.get_temp::<MenuRun>(run_id()))
+        .data(|data| data.get_temp::<MenuRun>(run_id))
         .is_some_and(|run| run.instance == instance && Popup::is_id_open(ui.ctx(), run.popup))
 }
 
 pub(crate) fn invalidate_stale(ui: &Ui, instance: Id, plan: SurfacePaintPlan<'_>) {
+    let run_id = run_id(ui.ctx().viewport_id());
     let Some(run) = ui
         .ctx()
-        .data(|data| data.get_temp::<MenuRun>(run_id()))
+        .data(|data| data.get_temp::<MenuRun>(run_id))
         .filter(|run| run.instance == instance && run.surface == plan.surface())
     else {
         return;
@@ -73,7 +82,7 @@ pub(crate) fn invalidate_stale(ui: &Ui, instance: Id, plan: SurfacePaintPlan<'_>
         || !source_available(ui, instance, run.popup)
     {
         Popup::close_id(ui.ctx(), run.popup);
-        ui.ctx().data_mut(|data| data.remove::<MenuRun>(run_id()));
+        ui.ctx().data_mut(|data| data.remove::<MenuRun>(run_id));
         return;
     }
     if !Popup::is_id_open(ui.ctx(), run.popup) {
@@ -100,7 +109,7 @@ pub(crate) fn invalidate_stale(ui: &Ui, instance: Id, plan: SurfacePaintPlan<'_>
         .is_ok();
     if !valid_program || !live {
         Popup::close_id(ui.ctx(), run.popup);
-        ui.ctx().data_mut(|data| data.remove::<MenuRun>(run_id()));
+        ui.ctx().data_mut(|data| data.remove::<MenuRun>(run_id));
     }
 }
 
@@ -112,9 +121,9 @@ pub(super) fn show(
     visual: DockspaceVisualId,
     popup: Id,
     anchor: &Response,
-    toggle_on_click: bool,
+    request: OpenRequest,
     style: &crate::DockStyle,
-    content: impl FnOnce(&mut Ui) -> (Vec<Id>, Vec<Id>),
+    content: impl FnOnce(&mut Ui, Id) -> (Vec<Id>, Vec<Id>),
 ) -> Option<InnerResponse<Option<keyboard::Outcome>>> {
     let context = source.ctx();
     if !super::effective_enabled(source, anchor.enabled())
@@ -129,8 +138,9 @@ pub(super) fn show(
         context.cumulative_frame_nr_for(context.viewport_id()),
     );
     let pass = context.cumulative_pass_nr();
+    let run_id = run_id(frame.0);
     let mut run = context
-        .data(|data| data.get_temp::<MenuRun>(run_id()))
+        .data(|data| data.get_temp::<MenuRun>(run_id))
         .filter(|run| run.popup == popup)
         .unwrap_or(MenuRun {
             instance,
@@ -139,34 +149,46 @@ pub(super) fn show(
             surface,
             visual,
             toggled_in: None,
-            visible_pass: 0,
+            visible_pass: None,
+            row_namespace: popup,
             press_started_while_open: false,
             focused_entry: None,
         });
     if run.workspace != workspace {
         Popup::close_id(context, popup);
-        context.data_mut(|data| data.remove::<MenuRun>(run_id()));
+        context.data_mut(|data| data.remove::<MenuRun>(run_id));
         return None;
     }
-    // While open, Enter/Space belong to the ordered menu keyboard handler.
-    // egui also marks the focused anchor as clicked for those same keys.
-    let keyboard_open = !Popup::is_id_open(context, popup)
-        && anchor.has_focus()
-        && source.input(|input| {
-            input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
-        });
-    let anchor_toggle = keyboard_open
-        || source.input(|input| {
-            input.has_accesskit_action_request(anchor.id, egui::accesskit::Action::Click)
-        })
-        || super::unambiguous_pointer_click(source, anchor, egui::PointerButton::Primary);
-    if toggle_on_click && anchor.clicked() && anchor_toggle && run.toggled_in != Some(frame) {
-        anchor.request_focus();
-        Popup::toggle_id(context, popup);
-        run.toggled_in = Some(frame);
+    let already_open = Popup::is_id_open(context, popup);
+    match request {
+        OpenRequest::Open => {
+            anchor.request_focus();
+            Popup::open_id(context, popup);
+        }
+        OpenRequest::ToggleOnClick if anchor.clicked() && run.toggled_in != Some(frame) => {
+            // While open, Enter/Space belong to the ordered menu keyboard handler.
+            // egui also marks the focused anchor as clicked for those same keys.
+            let keyboard_open = !already_open
+                && anchor.has_focus()
+                && source.input(|input| {
+                    input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
+                });
+            if keyboard_open
+                || source.input(|input| {
+                    input.has_accesskit_action_request(anchor.id, egui::accesskit::Action::Click)
+                })
+                || super::unambiguous_pointer_click(source, anchor, egui::PointerButton::Primary)
+            {
+                anchor.request_focus();
+                Popup::toggle_id(context, popup);
+                run.toggled_in = Some(frame);
+            }
+        }
+        OpenRequest::Keep | OpenRequest::ToggleOnClick => {}
     }
     if !Popup::is_id_open(context, popup) {
-        context.data_mut(|data| data.insert_temp(run_id(), run));
+        run.visible_pass = None;
+        context.data_mut(|data| data.insert_temp(run_id, run));
         return None;
     }
     Popup::open_id(context, popup);
@@ -181,10 +203,14 @@ pub(super) fn show(
     }
     let menu_layer = layer(instance, surface);
     prepare_layer(source, instance, surface);
-    let was_open = run.visible_pass.checked_add(1) == Some(pass);
+    let was_open =
+        already_open && run.visible_pass.and_then(|pass| pass.checked_add(1)) == Some(pass);
     let (pressed, clicked) =
         source.input(|input| (input.pointer.any_pressed(), input.pointer.any_click()));
     if !was_open {
+        // Each opening issues fresh input nodes, even if the roster is unchanged.
+        run.row_namespace = popup.with((workspace, frame.0, pass));
+        run.focused_entry = None;
         run.press_started_while_open = false;
     } else if pressed {
         run.press_started_while_open = true;
@@ -234,7 +260,7 @@ pub(super) fn show(
                         .id_salt("presentation-menu-scroll")
                         .max_height(available.y)
                         .show(ui, |ui| {
-                            let (entries, submenus) = content(ui);
+                            let (entries, submenus) = content(ui, run.row_namespace);
                             // Removed or disabled rows still own their preceding focus.
                             // Return it to the anchor without taking a newer application's focus.
                             if !ui.is_sizing_pass()
@@ -281,7 +307,7 @@ pub(super) fn show(
         output.response.set_close();
         run.press_started_while_open = false;
     }
-    run.visible_pass = pass;
-    context.data_mut(|data| data.insert_temp(run_id(), run));
+    run.visible_pass = Some(pass);
+    context.data_mut(|data| data.insert_temp(run_id, run));
     Some(output)
 }

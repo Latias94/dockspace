@@ -1,7 +1,7 @@
 //! Tab-strip overflow controls and the core-owned tab-list popup.
 
 use dockspace::runtime::{
-    SurfacePaintDisposition, TabChromeInputId, TabListMenuBackdropPaintRecord,
+    DockspaceControlId, SurfacePaintDisposition, TabListMenuBackdropPaintRecord,
     TabListMenuPaintRecord, TabListMenuRowPaintRecord, TabStripControlKind,
     TabStripControlPaintRecord,
 };
@@ -85,7 +85,7 @@ pub(super) fn control_id(
     control_widget_id(context, control.input_id())
 }
 
-fn control_widget_id(context: &RenderContext<'_, '_, '_>, control: TabChromeInputId) -> Id {
+fn control_widget_id(context: &RenderContext<'_, '_, '_>, control: DockspaceControlId) -> Id {
     context
         .ui
         .make_persistent_id((context.instance_id, "tab-strip-control", control))

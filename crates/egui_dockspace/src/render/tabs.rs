@@ -1,7 +1,7 @@
 //! Pane and tab rendering over opaque product paint records.
 
 use dockspace::runtime::{
-    DockspaceRuntimeError, PanePaintRecord, SurfacePaintDisposition, TabChromeInputId,
+    DockspaceControlId, DockspaceRuntimeError, PanePaintRecord, SurfacePaintDisposition,
     TabGroupDragRegionKind, TabPaintRecord, TabsPaintRecord,
 };
 use egui::accesskit::{Action, Role};
@@ -585,7 +585,7 @@ fn publish_native_tab_bounds_diagnostic(ui: &Ui, tab: Id, visible: egui::Rect, t
         });
 }
 
-pub(super) fn tab_id(ui: &Ui, instance_id: Id, input: TabChromeInputId) -> Id {
+pub(super) fn tab_id(ui: &Ui, instance_id: Id, input: DockspaceControlId) -> Id {
     ui.make_persistent_id((instance_id, "tab", input))
 }
 

@@ -418,9 +418,9 @@ impl PreparedSurfaceAction {
 
     /// Returns the widget identity to focus, including a tab revealed by navigation.
     #[must_use]
-    pub const fn tab_focus_input_id(&self) -> Option<super::TabChromeInputId> {
+    pub const fn tab_focus_input_id(&self) -> Option<super::DockspaceControlId> {
         match self.action {
-            SurfaceAction::SelectTab { scene, selection } => Some(super::TabChromeInputId::new(
+            SurfaceAction::SelectTab { scene, selection } => Some(super::DockspaceControlId::new(
                 scene,
                 super::DockspaceVisualId::from_tab_scene(selection.target()),
             )),
@@ -595,7 +595,7 @@ impl DeferredSurfaceAction {
 
     /// Returns the widget identity to focus, including a tab revealed by navigation.
     #[must_use]
-    pub const fn tab_focus_input_id(&self) -> Option<super::TabChromeInputId> {
+    pub const fn tab_focus_input_id(&self) -> Option<super::DockspaceControlId> {
         self.0.tab_focus_input_id()
     }
 

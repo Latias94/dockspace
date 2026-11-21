@@ -5,6 +5,229 @@ use egui_dockspace::{
 };
 
 #[test]
+fn stale_group_close_controls_cannot_close_replacement_panes() {
+    for remount in [false, true] {
+        for (anchor, label) in [
+            (Some("Layout actions"), "Close Layout"),
+            (Some("Tab group actions"), "Close Tab Group"),
+            (None, "Close floating Floating group"),
+        ] {
+            let context = Context::default();
+            context.enable_accesskit();
+            let layout = |items| {
+                let surface = if anchor.is_some() {
+                    DockspaceSurfaceLayout::new(
+                        SURFACE,
+                        DockspaceRootLayout::new(ROOT, DockspaceNode::central_tabs(items)),
+                    )
+                } else {
+                    DockspaceSurfaceLayout::new(
+                        SURFACE,
+                        DockspaceRootLayout::new(ROOT, DockspaceNode::central_tabs([FIRST])),
+                    )
+                    .with_contained(DockspaceContainedLayout::new(
+                        FLOATING,
+                        DockspaceRootLayout::new(
+                            FLOATING_ROOT,
+                            DockspaceNode::tabs(items).named("Floating group"),
+                        ),
+                        LogicalRect::new(460.0, 240.0, 280.0, 220.0).unwrap(),
+                    ))
+                };
+                DockspaceLayout::new([surface]).unwrap()
+            };
+            let build = |items| {
+                Dockspace::builder("replace-close-scope", layout(items))
+                    .build()
+                    .unwrap()
+            };
+            let mut dockspace = build([SECOND, THIRD, FOURTH]);
+            let mut panes = Panes;
+            let old_opener = anchor.map(|label| {
+                let first = run_frame(&context, &mut dockspace, &mut panes, Vec::new());
+                accesskit_node(&first.output, Role::Button, label).0
+            });
+            let old = group_close_node(&context, &mut dockspace, &mut panes, anchor, label);
+            let replacement = [ItemId::new(51), ItemId::new(52), ItemId::new(53)];
+            if remount {
+                dockspace = build(replacement);
+            } else {
+                dockspace.reset_layout(layout(replacement)).unwrap();
+            }
+            if let Some((anchor, opener)) = anchor.zip(old_opener) {
+                run_frame(&context, &mut dockspace, &mut panes, Vec::new());
+                let attempted = run_frame(
+                    &context,
+                    &mut dockspace,
+                    &mut panes,
+                    vec![accesskit_action(opener, Action::Click)],
+                );
+                let (_, node) = accesskit_node(&attempted.output, Role::Button, anchor);
+                assert_ne!(
+                    node.is_expanded(),
+                    Some(true),
+                    "{anchor}, remount={remount}"
+                );
+            }
+            let current = group_close_node(&context, &mut dockspace, &mut panes, anchor, label);
+            assert!(
+                click_close_node(&context, &mut dockspace, &mut panes, old).is_empty(),
+                "{label}, remount={remount}: old node closed replacement items"
+            );
+            assert_eq!(
+                click_close_node(&context, &mut dockspace, &mut panes, current),
+                replacement,
+                "{label}, remount={remount}: current node must close its own items"
+            );
+        }
+    }
+}
+
+#[test]
+fn reopened_group_close_menu_accepts_only_its_current_rows() {
+    for (anchor, label) in [
+        ("Layout actions", "Close Layout"),
+        ("Tab group actions", "Close Tab Group"),
+    ] {
+        let context = Context::default();
+        context.enable_accesskit();
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(ROOT, DockspaceNode::central_tabs([FIRST, SECOND, THIRD])),
+        )])
+        .unwrap();
+        let mut dockspace = Dockspace::builder("reopen-close-scope", layout)
+            .build()
+            .unwrap();
+        let mut panes = Panes;
+        let old = group_close_node(&context, &mut dockspace, &mut panes, Some(anchor), label);
+        run_frame(&context, &mut dockspace, &mut panes, key_press(Key::Escape));
+        let reopened = group_close_node(&context, &mut dockspace, &mut panes, Some(anchor), label);
+        assert!(click_close_node(&context, &mut dockspace, &mut panes, old).is_empty());
+
+        run_frame(&context, &mut dockspace, &mut panes, key_press(Key::Escape));
+        let added = dockspace
+            .open_item_current(
+                SIXTH,
+                DockPlacement::Center(egui_dockspace::DockAnchor::Item(FIRST)),
+            )
+            .unwrap();
+        assert!(added.mutation().workspace_changed());
+        let current = group_close_node(&context, &mut dockspace, &mut panes, Some(anchor), label);
+        assert!(click_close_node(&context, &mut dockspace, &mut panes, reopened).is_empty());
+        assert_eq!(
+            click_close_node(&context, &mut dockspace, &mut panes, current),
+            [FIRST, SECOND, THIRD, SIXTH]
+        );
+    }
+}
+
+#[test]
+fn group_close_buttons_expire_when_their_membership_changes() {
+    for floating in [false, true] {
+        let context = Context::default();
+        context.enable_accesskit();
+        let group = DockspaceNode::tabs([SECOND, THIRD]).named("Nested group");
+        let surface = if floating {
+            DockspaceSurfaceLayout::new(
+                SURFACE,
+                DockspaceRootLayout::new(ROOT, DockspaceNode::central_tabs([FIRST])),
+            )
+            .with_contained(DockspaceContainedLayout::new(
+                FLOATING,
+                DockspaceRootLayout::new(FLOATING_ROOT, group),
+                LogicalRect::new(460.0, 240.0, 280.0, 220.0).unwrap(),
+            ))
+        } else {
+            DockspaceSurfaceLayout::new(
+                SURFACE,
+                DockspaceRootLayout::new(
+                    ROOT,
+                    DockspaceNode::central_composed_tabs([group, DockspaceNode::pane(FIRST)]),
+                ),
+            )
+        };
+        let mut dockspace = Dockspace::builder(
+            "close-group-with-new-member",
+            DockspaceLayout::new([surface]).unwrap(),
+        )
+        .build()
+        .unwrap();
+        let mut panes = Panes;
+        let label = if floating {
+            "Close floating Nested group"
+        } else {
+            "Close Layout Tab Nested group"
+        };
+        let old = group_close_node(&context, &mut dockspace, &mut panes, None, label);
+        let added = dockspace
+            .open_item_current(
+                SIXTH,
+                DockPlacement::Center(egui_dockspace::DockAnchor::Item(SECOND)),
+            )
+            .unwrap();
+        assert!(added.mutation().workspace_changed());
+        let current = group_close_node(&context, &mut dockspace, &mut panes, None, label);
+
+        assert!(
+            click_close_node(&context, &mut dockspace, &mut panes, old).is_empty(),
+            "{label}: an activation must bind to its original roster"
+        );
+        assert_eq!(
+            click_close_node(&context, &mut dockspace, &mut panes, current),
+            [SECOND, THIRD, SIXTH]
+        );
+    }
+}
+
+fn group_close_node(
+    context: &Context,
+    dockspace: &mut Dockspace,
+    panes: &mut Panes,
+    anchor: Option<&str>,
+    label: &str,
+) -> egui::accesskit::NodeId {
+    run_frame(context, dockspace, panes, Vec::new());
+    let stable = run_frame(context, dockspace, panes, Vec::new());
+    if let Some(anchor) = anchor {
+        let (opener, node) = accesskit_node(&stable.output, Role::Button, anchor);
+        assert_ne!(node.is_expanded(), Some(true));
+        run_frame(
+            context,
+            dockspace,
+            panes,
+            vec![accesskit_action(opener, Action::Click)],
+        );
+        let opened = run_frame(context, dockspace, panes, Vec::new());
+        accesskit_node(&opened.output, Role::MenuItem, label).0
+    } else {
+        accesskit_node(&stable.output, Role::Button, label).0
+    }
+}
+
+fn click_close_node(
+    context: &Context,
+    dockspace: &mut Dockspace,
+    panes: &mut Panes,
+    node: egui::accesskit::NodeId,
+) -> Vec<ItemId> {
+    let clicked = run_frame(
+        context,
+        dockspace,
+        panes,
+        vec![accesskit_action(node, Action::Click)],
+    );
+    let settled = run_frame(context, dockspace, panes, Vec::new());
+    clicked
+        .close_requests
+        .iter()
+        .chain(&settled.close_requests)
+        .flat_map(|request| request.plan().items())
+        .map(|item| item.item())
+        .collect()
+}
+
+#[test]
 fn contained_group_close_waits_for_application_approval_for_every_activation() {
     #[derive(Clone, Copy)]
     enum Activation {

@@ -115,11 +115,9 @@ pub(crate) fn paint_controls(
     if let Some(title) = egui_rect(contained.title_drag_bounds()) {
         let core_enabled = effective_enabled(context.ui, contained.title_operable());
         let enabled = core_enabled && context.pointer_authority.supports_preview_gestures();
-        let id = context.ui.make_persistent_id((
-            context.instance_id,
-            "contained-title",
-            contained.visual_id(),
-        ));
+        let id = context
+            .ui
+            .make_persistent_id((context.instance_id, contained.input_id()));
         let response = context.interact_receiver(
             title,
             id,
@@ -173,16 +171,13 @@ pub(crate) fn paint_controls(
     }
 
     if let Some(close) = contained.close_bounds().and_then(egui_rect) {
-        let enabled = effective_enabled(context.ui, contained.close_operable())
-            && context
-                .plan
-                .prepare_contained_close(contained.floating())
-                .is_some();
-        let id = context.ui.make_persistent_id((
-            context.instance_id,
-            "contained-close",
-            contained.floating(),
-        ));
+        let action = effective_enabled(context.ui, contained.close_operable())
+            .then(|| context.plan.prepare_contained_close(contained.floating()))
+            .flatten();
+        let enabled = action.is_some();
+        let id = context
+            .ui
+            .make_persistent_id((context.instance_id, contained.close_input_id()));
         let response = context.interact_receiver(
             close,
             id,
@@ -218,10 +213,9 @@ pub(crate) fn paint_controls(
                 .painter()
                 .line_segment([close.right_top(), close.left_bottom()], stroke);
         }
-        if enabled
+        if let Some(action) = action
             && let Some(origin) =
                 button_activation_origin(context.ui, &response, context.pointer_authority)
-            && let Some(action) = context.plan.prepare_contained_close(contained.floating())
         {
             context.push_local_action(origin, action);
         }
@@ -231,12 +225,9 @@ pub(crate) fn paint_controls(
         let Some(bounds) = egui_rect(resize.hit_bounds()) else {
             continue;
         };
-        let id = context.ui.make_persistent_id((
-            context.instance_id,
-            "contained-resize",
-            contained.floating(),
-            resize.direction(),
-        ));
+        let id = context
+            .ui
+            .make_persistent_id((context.instance_id, resize.input_id()));
         let cardinal = cardinal_resize_axis(resize.direction());
         let enabled = effective_enabled(context.ui, resize.operable());
         let drag_enabled = enabled && context.pointer_authority.supports_preview_gestures();

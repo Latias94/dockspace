@@ -182,11 +182,13 @@ scrolled out of view. Route events through the original presentation before
 submitting. Immediate renderers can use `prepare_tab_input_sequence` during
 the paint pass with the same navigation rules.
 
-Register actionable tab headers, close buttons, and strip controls using the
-record's `input_id()`. Add a widget role when several controls share an identity,
-such as a header and its close button. `tab_focus_input_id()` gives a navigation
-action's destination even when the header will first appear in the next output.
-Use the current paint record to prepare an action or declare its receiver.
+Use `DockspaceControlId` to register widget and accessibility input. Tab headers,
+strip controls, root menu openers, splitters, and contained title and resize
+controls expose it through `input_id()`. Use `group_menu_input_id()` for a tab
+group's menu button and `close_input_id()` for tab and contained close buttons.
+`tab_focus_input_id()` gives a navigation action's destination even when the
+header will first appear in the next output. Use the current paint record to
+prepare an action or declare its receiver.
 
 To continue queued navigation after a selection presents, ask the new strip
 for `continuation_receiver(previous, committed_tab)`. Also check that the
@@ -267,8 +269,10 @@ A renderer's group menu uses `SurfacePaintPlan::tabs_group_command` and
 program. Root menus retain `presentation_command` and `prepare_root_close`.
 Both scopes submit through `submit_surface_action`; no adapter command dispatcher
 or second layout authority is needed. Use `plan.workspace_stamp()` to dismiss
-cached action popups after a layout edit or session reconstruction. The stamp
-identifies a session and revision; it does not authorize an action.
+cached action popups after a layout edit or session reconstruction. Namespace
+action rows to each opening of the menu so delayed input expires when it closes.
+The stamp identifies a session and revision. Action authorization comes from
+the corresponding paint record.
 
 1. Begin a host frame, submit ordered input and application commands, then
    prepare each surface that will be encoded with `prepare_surface_with` in
