@@ -68,6 +68,218 @@ fn pane_bounds(panes: &[(ItemId, LogicalRect)], item: u64) -> LogicalRect {
         .1
 }
 
+#[cfg(feature = "serde")]
+fn persistent_session(
+    content: DockspaceNode,
+    item_count: u64,
+    propagation: ResizePropagation,
+) -> DockspaceSession {
+    use crate::runtime::{DockspaceDocumentBootstrap, DockspaceDocumentId};
+
+    let mut bootstrap = DockspaceDocumentBootstrap::new(DockspaceDocumentId::from_bytes([5; 16]));
+    for id in 1..=item_count {
+        assert_eq!(
+            bootstrap.ensure_item(format!("pane-{id}")).unwrap(),
+            ItemId::new(id)
+        );
+    }
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(ROOT, content),
+    )])
+    .unwrap();
+    DockspaceSession::from_persistent_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        config(propagation),
+        bootstrap,
+    )
+    .unwrap()
+}
+
+#[cfg(feature = "serde")]
+fn reopen(session: &mut DockspaceSession, propagation: ResizePropagation) -> DockspaceSession {
+    DockspaceSession::from_document_json_with_presentation_config(
+        &session.save_document_json().unwrap(),
+        DockPolicy::default(),
+        config(propagation),
+        |_, _| true,
+    )
+    .unwrap()
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn remapped_grid_keeps_a_child_divider_whose_slot_still_follows_the_drag() {
+    let offered = LogicalRect::new(0.0, 0.0, 424.0, 228.0).unwrap();
+    let return_to_three_columns = LogicalRect::new(0.0, 0.0, 424.0, 170.0).unwrap();
+    let content = |outer, child| {
+        let nested = grid(fixed(1, 2), [pane(2), pane(3)], [1.0], child);
+        let sibling = grid(fixed(1, 2), [pane(6), pane(9)], [1.0], [2.0, 1.0]);
+        let parent = grid(
+            DockspaceGridShape::Auto,
+            [nested, pane(4), pane(5), sibling, pane(7), pane(8)],
+            [1.0, 1.0],
+            [113.0, 44.5, 44.5],
+        );
+        let [left, right] = outer;
+        DockspaceNode::split(
+            DockspaceAxis::Horizontal,
+            [(pane(1), left), (parent, right)],
+        )
+        .unwrap()
+    };
+
+    for mode in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
+        for pointer in [true, false] {
+            let mut session = persistent_session(content([1.0, 1.0], [1.0, 1.0]), 9, mode);
+            let original = measured_bounds(&mut session, offered, &[]);
+            assert_eq!(pane_bounds(&original, 2).x(), pane_bounds(&original, 6).x());
+            assert_eq!(pane_bounds(&original, 3).x(), 272.5);
+            let resized = if pointer {
+                drag_outer_splitter(&mut session, offered, &[], 44.0)
+            } else {
+                assert!(adjust_outer_splitter(
+                    &mut session,
+                    offered,
+                    &[],
+                    &[SurfaceSplitterAdjustment::Increment],
+                ));
+                measured_bounds(&mut session, offered, &[])
+            };
+
+            let mut reopened = reopen(&mut session, mode);
+            let mut expected =
+                super::session(content([230.0, 190.0], [34.5, 54.5]), offered, mode, &[]);
+            for (actual, expected) in [
+                (resized, bounds(&mut expected)),
+                (
+                    measured_bounds(&mut reopened, offered, &[]),
+                    bounds(&mut expected),
+                ),
+                (
+                    measured_bounds(&mut reopened, return_to_three_columns, &[]),
+                    measured_bounds(&mut expected, return_to_three_columns, &[]),
+                ),
+            ] {
+                for item in 1..=9 {
+                    let actual = pane_bounds(&actual, item);
+                    let expected = pane_bounds(&expected, item);
+                    assert!(
+                        (actual.x() - expected.x()).abs() < 1e-8
+                            && (actual.y() - expected.y()).abs() < 1e-8
+                            && (actual.width() - expected.width()).abs() < 1e-8
+                            && (actual.height() - expected.height()).abs() < 1e-8,
+                        "{mode:?}, pane {item}: expected {expected:?}, got {actual:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn resizing_a_grid_column_keeps_the_split_in_the_stationary_column() {
+    let offered = LogicalRect::new(0.0, 0.0, 504.0, 78.0).unwrap();
+    let auto = DockspaceNode::grid(DockspaceGridShape::Auto, (4..=9).map(pane)).unwrap();
+    let far = DockspaceNode::equal_split(DockspaceAxis::Horizontal, [pane(3), auto]).unwrap();
+    let content = grid(fixed(1, 3), [pane(1), pane(2), far], [1.0], [2.0, 2.0, 1.0]);
+    let hints = [(3, 20.0), (4, 40.0), (7, 40.0)].map(|(id, width)| {
+        (
+            ItemId::new(id),
+            PaneSizing::builder().min_width(width).build().unwrap(),
+        )
+    });
+    for mode in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
+        for pointer in [true, false] {
+            let mut session = persistent_session(content.clone(), 9, mode);
+            let original = measured_bounds(&mut session, offered, &hints);
+            assert_eq!(pane_bounds(&original, 4).x(), 420.0);
+            assert_eq!(pane_bounds(&original, 6).y(), pane_bounds(&original, 7).y());
+            let resized = if pointer {
+                drag_outer_splitter(&mut session, offered, &hints, 44.0)
+            } else {
+                assert!(adjust_outer_splitter(
+                    &mut session,
+                    offered,
+                    &hints,
+                    &[SurfaceSplitterAdjustment::Increment],
+                ));
+                measured_bounds(&mut session, offered, &hints)
+            };
+            let mut reopened = reopen(&mut session, mode);
+            for panes in [resized, measured_bounds(&mut reopened, offered, &hints)] {
+                assert_ne!(pane_bounds(&panes, 6).y(), pane_bounds(&panes, 7).y());
+                assert!((pane_bounds(&panes, 1).width() - 214.0).abs() < 1e-8);
+                assert!((pane_bounds(&panes, 2).width() - 174.0).abs() < 1e-8);
+                assert!((pane_bounds(&panes, 3).x() - 396.0).abs() < 1e-8);
+                assert!(
+                    (pane_bounds(&panes, 4).x() - 420.0).abs() < 1e-8,
+                    "{mode:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn junction_batch_stops_when_its_orthogonal_grid_boundary_changes_cells() {
+    use SurfaceSplitterAdjustment::Increment;
+
+    let inner = grid(
+        DockspaceGridShape::Auto,
+        (2..=7).map(pane),
+        [1.0, 3.0],
+        [1.0, 2.0, 1.0],
+    );
+    let content = DockspaceNode::equal_split(DockspaceAxis::Horizontal, [pane(1), inner]).unwrap();
+    for mode in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
+        for width in [424.0, 524.0] {
+            let offered = LogicalRect::new(0.0, 0.0, width, 228.0).unwrap();
+            let first_tee = |session: &mut DockspaceSession| {
+                inspect_surface(session, |plan| {
+                    plan.splitter_junctions()
+                        .filter(|junction| junction.arm_count() == 3)
+                        .min_by(|a, b| a.hit_bounds().y().total_cmp(&b.hit_bounds().y()))
+                        .unwrap()
+                        .visual_id()
+                })
+            };
+            let mut stepped = session(content.clone(), offered, mode, &[]);
+            let id = first_tee(&mut stepped);
+            let adjust = |session: &mut DockspaceSession, steps: &[SurfaceSplitterAdjustment]| {
+                let mut frame = session.begin_host_frame().unwrap();
+                let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+                let action = plan
+                    .prepare_splitter_junction_adjustment_sequence(
+                        id,
+                        DockspaceAxis::Horizontal,
+                        steps.iter().copied(),
+                    )
+                    .unwrap();
+                frame.submit_surface_action(action).unwrap();
+                measure(&mut frame, offered, &[]);
+                assert!(frame.commit().unwrap().workspace_changed());
+            };
+            let original = bounds(&mut stepped);
+            assert_eq!(pane_bounds(&original, 2).y(), pane_bounds(&original, 4).y());
+            adjust(&mut stepped, &[Increment]);
+            let first = bounds(&mut stepped);
+            assert_eq!(first_tee(&mut stepped), id);
+            let remapped = pane_bounds(&first, 2).y() != pane_bounds(&first, 4).y();
+            assert_eq!(remapped, width == 424.0);
+            if !remapped {
+                adjust(&mut stepped, &[Increment]);
+                adjust(&mut stepped, &[Increment]);
+            }
+            let mut batch = session(content.clone(), offered, mode, &[]);
+            adjust(&mut batch, &[Increment; 3]);
+            assert_eq!(bounds(&mut batch), bounds(&mut stepped), "{mode:?} {width}");
+        }
+    }
+}
+
 #[test]
 fn dragging_an_outer_split_preserves_a_capped_far_grid_track() {
     let offered = LogicalRect::new(0.0, 0.0, 404.0, 96.0).unwrap();
@@ -195,8 +407,6 @@ fn independent_grid_transfers_share_projection_passes() {
 #[cfg(feature = "serde")]
 #[test]
 fn resizing_a_neighbor_keeps_stationary_grid_tracks_after_reopening() {
-    use crate::runtime::{DockspaceDocumentBootstrap, DockspaceDocumentId};
-
     let offered = LogicalRect::new(0.0, 0.0, 504.0, 78.0).unwrap();
     let auto = DockspaceNode::grid(DockspaceGridShape::Auto, (4..=9).map(pane)).unwrap();
     let far = grid(fixed(1, 2), [pane(3), auto], [1.0], [1.0, 1.0]);
@@ -212,38 +422,12 @@ fn resizing_a_neighbor_keeps_stationary_grid_tracks_after_reopening() {
         )
     });
     for propagation in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
-        let mut bootstrap =
-            DockspaceDocumentBootstrap::new(DockspaceDocumentId::from_bytes([5; 16]));
-        for id in 1..=9 {
-            assert_eq!(
-                bootstrap.ensure_item(format!("pane-{id}")).unwrap(),
-                ItemId::new(id)
-            );
-        }
-        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
-            SURFACE,
-            DockspaceRootLayout::new(ROOT, content.clone()),
-        )])
-        .unwrap();
-        let mut session = DockspaceSession::from_persistent_layout_with_presentation_config(
-            layout,
-            DockPolicy::default(),
-            config(propagation),
-            bootstrap,
-        )
-        .unwrap();
+        let mut session = persistent_session(content.clone(), 9, propagation);
         let before = measured_bounds(&mut session, offered, &hints);
         assert_eq!(pane_bounds(&before, 4).x(), 420.0);
 
         let resized = drag_outer_splitter(&mut session, offered, &hints, 44.0);
-        let document = session.save_document_json().unwrap();
-        let mut reopened = DockspaceSession::from_document_json_with_presentation_config(
-            &document,
-            DockPolicy::default(),
-            config(propagation),
-            |_, _| true,
-        )
-        .unwrap();
+        let mut reopened = reopen(&mut session, propagation);
         for bounds in [resized, measured_bounds(&mut reopened, offered, &hints)] {
             for (item, width) in [(1, 214.0), (2, 174.0), (3, 20.0)] {
                 let pane = pane_bounds(&bounds, item);
@@ -260,8 +444,6 @@ fn resizing_a_neighbor_keeps_stationary_grid_tracks_after_reopening() {
 #[cfg(feature = "serde")]
 #[test]
 fn dragging_an_outer_split_does_not_store_the_auto_grids_temporary_columns() {
-    use crate::runtime::{DockspaceDocumentBootstrap, DockspaceDocumentId};
-
     let offered = LogicalRect::new(0.0, 0.0, 424.0, 228.0).unwrap();
     let restored_bounds = LogicalRect::new(0.0, 0.0, 424.0, 170.0).unwrap();
     let hints = [
@@ -277,26 +459,8 @@ fn dragging_an_outer_split_does_not_store_the_auto_grids_temporary_columns() {
         )
     });
     for propagation in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
-        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
-            SURFACE,
-            DockspaceRootLayout::new(ROOT, six_pane_auto_grid([1.0, 3.0], [1.0, 2.0, 1.0])),
-        )])
-        .unwrap();
-        let mut bootstrap =
-            DockspaceDocumentBootstrap::new(DockspaceDocumentId::from_bytes([5; 16]));
-        for id in 1..=7 {
-            assert_eq!(
-                bootstrap.ensure_item(format!("pane-{id}")).unwrap(),
-                ItemId::new(id)
-            );
-        }
-        let mut session = DockspaceSession::from_persistent_layout_with_presentation_config(
-            layout,
-            DockPolicy::default(),
-            config(propagation),
-            bootstrap,
-        )
-        .unwrap();
+        let content = six_pane_auto_grid([1.0, 3.0], [1.0, 2.0, 1.0]);
+        let mut session = persistent_session(content, 7, propagation);
         let before = measured_bounds(&mut session, offered, &hints);
         assert_eq!(pane_bounds(&before, 2).y(), pane_bounds(&before, 4).y());
         let committed = drag_outer_splitter(&mut session, offered, &hints, 44.0);
@@ -305,14 +469,7 @@ fn dragging_an_outer_split_does_not_store_the_auto_grids_temporary_columns() {
             pane_bounds(&committed, 4).y()
         );
 
-        let document = session.save_document_json().unwrap();
-        let mut reopened = DockspaceSession::from_document_json_with_presentation_config(
-            &document,
-            DockPolicy::default(),
-            config(propagation),
-            |_, _| true,
-        )
-        .unwrap();
+        let mut reopened = reopen(&mut session, propagation);
         let panes = measured_bounds(&mut reopened, restored_bounds, &[]);
         for (id, expected) in [(2, 45.5), (3, 91.0), (4, 45.5)] {
             assert!(

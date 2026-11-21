@@ -8,15 +8,15 @@ use crate::graph::root_structure::RootNodeKind;
 use crate::ids::{NodeId, RootId};
 use crate::presentation::config::PaneOverflowPolicy;
 use crate::presentation::layout::{
-    FrozenRootLayout, GridProjection, LayoutProjection, measure_resize_geometry,
+    FrozenRootLayout, GridProjection, LayoutProjection, NodeResult, measure_resize_geometry,
 };
 
 use super::piecewise::{FrozenTracks, TrackAllocation, grid_shares_match_extents};
-use super::{FrozenPiecewiseAxis, merge_axis_update, rect_start, tolerance};
+use super::{FrozenPiecewiseAxis, merge_axis_update, rect_extent, rect_start, tolerance};
 
 pub(super) fn finish_auto_reflow(
     samples: &[(&FrozenPiecewiseAxis, f64)],
-    inherited: &[InheritedGridTransfer<'_>],
+    inherited: &[InheritedTrackTransfer<'_>],
     updates: &mut BTreeMap<(RootId, NodeId), TrackResize>,
 ) -> Option<()> {
     let mut checked = BTreeSet::new();
@@ -31,14 +31,14 @@ pub(super) fn finish_auto_reflow(
                     (owner_root == root).then_some((node, update.clone()))
                 })
                 .collect::<BTreeMap<_, _>>();
-            let mut transfers = BTreeMap::<NodeId, Vec<GridTransfer<'_>>>::new();
+            let mut transfers = BTreeMap::<NodeId, Vec<TrackTransfer<'_>>>::new();
             for target in inherited.iter().filter(|transfer| transfer.root == root) {
                 transfers
                     .entry(target.node)
                     .or_default()
-                    .push(GridTransfer {
+                    .push(TrackTransfer {
                         target,
-                        state: GridShares::Stored,
+                        state: TransferState::Stored,
                     });
             }
             let feasible = |projection: &LayoutProjection| {
@@ -47,10 +47,10 @@ pub(super) fn finish_auto_reflow(
                 }) && measure_resize_geometry(projection, layout.splitter_thickness())
                     .root_is_feasible(node)
             };
-            project_inherited_grid_transfers(layout, &direct, &mut transfers, feasible)?;
+            project_inherited_transfers(layout, &direct, &mut transfers, feasible)?;
             for (node, axes) in transfers {
                 for transfer in axes {
-                    if let GridShares::Resize(update) = transfer.state {
+                    if let TransferState::Resize(update) = transfer.state {
                         merge_axis_update(updates, (root, node), transfer.target.axis, update)?;
                     }
                 }
@@ -60,7 +60,7 @@ pub(super) fn finish_auto_reflow(
     Some(())
 }
 
-pub(super) struct InheritedGridTransfer<'a> {
+pub(super) struct InheritedTrackTransfer<'a> {
     pub(super) root: RootId,
     pub(super) node: NodeId,
     pub(super) axis: Axis,
@@ -69,34 +69,37 @@ pub(super) struct InheritedGridTransfer<'a> {
     pub(super) overflow_policy: PaneOverflowPolicy,
 }
 
-impl InheritedGridTransfer<'_> {
-    fn matches_cell_map(&self, grid: &GridProjection) -> bool {
-        self.tracks.grid_basis().is_some_and(|basis| {
-            grid.shape.rows == basis.rows()
-                && grid.shape.columns == basis.columns()
-                && grid.children.as_ref() == basis.children()
-        })
-    }
-
-    fn extents_match(&self, grid: &GridProjection) -> bool {
-        grid.axis(self.axis)
-            .tracks
-            .iter()
-            .zip(&self.expected.extents)
-            .all(|(track, &extent)| {
-                (track.extent - extent).abs() <= tolerance(track.extent, extent)
+impl InheritedTrackTransfer<'_> {
+    fn matches_cell_map(&self, grid: Option<&GridProjection>) -> bool {
+        self.tracks.grid_basis().is_none_or(|basis| {
+            grid.is_some_and(|grid| {
+                grid.shape.rows == basis.rows()
+                    && grid.shape.columns == basis.columns()
+                    && grid.children.as_ref() == basis.children()
             })
-    }
-
-    fn origin_matches(&self, grid: &GridProjection) -> bool {
-        grid.axis(self.axis).tracks.first().is_some_and(|track| {
-            let actual = rect_start(track.bounds, self.axis);
-            let expected = self.expected.origin;
-            (actual - expected).abs() <= tolerance(actual, expected)
         })
     }
 
-    fn can_reuse_shares(&self, grid: &GridProjection) -> bool {
+    fn extents_match(&self, extents: impl ExactSizeIterator<Item = f64>) -> bool {
+        extents.len() == self.expected.extents.len()
+            && extents
+                .zip(&self.expected.extents)
+                .all(|(actual, &expected)| (actual - expected).abs() <= tolerance(actual, expected))
+    }
+
+    fn origin_matches(&self, node: &NodeResult) -> bool {
+        let actual = rect_start(node.slot, self.axis);
+        let expected = self.expected.origin;
+        (actual - expected).abs() <= tolerance(actual, expected)
+    }
+
+    fn slot_matches(&self, node: &NodeResult) -> bool {
+        let actual = rect_start(node.slot, self.axis) + rect_extent(node.slot, self.axis);
+        let expected = self.expected.origin + self.expected.slot_extent;
+        self.origin_matches(node) && (actual - expected).abs() <= tolerance(actual, expected)
+    }
+
+    fn can_reuse_grid_shares(&self, grid: &GridProjection) -> bool {
         let axis = grid.axis(self.axis);
         grid_shares_match_extents(
             self.tracks.weights(),
@@ -110,21 +113,21 @@ impl InheritedGridTransfer<'_> {
     }
 }
 
-struct GridTransfer<'a> {
-    target: &'a InheritedGridTransfer<'a>,
-    state: GridShares,
+struct TrackTransfer<'a> {
+    target: &'a InheritedTrackTransfer<'a>,
+    state: TransferState,
 }
 
-enum GridShares {
+enum TransferState {
     Stored,
     Resize(TrackResize),
     Reflowed,
 }
 
-fn project_inherited_grid_transfers(
+fn project_inherited_transfers(
     layout: &FrozenRootLayout,
     direct: &BTreeMap<NodeId, TrackResize>,
-    transfers: &mut BTreeMap<NodeId, Vec<GridTransfer<'_>>>,
+    transfers: &mut BTreeMap<NodeId, Vec<TrackTransfer<'_>>>,
     feasible: impl Fn(&LayoutProjection) -> bool,
 ) -> Option<()> {
     let topology = layout.topology();
@@ -133,7 +136,7 @@ fn project_inherited_grid_transfers(
         let mut updates = direct.clone();
         for (&node, axes) in &*transfers {
             for transfer in axes {
-                if let GridShares::Resize(update) = &transfer.state {
+                if let TransferState::Resize(update) = &transfer.state {
                     merge_axis_update(&mut updates, node, transfer.target.axis, update.clone())?;
                 }
             }
@@ -148,38 +151,47 @@ fn project_inherited_grid_transfers(
         pending.push((0, false));
         while let Some((row, mut remapped)) = pending.pop() {
             let node = &topology.nodes[row];
-            if !projection.nodes.get(&node.id)?.visible {
+            let result = projection.nodes.get(&node.id)?;
+            if !result.visible {
                 continue;
             }
             let mut changed = false;
             if let Some(axes) = transfers.get_mut(&node.id) {
-                let grid = projection.grids.get(&node.id)?;
-                remapped |= !axes[0].target.matches_cell_map(grid);
+                let grid = projection.grids.get(&node.id);
+                let map_changed = !axes.first()?.target.matches_cell_map(grid);
+                remapped |= map_changed;
                 for transfer in axes {
-                    if remapped {
-                        if matches!(transfer.state, GridShares::Resize(_)) {
-                            transfer.state = GridShares::Reflowed;
+                    let target = transfer.target;
+                    // When an ancestor remaps, each child can still inherit the
+                    // old transfer if it occupies the expected slot on this axis.
+                    if map_changed || (remapped && !target.slot_matches(result)) {
+                        if matches!(transfer.state, TransferState::Resize(_)) {
+                            transfer.state = TransferState::Reflowed;
                             changed = true;
                         }
                         continue;
                     }
-                    let target = transfer.target;
-                    let extents_match = target.extents_match(grid);
-                    allocations_match &= extents_match && target.origin_matches(grid);
+                    let extents_match = if let Some(grid) = grid {
+                        target.extents_match(grid.axis(target.axis).tracks.iter().map(|t| t.extent))
+                    } else {
+                        let split = projection.splits.get(&node.id)?;
+                        target.extents_match(split.children.iter().map(|t| t.extent))
+                    };
+                    allocations_match &= extents_match && target.origin_matches(result);
                     if !extents_match
-                        && matches!(transfer.state, GridShares::Stored)
-                        && !target.can_reuse_shares(grid)
+                        && matches!(transfer.state, TransferState::Stored)
+                        && !grid.is_some_and(|grid| target.can_reuse_grid_shares(grid))
                         && let Some(update) = target
                             .tracks
-                            .resize_inherited_grid(target.axis, &target.expected)
+                            .resize_inherited(target.axis, &target.expected)
                     {
-                        transfer.state = GridShares::Resize(update);
+                        transfer.state = TransferState::Resize(update);
                         changed = true;
                     }
                 }
             }
-            reproject |= changed;
-            if changed && !remapped {
+            if changed {
+                reproject = true;
                 // Choose children from the next projection of this parent's
                 // allocation. Disjoint branches can advance on the same pass.
                 continue;
@@ -195,8 +207,8 @@ fn project_inherited_grid_transfers(
         if !reproject {
             return (allocations_match && feasible(&projection)).then_some(());
         }
-        // Each axis can request a share change once and discard it once if its
-        // original cell map no longer applies. The traversal never retries an
+        // Each axis can propose a share change and discard it if its original
+        // cell map or slot no longer applies. The traversal never retries an
         // individual owner against the whole root.
     }
 }

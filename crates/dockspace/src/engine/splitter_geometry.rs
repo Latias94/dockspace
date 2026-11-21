@@ -14,7 +14,7 @@ use crate::presentation::scene::{PresentationLayoutFacts, PresentationPlan, Spli
 
 mod auto_reflow;
 pub(crate) mod piecewise;
-use auto_reflow::{InheritedGridTransfer, finish_auto_reflow};
+use auto_reflow::{InheritedTrackTransfer, finish_auto_reflow};
 pub(crate) use piecewise::FrozenPiecewiseAxis;
 
 #[derive(Clone, Copy)]
@@ -422,8 +422,8 @@ pub(super) fn resize_axis_group_updates(
                     .tracks
                     .into_iter()
                     .filter_map(|((root, node), expected)| {
-                        let (tracks, overflow_policy) = piecewise.inherited_grid(root, node)?;
-                        Some(InheritedGridTransfer {
+                        let (tracks, overflow_policy) = piecewise.inherited_tracks(root, node)?;
+                        Some(InheritedTrackTransfer {
                             root,
                             node,
                             axis: group.axis,

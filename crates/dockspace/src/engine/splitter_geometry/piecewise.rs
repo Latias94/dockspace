@@ -92,6 +92,7 @@ pub(super) struct Sample {
 
 pub(super) struct TrackAllocation {
     pub(super) origin: f64,
+    pub(super) slot_extent: f64,
     pub(super) extents: Vec<f64>,
 }
 
@@ -579,7 +580,7 @@ impl FrozenPiecewiseAxis {
         self.sources.iter()
     }
 
-    pub(super) fn inherited_grid(
+    pub(super) fn inherited_tracks(
         &self,
         root: RootId,
         node: NodeId,
@@ -594,7 +595,6 @@ impl FrozenPiecewiseAxis {
         let FrozenKind::Tracks(tracks) = &frozen.nodes.get(&node)?.kind else {
             return None;
         };
-        tracks.grid.as_ref()?;
         Some((tracks, self.overflow_policy))
     }
 
@@ -714,15 +714,14 @@ impl FrozenPiecewiseAxis {
                             .zip(&tracks.tracks)
                             .any(|(extent, track)| *extent != track.extent);
                         let key = (root.source.root(), id);
-                        let inherited_grid = tracks.grid.is_some() && drivers.is_empty();
-                        // Auto reflow decides inherited Grid writes from the settled
-                        // parent allocation, including tracks that do not move.
-                        if !(inherited_grid && root.auto_reflow.is_some())
+                        // Auto reflow settles inherited allocation against the
+                        // actual parent slot and constraints, including stationary tracks.
+                        if !(drivers.is_empty() && root.auto_reflow.is_some())
                             && (moved || (!drivers.is_empty() && tracks.grid.is_none()))
                             && let Some(update) = tracks.update(
                                 self.axis,
                                 &extents,
-                                inherited_grid,
+                                drivers.is_empty(),
                                 self.overflow_policy,
                             )?
                         {
@@ -742,6 +741,7 @@ impl FrozenPiecewiseAxis {
                             key,
                             TrackAllocation {
                                 origin: origin.value,
+                                slot_extent: offered.value,
                                 extents,
                             },
                         );
@@ -762,15 +762,20 @@ impl FrozenTracks {
         &self.weights
     }
 
-    pub(super) fn resize_inherited_grid(
+    pub(super) fn resize_inherited(
         &self,
         axis: Axis,
         allocation: &TrackAllocation,
     ) -> Option<TrackResize> {
         let weights = self.weights_for_allocation(&allocation.extents)?;
-        (weights != self.weights)
-            .then(|| self.grid_update(axis, weights))
-            .flatten()
+        if weights == self.weights {
+            return None;
+        }
+        if self.grid.is_some() {
+            self.grid_update(axis, weights)
+        } else {
+            Some(TrackResize::split(self.source.clone(), weights))
+        }
     }
 
     fn allocate(

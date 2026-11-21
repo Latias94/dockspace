@@ -205,7 +205,8 @@ fn gap_record(id: SplitterSceneId, draw: Option<LogicalRect>) -> SplitterGapReco
 }
 
 /// Recomputes the exact captured boundary or junction in the staged geometry.
-/// A consumed prefix can collapse a boundary or change its junction's arms.
+/// A consumed prefix can collapse a boundary, change its Grid cell map, or
+/// change the membership of a junction.
 pub(crate) fn reprojected_resize_handles(
     workspace: &Workspace,
     plan: &PresentationPlan,
@@ -289,7 +290,12 @@ pub(crate) fn reprojected_resize_handles(
             records.retain(|record| splitters.contains(record.id()));
         }
     }
-    Ok((!records.is_empty()).then_some(records))
+    let same_boundaries = records.iter().all(|record| {
+        plan.splitter_record(*record.id()).is_some_and(|original| {
+            original.after_index() == record.after_index() && original.grid() == record.grid()
+        })
+    });
+    Ok((!records.is_empty() && same_boundaries).then_some(records))
 }
 
 fn splitter_hit_rects(
