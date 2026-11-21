@@ -2,7 +2,7 @@
 
 use egui::{Event, EventFilter, Id, Key, Ui};
 
-use crate::render::menu_input::{self, Intent, MenuKind, Navigation};
+use crate::render::menu_input::{self, Intent, MenuKind, Navigation, live_accesskit_click_target};
 
 pub(super) enum Outcome {
     Focus(Id),
@@ -95,10 +95,13 @@ pub(super) fn capture(
         };
         return Some(apply(ui, anchor, outcome, routed.retains_focus));
     }
-    let (events, outcome) = ui.input(|input| {
+    let (events, outcome) = ui.ctx().viewport(|viewport| {
         let mut events = Vec::new();
         let mut outcome = None;
-        for (slot, event) in input.events.iter().enumerate() {
+        for (slot, event) in viewport.input.events.iter().enumerate() {
+            if live_accesskit_click_target(event, &viewport.prev_pass.widgets).is_some() {
+                break;
+            }
             let Event::Key {
                 key,
                 modifiers,

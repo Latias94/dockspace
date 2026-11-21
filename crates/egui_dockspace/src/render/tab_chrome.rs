@@ -220,9 +220,10 @@ fn configure_control_accessibility(
     });
 }
 
-pub(crate) fn paint_backdrop(
+fn paint_backdrop(
     context: &mut RenderContext<'_, '_, '_>,
     backdrop: TabListMenuBackdropPaintRecord,
+    terminal: bool,
 ) {
     let Some(bounds) = egui_rect(backdrop.bounds()) else {
         return;
@@ -233,7 +234,7 @@ pub(crate) fn paint_backdrop(
         backdrop.visual_id(),
     ));
     let enabled = effective_enabled(context.ui, true);
-    let receiver = enabled
+    let receiver = (enabled && !terminal)
         .then(|| context.plan.receiver_for_tab_list_menu_backdrop(backdrop))
         .flatten();
     let scroll_id = context.ui.make_persistent_id((
@@ -260,6 +261,7 @@ pub(crate) fn paint_backdrop(
         receiver,
     );
     if enabled
+        && !terminal
         && context.pointer_authority.accepts_local_pointer_actions()
         && unambiguous_pointer_click(context.ui, &response, PointerButton::Primary)
         && let Some(action) = context.plan.prepare_tab_list_menu_dismiss(backdrop)
@@ -284,6 +286,27 @@ pub(crate) fn paint_menu(
             .ui
             .make_persistent_id((context.instance_id, "tab-list-menu", menu.input_id()));
     let enabled = effective_enabled(context.ui, true);
+    let rows = menu
+        .rows()
+        .map(|record| MenuRow {
+            id: frame_id.with(("row", record.input_id())),
+            record,
+        })
+        .collect::<Vec<_>>();
+    let opener = control_widget_id(context, menu.opener_input_id());
+    let opening_input = enabled
+        .then(|| keyboard::take_menu_input(context, menu, frame_id, opener, &rows))
+        .flatten();
+    let waiting = matches!(
+        opening_input,
+        Some(keyboard::OpeningInput::AwaitingPresentation { .. })
+    );
+    let terminal = opening_input
+        .as_ref()
+        .is_some_and(keyboard::OpeningInput::terminal);
+    // An earlier queued confirmation owns the menu. Keep the backdrop's
+    // blocking geometry while withholding its dismissal receiver.
+    paint_backdrop(context, menu.backdrop(), terminal);
     let frame_receiver = enabled
         .then(|| context.plan.receiver_for_tab_list_menu_frame(menu))
         .flatten();
@@ -334,15 +357,8 @@ pub(crate) fn paint_menu(
         .flatten();
     context.register_scroll_receiver(scroll_id, scroll_receiver);
 
-    let rows = menu
-        .rows()
-        .map(|record| MenuRow {
-            id: frame_id.with(("row", record.input_id())),
-            record,
-        })
-        .collect::<Vec<_>>();
     for row in &rows {
-        paint_menu_row(context, row, paint);
+        paint_menu_row(context, row, paint, waiting, terminal);
     }
     paint_scrollbar(
         context,
@@ -352,14 +368,7 @@ pub(crate) fn paint_menu(
         bounds,
         paint,
     );
-    let opener = control_widget_id(context, menu.opener_input_id());
-    let opening_input = enabled
-        .then(|| keyboard::take_opening_input(context, menu, opener))
-        .flatten();
-    if matches!(
-        opening_input,
-        Some(keyboard::OpeningInput::AwaitingPresentation)
-    ) {
+    if waiting {
         return;
     }
     let mut opening = false;
@@ -421,6 +430,8 @@ fn paint_menu_row(
     context: &mut RenderContext<'_, '_, '_>,
     row: &MenuRow<'_>,
     paint: SurfacePaintDisposition,
+    waiting: bool,
+    terminal: bool,
 ) {
     let MenuRow { id, record: row } = *row;
     let Some(bounds) = egui_rect(row.bounds()) else {
@@ -432,7 +443,7 @@ fn paint_menu_row(
         .and_then(egui_rect)
         .map(|hit| hit.intersect(context.ui.clip_rect()))
         .filter(Rect::is_positive);
-    let can_click = enabled && visible.is_some();
+    let can_click = enabled && !terminal && visible.is_some();
     let (click, reveal) = if enabled {
         context.ui.input(|input| {
             (
@@ -443,7 +454,7 @@ fn paint_menu_row(
     } else {
         (false, false)
     };
-    let receiver = enabled
+    let receiver = (enabled && !terminal)
         .then(|| context.plan.receiver_for_tab_list_menu_row(row))
         .flatten();
     let pointer_operable = receiver.is_some();
@@ -451,7 +462,11 @@ fn paint_menu_row(
         let response = context.interact_receiver(
             hit,
             id,
-            if pointer_operable {
+            if terminal {
+                // A previously queued confirmation owns this menu until it
+                // can execute. Shield the row without exporting a receiver.
+                Sense::click_and_drag()
+            } else if pointer_operable {
                 Sense::click()
             } else {
                 Sense::hover()
@@ -531,6 +546,9 @@ fn paint_menu_row(
             node.set_disabled();
         }
     });
+    if waiting || terminal {
+        return;
+    }
     let pointer = pointer_operable
         && context.pointer_authority.accepts_local_pointer_actions()
         && response.as_ref().is_some_and(|response| {

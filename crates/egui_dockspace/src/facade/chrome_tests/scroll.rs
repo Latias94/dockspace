@@ -621,17 +621,20 @@ fn official_tab_strip_continues_its_own_smoothing_tail() {
             dockspace.show_single_surface(SURFACE, ui, panes).unwrap();
         },
     );
-    let mut tail = 0.0;
     run_with(&mut harness, Vec::new(), |ui, dockspace, panes| {
-        tail = -f64::from(ui.input(egui::InputState::smooth_scroll_delta).x);
+        assert_eq!(ui.input(egui::InputState::smooth_scroll_delta).x, 0.0);
         dockspace.show_single_surface(SURFACE, ui, panes).unwrap();
     });
-    assert!(first > 0.0 && tail > 0.0);
+    assert!(first > 0.0 && first < 90.0);
     harness.run(WIDTH, Vec::new());
     assert!(
-        (strip(&mut harness).1 - before - first - tail).abs() < 1e-6,
+        strip(&mut harness).1 - before > first,
         "a header's acquired wheel keeps its own subsequent smoothing sample"
     );
+    for _ in 0..8 {
+        harness.run(WIDTH, Vec::new());
+    }
+    assert!((strip(&mut harness).1 - before - 90.0).abs() < 1e-5);
 }
 
 #[test]

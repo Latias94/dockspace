@@ -1,7 +1,7 @@
 //! Route keys by event order before egui applies the packet's final focus.
 
-use egui::accesskit::{Action, ActionRequest, TreeId};
-use egui::{Context, Event, Id, Key, Memory, RawInput, Ui, ViewportId, ViewportIdMap};
+use egui::accesskit::{Action, ActionRequest, NodeId, TreeId};
+use egui::{Context, Event, Id, Key, Memory, RawInput, Ui, ViewportId, ViewportIdMap, WidgetRects};
 
 #[derive(Default)]
 struct MenuInput {
@@ -147,10 +147,9 @@ impl egui::plugin::Plugin for MenuInput {
             initial_focus == Some(id) && started <= frame && frame - started <= 1
         });
         if input.opening.is_none()
-            && !raw
-                .events
-                .iter()
-                .any(|event| accesskit_focus_target(event).is_some())
+            && !raw.events.iter().any(|event| {
+                accesskit_focus_target(event).is_some() || accesskit_click_target(event).is_some()
+            })
         {
             return;
         }
@@ -169,6 +168,28 @@ impl egui::plugin::Plugin for MenuInput {
         let mut app_key_before_menu_focus = false;
         let mut defer_menu_focus = false;
         for (slot, event) in raw.events.iter().enumerate() {
+            if accesskit_click_target(event).is_some() {
+                let Some(target) = context.viewport_for(viewport, |previous| {
+                    live_accesskit_click_target(event, &previous.prev_pass.widgets)
+                }) else {
+                    continue;
+                };
+                if let Some((menu, row)) = previous
+                    .menus
+                    .iter()
+                    .find_map(|menu| Some((menu, menu.product_row(target)?)))
+                {
+                    set_intent(&mut input.routed, menu.id, Intent::Activate(row));
+                }
+                // The clicked widget can run application code that transfers focus.
+                // Only an explicit focus event can establish a new menu cursor.
+                cursor = None;
+                opening_cursor = None;
+                focus_owner = None;
+                app_key_before_menu_focus = true;
+                defer_menu_focus = true;
+                continue;
+            }
             if let Some(target) = accesskit_focus_target(event) {
                 let target_menu = previous.menus.iter().find_map(|menu| {
                     menu.targets()
@@ -290,6 +311,16 @@ impl egui::plugin::Plugin for MenuInput {
 }
 
 impl Menu {
+    fn product_row(&self, target: NodeId) -> Option<Id> {
+        if !matches!(self.kind, MenuKind::Product { .. }) {
+            return None;
+        }
+        self.rows
+            .iter()
+            .copied()
+            .find(|id| id.accesskit_id() == target)
+    }
+
     fn anchor(&self) -> Option<Id> {
         match self.kind {
             MenuKind::TabList => None,
@@ -330,14 +361,35 @@ impl Menu {
     }
 }
 
-pub(super) fn accesskit_focus_target(event: &Event) -> Option<egui::accesskit::NodeId> {
+pub(super) fn accesskit_focus_target(event: &Event) -> Option<NodeId> {
+    accesskit_target(event, Action::Focus)
+}
+
+fn accesskit_click_target(event: &Event) -> Option<NodeId> {
+    accesskit_target(event, Action::Click)
+}
+
+pub(super) fn live_accesskit_click_target(event: &Event, widgets: &WidgetRects) -> Option<NodeId> {
+    accesskit_click_target(event).filter(|target| {
+        widgets.layers().any(|(_, widgets)| {
+            widgets.iter().any(|widget| {
+                widget.enabled
+                    && widget.visible
+                    && widget.sense.senses_click()
+                    && widget.id.accesskit_id() == *target
+            })
+        })
+    })
+}
+
+fn accesskit_target(event: &Event, wanted: Action) -> Option<NodeId> {
     match event {
         Event::AccessKitActionRequest(ActionRequest {
-            action: Action::Focus,
+            action,
             target_node,
             target_tree: TreeId::ROOT,
             data: None,
-        }) => Some(*target_node),
+        }) if *action == wanted => Some(*target_node),
         _ => None,
     }
 }
