@@ -4,7 +4,107 @@ use egui::accesskit::{Action, ActionRequest, Orientation, TreeId};
 
 use super::*;
 
+#[derive(Clone, Copy, Debug)]
+struct ResizeControl {
+    id: egui::Id,
+    label: &'static str,
+    orientation: Orientation,
+    bounds: Rect,
+}
+
 impl Replay {
+    fn resize_controls(&self, label: &'static str) -> Vec<ResizeControl> {
+        let nodes = &self
+            .output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes;
+        let mut controls = self
+            .controls(Role::Splitter, label)
+            .into_iter()
+            .filter_map(|(id, bounds)| {
+                let (_, node) = nodes.iter().find(|(node, _)| *node == id.accesskit_id())?;
+                Some(ResizeControl {
+                    id,
+                    label,
+                    orientation: node.orientation()?,
+                    bounds,
+                })
+            })
+            .collect::<Vec<_>>();
+        // Seeded choice follows position within each semantic control role.
+        controls.sort_unstable_by(|left, right| {
+            let a = left.bounds;
+            let b = right.bounds;
+            a.left()
+                .total_cmp(&b.left())
+                .then_with(|| a.top().total_cmp(&b.top()))
+                .then_with(|| a.right().total_cmp(&b.right()))
+                .then_with(|| a.bottom().total_cmp(&b.bottom()))
+                .then_with(|| {
+                    (left.orientation == Orientation::Vertical)
+                        .cmp(&(right.orientation == Orientation::Vertical))
+                })
+        });
+        controls
+    }
+
+    fn resize_counterpart(&self, target: ResizeControl, separate: &Self) -> ResizeControl {
+        let mut matches = separate
+            .resize_controls(target.label)
+            .into_iter()
+            .filter(|control| {
+                let source = target.bounds;
+                let candidate = control.bounds;
+                control.orientation == target.orientation
+                    && [source.left(), source.top(), source.right(), source.bottom()]
+                        .into_iter()
+                        .zip([
+                            candidate.left(),
+                            candidate.top(),
+                            candidate.right(),
+                            candidate.bottom(),
+                        ])
+                        .all(|(a, b)| (a - b).abs() < 1e-3)
+            });
+        let counterpart = matches
+            .next()
+            .unwrap_or_else(|| panic!("the rebuilt layout must expose {target:?}"));
+        assert!(
+            matches.next().is_none(),
+            "the matching resize control must be unique: {target:?}"
+        );
+        match (
+            self.numeric_range(target.id),
+            separate.numeric_range(counterpart.id),
+        ) {
+            (Some((value, min, max)), Some((other_value, other_min, other_max))) => {
+                for (a, b) in [(value, other_value), (min, other_min), (max, other_max)] {
+                    assert!(
+                        (a - b).abs() < 1e-8,
+                        "initial resize range for {target:?}: {a} != {b}"
+                    );
+                }
+            }
+            (None, None) => {}
+            (source, counterpart) => panic!(
+                "initial resize range missing on one path for {target:?}: {source:?} vs {counterpart:?}"
+            ),
+        }
+        counterpart
+    }
+
+    fn focus_resize_control(&mut self, control: ResizeControl) {
+        self.frame(vec![accesskit(control.id, Action::Focus)]);
+        assert_eq!(
+            self.context.memory(egui::Memory::focused),
+            Some(control.id),
+            "the registered resize control {control:?} must accept accessibility focus"
+        );
+    }
+
     fn assert_same_materialized_panes(&self, separate: &Self) {
         let expected = self.selected_rects();
         let actual = separate.selected_rects();
@@ -43,23 +143,9 @@ impl Replay {
             "Resize floating top edge",
             "Resize floating bottom edge",
         ] {
-            for (widget, _) in self.controls(Role::Splitter, label) {
-                let orientation = self
-                    .output
-                    .platform_output
-                    .accesskit_update
-                    .as_ref()
-                    .unwrap()
-                    .nodes
-                    .iter()
-                    .find(|(id, _)| *id == widget.accesskit_id())
-                    .and_then(|(_, node)| node.orientation());
-                if let Some(orientation) = orientation {
-                    controls.push((widget, orientation));
-                }
-            }
+            controls.extend(self.resize_controls(label));
         }
-        let Some((target, orientation)) = self.pick(&controls) else {
+        let Some(target) = self.pick(&controls) else {
             self.record("mixed adjustment", Attempt::NotApplicable);
             return;
         };
@@ -67,26 +153,10 @@ impl Replay {
         let mut separate = self.at_current_layout();
         before.assert_equivalent_geometry(&LayoutState::capture(&separate));
         self.assert_same_materialized_panes(&separate);
-        assert!(
-            separate
-                .output
-                .platform_output
-                .accesskit_update
-                .as_ref()
-                .unwrap()
-                .nodes
-                .iter()
-                .any(|(id, _)| *id == target.accesskit_id()),
-            "rebuilding the same logical layout must register the selected semantic control"
-        );
-        self.frame(vec![accesskit(target, Action::Focus)]);
-        separate.frame(vec![accesskit(target, Action::Focus)]);
-        assert_eq!(
-            self.context.memory(egui::Memory::focused),
-            Some(target),
-            "the registered resize control must retain its accepted accessibility focus",
-        );
-        let (increment, decrement) = match orientation {
+        let counterpart = self.resize_counterpart(target, &separate);
+        self.focus_resize_control(target);
+        separate.focus_resize_control(counterpart);
+        let (increment, decrement) = match target.orientation {
             Orientation::Vertical => (egui::Key::ArrowRight, egui::Key::ArrowLeft),
             Orientation::Horizontal => (egui::Key::ArrowDown, egui::Key::ArrowUp),
         };
@@ -98,7 +168,7 @@ impl Replay {
             let increase = self.pick(&[false, true]).unwrap();
             let event = if index % 2 == 0 {
                 accesskit(
-                    target,
+                    target.id,
                     if increase {
                         Action::Increment
                     } else {
@@ -116,18 +186,25 @@ impl Replay {
         self.note(format!(
             "mixed resize batch target={target:?}, events={events:?}"
         ));
-        for event in events.iter().cloned() {
+        for mut event in events.iter().cloned() {
+            if let Event::AccessKitActionRequest(request) = &mut event {
+                request.target_node = counterpart.id.accesskit_id();
+            }
             separate.frame(vec![event]);
             separate.frame(Vec::new());
+            assert_eq!(
+                separate.context.memory(egui::Memory::focused),
+                Some(counterpart.id)
+            );
         }
         self.frame(events);
         assert!(self.context.input(|input| input.events.iter().all(|event| {
             !matches!(event, Event::Key { key, pressed: true, .. } if *key == increment || *key == decrement)
                 && !matches!(event, Event::AccessKitActionRequest(request)
-                    if request.target_node == target.accesskit_id()
+                    if request.target_node == target.id.accesskit_id()
                         && matches!(request.action, Action::Increment | Action::Decrement))
         })), "the actual focused control must consume every mixed adjustment");
-        assert_eq!(self.context.memory(egui::Memory::focused), Some(target));
+        assert_eq!(self.context.memory(egui::Memory::focused), Some(target.id));
         assert!(!self.dock.has_active_gesture());
         self.settle();
         separate.settle();
@@ -138,13 +215,13 @@ impl Replay {
 
         // Equivalence alone would accept two paths that both consume and ignore
         // input. A numeric control with room must also make an actual step.
-        if let Some((value, minimum, maximum)) = self.numeric_range(target)
+        if let Some((value, minimum, maximum)) = self.numeric_range(target.id)
             && maximum - minimum > 1e-6
         {
             let increase = value < (minimum + maximum) * 0.5;
             self.frame(vec![
                 accesskit(
-                    target,
+                    target.id,
                     if increase {
                         Action::Increment
                     } else {
@@ -154,7 +231,7 @@ impl Replay {
                 key(if increase { increment } else { decrement }),
             ]);
             self.frame(Vec::new());
-            let (actual, _, _) = self.numeric_range(target).unwrap();
+            let (actual, _, _) = self.numeric_range(target.id).unwrap();
             assert!(
                 (actual - value) * if increase { 1.0 } else { -1.0 } > 1e-7,
                 "a numeric control with room must apply its admitted adjustments: {value} -> {actual}"
@@ -186,7 +263,7 @@ pub(super) fn key(key: egui::Key) -> Event {
     }
 }
 
-fn clamped_splitter_fixture() -> (Replay, egui::Id) {
+fn clamped_splitter_fixture() -> (Replay, ResizeControl) {
     use egui_dockspace::{
         DockspaceAxis, DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout,
     };
@@ -207,18 +284,17 @@ fn clamped_splitter_fixture() -> (Replay, egui::Id) {
     .unwrap();
     let mut replay = Replay::from_layout(0xc1a0_0ed, layout);
     replay.settle();
-    let (target, _) = replay
-        .controls(Role::Splitter, "Resize panes")
+    let target = replay
+        .resize_controls("Resize panes")
         .into_iter()
         .next()
         .expect("the clamped two-pane fixture must register its divider");
-    let (value, minimum, maximum) = replay.numeric_range(target).unwrap();
+    let (value, minimum, maximum) = replay.numeric_range(target.id).unwrap();
     assert!(
         (value - minimum).abs() < 1e-8 && value > 0.1 && value < maximum,
         "the latent 10% share must be projected up to the content minimum"
     );
-    replay.frame(vec![accesskit(target, Action::Focus)]);
-    assert_eq!(replay.context.memory(egui::Memory::focused), Some(target));
+    replay.focus_resize_control(target);
     (replay, target)
 }
 
@@ -229,16 +305,19 @@ fn clamped_mixed_resize_round_trip_preserves_frame_independent_durable_shares() 
     let mut separate = batched.at_current_layout();
     initial.assert_equivalent_geometry(&LayoutState::capture(&separate));
     batched.assert_same_materialized_panes(&separate);
-    separate.frame(vec![accesskit(target, Action::Focus)]);
-    let events = [
-        accesskit(target, Action::Increment),
-        key(egui::Key::ArrowLeft),
-    ];
-    for event in events.iter().cloned() {
+    let counterpart = batched.resize_counterpart(target, &separate);
+    separate.focus_resize_control(counterpart);
+    let events = |target| {
+        [
+            accesskit(target, Action::Increment),
+            key(egui::Key::ArrowLeft),
+        ]
+    };
+    for event in events(counterpart.id) {
         separate.frame(vec![event]);
         separate.settle();
     }
-    batched.frame(events.into_iter().collect());
+    batched.frame(events(target.id).into());
     batched.settle();
     batched.assert_same_materialized_panes(&separate);
     let final_state = LayoutState::capture(&batched);
@@ -247,7 +326,7 @@ fn clamped_mixed_resize_round_trip_preserves_frame_independent_durable_shares() 
         final_state, initial,
         "an effective discrete round trip must record the measured shares, even at its original visible minimum"
     );
-    let (value, _, _) = batched.numeric_range(target).unwrap();
+    let (value, _, _) = batched.numeric_range(target.id).unwrap();
     let first_share = batched
         .dock
         .view()
@@ -271,7 +350,7 @@ fn outward_resize_at_a_clamped_minimum_preserves_latent_shares() {
     let (mut replay, target) = clamped_splitter_fixture();
     let before = LayoutState::capture(&replay);
     replay.frame(vec![
-        accesskit(target, Action::Decrement),
+        accesskit(target.id, Action::Decrement),
         key(egui::Key::ArrowLeft),
     ]);
     replay.settle();
@@ -320,25 +399,27 @@ fn junction_axis_identity_survives_tab_overflow_and_opposite_adjustments() {
     .unwrap();
     let mut batched = Replay::from_layout(0x5eed, layout);
     batched.settle();
-    let (target, _) = batched
-        .controls(Role::Splitter, "Resize pane grid horizontally")
+    let target = batched
+        .resize_controls("Resize pane grid horizontally")
         .into_iter()
-        .max_by(|(_, first), (_, second)| first.center().x.total_cmp(&second.center().x))
+        .max_by(|a, b| a.bounds.center().x.total_cmp(&b.bounds.center().x))
         .expect("the row and three columns must expose their right junction");
     let mut separate = batched.at_current_layout();
     let initial = LayoutState::capture(&batched);
+    initial.assert_equivalent_geometry(&LayoutState::capture(&separate));
     batched.assert_same_materialized_panes(&separate);
-    for replay in [&mut batched, &mut separate] {
-        replay.frame(vec![accesskit(target, Action::Focus)]);
-        assert_eq!(replay.context.memory(egui::Memory::focused), Some(target));
-    }
+    let counterpart = batched.resize_counterpart(target, &separate);
+    batched.focus_resize_control(target);
+    separate.focus_resize_control(counterpart);
     // The first step crosses a tab overflow threshold. A sibling chrome change
     // must not replace the junction axis's input or accessibility identity.
-    let events = [
-        key(egui::Key::ArrowLeft),
-        accesskit(target, Action::Increment),
-    ];
-    for event in events.iter().cloned() {
+    let events = |target| {
+        [
+            key(egui::Key::ArrowLeft),
+            accesskit(target, Action::Increment),
+        ]
+    };
+    for event in events(counterpart.id) {
         separate.frame(vec![event]);
         assert!(
             separate.context.input(|input| input.events.is_empty()),
@@ -347,14 +428,21 @@ fn junction_axis_identity_survives_tab_overflow_and_opposite_adjustments() {
         separate.frame(Vec::new());
         assert!(
             separate
-                .controls(Role::Splitter, "Resize pane grid horizontally")
+                .resize_controls(counterpart.label)
                 .iter()
-                .any(|(widget, _)| *widget == target),
+                .any(|widget| widget.id == counterpart.id),
             "tab overflow changes must preserve the junction axis identity"
         );
-        assert_eq!(separate.context.memory(egui::Memory::focused), Some(target));
+        assert_eq!(
+            separate.context.memory(egui::Memory::focused),
+            Some(counterpart.id)
+        );
     }
-    batched.frame(events.into_iter().collect());
+    batched.frame(events(target.id).into());
+    assert_eq!(
+        batched.context.memory(egui::Memory::focused),
+        Some(target.id)
+    );
     batched.settle();
     separate.settle();
     batched.assert_same_materialized_panes(&separate);

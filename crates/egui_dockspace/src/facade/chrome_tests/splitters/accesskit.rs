@@ -42,6 +42,8 @@ fn assert_batch_matches_separate_frames(inputs: &[Adjustment], discards: usize) 
         ] {
             for callback in [false, true] {
                 let mut separate = keyboard_resize_harness(axis, junction, callback);
+                let mut batched = keyboard_resize_harness(axis, junction, callback);
+                assert_same_resize_start(&mut separate, &mut batched);
                 let target = separate.context.memory(egui::Memory::focused).unwrap();
                 for input in inputs {
                     let event_batch = events(target, axis, std::slice::from_ref(input));
@@ -55,7 +57,6 @@ fn assert_batch_matches_separate_frames(inputs: &[Adjustment], discards: usize) 
                 }
                 let expected = separator_geometry(&settle_keyboard_resize(&mut separate));
 
-                let mut batched = keyboard_resize_harness(axis, junction, callback);
                 let focused = batched.context.memory(egui::Memory::focused).unwrap();
                 batched.context.options_mut(|options| {
                     options.max_passes = (discards + 1).try_into().unwrap();

@@ -78,6 +78,15 @@ fn assert_tab_focus(harness: &Harness, output: &FullOutput, expected: u64) {
     );
 }
 
+fn focused_widget(harness: &Harness, output: &FullOutput) -> Option<(Role, Option<String>)> {
+    let target = harness.context.memory(egui::Memory::focused)?;
+    let (_, node) = nodes(output)
+        .iter()
+        .find(|(id, _)| *id == target.accesskit_id())
+        .expect("the focused widget is registered in this workspace");
+    Some((node.role(), node.label().map(str::to_owned)))
+}
+
 fn run_with(
     harness: &mut Harness,
     width: f32,
@@ -990,7 +999,7 @@ fn unavailable_cycling_preserves_egui_traversal_from_tab_and_content_focus() {
                 harness.focus_tab(800.0, "Only document");
             }
             let before = harness.context.memory(egui::Memory::focused);
-            present(
+            let output = present(
                 &mut harness,
                 800.0,
                 vec![shortcut(bindings().previous_tab.unwrap())],
@@ -1001,13 +1010,14 @@ fn unavailable_cycling_preserves_egui_traversal_from_tab_and_content_focus() {
                 before, after,
                 "the unavailable action must preserve traversal"
             );
+            let destination = focused_widget(&harness, &output);
             if configured {
                 assert_eq!(
-                    after, baseline,
+                    destination, baseline,
                     "configuration must preserve native traversal"
                 );
             } else {
-                baseline = after;
+                baseline = destination;
             }
         }
     }
@@ -1092,7 +1102,7 @@ fn unrelated_tab_events_keep_native_editor_indentation_and_focus_traversal() {
                 .memory_mut(|memory| memory.request_focus(target));
             run_with(&mut harness, 800.0, Vec::new(), &mut paint);
             run_with(&mut harness, 800.0, vec![key(Key::Tab)], &mut paint);
-            run_with(&mut harness, 800.0, Vec::new(), &mut paint);
+            let output = run_with(&mut harness, 800.0, Vec::new(), &mut paint);
             assert_selected(&harness, 1);
             assert_eq!(
                 harness.panes.text,
@@ -1104,10 +1114,11 @@ fn unrelated_tab_events_keep_native_editor_indentation_and_focus_traversal() {
             } else {
                 assert_ne!(focused, Some(target));
             }
-            if let Some(baseline) = baseline {
-                assert_eq!(focused, baseline);
+            let destination = focused_widget(&harness, &output);
+            if let Some(baseline) = &baseline {
+                assert_eq!(&destination, baseline);
             } else {
-                baseline = Some(focused);
+                baseline = Some(destination);
             }
         }
     }

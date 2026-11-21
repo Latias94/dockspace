@@ -143,24 +143,51 @@ fn separator_geometry(output: &FullOutput) -> Vec<[f64; 7]> {
     let mut separators: Vec<_> = nodes(output)
         .iter()
         .filter(|(_, node)| node.role() == Role::Splitter && node.label() == Some("Resize panes"))
-        .collect();
-    // AccessKit nodes come from an IdMap, not the surface's layout order.
-    separators.sort_unstable_by_key(|(id, _)| id.0);
-    separators
-        .into_iter()
         .map(|(_, node)| {
             let bounds = node.bounds().unwrap();
             [
-                node.numeric_value().unwrap(),
-                node.min_numeric_value().unwrap(),
-                node.max_numeric_value().unwrap(),
                 bounds.x0,
                 bounds.y0,
                 bounds.x1,
                 bounds.y1,
+                node.numeric_value().unwrap(),
+                node.min_numeric_value().unwrap(),
+                node.max_numeric_value().unwrap(),
             ]
         })
-        .collect()
+        .collect();
+    // Match dividers by geometry across independently allocated sessions.
+    separators.sort_unstable_by(|left, right| {
+        left.iter()
+            .zip(right)
+            .map(|(a, b)| a.total_cmp(b))
+            .find(|ordering| !ordering.is_eq())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    separators
+}
+
+fn assert_same_resize_start(ordered: &mut Harness, batched: &mut Harness) {
+    let ordered_output = settle_keyboard_resize(ordered);
+    let batched_output = settle_keyboard_resize(batched);
+    assert_eq!(
+        separator_geometry(&ordered_output),
+        separator_geometry(&batched_output)
+    );
+    let focused_bounds = |harness: &Harness, output: &FullOutput| {
+        let focused = harness.context.memory(egui::Memory::focused).unwrap();
+        nodes(output)
+            .iter()
+            .find(|(id, _)| *id == focused.accesskit_id())
+            .unwrap()
+            .1
+            .bounds()
+            .expect("the focused resize control has geometry")
+    };
+    assert_eq!(
+        focused_bounds(ordered, &ordered_output),
+        focused_bounds(batched, &batched_output)
+    );
 }
 
 fn assert_keyboard_resize_batch_matches_separate_frames(junction: bool, keys: &[Key]) {
@@ -186,13 +213,14 @@ fn assert_keyboard_resize_batch_matches_separate_frames_with_discards(
             .collect();
         for callback in [false, true] {
             let mut ordered = keyboard_resize_harness(axis, junction, callback);
+            let mut batched = keyboard_resize_harness(axis, junction, callback);
+            assert_same_resize_start(&mut ordered, &mut batched);
             for &key in &keys {
                 ordered.run(800.0, resize_key_events(&[key]));
                 settle_keyboard_resize(&mut ordered);
             }
             let expected = separator_geometry(&settle_keyboard_resize(&mut ordered));
 
-            let mut batched = keyboard_resize_harness(axis, junction, callback);
             let focused = batched.context.memory(egui::Memory::focused).unwrap();
             batched.context.options_mut(|options| {
                 options.max_passes = (discarded_passes + 1).try_into().unwrap();
