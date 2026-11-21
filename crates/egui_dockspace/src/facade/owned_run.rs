@@ -67,7 +67,7 @@ pub(super) struct UiActionBatch {
 
 struct UiActionIntent {
     origin: Id,
-    action: DeferredSurfaceAction,
+    action: render::DeferredEguiSurfaceAction,
 }
 
 /// UI intent enters a later original run, independently of egui pass retries.
@@ -97,11 +97,20 @@ impl UiActionQueue {
         Ok(self.sequence)
     }
 
-    pub(super) fn before(&self, run: u64) -> impl Iterator<Item = DeferredSurfaceAction> + '_ {
+    pub(super) fn before(
+        &self,
+        run: u64,
+        focused: Option<Id>,
+    ) -> impl Iterator<Item = DeferredSurfaceAction> + '_ {
         self.batches
             .iter()
             .filter(move |batch| batch.run < run)
-            .flat_map(|batch| batch.actions.iter().map(|intent| intent.action.clone()))
+            .flat_map(move |batch| {
+                batch
+                    .actions
+                    .iter()
+                    .map(move |intent| intent.action.resolve(focused))
+            })
     }
 
     /// Preserve the first witnessed batch across repeated passes. Different
@@ -435,7 +444,8 @@ impl Dockspace {
                                     .report_host_focus(surface, actual_focus)
                                     .map_err(DockspaceError::from_detail)?;
                             }
-                            for action in self.ui_actions.before(sequence) {
+                            let focused = ui.memory(egui::Memory::focused);
+                            for action in self.ui_actions.before(sequence, focused) {
                                 frame
                                     .submit_deferred_surface_action(action)
                                     .map_err(DockspaceError::from_detail)?;

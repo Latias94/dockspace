@@ -1939,7 +1939,7 @@ fn real_ui_action_ingress_accepts_64_events_and_rejects_65_without_partial_publi
             let (output, receipt) = output.into_parts();
             output.drop_without_applying_deltas();
             receipt.report(SurfacePresentationResult::Presented);
-            assert_eq!(dockspace.ui_actions.before(u64::MAX).count(), 64);
+            assert_eq!(dockspace.ui_actions.before(u64::MAX, None).count(), 64);
             let (output, _) = dockspace
                 .run_single_surface(&context, wide_input(2.0, Vec::new()), SURFACE, &mut panes)
                 .unwrap();

@@ -158,7 +158,8 @@ impl Dockspace {
                     .report_host_focus(surface, actual_focus)
                     .map_err(DockspaceError::from_detail)?;
             }
-            for action in self.ui_actions.before(run_sequence) {
+            let focused = ui.memory(egui::Memory::focused);
+            for action in self.ui_actions.before(run_sequence, focused) {
                 frame
                     .submit_deferred_surface_action(action)
                     .map_err(DockspaceError::from_detail)?;

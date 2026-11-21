@@ -5,7 +5,7 @@ use dockspace::runtime::{
     PreparedSurfaceAction, SurfacePaintProgramOperation as Operation,
     SurfacePaintProgramStep as Step,
 };
-use egui::{Id, Vec2};
+use egui::{Event, Id, Pos2, Ui, Vec2};
 
 use super::{RenderContext, actions::effective_enabled, geometry::egui_rect};
 
@@ -13,8 +13,66 @@ use super::{RenderContext, actions::effective_enabled, geometry::egui_rect};
 #[derive(Clone, Copy)]
 struct WheelClaim {
     first_pass: u64,
+    last_pass: u64,
     axes: [bool; 2],
-    owner: Option<Id>,
+    owner: Option<(Id, Pos2)>,
+}
+
+#[derive(Clone, Copy)]
+struct WheelLocation {
+    pass: u64,
+    cursor: Option<Pos2>,
+    sample: WheelSample,
+}
+
+#[derive(Clone, Copy)]
+enum WheelSample {
+    None,
+    At(Pos2),
+    Ambiguous,
+}
+
+impl WheelLocation {
+    fn for_pass(ui: &Ui) -> Self {
+        let context = ui.ctx();
+        let pass = context.cumulative_pass_nr();
+        let id = Id::unique(("dockspace-wheel-location", context.viewport_id()));
+        let previous = context.data(|data| data.get_temp::<Self>(id));
+        if let Some(location) = previous.filter(|location| location.pass == pass) {
+            return location;
+        }
+        let location = ui.input(|input| {
+            let mut point = previous
+                .filter(|location| location.pass.checked_add(1) == Some(pass))
+                .and_then(|location| location.cursor);
+            let mut sample = WheelSample::None;
+            for event in &input.raw.events {
+                match event {
+                    Event::PointerMoved(position) | Event::PointerButton { pos: position, .. } => {
+                        point = Some(*position);
+                    }
+                    Event::PointerGone => point = None,
+                    Event::MouseWheel { .. } => {
+                        // egui provides one smoothed delta for the pass. We can
+                        // attribute it only when all raw samples share one point.
+                        sample = match (sample, point) {
+                            (WheelSample::None, Some(point)) => WheelSample::At(point),
+                            (WheelSample::At(previous), Some(point)) if previous == point => sample,
+                            _ => WheelSample::Ambiguous,
+                        };
+                    }
+                    _ => {}
+                }
+            }
+            Self {
+                pass,
+                cursor: input.pointer.latest_pos(),
+                sample,
+            }
+        });
+        context.data_mut(|data| data.insert_temp(id, location));
+        location
+    }
 }
 
 pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
@@ -31,10 +89,9 @@ pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
         "tab-chrome-wheel",
         context.plan.surface(),
     ));
-    let first_pass =
-        context.ui.ctx().cumulative_pass_nr().saturating_sub(
-            u64::try_from(context.ui.ctx().current_pass_index()).unwrap_or(u64::MAX),
-        );
+    let pass = context.ui.ctx().cumulative_pass_nr();
+    let first_pass = pass
+        .saturating_sub(u64::try_from(context.ui.ctx().current_pass_index()).unwrap_or(u64::MAX));
     let previous = context
         .ui
         .ctx()
@@ -43,17 +100,23 @@ pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
         // egui may advance wheel smoothing during a layout retry. The original
         // run already owns its action, including when a later callback discards it.
         consume(context, claim.axes);
+        context.ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                id,
+                WheelClaim {
+                    last_pass: pass,
+                    ..claim
+                },
+            );
+        });
         return;
     }
-    let original_wheel = context.ui.input(|input| {
-        input
-            .raw
-            .events
-            .iter()
-            .any(|event| matches!(event, egui::Event::MouseWheel { .. }))
-    });
-    let previous_owner = previous.and_then(|claim| claim.owner);
-    if !original_wheel && previous_owner.is_none() {
+    let location = WheelLocation::for_pass(context.ui);
+    let previous_owner = previous
+        .filter(|claim| claim.last_pass.checked_add(1) == Some(first_pass))
+        .and_then(|claim| claim.owner);
+    let smoothing_tail = matches!(location.sample, WheelSample::None);
+    if smoothing_tail && previous_owner.is_none() {
         return;
     }
     // A fresh run starts without a claim. Even when application content owns
@@ -63,6 +126,7 @@ pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
             id,
             WheelClaim {
                 first_pass,
+                last_pass: pass,
                 axes: [false; 2],
                 owner: None,
             },
@@ -82,23 +146,29 @@ pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
     let Some(bounds) = egui_rect(context.plan.bounds()) else {
         return;
     };
-    if !context.ui.rect_contains_pointer(bounds) {
-        return;
-    }
-    let Some(point) = context.ui.input(|input| input.pointer.interact_pos()) else {
+    let Some(global_point) = (match location.sample {
+        WheelSample::None => previous_owner.map(|(_, at)| at),
+        WheelSample::At(point) => Some(point),
+        WheelSample::Ambiguous => None,
+    }) else {
         return;
     };
     let point = context
         .ui
         .ctx()
         .layer_transform_from_global(context.ui.layer_id())
-        .map_or(point, |transform| transform * point);
+        .map_or(global_point, |transform| transform * global_point);
+    let clip = context.ui.clip_rect().intersect(bounds);
+    if !clip.is_positive()
+        || !clip.contains(point)
+        || context.ui.ctx().layer_id_at(global_point) != Some(context.ui.layer_id())
+        || !owns_framework_hits(context, global_point, point)
+    {
+        return;
+    }
     let Ok(logical_point) = LogicalPoint::new(f64::from(point.x), f64::from(point.y)) else {
         return;
     };
-    if !owns_framework_hits(context, point) {
-        return;
-    }
     let delta = context.ui.input(|input| input.smooth_scroll_delta());
     if !delta.is_finite() || delta == Vec2::ZERO {
         return;
@@ -106,7 +176,8 @@ pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
     let Some((origin, action, axes)) = prepare(context, id, logical_point, delta) else {
         return;
     };
-    if !original_wheel && previous_owner != Some(origin) {
+    let owner = (origin, global_point);
+    if smoothing_tail && previous_owner != Some(owner) {
         return;
     }
     consume(context, axes);
@@ -115,8 +186,9 @@ pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
             id,
             WheelClaim {
                 first_pass,
+                last_pass: pass,
                 axes,
-                owner: Some(origin),
+                owner: Some(owner),
             },
         );
     });
@@ -144,7 +216,7 @@ fn prepare(
                     .receiver_for_tab_list_menu_backdrop(backdrop)
                     .is_some_and(|receiver| receiver.bounds().contains(point))
                 {
-                    popup_owner = Some(id.with(backdrop.menu_visual_id()));
+                    popup_owner = Some(id.with(backdrop.visual_id()));
                 }
             } else if prepared.is_none() {
                 match step {
@@ -158,7 +230,7 @@ fn prepare(
                             context.plan.prepare_tab_strip_scroll_at(bar, point, amount)
                         {
                             prepared = Some((
-                                id.with(bar.visual_id()),
+                                id.with(bar.group_menu_input_id()),
                                 action,
                                 consumed_axes(0, single_direction),
                             ));
@@ -171,7 +243,7 @@ fn prepare(
                             .prepare_tab_list_menu_scroll_at(menu, point, amount)
                         {
                             prepared = Some((
-                                id.with(menu.visual_id()),
+                                id.with(menu.input_id()),
                                 action,
                                 consumed_axes(1, single_direction),
                             ));
@@ -198,12 +270,32 @@ fn prepare(
     }
 }
 
-fn owns_framework_hits(context: &RenderContext<'_, '_, '_>, point: egui::Pos2) -> bool {
+fn owns_framework_hits(context: &RenderContext<'_, '_, '_>, global: Pos2, local: Pos2) -> bool {
+    let current = context.ui.input(|input| input.pointer.interact_pos());
+    let layer = context.ui.layer_id();
     context.ui.ctx().viewport(|viewport| {
-        [viewport.hits.click, viewport.hits.drag]
-            .into_iter()
+        let hits = if current == Some(global) {
+            [viewport.hits.click, viewport.hits.drag]
+        } else {
+            // The cached hit result belongs to the last pointer position. Use
+            // the registered click and drag lanes at the wheel's actual point.
+            let mut hits = [None, None];
+            for widget in viewport.prev_pass.widgets.get_layer(layer) {
+                if !widget.enabled || !widget.interact_rect.contains(local) {
+                    continue;
+                }
+                if widget.sense.senses_click() {
+                    hits[0] = Some(*widget);
+                }
+                if widget.sense.senses_drag() {
+                    hits[1] = Some(*widget);
+                }
+            }
+            hits
+        };
+        hits.into_iter()
             .flatten()
-            .filter(|hit| hit.interact_rect.contains(point))
+            .filter(|hit| hit.interact_rect.contains(local))
             .all(|hit| {
                 context.receivers.iter().any(|binding| {
                     binding.interactive

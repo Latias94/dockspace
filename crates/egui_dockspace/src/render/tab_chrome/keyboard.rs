@@ -1,11 +1,93 @@
 //! Ordered tab-list commands retain one cursor and one final core action.
 
-use dockspace::runtime::TabListMenuPaintRecord;
+use dockspace::runtime::{
+    RetainedTabListOpener, TabListMenuPaintRecord, TabStripControlPaintRecord,
+};
 use egui::accesskit::{Action, ActionRequest, NodeId, TreeId};
 use egui::{Event, EventFilter, Id, Key, PointerButton, Ui};
 
 use super::super::{RenderContext, actions::effective_enabled};
 use super::MenuRow;
+
+mod routing;
+
+use routing::{Intent, MenuKey};
+
+#[derive(Clone)]
+struct PendingOpening {
+    frame: u64,
+    id: Id,
+    opener: RetainedTabListOpener,
+    input: OpeningInput,
+    prior_focus: Option<Id>,
+}
+
+#[derive(Clone)]
+pub(super) struct OpeningInput {
+    keys: Vec<MenuKey>,
+    pub(super) retains_focus: bool,
+}
+
+fn opening_slot(context: &RenderContext<'_, '_, '_>) -> Id {
+    context.instance_id.with((
+        "tab-list-opening",
+        context.plan.surface(),
+        context.ui.ctx().viewport_id(),
+    ))
+}
+
+pub(super) fn register_opener(
+    context: &RenderContext<'_, '_, '_>,
+    control: TabStripControlPaintRecord,
+    id: Id,
+    activated: bool,
+) {
+    if let Some(input) = routing::register_closed_opener(context.ui, id)
+        && activated
+        && let Some(opener) = context.plan.retain_tab_list_opener(control)
+    {
+        let context_ui = context.ui.ctx();
+        let pending = PendingOpening {
+            frame: context_ui.cumulative_frame_nr(),
+            id,
+            opener,
+            input,
+            prior_focus: context_ui.memory(egui::Memory::focused),
+        };
+        let slot = opening_slot(context);
+        context_ui.data_mut(|data| data.insert_temp(slot, pending));
+    }
+}
+
+pub(super) fn take_opening_input(
+    context: &RenderContext<'_, '_, '_>,
+    menu: TabListMenuPaintRecord<'_>,
+    opener: Id,
+) -> Option<OpeningInput> {
+    let ui = &*context.ui;
+    let frame = ui.ctx().cumulative_frame_nr();
+    let slot = opening_slot(context);
+    let pending = ui.ctx().data_mut(|data| {
+        let pending = data.get_temp::<PendingOpening>(slot)?;
+        if pending.frame == frame {
+            return None;
+        }
+        data.remove::<PendingOpening>(slot);
+        Some(pending)
+    })?;
+    if pending.frame.checked_add(1) != Some(frame)
+        || pending.id != opener
+        || !context
+            .plan
+            .retain_tab_list_menu(menu)?
+            .can_continue_opening(&pending.opener)
+    {
+        return None;
+    }
+    let mut input = pending.input;
+    input.retains_focus &= ui.memory(egui::Memory::focused) == pending.prior_focus;
+    Some(input)
+}
 
 pub(super) fn capture(
     context: &mut RenderContext<'_, '_, '_>,
@@ -14,12 +96,14 @@ pub(super) fn capture(
     opener: Id,
     rows: &[MenuRow<'_>],
     opening: bool,
+    opening_input: Option<OpeningInput>,
 ) {
     if !effective_enabled(context.ui, true) {
         return;
     }
     let focused = context.ui.memory(egui::Memory::focused);
     let focused_index = rows.iter().position(|row| Some(row.id) == focused);
+    let routed = routing::register(context.ui, id, rows);
     if let Some(row) = focused_index.and_then(|index| rows.get(index)) {
         context.ui.memory_mut(|memory| {
             memory.set_focus_lock_filter(
@@ -31,6 +115,57 @@ pub(super) fn capture(
                 },
             );
         });
+    }
+    if let Some(routed) = routed {
+        let outcome = match routed.intent {
+            Intent::Focus(row) => rows
+                .iter()
+                .position(|candidate| candidate.id == row)
+                .map(Outcome::Navigate),
+            Intent::Activate(row) => rows
+                .iter()
+                .position(|candidate| candidate.id == row)
+                .map(Outcome::Activate),
+            Intent::Dismiss(row) => rows
+                .iter()
+                .any(|candidate| candidate.id == row)
+                .then_some(Outcome::Dismiss),
+        };
+        if let Some(outcome) = outcome {
+            apply(
+                context,
+                menu,
+                id,
+                opener,
+                rows,
+                outcome,
+                routed.retains_focus,
+                None,
+            );
+        }
+        return;
+    }
+    if let Some(input) = opening_input {
+        let mut cursor = rows.iter().position(|row| row.record.focused());
+        let mut outcome = None;
+        for key in input.keys {
+            if let Some(next) = step(&mut cursor, rows.len().checked_sub(1), key) {
+                outcome = Some(next);
+            }
+        }
+        if let Some(outcome) = outcome {
+            apply(
+                context,
+                menu,
+                id,
+                opener,
+                rows,
+                outcome,
+                input.retains_focus,
+                None,
+            );
+        }
+        return;
     }
     let start = if opening {
         let Some(start) = after_opening_click(context.ui, opener) else {
@@ -49,55 +184,16 @@ pub(super) fn capture(
         focused_index
     };
     if let Some(batch) = keyboard_batch(context.ui, rows, initial, focused, start) {
-        let action = match batch.outcome {
-            Outcome::Navigate(index) => rows.get(index).and_then(|row| {
-                context
-                    .plan
-                    .prepare_tab_list_menu_focus(menu, row.record.key())
-            }),
-            Outcome::Activate(index) => rows.get(index).and_then(|row| {
-                context
-                    .plan
-                    .prepare_tab_list_menu_row_activation(row.record)
-            }),
-            Outcome::Dismiss => context.plan.prepare_tab_list_menu_dismiss(menu.backdrop()),
-        };
-        let Some(action) = action else {
-            return;
-        };
-        let consumed = context.ui.input_mut(|input| {
-            if batch
-                .events
-                .iter()
-                .any(|(index, event)| input.events.get(*index) != Some(event))
-            {
-                return false;
-            }
-            for (index, _) in batch.events.iter().rev() {
-                input.events.remove(*index);
-            }
-            true
-        });
-        if !consumed {
-            return;
-        }
-        match batch.outcome {
-            Outcome::Navigate(index) if batch.retains_focus => {
-                if let Some(row) = rows.get(index) {
-                    context.ui.memory_mut(|memory| {
-                        memory.move_focus(egui::FocusDirection::None);
-                        if !memory.has_focus(row.id) {
-                            memory.request_focus(row.id);
-                        }
-                    });
-                }
-            }
-            Outcome::Dismiss if batch.retains_focus || focused.is_none() => {
-                restore_trigger_focus(context.ui, opener);
-            }
-            Outcome::Navigate(_) | Outcome::Dismiss | Outcome::Activate(_) => {}
-        }
-        context.push_local_action(id.with("keyboard-input"), action);
+        apply(
+            context,
+            menu,
+            id,
+            opener,
+            rows,
+            batch.outcome,
+            batch.retains_focus || (focused.is_none() && matches!(batch.outcome, Outcome::Dismiss)),
+            Some(batch.events),
+        );
         return;
     }
     if let Some(row) = focused_index.and_then(|index| rows.get(index))
@@ -107,6 +203,70 @@ pub(super) fn capture(
             .prepare_tab_list_menu_focus(menu, row.record.key())
     {
         context.push_local_action(row.id.with("framework-focus"), action);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply(
+    context: &mut RenderContext<'_, '_, '_>,
+    menu: TabListMenuPaintRecord<'_>,
+    id: Id,
+    opener: Id,
+    rows: &[MenuRow<'_>],
+    outcome: Outcome,
+    retains_focus: bool,
+    events: Option<Vec<(usize, Event)>>,
+) {
+    let action = match outcome {
+        Outcome::Navigate(index) => rows.get(index).and_then(|row| {
+            context
+                .plan
+                .prepare_tab_list_menu_focus(menu, row.record.key())
+        }),
+        Outcome::Activate(index) => rows.get(index).and_then(|row| {
+            context
+                .plan
+                .prepare_tab_list_menu_row_activation(row.record)
+        }),
+        Outcome::Dismiss => context.plan.prepare_tab_list_menu_dismiss(menu.backdrop()),
+    };
+    let Some(action) = action else {
+        return;
+    };
+    if let Some(events) = events {
+        let consumed = context.ui.input_mut(|input| {
+            if events
+                .iter()
+                .any(|(index, event)| input.events.get(*index) != Some(event))
+            {
+                return false;
+            }
+            for (index, _) in events.iter().rev() {
+                input.events.remove(*index);
+            }
+            true
+        });
+        if !consumed {
+            return;
+        }
+    }
+    match outcome {
+        Outcome::Navigate(index) if retains_focus => {
+            context.ui.memory_mut(|memory| {
+                memory.move_focus(egui::FocusDirection::None);
+                if !memory.has_focus(rows[index].id) {
+                    memory.request_focus(rows[index].id);
+                }
+            });
+        }
+        Outcome::Dismiss if retains_focus => restore_trigger_focus(context.ui, opener),
+        Outcome::Navigate(_) | Outcome::Dismiss | Outcome::Activate(_) => {}
+    }
+    let origin = id.with("keyboard-input");
+    if matches!(outcome, Outcome::Activate(_)) {
+        context.push_tab_list_activation(origin, action, retains_focus);
+    } else {
+        context.push_local_action(origin, action);
     }
 }
 
@@ -186,6 +346,19 @@ struct KeyboardBatch {
     retains_focus: bool,
 }
 
+fn step(cursor: &mut Option<usize>, last: Option<usize>, key: MenuKey) -> Option<Outcome> {
+    match (key, *cursor, last) {
+        (MenuKey::Navigate(navigation), Some(index), Some(last)) => {
+            let next = navigation.destination(index, last);
+            *cursor = Some(next);
+            Some(Outcome::Navigate(next))
+        }
+        (MenuKey::Activate, Some(index), _) => Some(Outcome::Activate(index)),
+        (MenuKey::Dismiss, _, _) => Some(Outcome::Dismiss),
+        _ => None,
+    }
+}
+
 fn keyboard_batch(
     ui: &Ui,
     rows: &[MenuRow<'_>],
@@ -211,42 +384,15 @@ fn keyboard_batch(
                 }
                 continue;
             }
-            let Event::Key {
-                key,
-                modifiers,
-                pressed: true,
-                ..
-            } = event
-            else {
+            let Some(key) = MenuKey::from_event(event) else {
                 continue;
             };
-            if !modifiers.matches_logically(egui::Modifiers::NONE) {
-                continue;
-            }
-            if let (Some(index), Some(last)) = (cursor, last) {
-                let next = match key {
-                    Key::ArrowUp => Some(index.saturating_sub(1)),
-                    Key::ArrowDown => Some(index.saturating_add(1).min(last)),
-                    Key::Home => Some(0),
-                    Key::End => Some(last),
-                    _ => None,
-                };
-                if let Some(next) = next {
-                    cursor = Some(next);
-                    outcome = Some(Outcome::Navigate(next));
-                    events.push((slot, event.clone()));
-                    continue;
-                }
-                if matches!(key, Key::Enter | Key::Space) {
-                    outcome = Some(Outcome::Activate(index));
-                    events.push((slot, event.clone()));
+            if let Some(next) = step(&mut cursor, last, key) {
+                outcome = Some(next);
+                events.push((slot, event.clone()));
+                if matches!(next, Outcome::Activate(_) | Outcome::Dismiss) {
                     break;
                 }
-            }
-            if *key == Key::Escape {
-                outcome = Some(Outcome::Dismiss);
-                events.push((slot, event.clone()));
-                break;
             }
         }
         outcome.map(|outcome| KeyboardBatch {

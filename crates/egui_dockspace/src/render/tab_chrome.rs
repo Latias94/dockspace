@@ -68,11 +68,19 @@ fn paint_control_records(
         }
         configure_control_accessibility(context, control, id, response.interact_rect, enabled);
 
-        if enabled
-            && let Some(origin) =
-                button_activation_origin(context.ui, &response, context.pointer_authority)
-            && let Some(action) = context.plan.prepare_tab_strip_control_activation(control)
-        {
+        let activation = enabled
+            .then(|| button_activation_origin(context.ui, &response, context.pointer_authority))
+            .flatten()
+            .and_then(|origin| {
+                Some((
+                    origin,
+                    context.plan.prepare_tab_strip_control_activation(control)?,
+                ))
+            });
+        if enabled && control.kind() == TabStripControlKind::TabListMenu && !control.menu_open() {
+            keyboard::register_opener(context, control, id, activation.is_some());
+        }
+        if let Some((origin, action)) = activation {
             context.push_local_action(origin, action);
         }
     }
@@ -344,6 +352,10 @@ pub(crate) fn paint_menu(
         bounds,
         paint,
     );
+    let opener = control_widget_id(context, menu.opener_input_id());
+    let opening_input = enabled
+        .then(|| keyboard::take_opening_input(context, menu, opener))
+        .flatten();
     let mut opening = false;
     if enabled {
         // One instance slot observes semantic focus edges, without retaining popup history.
@@ -365,6 +377,9 @@ pub(crate) fn paint_menu(
         opening = previous.is_none_or(|(menu, _)| menu != edge.0);
         if previous != Some(edge)
             && let Some(target) = edge.1
+            && opening_input
+                .as_ref()
+                .is_none_or(|input| input.retains_focus)
         {
             let can_retarget = context.ui.memory(|memory| {
                 let focused = memory.focused();
@@ -380,8 +395,15 @@ pub(crate) fn paint_menu(
             }
         }
     }
-    let opener = control_widget_id(context, menu.opener_input_id());
-    keyboard::capture(context, menu, frame_id, opener, &rows, opening);
+    keyboard::capture(
+        context,
+        menu,
+        frame_id,
+        opener,
+        &rows,
+        opening,
+        opening_input,
+    );
 }
 
 struct MenuRow<'plan> {

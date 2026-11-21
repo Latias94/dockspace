@@ -930,8 +930,10 @@ impl<P: PaneView> NativeRuntimeState<P> {
                                 host_frame.presented_focus_bindings(surface, token.viewport_id()),
                             )
                         });
-                    let (actions, mut acknowledgement) =
-                        self.pass_actions.peek_deferred_actions(token, surface);
+                    let focused = context.memory(egui::Memory::focused);
+                    let (actions, mut acknowledgement) = self
+                        .pass_actions
+                        .peek_deferred_actions(token, surface, focused);
                     if let Some(observation) = self.pass_actions.peek_pane_focus(
                         token,
                         host_frame.frame.presented_surface(surface),

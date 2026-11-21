@@ -9,6 +9,7 @@ use dockspace::runtime::{
     SurfacePresentationCommit,
 };
 use eframe::{NativeOutputToken, egui};
+use egui_dockspace::native_support::DeferredEguiSurfaceAction;
 
 use crate::host_frame::NativeSurfacePaint;
 
@@ -29,7 +30,7 @@ struct UiActionEvent {
 struct PendingLocalAction {
     event: UiActionEvent,
     owner: Option<NativeSurfaceBinding>,
-    action: DeferredSurfaceAction,
+    action: DeferredEguiSurfaceAction,
 }
 
 /// Exact events acknowledged after publication; candidate clones leave ingress intact.
@@ -197,6 +198,7 @@ impl NativePassActions {
         &self,
         token: NativeOutputToken,
         surface: SurfaceId,
+        focused: Option<egui::Id>,
     ) -> (Vec<DeferredSurfaceAction>, NativeUiActionAcknowledgement) {
         let (events, actions) = self
             .local_actions
@@ -204,7 +206,7 @@ impl NativePassActions {
             .into_iter()
             .flatten()
             .filter(|pending| pending.event.run != token)
-            .map(|pending| (pending.event, pending.action.clone()))
+            .map(|pending| (pending.event, pending.action.resolve(focused)))
             .unzip();
         (
             actions,

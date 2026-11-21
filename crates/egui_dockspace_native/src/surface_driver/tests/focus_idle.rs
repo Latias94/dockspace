@@ -94,7 +94,7 @@ fn exercise_focus_observations(tokens: &[NativeOutputToken]) {
         }
         let token = tokens[usize::try_from(pass).unwrap() % tokens.len()];
         let mut frame = session.begin_host_frame().unwrap();
-        let (_, mut acknowledged) = actions.peek_deferred_actions(token, SURFACE);
+        let (_, mut acknowledged) = actions.peek_deferred_actions(token, SURFACE, None);
         if let Some(observation) =
             actions.peek_pane_focus(token, frame.presented_surface(SURFACE), &mut acknowledged)
         {

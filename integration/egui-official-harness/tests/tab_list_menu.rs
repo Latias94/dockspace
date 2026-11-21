@@ -6,6 +6,9 @@ use egui_dockspace::{
     SurfacePresentationResult, TabKey,
 };
 
+#[path = "tab_list_menu/ordered_input.rs"]
+mod ordered_input;
+
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const SELECTED: ItemId = ItemId::new(36);
 const LAST: ItemId = ItemId::new(40);
@@ -27,6 +30,7 @@ struct Panes {
     header_width: Option<f32>,
     titles: Titles,
     title_prefix: Option<&'static str>,
+    editors: Option<std::collections::BTreeMap<ItemId, String>>,
 }
 
 impl Panes {
@@ -75,8 +79,18 @@ impl PaneView for Panes {
         self.header_width.unwrap_or(title.size().x)
     }
 
-    fn ui(&mut self, _: ItemId, _: &mut Ui) -> PaneResponse {
+    fn ui(&mut self, item: ItemId, ui: &mut Ui) -> PaneResponse {
+        let target = self.focus_target(item);
+        if let (Some(editors), Some(target)) = (&mut self.editors, target) {
+            ui.add(egui::TextEdit::singleline(editors.entry(item).or_default()).id(target));
+        }
         PaneResponse::default()
+    }
+
+    fn focus_target(&self, item: ItemId) -> Option<egui::Id> {
+        self.editors
+            .as_ref()
+            .map(|_| egui::Id::unique(("test-tab-list-pane-editor", item)))
     }
 }
 
@@ -217,7 +231,11 @@ fn layout() -> DockspaceLayout {
 }
 
 fn make_dock() -> Dockspace {
-    Dockspace::builder("tab-list-menu-regressions", layout())
+    make_named_dock("tab-list-menu-regressions")
+}
+
+fn make_named_dock(id: &str) -> Dockspace {
+    Dockspace::builder(id, layout())
         .style(DockStyle {
             tab_min_width: 160.0,
             tab_max_width: 160.0,
@@ -354,6 +372,53 @@ fn menu_keys_follow_the_opening_release_in_batched_and_split_input() {
                     .any(|(_, node)| node.role() == Role::Menu),
                 keys_before_release,
             );
+        }
+    }
+}
+
+#[test]
+fn menu_keys_follow_accesskit_opener_activation_in_batched_and_split_input() {
+    for (host, run) in [
+        (
+            "owned",
+            Fixture::run as fn(&mut Fixture, Vec<Event>) -> FullOutput,
+        ),
+        ("embedded", Fixture::run_embedded),
+    ] {
+        for click_first in [false, true] {
+            for batched in [false, true] {
+                let mut fixture = Fixture::new(Panes::default());
+                run(&mut fixture, Vec::new());
+                let output = run(&mut fixture, Vec::new());
+                let (trigger, _) = node(&output, Role::Button, "List tabs");
+                let click = vec![accesskit(*trigger, Action::Click)];
+                let keys = vec![key(Key::End), key(Key::Enter)];
+                let packets = if click_first {
+                    [click, keys]
+                } else {
+                    [keys, click]
+                };
+                if batched {
+                    run(&mut fixture, packets.into_iter().flatten().collect());
+                } else {
+                    for packet in packets {
+                        run(&mut fixture, packet);
+                    }
+                }
+                run(&mut fixture, Vec::new());
+                let output = run(&mut fixture, Vec::new());
+                let expected = if click_first { LAST } else { SELECTED };
+                assert!(
+                    fixture.dock.view().item(expected).unwrap().is_active(),
+                    "{host}, click first: {click_first}, batched: {batched}"
+                );
+                assert_eq!(
+                    nodes(&output)
+                        .iter()
+                        .any(|(_, node)| node.role() == Role::Menu),
+                    !click_first,
+                );
+            }
         }
     }
 }

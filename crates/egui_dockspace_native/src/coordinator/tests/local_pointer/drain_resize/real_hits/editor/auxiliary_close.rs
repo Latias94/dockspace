@@ -116,7 +116,7 @@ fn middle_click(editor: &mut Editor, point: LogicalPoint) -> Vec<EguiSurfaceActi
 }
 
 fn request_close(editor: &mut Editor, action: EguiSurfaceAction) -> DockspaceClosePlan {
-    let deferred = action.into_deferred();
+    let deferred = action.into_deferred().resolve(None);
     let version = editor.native.session.version();
     let mut abandoned = editor
         .native

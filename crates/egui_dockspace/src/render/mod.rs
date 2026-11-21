@@ -60,7 +60,7 @@ pub(crate) use presentation_menu::prepare_layer as prepare_menu_layer;
 #[derive(Debug)]
 pub struct EguiSurfaceAction {
     origin: Id,
-    action: PreparedSurfaceAction,
+    action: DeferredEguiSurfaceAction,
 }
 
 impl EguiSurfaceAction {
@@ -74,8 +74,62 @@ impl EguiSurfaceAction {
     ///
     /// Read [`Self::origin`] first when recording the original adapter event slot.
     #[must_use]
-    pub fn into_deferred(self) -> DeferredSurfaceAction {
-        self.action.into_deferred()
+    pub fn into_deferred(self) -> DeferredEguiSurfaceAction {
+        self.action
+    }
+}
+
+/// An egui action awaiting submission from the matching viewport.
+#[derive(Debug, Clone)]
+pub struct DeferredEguiSurfaceAction {
+    action: DeferredSurfaceAction,
+    tab_list_focus: TabListFocusHandoff,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TabListFocusHandoff {
+    Activate,
+    Preserve,
+    IfUnchanged(Option<Id>),
+}
+
+impl DeferredEguiSurfaceAction {
+    /// Resolves the action using the viewport's current framework focus.
+    #[must_use]
+    pub fn resolve(&self, focused: Option<Id>) -> DeferredSurfaceAction {
+        let preserve_focus = match self.tab_list_focus {
+            TabListFocusHandoff::Activate => false,
+            TabListFocusHandoff::Preserve => true,
+            TabListFocusHandoff::IfUnchanged(owner) => focused.is_some() && focused != owner,
+        };
+        let action = self.action.clone();
+        if preserve_focus {
+            action.preserve_tab_list_focus()
+        } else {
+            action
+        }
+    }
+
+    /// Checks whether a repeated pass captured the same action target and intent.
+    #[must_use]
+    pub fn same_intent(&self, other: &Self) -> bool {
+        self.action.same_intent(&other.action)
+    }
+
+    /// Returns the workspace version from which the underlying action was prepared.
+    #[cfg(feature = "native-render-support")]
+    #[must_use]
+    pub fn expected_version(&self) -> dockspace::runtime::WorkspaceVersion {
+        self.action.expected_version()
+    }
+}
+
+impl From<DeferredSurfaceAction> for DeferredEguiSurfaceAction {
+    fn from(action: DeferredSurfaceAction) -> Self {
+        Self {
+            action,
+            tab_list_focus: TabListFocusHandoff::Activate,
+        }
     }
 }
 
@@ -242,8 +296,29 @@ impl RenderContext<'_, '_, '_> {
     }
 
     fn push_local_action(&mut self, origin: Id, action: PreparedSurfaceAction) {
-        self.local_actions
-            .push(EguiSurfaceAction { origin, action });
+        self.local_actions.push(EguiSurfaceAction {
+            origin,
+            action: action.into_deferred().into(),
+        });
+    }
+
+    fn push_tab_list_activation(
+        &mut self,
+        origin: Id,
+        action: PreparedSurfaceAction,
+        retains_focus: bool,
+    ) {
+        self.local_actions.push(EguiSurfaceAction {
+            origin,
+            action: DeferredEguiSurfaceAction {
+                action: action.into_deferred(),
+                tab_list_focus: if retains_focus {
+                    TabListFocusHandoff::IfUnchanged(self.ui.memory(egui::Memory::focused))
+                } else {
+                    TabListFocusHandoff::Preserve
+                },
+            },
+        });
     }
 
     fn interact_receiver(

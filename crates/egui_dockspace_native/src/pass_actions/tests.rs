@@ -212,12 +212,12 @@ impl Fixture {
 fn pending(
     run: NativeOutputToken,
     origin: Id,
-    action: DeferredSurfaceAction,
+    action: impl Into<DeferredEguiSurfaceAction>,
 ) -> PendingLocalAction {
     PendingLocalAction {
         event: UiActionEvent { run, origin },
         owner: None,
-        action,
+        action: action.into(),
     }
 }
 
@@ -258,7 +258,7 @@ fn queued_event_survives_a_real_hook_panic(tokens: &[NativeOutputToken]) {
     let armed = Arc::new(AtomicBool::new(true));
     fixture.context.add_plugin(PanicHook(armed));
     let result = catch_unwind(AssertUnwindSafe(|| {
-        let (actions, _acknowledgement) = queue.peek_deferred_actions(tokens[1], SURFACE);
+        let (actions, _acknowledgement) = queue.peek_deferred_actions(tokens[1], SURFACE, None);
         fixture
             .render(Vec::new(), actions)
             .1
@@ -268,7 +268,7 @@ fn queued_event_survives_a_real_hook_panic(tokens: &[NativeOutputToken]) {
     assert_eq!(fixture.session.version(), version);
     assert!(fixture.session.view().item(FIRST).unwrap().is_active());
     assert!(queue.has_retained_action_work());
-    let (actions, acknowledgement) = queue.peek_deferred_actions(tokens[2], SURFACE);
+    let (actions, acknowledgement) = queue.peek_deferred_actions(tokens[2], SURFACE, None);
     assert_eq!(
         actions.len(),
         1,
@@ -297,7 +297,7 @@ fn independent_tokens_and_origins_each_reach_core(tokens: &[NativeOutputToken]) 
             ],
         )
         .unwrap();
-    let (actions, acknowledgement) = queue.peek_deferred_actions(tokens[2], SURFACE);
+    let (actions, acknowledgement) = queue.peek_deferred_actions(tokens[2], SURFACE, None);
     assert_eq!(actions.len(), 3);
     queue
         .retain_local_actions(
@@ -321,7 +321,10 @@ fn independent_tokens_and_origins_each_reach_core(tokens: &[NativeOutputToken]) 
         "publication must not acknowledge actions emitted after its ingress snapshot"
     );
     assert!(
-        queue.peek_deferred_actions(tokens[2], SURFACE).0.is_empty(),
+        queue
+            .peek_deferred_actions(tokens[2], SURFACE, None)
+            .0
+            .is_empty(),
         "the current run's new intent is input for a subsequent run"
     );
 }
@@ -351,7 +354,13 @@ fn capacity_and_conflicts_do_not_damage_accepted_events(tokens: &[NativeOutputTo
         ),
         Err(NativePassActionError::LocalActionConflict)
     );
-    assert_eq!(queue.peek_deferred_actions(tokens[2], SURFACE).0.len(), 64);
+    assert_eq!(
+        queue
+            .peek_deferred_actions(tokens[2], SURFACE, None)
+            .0
+            .len(),
+        64
+    );
     assert_eq!(
         queue.retain_local_actions(
             SURFACE,
@@ -363,7 +372,7 @@ fn capacity_and_conflicts_do_not_damage_accepted_events(tokens: &[NativeOutputTo
         ),
         Err(NativePassActionError::LocalActionConflict)
     );
-    let (actions, acknowledgement) = queue.peek_deferred_actions(tokens[2], SURFACE);
+    let (actions, acknowledgement) = queue.peek_deferred_actions(tokens[2], SURFACE, None);
     assert_eq!(fixture.submit(actions), 64);
     queue.acknowledge(acknowledgement);
     queue
@@ -372,7 +381,13 @@ fn capacity_and_conflicts_do_not_damage_accepted_events(tokens: &[NativeOutputTo
             vec![pending(tokens[1], Id::unique(0_usize), action)],
         )
         .unwrap();
-    assert_eq!(queue.peek_deferred_actions(tokens[2], SURFACE).0.len(), 1);
+    assert_eq!(
+        queue
+            .peek_deferred_actions(tokens[2], SURFACE, None)
+            .0
+            .len(),
+        1
+    );
 }
 
 fn publication_retires_removed_surfaces_and_preserves_unpresented_owners(
@@ -615,7 +630,7 @@ fn actual_repeat_preserves_scrollbar_response_identity(token: NativeOutputToken)
     output.drop_without_applying_deltas();
     fixture.submit(
         open.into_iter()
-            .map(EguiSurfaceAction::into_deferred)
+            .map(|action| action.into_deferred().resolve(None))
             .collect(),
     );
     fixture
