@@ -2226,10 +2226,12 @@ pub(crate) struct ActiveResize {
 pub(crate) struct FrozenResizeSplit {
     pub(crate) source: NodeSource,
     pub(crate) axis: Axis,
+    pub(crate) has_driver: bool,
     pub(crate) bounds: LogicalRect,
     pub(crate) constraints: Constraints,
     pub(crate) weights: Vec<SplitWeight>,
     pub(crate) child_extents: Vec<f64>,
+    pub(crate) child_visible: Vec<bool>,
     pub(crate) child_minimum_extents: Vec<f64>,
     pub(crate) child_maximum_extents: Vec<f64>,
     /// Extent changes per unit displacement along the containing group's axis.
@@ -2240,6 +2242,7 @@ pub(crate) struct FrozenResizeSplit {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FrozenResizeAxisGroup {
     pub(crate) axis: Axis,
+    pub(crate) overflow_policy: crate::presentation::config::PaneOverflowPolicy,
     pub(crate) splits: Vec<FrozenResizeSplit>,
     pub(crate) piecewise: Option<Arc<crate::engine::FrozenPiecewiseAxis>>,
     pub(crate) common_delta: ResizeDeltaInterval,

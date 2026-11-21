@@ -7,7 +7,7 @@ use super::*;
 use crate::graph::command::GridResizeBasis;
 use crate::model::DockspaceGridShares;
 use crate::presentation::config::{PaneOverflowPolicy, ResizePropagation};
-use crate::presentation::layout::{FrozenRootLayout, NodeResult, solve_grid_axis};
+use crate::presentation::layout::{FrozenRootLayout, NodeResult};
 use crate::presentation::scene::SplitterOwner;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -57,6 +57,7 @@ struct Track {
     visible: bool,
     minimum: f64,
     maximum: f64,
+    maximum_follows_frame: bool,
     extent: f64,
     gap: f64,
 }
@@ -236,6 +237,7 @@ pub(super) fn prepare(
                                     visible: child.visible,
                                     minimum: child.minimum,
                                     maximum: child.maximum,
+                                    maximum_follows_frame: false,
                                     extent: child.extent,
                                     gap: child
                                         .following_gap
@@ -294,6 +296,7 @@ pub(super) fn prepare(
                                     visible: true,
                                     minimum: track.minimum,
                                     maximum: track.maximum,
+                                    maximum_follows_frame: track.maximum_follows_frame,
                                     extent: track.extent,
                                     gap: track
                                         .following_gap
@@ -425,6 +428,7 @@ pub(super) fn prepare(
             }
             Some(FrozenResizeAxisGroup {
                 axis,
+                overflow_policy: frozen.overflow_policy,
                 splits: Vec::new(),
                 common_delta: ResizeDeltaInterval { minimum, maximum },
                 piecewise: Some(Arc::new(frozen)),
@@ -721,6 +725,7 @@ impl FrozenPiecewiseAxis {
                             && let Some(update) = tracks.update(
                                 self.axis,
                                 &extents,
+                                frame.value,
                                 drivers.is_empty(),
                                 self.overflow_policy,
                             )?
@@ -972,7 +977,8 @@ impl FrozenTracks {
         &self,
         axis: Axis,
         extents: &[f64],
-        constraints_frozen: bool,
+        frame_extent: f64,
+        inherited: bool,
         overflow_policy: PaneOverflowPolicy,
     ) -> Result<Option<TrackResize>, SampleError> {
         let unchanged = extents
@@ -991,22 +997,34 @@ impl FrozenTracks {
         if !unchanged && self.rounded_contact(extents, &weights) {
             weights.clone_from(&self.weights);
         }
+        // Keep durable shares when the allocator can realize the inherited
+        // transfer under the proposed frame's limits. An empty Grid track's
+        // maximum comes from that frame, so its old limit cannot prove reuse.
+        let weights = if inherited
+            && weights != self.weights
+            && stored_shares_match_extents(
+                &self.weights,
+                extents,
+                self.tracks.iter().map(|track| {
+                    let maximum = if track.maximum_follows_frame {
+                        frame_extent.max(1.0)
+                    } else {
+                        track.maximum
+                    };
+                    (track.minimum, maximum, track.visible)
+                }),
+                self.central,
+                overflow_policy,
+            ) {
+            match &self.grid {
+                Some(_) => return Ok(None),
+                None => self.weights.clone(),
+            }
+        } else {
+            weights
+        };
         Ok(Some(if self.grid.is_some() {
-            // Caps break the inverse from allocated pixels to shares. For an
-            // inherited resize, retain the original shares if they still
-            // produce these tracks under the same constraints.
-            if weights == self.weights
-                || (constraints_frozen
-                    && grid_shares_match_extents(
-                        &self.weights,
-                        extents,
-                        self.tracks
-                            .iter()
-                            .map(|track| (track.minimum, track.maximum)),
-                        self.central,
-                        overflow_policy,
-                    ))
-            {
+            if weights == self.weights {
                 return Ok(None);
             }
             self.grid_update(axis, weights)
@@ -1061,28 +1079,6 @@ impl FrozenTracks {
             .zip(&self.weights)
             .all(|(new, old)| new.get().to_bits().abs_diff(old.get().to_bits()) <= 1)
     }
-}
-
-pub(super) fn grid_shares_match_extents(
-    weights: &[SplitWeight],
-    extents: &[f64],
-    constraints: impl IntoIterator<Item = (f64, f64)>,
-    central: Option<usize>,
-    overflow_policy: PaneOverflowPolicy,
-) -> bool {
-    solve_grid_axis(
-        extents.iter().sum(),
-        weights,
-        constraints,
-        central,
-        overflow_policy,
-    )
-    .is_ok_and(|solved| {
-        solved
-            .iter()
-            .zip(extents)
-            .all(|(&actual, &target)| (actual - target).abs() <= tolerance(actual, target))
-    })
 }
 
 fn weights_with_zero_tracks(

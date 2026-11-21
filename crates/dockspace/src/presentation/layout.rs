@@ -23,7 +23,6 @@ pub use projection::{
     ChildProjection, LayoutProjection, NodeMap, NodeResult, SplitMap, SplitProjection,
 };
 mod grid;
-pub(crate) use grid::solve_grid_axis;
 pub use grid::{GridMap, GridProjection, ResolvedGridShape};
 mod reflow;
 pub(crate) use reflow::FrozenRootLayout;
@@ -364,6 +363,40 @@ pub fn solve_axis(
 struct AxisOutcome {
     overflow: f64,
     unallocated: f64,
+}
+
+pub(crate) fn solve_track_extents(
+    extent: f64,
+    weights: &[SplitWeight],
+    tracks: impl Iterator<Item = (f64, f64, bool)> + Clone,
+    central_index: Option<usize>,
+    overflow_policy: PaneOverflowPolicy,
+) -> Result<Vec<f64>, LayoutError> {
+    let constraints = tracks
+        .clone()
+        .map(|(min, max, _)| AxisConstraint { min, max })
+        .collect::<Vec<_>>();
+    let weights = if tracks.clone().all(|(_, _, visible)| visible) {
+        weights.iter().map(|weight| weight.get()).collect()
+    } else {
+        visible_track_weights(
+            weights
+                .iter()
+                .zip(tracks)
+                .map(|(weight, (_, _, visible))| (weight.get(), visible)),
+        )
+    };
+    let mut sizes = vec![0.0; weights.len()];
+    solve_axis_into(
+        extent,
+        &weights,
+        &constraints,
+        central_index,
+        &mut sizes,
+        &mut Vec::new(),
+        overflow_policy,
+    )?;
+    Ok(sizes)
 }
 
 fn solve_axis_into(
@@ -1547,21 +1580,13 @@ fn prepare_split_projection(
     let axis_weights = if visible_count == children.len() {
         stored_weights
     } else {
-        let total =
-            normalized_weight_sum(stored_weights.iter().zip(children).filter_map(
-                |(&weight, &row)| projection.nodes.at_row(row).visible.then_some(weight),
-            ));
-        visible_weights = stored_weights
-            .iter()
-            .zip(children)
-            .map(|(&weight, &row)| {
-                if projection.nodes.at_row(row).visible {
-                    weight / total
-                } else {
-                    0.0
-                }
-            })
-            .collect::<Vec<_>>();
+        visible_weights = visible_track_weights(
+            stored_weights.iter().copied().zip(
+                children
+                    .iter()
+                    .map(|&row| projection.nodes.at_row(row).visible),
+            ),
+        );
         visible_weights.as_slice()
     };
     let central_index = match central {
@@ -1640,6 +1665,18 @@ fn prepare_split_projection(
         splitter_thickness,
         pending_child: false,
     }))
+}
+
+/// Projects durable weights into the axis solver's weight space for visible tracks.
+fn visible_track_weights(tracks: impl Iterator<Item = (f64, bool)> + Clone) -> Vec<f64> {
+    let total = normalized_weight_sum(
+        tracks
+            .clone()
+            .filter_map(|(weight, visible)| visible.then_some(weight)),
+    );
+    tracks
+        .map(|(weight, visible)| if visible { weight / total } else { 0.0 })
+        .collect()
 }
 
 fn projected_splitter_geometry(

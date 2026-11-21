@@ -110,6 +110,10 @@ impl FrozenRootLayout {
 }
 
 impl LayoutProjection {
+    pub(crate) const fn caps_frames(&self) -> bool {
+        self.basis.cap_frames
+    }
+
     /// Reprojects this root using only numeric layout facts. The original
     /// surface supplies clipping and input authority separately.
     pub(crate) fn project_resize_step(

@@ -38,10 +38,10 @@ fn grid_handle(
         SceneLayerKey::surface_base(),
         true,
     )
-    .with_grid_proof(
+    .with_grid_proof(crate::presentation::scene::GridBoundaryProof::new(
         (grid.shape.rows, grid.shape.columns),
         Arc::clone(&grid.children),
-    );
+    ));
     (
         fixture.workspace.capture_node_source(ROOT, owner).unwrap(),
         record,

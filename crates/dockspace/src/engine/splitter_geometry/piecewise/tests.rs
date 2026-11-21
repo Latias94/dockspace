@@ -33,6 +33,7 @@ fn tracks() -> FrozenTracks {
                 visible: true,
                 minimum: 1.0,
                 maximum: 1000.0,
+                maximum_follows_frame: false,
                 extent,
                 gap: 0.0,
             })
