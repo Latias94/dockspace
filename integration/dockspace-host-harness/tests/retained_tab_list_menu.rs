@@ -391,6 +391,32 @@ fn retained_and_last(
 }
 
 #[test]
+fn queued_opening_input_expires_when_the_menu_is_replaced() {
+    let mut original = session();
+    let mut opener = None;
+    present(&mut original, 80.0, None, |plan, step| {
+        if let Some(control) = opener_in(step) {
+            opener = plan.retain_tab_list_opener(control);
+        }
+    });
+    let opener = opener.unwrap();
+    let open = open_action(&mut original, 80.0);
+    let (menu, row) = with_menu(&mut original, 80.0, Some(open), retained_and_last);
+    assert!(menu.can_continue_opening(&opener));
+
+    let mut foreign = session();
+    let open = open_action(&mut foreign, 80.0);
+    let (foreign_menu, _) = with_menu(&mut foreign, 80.0, Some(open), retained_and_last);
+    assert!(!foreign_menu.can_continue_opening(&opener));
+
+    let (_, dismiss) = menu.resolve(row, Input::Dismiss).unwrap();
+    present(&mut original, 80.0, Some(dismiss), |_, _| {});
+    let open = open_action(&mut original, 80.0);
+    let (reopened, _) = with_menu(&mut original, 80.0, Some(open), retained_and_last);
+    assert!(!reopened.can_continue_opening(&opener));
+}
+
+#[test]
 fn retained_menu_rows_expire_across_session_epoch_roster_and_popup_changes() {
     let mut original = session();
     let open = open_action(&mut original, 80.0);

@@ -590,7 +590,7 @@ impl DockEngine {
         let key = match action {
             LocalTabChromeAction::ActivateControl(control) => control.key,
             LocalTabChromeAction::ScrollStrip { key, .. } => *key,
-            LocalTabChromeAction::ActivateMenuRow(row) => row.session.key(),
+            LocalTabChromeAction::ActivateMenuRow { row, .. } => row.session.key(),
             LocalTabChromeAction::DismissMenu { session, .. }
             | LocalTabChromeAction::ScrollMenu { session, .. }
             | LocalTabChromeAction::NavigateMenu { session, .. } => session.key(),

@@ -549,6 +549,19 @@ impl Clone for DeferredSurfaceAction {
 }
 
 impl DeferredSurfaceAction {
+    /// Preserves existing framework focus when this action selects a tab-list row.
+    #[must_use]
+    pub fn preserve_tab_list_focus(mut self) -> Self {
+        if let SurfaceAction::TabChrome {
+            action: LocalTabChromeAction::ActivateMenuRow { focus_content, .. },
+            ..
+        } = &mut self.0.action
+        {
+            *focus_content = false;
+        }
+        self
+    }
+
     /// Changes pending tab navigation into content activation of its destination.
     ///
     /// Retains the original strip and navigation witness. Use this when Enter

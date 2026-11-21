@@ -200,7 +200,13 @@ navigation, activation, and dismissal using the row's `input_id()` when the UI
 delivers input. Pass the returned row ID into the next navigation step. Use the
 menu's `input_id()` for its frame and scrollbar, and `opener_input_id()` to return
 focus to the button. Check `can_continue_from()` before resuming queued input on
-a new presentation. Keyboard navigation reveals its
+a new presentation. For input received after accepting an open, retain the
+closed control with `retain_tab_list_opener` and use `can_continue_opening()` on
+the first menu output. Only resume while the menu still owns keyboard input. If
+a later focus change follows a row confirmation, `preserve_tab_list_focus()`
+keeps the selection while leaving framework focus in place.
+
+Keyboard navigation reveals its
 target in the current viewport until manual scrolling takes over. Lay out row
 content in `bounds()` and clip it to `interaction_bounds()`, skipping rows
 without a visible intersection. Answer `TabIntrinsic` requests with

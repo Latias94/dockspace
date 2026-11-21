@@ -117,6 +117,9 @@ Register actionable widgets with the paint record's `DockspaceControlId` and
 keep the original output's input witness. For host-owned menus, issue fresh row
 IDs on each opening. Replay an old close activation after rebuilding a session
 or reopening a menu and check that the new pane roster remains intact.
+Keep keys received after an accepted open with its `RetainedTabListOpener`.
+Before replay, require the first matching presented menu via
+`RetainedTabListMenu::can_continue_opening` and verify window focus ownership.
 
 When the framework has proved that a pointer hit is unobstructed, use
 `HostPointerHit::unobstructed_receiver_facts` to retain its independent click and

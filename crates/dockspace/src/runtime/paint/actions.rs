@@ -159,11 +159,14 @@ impl SurfacePaintPlan<'_> {
             self.version,
             self.scene,
             self.frozen_action_witness()?,
-            crate::engine::LocalTabChromeAction::ActivateMenuRow(FrozenTabListMenuRowClick {
-                session,
-                record,
-                revision: self.plan.popup().revision(),
-            }),
+            crate::engine::LocalTabChromeAction::ActivateMenuRow {
+                row: FrozenTabListMenuRowClick {
+                    session,
+                    record,
+                    revision: self.plan.popup().revision(),
+                },
+                focus_content: true,
+            },
         ))
     }
 

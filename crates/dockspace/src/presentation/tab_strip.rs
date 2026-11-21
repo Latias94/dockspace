@@ -107,7 +107,7 @@ impl PopupRoutingRevision {
         self.0
     }
 
-    const fn checked_next(self) -> Option<Self> {
+    pub(crate) const fn checked_next(self) -> Option<Self> {
         match self.0.checked_add(1) {
             Some(value) => Some(Self(value)),
             None => None,

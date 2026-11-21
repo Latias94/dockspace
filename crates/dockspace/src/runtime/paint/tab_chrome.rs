@@ -8,8 +8,8 @@ use crate::ids::{EngineAuthorityDomainId, ItemId, RootId, TabKey, WorkspaceEpoch
 use crate::interaction::FrozenTabListMenuRowClick;
 use crate::model::WorkspaceVersion;
 use crate::presentation::scene::{
-    SurfacePlanScene, TabListMenuBackdropRecord, TabListMenuRecord, TabListMenuRowRecord,
-    TabSceneId, TabStripControlRecord,
+    SurfacePlanScene, TabBarSceneId, TabListMenuBackdropRecord, TabListMenuRecord,
+    TabListMenuRowRecord, TabSceneId, TabStripControlRecord,
 };
 use crate::presentation::tab_strip::{
     PopupRoutingRevision, TabListMenuSessionId, TabStripControlId,
@@ -89,7 +89,30 @@ pub struct RetainedTabListMenu {
     backdrop: TabListMenuBackdropRecord,
 }
 
+/// The closed tab-list control that received an opening input.
+///
+/// Retain this while waiting for its menu. The host checks that the opening
+/// input was accepted and that focus still belongs to the menu.
+#[derive(Debug, Clone)]
+pub struct RetainedTabListOpener {
+    witness: Arc<SurfacePlanScene>,
+    version: WorkspaceVersion,
+    bar: TabBarSceneId,
+}
+
 impl RetainedTabListMenu {
+    /// Tests whether this is the first menu opened by the witnessed control.
+    ///
+    /// Reopening, roster changes, and changes to surface input authority expire
+    /// the transition. Resolve queued input only after the host accepts this menu.
+    #[must_use]
+    pub fn can_continue_opening(&self, opener: &RetainedTabListOpener) -> bool {
+        self.scope.session.key().bar() == opener.bar
+            && self.version == opener.version
+            && super::tab_input::same_surface_keyboard_authority(&self.witness, &opener.witness)
+            && opener.witness.plan().popup().revision().checked_next() == Some(self.scope.revision)
+    }
+
     /// Tests whether a later presented menu can continue this menu's keyboard input.
     ///
     /// The popup session, ordered roster and keyboard authority must match.
@@ -135,13 +158,14 @@ impl RetainedTabListMenu {
                     target: target.tab().tab,
                 }
             }
-            SurfaceTabListInput::Activate => {
-                LocalTabChromeAction::ActivateMenuRow(FrozenTabListMenuRowClick {
+            SurfaceTabListInput::Activate => LocalTabChromeAction::ActivateMenuRow {
+                row: FrozenTabListMenuRowClick {
                     session,
                     record: *target,
                     revision,
-                })
-            }
+                },
+                focus_content: true,
+            },
             SurfaceTabListInput::Dismiss => LocalTabChromeAction::DismissMenu {
                 session,
                 revision,
@@ -162,6 +186,24 @@ impl RetainedTabListMenu {
 }
 
 impl SurfacePaintPlan<'_> {
+    /// Retains the exact closed control for input received after an accepted open.
+    #[must_use]
+    pub fn retain_tab_list_opener(
+        self,
+        control: TabStripControlPaintRecord,
+    ) -> Option<RetainedTabListOpener> {
+        (control.belongs_to(&self)
+            && control.enabled()
+            && control.kind() == TabStripControlKind::TabListMenu
+            && !control.menu_open())
+        .then_some(())?;
+        Some(RetainedTabListOpener {
+            witness: self.frozen_action_witness()?,
+            version: self.version,
+            bar: control.record.id().bar(),
+        })
+    }
+
     /// Captures one menu for retained keyboard and accessibility delivery.
     #[must_use]
     pub fn retain_tab_list_menu(

@@ -127,6 +127,14 @@ pub(super) fn same_keyboard_authority(
     current: &SurfacePlanScene,
     previous: &SurfacePlanScene,
 ) -> bool {
+    same_surface_keyboard_authority(current, previous)
+        && current.plan().popup() == previous.plan().popup()
+}
+
+pub(super) fn same_surface_keyboard_authority(
+    current: &SurfacePlanScene,
+    previous: &SurfacePlanScene,
+) -> bool {
     let ticket = current.stamp().requirement();
     let before = previous.stamp().requirement();
     ticket.authority_domain() == before.authority_domain()
@@ -137,7 +145,6 @@ pub(super) fn same_keyboard_authority(
         && current
             .coordinate_capture()
             .same_projection_authority(previous.coordinate_capture())
-        && current.plan().popup() == previous.plan().popup()
 }
 
 impl SurfacePaintPlan<'_> {

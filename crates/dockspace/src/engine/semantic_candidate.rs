@@ -506,14 +506,19 @@ impl DockEngine {
                 record,
                 adjustment,
             } => self.finish_tab_strip_scroll(cause, plan, *key, record, adjustment)?,
-            LocalTabChromeAction::ActivateMenuRow(row) => self.finish_tab_list_menu_row(
-                cause,
-                TabListMenuActivation::Local(focus_causal),
-                row,
-                plan,
-                policy,
-                events,
-            )?,
+            LocalTabChromeAction::ActivateMenuRow { row, focus_content } => self
+                .finish_tab_list_menu_row(
+                    cause,
+                    if *focus_content {
+                        TabListMenuActivation::Local(focus_causal)
+                    } else {
+                        TabListMenuActivation::PreserveFocus
+                    },
+                    row,
+                    plan,
+                    policy,
+                    events,
+                )?,
             LocalTabChromeAction::DismissMenu {
                 session,
                 revision,

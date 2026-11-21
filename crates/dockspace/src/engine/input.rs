@@ -260,7 +260,10 @@ pub(crate) enum LocalTabChromeAction {
         adjustment: TabScrollAdjustment,
     },
     /// Select one exact row from the active tab-list menu.
-    ActivateMenuRow(FrozenTabListMenuRowClick),
+    ActivateMenuRow {
+        row: FrozenTabListMenuRowClick,
+        focus_content: bool,
+    },
     /// Dismiss the exact active tab-list menu.
     DismissMenu {
         session: crate::presentation::tab_strip::TabListMenuSessionId,
@@ -304,9 +307,16 @@ impl LocalTabChromeAction {
                     ..
                 },
             ) => a == b && ad == bd,
-            (Self::ActivateMenuRow(a), Self::ActivateMenuRow(b)) => {
-                a.session == b.session && a.record.tab() == b.record.tab()
-            }
+            (
+                Self::ActivateMenuRow {
+                    row: a,
+                    focus_content: af,
+                },
+                Self::ActivateMenuRow {
+                    row: b,
+                    focus_content: bf,
+                },
+            ) => af == bf && a.session == b.session && a.record.tab() == b.record.tab(),
             (Self::DismissMenu { session: a, .. }, Self::DismissMenu { session: b, .. }) => a == b,
             (Self::DismissMenuFromBackdrop(a), Self::DismissMenuFromBackdrop(b)) => {
                 a.session == b.session

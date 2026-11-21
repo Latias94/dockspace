@@ -7,6 +7,8 @@ pub(super) enum TabListMenuActivation {
     Local(FocusCausalStamp),
     /// Native pointer input retains ordered activation and compensation handling.
     Journal(FocusCausalStamp),
+    /// A later host input has already chosen a focus owner.
+    PreserveFocus,
 }
 
 enum TabListScroll {
@@ -376,18 +378,20 @@ impl DockEngine {
             self.consume_tab_strip_state_delta(cause, &close_delta)?;
         }
         let surface = session.key().surface();
-        let (focus_causal, native_activation) = match activation {
-            TabListMenuActivation::Local(causal) => (causal, None),
-            TabListMenuActivation::Journal(causal) => (
+        let focus = match activation {
+            TabListMenuActivation::Local(causal) => Some((causal, None)),
+            TabListMenuActivation::Journal(causal) => Some((
                 causal,
                 self.viewport
                     .viewport(surface)
                     .filter(|record| record.can_accept_activation())
                     .map(crate::platform::registry::ViewportRecord::binding),
-            ),
+            )),
+            TabListMenuActivation::PreserveFocus => None,
         };
-        let focus_item = self.tab_content_focus_target(tab);
-        if let Some(item) = focus_item {
+        if let Some((focus_causal, native_activation)) = focus
+            && let Some(item) = self.tab_content_focus_target(tab)
+        {
             if let Some(binding) = native_activation {
                 let _ = self.start_viewport_activation(
                     ViewportActivationRequest::pointer_tab_gesture(binding, PanelFocus::Item(item)),
