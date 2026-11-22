@@ -89,6 +89,50 @@ pub(super) fn expect_tab_list(ui: &Ui, id: Id) {
     with_input(ui, |input| input.opening = Some((id, frame)));
 }
 
+pub(super) fn tab_list_opener_has_focus(ui: &Ui, id: Id) -> bool {
+    with_input(ui, |input| input.focus_owner == Some(id))
+}
+
+pub(super) fn focus_tab_list_opener(ui: &Ui, id: Id, keep_keys: bool) {
+    let frame = ui.ctx().cumulative_frame_nr();
+    ui.memory_mut(|memory| memory.request_focus(id));
+    with_input(ui, |input| {
+        input.focus_owner = Some(id);
+        input.opening = keep_keys.then_some((id, frame));
+    });
+}
+
+pub(super) fn take_tab_list_click_keys(
+    ui: &Ui,
+    opener: Id,
+    after_click: usize,
+) -> Option<Vec<MenuKey>> {
+    let target = opener.accesskit_id();
+    let preceding = after_click.checked_sub(1)?;
+    if ui.input(|input| input.events.get(preceding).and_then(accesskit_click_target))
+        != Some(target)
+    {
+        return None;
+    }
+    let focused = ui.memory(Memory::focused);
+    with_input(ui, |input| {
+        let pending = input.after_application.as_ref()?;
+        if pending.target != target || input.focus_before_ui != focused {
+            return None;
+        }
+        // A prepared list opener resolves this click without an application callback.
+        let pending = input.after_application.take()?;
+        Some(
+            pending
+                .keys
+                .iter()
+                .filter_map(MenuKey::from_event)
+                .filter(|key| key.is_tab_list())
+                .collect(),
+        )
+    })
+}
+
 pub(super) fn take_opening_keys(ui: &Ui, id: Id) -> (Vec<MenuKey>, bool) {
     let focused = ui.memory(Memory::focused);
     with_input(ui, |input| {
@@ -192,6 +236,12 @@ impl egui::plugin::Plugin for MenuInput {
         });
         input.initial_menu = initial.map(|(menu, _)| menu.id);
         let delivering = previous.delivery.is_some_and(|delivery| {
+            // An egui sizing retry repeats the same input frame. Delivering
+            // its suffix there could change the action captured on the first pass.
+            if context.viewport_for(viewport, |state| state.output.num_completed_passes != 0) {
+                input.delivery = Some(delivery);
+                return false;
+            }
             let current = initial_focus.is_some()
                 && initial_focus == delivery.receiver
                 && !raw.events.iter().any(changes_keyboard_owner);
@@ -249,6 +299,7 @@ impl egui::plugin::Plugin for MenuInput {
                 let owner = cursor
                     .take()
                     .map(|(menu, _)| menu.id)
+                    .or(opening_cursor)
                     .or_else(|| input.after_application.as_ref().map(|pending| pending.menu));
                 if let Some(menu) = owner
                     && input
@@ -514,7 +565,7 @@ pub(super) fn accesskit_focus_target(event: &Event) -> Option<NodeId> {
     accesskit_target(event, Action::Focus)
 }
 
-fn accesskit_click_target(event: &Event) -> Option<NodeId> {
+pub(super) fn accesskit_click_target(event: &Event) -> Option<NodeId> {
     accesskit_target(event, Action::Click)
 }
 

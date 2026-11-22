@@ -6,7 +6,8 @@ use dockspace::runtime::{
 use egui::{Event, EventFilter, Id, Key, PointerButton, Ui};
 
 use super::super::menu_input::{
-    self, Intent, MenuKey, MenuKind, accesskit_focus_target, live_accesskit_click_target,
+    self, Intent, MenuKey, MenuKind, accesskit_click_target, accesskit_focus_target,
+    live_accesskit_click_target,
 };
 use super::super::{
     RenderContext,
@@ -102,10 +103,13 @@ fn retain_opening(
 ) {
     let ui = &*context.ui;
     let focused = ui.memory(egui::Memory::focused);
+    let click_keys = menu_input::take_tab_list_click_keys(ui, id, start);
+    let other_opener = focused
+        .filter(|&focused| focused != id && menu_input::tab_list_opener_has_focus(ui, focused));
     // An application widget already built in this pass may have seen Enter.
     // Preserve that confirmation while the new opener takes the next packet.
     let application_seen_key = focused
-        .filter(|&focused| focused != id)
+        .filter(|&focused| focused != id && other_opener != Some(focused))
         .is_some_and(|focused| {
             ui.ctx()
                 .viewport(|viewport| viewport.this_pass.widgets.get(focused).is_some())
@@ -124,9 +128,22 @@ fn retain_opening(
             })
     });
     let (keys, retains_focus) = ui.input_mut(|input| {
-        let mut keys = Vec::new();
+        let claims_click = click_keys.is_some();
+        let mut retains_focus = claims_click || !application_took_focus;
+        if let Some(other) = other_opener {
+            // Two openers can accept separate confirmations in one packet.
+            // Only the later click can take focus, independent of paint order.
+            let last_click = input
+                .raw
+                .events
+                .iter()
+                .rev()
+                .filter_map(accesskit_click_target)
+                .find(|&target| target == other.accesskit_id() || target == id.accesskit_id());
+            retains_focus &= last_click != Some(other.accesskit_id());
+        }
+        let mut keys = click_keys.unwrap_or_default();
         let mut slots = Vec::new();
-        let mut retains_focus = !application_took_focus;
         for (slot, event) in input.events.iter().enumerate().skip(start) {
             if accesskit_focus_target(event).is_some()
                 || click_boundary == Some(slot)
@@ -149,7 +166,7 @@ fn retain_opening(
             let Some(key) = MenuKey::from_event(event).filter(|key| key.is_tab_list()) else {
                 continue;
             };
-            if application_seen_key && matches!(key, MenuKey::Activate) {
+            if application_seen_key && !claims_click && matches!(key, MenuKey::Activate) {
                 break;
             }
             keys.push(key);
@@ -164,10 +181,11 @@ fn retain_opening(
         (keys, retains_focus)
     });
     if retains_focus {
-        ui.memory_mut(|memory| memory.request_focus(id));
-        if !keys.last().is_some_and(|key| key.is_terminal()) {
-            menu_input::expect_tab_list(ui, id);
-        }
+        menu_input::focus_tab_list_opener(
+            ui,
+            id,
+            !keys.last().is_some_and(|key| key.is_terminal()),
+        );
     }
     let slot = opening_slot(context);
     let frame = ui.ctx().cumulative_frame_nr();

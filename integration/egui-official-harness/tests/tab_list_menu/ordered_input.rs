@@ -10,6 +10,7 @@ struct Application {
     toolbar_focuses_confirm: bool,
     toolbar_clicks: usize,
     focus_confirm: bool,
+    retry: bool,
     return_focus_after_confirm: Option<egui::Id>,
 }
 
@@ -28,6 +29,7 @@ impl Application {
             toolbar_focuses_confirm: true,
             toolbar_clicks: 0,
             focus_confirm: false,
+            retry: false,
             return_focus_after_confirm: None,
         }
     }
@@ -43,6 +45,10 @@ impl Application {
                 SURFACE,
                 &mut self.fixture.panes,
                 |ui| {
+                    if self.retry && ui.ctx().current_pass_index() == 0 {
+                        ui.ctx()
+                            .request_discard("exercise application key delivery after layout");
+                    }
                     egui::Panel::top("app-tools")
                         .exact_size(44.0)
                         .frame(egui::Frame::NONE)
@@ -256,6 +262,29 @@ fn a_repeated_toolbar_click_preserves_the_application_confirmation() {
         assert_eq!(app.activations, 1, "batched: {batched}");
         assert!(app.closed.is_empty(), "batched: {batched}");
     }
+}
+
+#[test]
+fn an_application_confirmation_waits_until_the_next_frame_after_a_retry() {
+    let mut app = Application::new();
+    let menu = app.open_layout_menu();
+    let close = node(&menu, Role::MenuItem, "Close Layout").0;
+    let toolbar = node(&menu, Role::Button, "Focus app command").0;
+    app.send(vec![accesskit(close, Action::Focus)], true);
+    app.fixture
+        .context
+        .options_mut(|options| options.max_passes = 2.try_into().unwrap());
+    app.retry = true;
+
+    let output = app.run(vec![accesskit(toolbar, Action::Click), key(Key::Enter)]);
+    assert_eq!(output.platform_output.num_completed_passes, 2);
+    assert_eq!(app.activations, 0);
+    assert!(app.closed.is_empty());
+
+    app.retry = false;
+    app.run(Vec::new());
+    assert_eq!(app.activations, 1);
+    assert!(app.closed.is_empty());
 }
 
 #[test]
@@ -1139,6 +1168,107 @@ fn accessible_splitter_follows_the_same_pair_after_an_earlier_pane_closes() {
     let after = dividers(&render(&mut fixture, Vec::new()));
     assert!(after[0].1 > before[0].1);
     assert_eq!(after[1..], before[1..]);
+}
+
+#[test]
+fn each_list_opener_keeps_its_confirmation_across_dockspaces_and_pass_retries() {
+    for first in 0..2 {
+        let second = 1 - first;
+        for (batched, retry) in [(false, false), (false, true), (true, false), (true, true)] {
+            for first_already_open in [false, true] {
+                let context = Context::default();
+                context.enable_accesskit();
+                context.options_mut(|options| options.max_passes = 2.try_into().unwrap());
+                let mut docks = ["left-list", "right-list"].map(make_named_dock);
+                let mut panes = ["Left", "Right"].map(|prefix| Panes {
+                    title_prefix: Some(prefix),
+                    ..Panes::default()
+                });
+                let mut tick = 0;
+                let mut run = |docks: &mut [Dockspace; 2], events, discard| {
+                    tick += 1;
+                    let input = RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 260.0))),
+                        time: Some(f64::from(tick) / 60.0),
+                        events,
+                        ..Default::default()
+                    };
+                    let (mut output, receipt) = egui_dockspace::run_ui(&context, input, |ui| {
+                        ui.columns(2, |columns| {
+                            for ((dock, panes), column) in
+                                docks.iter_mut().zip(&mut panes).zip(columns)
+                            {
+                                column.shrink_clip_rect(column.available_rect_before_wrap());
+                                dock.show_single_surface(SURFACE, column, panes).unwrap();
+                            }
+                        });
+                        if discard && ui.ctx().current_pass_index() == 0 {
+                            ui.ctx()
+                                .request_discard("exercise menu routing after layout");
+                        }
+                    })
+                    .into_parts();
+                    receipt.report(SurfacePresentationResult::Presented);
+                    output.textures_delta.clear();
+                    output
+                };
+                run(&mut docks, Vec::new(), false);
+                let output = run(&mut docks, Vec::new(), false);
+                let mut openers: Vec<_> = nodes(&output)
+                    .iter()
+                    .filter(|(_, node)| {
+                        node.role() == Role::Button && node.label() == Some("List tabs")
+                    })
+                    .map(|(id, node)| (*id, node.bounds().unwrap().x0))
+                    .collect();
+                openers.sort_by(|left, right| left.1.total_cmp(&right.1));
+                assert_eq!(openers.len(), 2);
+                let open = |index: usize| accesskit(openers[index].0, Action::Click);
+                let mut events = if first_already_open {
+                    run(&mut docks, vec![open(first)], false);
+                    run(&mut docks, Vec::new(), false);
+                    let opened = run(&mut docks, Vec::new(), false);
+                    let side = ["Left", "Right"][first];
+                    let label = format!("{side} document name with a unique suffix 34");
+                    vec![accesskit(
+                        node(&opened, Role::MenuItem, &label).0,
+                        Action::Focus,
+                    )]
+                } else {
+                    vec![open(first), key(Key::Home), key(Key::Enter)]
+                };
+                events.extend([open(second), key(Key::End), key(Key::Enter)]);
+                if batched {
+                    let output = run(&mut docks, events, retry);
+                    assert_eq!(
+                        output.platform_output.num_completed_passes,
+                        1 + usize::from(retry)
+                    );
+                } else {
+                    for event in events {
+                        run(&mut docks, vec![event], retry);
+                    }
+                }
+                for _ in 0..3 {
+                    run(&mut docks, Vec::new(), false);
+                }
+                let first_item = if first_already_open {
+                    SELECTED
+                } else {
+                    ItemId::new(1)
+                };
+                let case = (first, batched, retry, first_already_open);
+                assert!(
+                    docks[first].view().item(first_item).unwrap().is_active(),
+                    "{case:?}"
+                );
+                assert!(
+                    docks[second].view().item(LAST).unwrap().is_active(),
+                    "{case:?}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
