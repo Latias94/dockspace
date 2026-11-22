@@ -41,9 +41,7 @@ impl SurfacePaintPlan<'_> {
         };
         let unavailable = |reason| {
             PresentationCommandPaintRecord::unavailable(
-                self.authority_domain,
-                self.version,
-                self.scene,
+                self,
                 id.root,
                 kind,
                 DockspacePresentationCommandUnavailable::Action(reason),
@@ -95,10 +93,8 @@ impl SurfacePaintPlan<'_> {
         Ok(Some(
             match self.candidate.prepare_product_action_if_available(action)? {
                 Ok(prepared) => {
-                    let (domain, version, action, _) = prepared.into_parts();
-                    PresentationCommandPaintRecord::ready(
-                        domain, version, self.scene, id.root, kind, action,
-                    )
+                    let (_, _, action, _) = prepared.into_parts();
+                    PresentationCommandPaintRecord::ready(self, id.root, kind, action)
                 }
                 Err(reason) => unavailable(reason),
             },

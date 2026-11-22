@@ -36,9 +36,10 @@ impl RetainedTabStrip {
     ///
     /// Selection and scrolling can produce a new output for the same strip.
     /// The session, layout epoch, surface, policy, presentation configuration,
-    /// coordinate authority, popup state, and strip allocation must match. The
-    /// host must independently verify focus, the expected workspace version,
-    /// and that the replacement output has presented before resolving queued input.
+    /// coordinate authority, the surface's popup plane, and strip allocation
+    /// must match. The host must independently verify focus, the expected
+    /// workspace version, and that the replacement output has presented before
+    /// resolving queued input.
     #[must_use]
     pub fn same_navigation_scope(&self, previous: &Self) -> bool {
         self.bar == previous.bar
@@ -127,8 +128,10 @@ pub(super) fn same_keyboard_authority(
     current: &SurfacePlanScene,
     previous: &SurfacePlanScene,
 ) -> bool {
+    let surface = current.stamp().surface();
     same_surface_keyboard_authority(current, previous)
-        && current.plan().popup() == previous.plan().popup()
+        && current.plan().popup().visual_for_surface(surface)
+            == previous.plan().popup().visual_for_surface(surface)
 }
 
 pub(super) fn same_surface_keyboard_authority(

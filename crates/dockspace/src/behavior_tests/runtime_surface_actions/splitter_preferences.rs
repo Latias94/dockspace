@@ -162,7 +162,7 @@ fn apply_at_splitter(
     let mut frame = session.begin_host_frame().unwrap();
     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
     let action = plan
-        .prepare_splitter_adjustment_sequence(splitter(plan).visual_id(), steps.iter().copied())
+        .prepare_splitter_adjustment_sequence(splitter(plan), steps.iter().copied())
         .expect("the constrained splitter prepares the explicit preference sequence");
     frame.submit_surface_action(action).unwrap();
     measure_at(&mut frame, hints, bounds);
@@ -693,7 +693,7 @@ fn junction_preferences_require_one_common_incident_displacement() {
         let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
         let junction = plan.splitter_junctions().next().unwrap();
         let action = plan.prepare_splitter_junction_adjustment(
-            junction.visual_id(),
+            junction,
             DockspaceAxis::Vertical,
             SurfaceSplitterAdjustment::Preferred,
         );

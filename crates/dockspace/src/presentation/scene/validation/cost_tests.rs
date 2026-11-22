@@ -129,6 +129,7 @@ fn with_resize_arrays(
         record.layer(),
         record.operable(),
     )
+    .with_split_proof(record.after_index(), record.split_children().unwrap())
 }
 
 #[test]
@@ -174,7 +175,8 @@ fn compressed_splitters_require_exact_layout_constraints_and_remain_inoperable()
             Arc::from(record.weights()),
             record.layer(),
             defect == 3,
-        );
+        )
+        .with_split_proof(record.after_index(), record.split_children().unwrap());
         assert!(matches!(
             revalidate(&engine, plan),
             Err(SceneBuildError::InvalidSplitterRecord { id, .. }) if id == *record.id()

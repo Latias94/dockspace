@@ -7,7 +7,7 @@ use super::*;
 use crate::graph::command::GridResizeBasis;
 use crate::model::DockspaceGridShares;
 use crate::presentation::config::{PaneOverflowPolicy, ResizePropagation};
-use crate::presentation::layout::{FrozenRootLayout, NodeResult, solve_grid_axis};
+use crate::presentation::layout::{FrozenRootLayout, NodeResult};
 use crate::presentation::scene::SplitterOwner;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -57,6 +57,7 @@ struct Track {
     visible: bool,
     minimum: f64,
     maximum: f64,
+    maximum_follows_frame: bool,
     extent: f64,
     gap: f64,
 }
@@ -83,6 +84,32 @@ impl Scalar {
             slope: self.slope - other.slope,
         }
     }
+
+    fn cap(self, maximum: f64, delta: f64, mut contact: Option<f64>) -> (Self, Option<f64>) {
+        if self.value < maximum {
+            return (self, contact);
+        }
+        if self.slope * delta > 0.0 {
+            let crossing = delta + (maximum - self.value) / self.slope;
+            if crossing == delta {
+                // At contact the path back toward zero still follows the slot.
+                return (
+                    Self {
+                        value: maximum,
+                        ..self
+                    },
+                    contact,
+                );
+            }
+            if crossing * delta.signum() >= 0.0
+                && crossing.abs() < delta.abs()
+                && contact.is_none_or(|previous| crossing.abs() > previous.abs())
+            {
+                contact = Some(crossing);
+            }
+        }
+        (Self::fixed(maximum), contact)
+    }
 }
 
 pub(super) struct Sample {
@@ -99,7 +126,27 @@ pub(super) struct TrackAllocation {
 #[derive(Debug)]
 enum SampleError {
     Limit(f64),
+    Saturated,
     Invalid,
+}
+
+impl SampleError {
+    fn within_contact(self, contact: Option<f64>, delta: f64) -> Self {
+        let Some(contact) = contact else {
+            return self;
+        };
+        match self {
+            Self::Saturated => Self::Limit(contact),
+            Self::Limit(limit)
+                if !limit.is_finite()
+                    || limit.abs() >= delta.abs()
+                    || (limit - contact) * delta.signum() < 0.0 =>
+            {
+                Self::Limit(contact)
+            }
+            error => error,
+        }
+    }
 }
 
 pub(super) fn prepare(
@@ -236,6 +283,7 @@ pub(super) fn prepare(
                                     visible: child.visible,
                                     minimum: child.minimum,
                                     maximum: child.maximum,
+                                    maximum_follows_frame: false,
                                     extent: child.extent,
                                     gap: child
                                         .following_gap
@@ -294,6 +342,7 @@ pub(super) fn prepare(
                                     visible: true,
                                     minimum: track.minimum,
                                     maximum: track.maximum,
+                                    maximum_follows_frame: track.maximum_follows_frame,
                                     extent: track.extent,
                                     gap: track
                                         .following_gap
@@ -425,6 +474,7 @@ pub(super) fn prepare(
             }
             Some(FrozenResizeAxisGroup {
                 axis,
+                overflow_policy: frozen.overflow_policy,
                 splits: Vec::new(),
                 common_delta: ResizeDeltaInterval { minimum, maximum },
                 piecewise: Some(Arc::new(frozen)),
@@ -678,37 +728,45 @@ impl FrozenPiecewiseAxis {
                 root.source.node(),
                 Scalar::fixed(rect_start(initial.slot, self.axis)),
                 Scalar::fixed(rect_extent(initial.slot, self.axis)),
+                None,
             )];
-            while let Some((id, origin, offered)) = pending.pop() {
+            while let Some((id, origin, offered, contact)) = pending.pop() {
                 let node = root.nodes.get(&id).ok_or(SampleError::Invalid)?;
                 let maximum = size_extent(node.result.constraints.max(), self.axis);
-                let frame = if offered.value >= maximum {
-                    Scalar::fixed(maximum)
-                } else {
-                    offered
-                };
+                let (frame, contact) = offered.cap(maximum, delta, contact);
+                let within_contact = |error: SampleError| error.within_contact(contact, delta);
                 let minimum = size_extent(node.result.constraints.min(), self.axis);
-                require_range(frame, minimum, maximum, delta)?;
+                require_range(frame, minimum, maximum, delta).map_err(within_contact)?;
                 match &node.kind {
                     FrozenKind::Pane => {}
                     FrozenKind::Tabs { child, header } => {
                         if let Some(child) = child {
-                            pending.push((*child, origin.add(*header), frame.add(-*header)));
+                            pending.push((
+                                *child,
+                                origin.add(*header),
+                                frame.add(-*header),
+                                contact,
+                            ));
                         }
                     }
-                    FrozenKind::Parallel(children) => {
-                        pending.extend(children.iter().rev().map(|child| (*child, origin, frame)))
-                    }
+                    FrozenKind::Parallel(children) => pending.extend(
+                        children
+                            .iter()
+                            .rev()
+                            .map(|child| (*child, origin, frame, contact)),
+                    ),
                     FrozenKind::Tracks(tracks) => {
                         let drivers = root.drivers.get(&id).map_or(&[][..], Vec::as_slice);
-                        let (extents, starts) = tracks.allocate(
-                            origin,
-                            frame,
-                            rect_start(node.result.rect, self.axis),
-                            drivers,
-                            delta,
-                            self.propagation,
-                        )?;
+                        let (extents, starts) = tracks
+                            .allocate(
+                                origin,
+                                frame,
+                                rect_start(node.result.rect, self.axis),
+                                drivers,
+                                delta,
+                                self.propagation,
+                            )
+                            .map_err(within_contact)?;
                         let moved = extents
                             .iter()
                             .zip(&tracks.tracks)
@@ -721,6 +779,7 @@ impl FrozenPiecewiseAxis {
                             && let Some(update) = tracks.update(
                                 self.axis,
                                 &extents,
+                                frame.value,
                                 drivers.is_empty(),
                                 self.overflow_policy,
                             )?
@@ -735,6 +794,7 @@ impl FrozenPiecewiseAxis {
                                     value: extents[track],
                                     slope: starts[track + 1].slope - starts[track].slope,
                                 },
+                                contact,
                             ));
                         }
                         sample.tracks.insert(
@@ -972,7 +1032,8 @@ impl FrozenTracks {
         &self,
         axis: Axis,
         extents: &[f64],
-        constraints_frozen: bool,
+        frame_extent: f64,
+        inherited: bool,
         overflow_policy: PaneOverflowPolicy,
     ) -> Result<Option<TrackResize>, SampleError> {
         let unchanged = extents
@@ -991,22 +1052,34 @@ impl FrozenTracks {
         if !unchanged && self.rounded_contact(extents, &weights) {
             weights.clone_from(&self.weights);
         }
+        // Keep durable shares when the allocator can realize the inherited
+        // transfer under the proposed frame's limits. An empty Grid track's
+        // maximum comes from that frame, so its old limit cannot prove reuse.
+        let weights = if inherited
+            && weights != self.weights
+            && stored_shares_match_extents(
+                &self.weights,
+                extents,
+                self.tracks.iter().map(|track| {
+                    let maximum = if track.maximum_follows_frame {
+                        frame_extent.max(1.0)
+                    } else {
+                        track.maximum
+                    };
+                    (track.minimum, maximum, track.visible)
+                }),
+                self.central,
+                overflow_policy,
+            ) {
+            match &self.grid {
+                Some(_) => return Ok(None),
+                None => self.weights.clone(),
+            }
+        } else {
+            weights
+        };
         Ok(Some(if self.grid.is_some() {
-            // Caps break the inverse from allocated pixels to shares. For an
-            // inherited resize, retain the original shares if they still
-            // produce these tracks under the same constraints.
-            if weights == self.weights
-                || (constraints_frozen
-                    && grid_shares_match_extents(
-                        &self.weights,
-                        extents,
-                        self.tracks
-                            .iter()
-                            .map(|track| (track.minimum, track.maximum)),
-                        self.central,
-                        overflow_policy,
-                    ))
-            {
+            if weights == self.weights {
                 return Ok(None);
             }
             self.grid_update(axis, weights)
@@ -1061,28 +1134,6 @@ impl FrozenTracks {
             .zip(&self.weights)
             .all(|(new, old)| new.get().to_bits().abs_diff(old.get().to_bits()) <= 1)
     }
-}
-
-pub(super) fn grid_shares_match_extents(
-    weights: &[SplitWeight],
-    extents: &[f64],
-    constraints: impl IntoIterator<Item = (f64, f64)>,
-    central: Option<usize>,
-    overflow_policy: PaneOverflowPolicy,
-) -> bool {
-    solve_grid_axis(
-        extents.iter().sum(),
-        weights,
-        constraints,
-        central,
-        overflow_policy,
-    )
-    .is_ok_and(|solved| {
-        solved
-            .iter()
-            .zip(extents)
-            .all(|(&actual, &target)| (actual - target).abs() <= tolerance(actual, target))
-    })
 }
 
 fn weights_with_zero_tracks(
@@ -1173,7 +1224,7 @@ fn require_transfer(
 
 fn limit_at(value: Scalar, endpoint: f64, delta: f64) -> Result<(), SampleError> {
     if value.slope == 0.0 {
-        return Err(SampleError::Invalid);
+        return Err(SampleError::Saturated);
     }
     let intercept = (-value.slope).mul_add(delta, value.value);
     Err(SampleError::Limit((endpoint - intercept) / value.slope))

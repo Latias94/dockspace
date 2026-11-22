@@ -1,7 +1,7 @@
 //! Route keys by event order before egui applies the packet's final focus.
 
-use egui::accesskit::{Action, ActionRequest, TreeId};
-use egui::{Context, Event, Id, Key, Memory, RawInput, Ui, ViewportId, ViewportIdMap};
+use egui::accesskit::{Action, ActionRequest, NodeId, TreeId};
+use egui::{Context, Event, Id, Key, Memory, RawInput, Ui, ViewportId, ViewportIdMap, WidgetRects};
 
 #[derive(Default)]
 struct MenuInput {
@@ -13,11 +13,27 @@ struct ViewportInput {
     pass: u64,
     menus: Vec<Menu>,
     opening: Option<(Id, u64)>,
-    routed: Vec<(Id, Intent)>,
+    routed: Vec<(Id, OrderedIntent)>,
     opening_keys: Vec<MenuKey>,
+    after_application: Option<AfterApplication>,
+    delivery: Option<FocusedInput>,
     focus_at_end: Option<Id>,
+    initial_focus: Option<Id>,
+    initial_menu: Option<Id>,
     focus_before_ui: Option<Id>,
     focus_owner: Option<Id>,
+}
+
+struct AfterApplication {
+    menu: Id,
+    target: NodeId,
+    keys: Vec<Event>,
+    release_slots: Vec<usize>,
+}
+
+struct FocusedInput {
+    receiver: Option<Id>,
+    keys: Vec<Event>,
 }
 
 struct Menu {
@@ -29,6 +45,7 @@ struct Menu {
 #[derive(Clone, Copy)]
 pub(super) enum Intent {
     Focus(Id),
+    Click(Id),
     Activate(Id),
     Dismiss(Id),
     Back(Id),
@@ -36,18 +53,91 @@ pub(super) enum Intent {
 
 impl Intent {
     fn is_terminal(self) -> bool {
-        matches!(self, Self::Activate(_) | Self::Dismiss(_) | Self::Back(_))
+        matches!(
+            self,
+            Self::Click(_) | Self::Activate(_) | Self::Dismiss(_) | Self::Back(_)
+        )
     }
 }
 
 pub(super) struct RoutedInput {
     pub(super) intent: Intent,
     pub(super) retains_focus: bool,
+    pub(super) follows_primary_release: bool,
+}
+
+#[derive(Clone, Copy)]
+struct OrderedIntent {
+    intent: Intent,
+    follows_primary_release: bool,
+}
+
+pub(super) fn awaits_application(ui: &Ui, menu: Id) -> bool {
+    with_input(ui, |input| {
+        input
+            .after_application
+            .as_ref()
+            .is_some_and(|pending| pending.menu == menu)
+    })
+}
+
+pub(super) fn initial_focus(ui: &Ui) -> Option<Id> {
+    with_input(ui, |input| input.initial_focus)
+}
+
+pub(super) fn started_outside(ui: &Ui, menu: Id, owns_focus: impl FnOnce(Id) -> bool) -> bool {
+    with_input(ui, |input| {
+        input.initial_menu != Some(menu) && input.initial_focus.is_some_and(|id| !owns_focus(id))
+    })
 }
 
 pub(super) fn expect_tab_list(ui: &Ui, id: Id) {
     let frame = ui.ctx().cumulative_frame_nr();
     with_input(ui, |input| input.opening = Some((id, frame)));
+}
+
+pub(super) fn tab_list_opener_has_focus(ui: &Ui, id: Id) -> bool {
+    with_input(ui, |input| input.focus_owner == Some(id))
+}
+
+pub(super) fn focus_tab_list_opener(ui: &Ui, id: Id, keep_keys: bool) {
+    let frame = ui.ctx().cumulative_frame_nr();
+    ui.memory_mut(|memory| memory.request_focus(id));
+    with_input(ui, |input| {
+        input.focus_owner = Some(id);
+        input.opening = keep_keys.then_some((id, frame));
+    });
+}
+
+pub(super) fn take_tab_list_click_keys(
+    ui: &Ui,
+    opener: Id,
+    after_click: usize,
+) -> Option<Vec<MenuKey>> {
+    let target = opener.accesskit_id();
+    let preceding = after_click.checked_sub(1)?;
+    if ui.input(|input| input.events.get(preceding).and_then(accesskit_click_target))
+        != Some(target)
+    {
+        return None;
+    }
+    let focused = ui.memory(Memory::focused);
+    with_input(ui, |input| {
+        let pending = input.after_application.as_ref()?;
+        if pending.target != target || input.focus_before_ui != focused {
+            return None;
+        }
+        // A prepared list opener resolves this click without an application callback.
+        let pending = input.after_application.take()?;
+        Some(
+            pending
+                .keys
+                .iter()
+                .filter_map(MenuKey::from_event)
+                .filter(|key| key.is_tab_list())
+                .collect(),
+        )
+    })
 }
 
 pub(super) fn take_opening_keys(ui: &Ui, id: Id) -> (Vec<MenuKey>, bool) {
@@ -85,12 +175,13 @@ pub(super) fn register(
             });
         }
         let index = input.routed.iter().position(|(menu, _)| *menu == id)?;
-        let intent = input.routed.remove(index).1;
+        let ordered = input.routed.remove(index).1;
         Some(RoutedInput {
-            intent,
+            intent: ordered.intent,
             // The application may explicitly move focus while building its UI.
             // The menu still applies its semantic input without reclaiming focus.
             retains_focus: input.focus_owner == Some(id) && input.focus_before_ui == focused,
+            follows_primary_release: ordered.follows_primary_release,
         })
     })
 }
@@ -142,18 +233,8 @@ impl egui::plugin::Plugin for MenuInput {
         } else {
             previous.focus_at_end
         };
-        let frame = context.cumulative_frame_nr_for(viewport);
-        input.opening = previous.opening.filter(|&(id, started)| {
-            initial_focus == Some(id) && started <= frame && frame - started <= 1
-        });
-        if input.opening.is_none()
-            && !raw
-                .events
-                .iter()
-                .any(|event| accesskit_focus_target(event).is_some())
-        {
-            return;
-        }
+        input.initial_focus = initial_focus;
+        input.focus_before_ui = initial_focus;
         let initial = initial_focus.and_then(|initial| {
             previous
                 .menus
@@ -161,6 +242,38 @@ impl egui::plugin::Plugin for MenuInput {
                 .find(|menu| menu.owns(initial))
                 .map(|menu| (menu, initial))
         });
+        input.initial_menu = initial.map(|(menu, _)| menu.id);
+        let delivering = previous.delivery.is_some_and(|delivery| {
+            // An egui sizing retry repeats the same input frame. Delivering
+            // its suffix there could change the action captured on the first pass.
+            if context.viewport_for(viewport, |state| state.output.num_completed_passes != 0) {
+                input.delivery = Some(delivery);
+                return false;
+            }
+            let current = initial_focus.is_some()
+                && initial_focus == delivery.receiver
+                && !raw.events.iter().any(changes_keyboard_owner);
+            raw.events.splice(
+                ..0,
+                delivery
+                    .keys
+                    .into_iter()
+                    .filter(|event| current || matches!(event, Event::Key { pressed: false, .. })),
+            );
+            current
+        });
+        let frame = context.cumulative_frame_nr_for(viewport);
+        input.opening = previous.opening.filter(|&(id, started)| {
+            initial_focus == Some(id) && started <= frame && frame - started <= 1
+        });
+        if !delivering
+            && input.opening.is_none()
+            && !raw.events.iter().any(|event| {
+                accesskit_focus_target(event).is_some() || accesskit_click_target(event).is_some()
+            })
+        {
+            return;
+        }
         let mut cursor = initial;
         let mut opening_cursor = input.opening.map(|(id, _)| id);
         let mut focus_owner = initial.map(|(menu, _)| menu.id).or(opening_cursor);
@@ -168,7 +281,67 @@ impl egui::plugin::Plugin for MenuInput {
         let mut menu_focus_events = Vec::new();
         let mut app_key_before_menu_focus = false;
         let mut defer_menu_focus = false;
+        let mut follows_primary_release = false;
         for (slot, event) in raw.events.iter().enumerate() {
+            follows_primary_release |= matches!(
+                event,
+                Event::PointerButton {
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    ..
+                }
+            );
+            if let Some(clicked) = accesskit_click_target(event) {
+                let target = context.viewport_for(viewport, |previous| {
+                    live_accesskit_click_target(event, &previous.prev_pass.widgets)
+                });
+                if let Some((menu, row)) = target.and_then(|target| {
+                    previous
+                        .menus
+                        .iter()
+                        .find_map(|menu| Some((menu, menu.row(target)?)))
+                }) {
+                    input.after_application = None;
+                    set_intent(
+                        &mut input.routed,
+                        menu.id,
+                        Intent::Click(row),
+                        follows_primary_release,
+                    );
+                    if cursor.is_some_and(|(owner, _)| owner.id == menu.id) {
+                        cursor = None;
+                    }
+                    if matches!(menu.kind, MenuKind::Product { .. }) {
+                        focus_owner = Some(menu.id);
+                    }
+                    continue;
+                }
+                // Application code can change focus while handling the click.
+                // Deliver its key suffix once, after the application runs.
+                let owner = cursor
+                    .take()
+                    .map(|(menu, _)| menu.id)
+                    .or(opening_cursor)
+                    .or_else(|| input.after_application.as_ref().map(|pending| pending.menu));
+                if let Some(menu) = owner
+                    && input
+                        .after_application
+                        .as_ref()
+                        .is_none_or(|pending| pending.target != clicked)
+                {
+                    // egui reports repeated clicks on the same widget in a pass
+                    // as one click. Their unresolved keyboard suffix is shared.
+                    input.after_application = Some(AfterApplication {
+                        menu,
+                        target: clicked,
+                        keys: Vec::new(),
+                        release_slots: Vec::new(),
+                    });
+                }
+                opening_cursor = None;
+                focus_owner = None;
+                continue;
+            }
             if let Some(target) = accesskit_focus_target(event) {
                 let target_menu = previous.menus.iter().find_map(|menu| {
                     menu.targets()
@@ -176,12 +349,14 @@ impl egui::plugin::Plugin for MenuInput {
                         .map(|id| (menu, id))
                 });
                 if let Some((menu, row)) = target_menu {
+                    input.after_application = None;
                     if input
                         .routed
                         .iter()
-                        .any(|(id, intent)| *id == menu.id && intent.is_terminal())
+                        .any(|(id, ordered)| *id == menu.id && ordered.intent.is_terminal())
                     {
                         consumed_keys.push(slot);
+                        cursor = target_menu;
                         continue;
                     }
                     menu_focus_events.push(slot);
@@ -189,19 +364,34 @@ impl egui::plugin::Plugin for MenuInput {
                     cursor = target_menu;
                     opening_cursor = None;
                     focus_owner = Some(menu.id);
-                    set_intent(&mut input.routed, menu.id, Intent::Focus(row));
-                } else if context.viewport_for(viewport, |viewport| {
-                    viewport.prev_pass.widgets.layers().any(|(_, widgets)| {
-                        widgets.iter().any(|widget| {
-                            widget.enabled
-                                && widget.sense.is_focusable()
-                                && widget.id.accesskit_id() == target
+                    input.focus_before_ui = Some(row);
+                    set_intent(
+                        &mut input.routed,
+                        menu.id,
+                        Intent::Focus(row),
+                        follows_primary_release,
+                    );
+                } else if let Some(target) = context.viewport_for(viewport, |viewport| {
+                    viewport
+                        .prev_pass
+                        .widgets
+                        .layers()
+                        .find_map(|(_, widgets)| {
+                            widgets
+                                .iter()
+                                .find(|widget| {
+                                    widget.enabled
+                                        && widget.sense.is_focusable()
+                                        && widget.id.accesskit_id() == target
+                                })
+                                .map(|widget| widget.id)
                         })
-                    })
                 }) {
                     cursor = None;
                     opening_cursor = None;
+                    input.after_application = None;
                     focus_owner = None;
+                    input.focus_before_ui = Some(target);
                     defer_menu_focus = false;
                 }
                 continue;
@@ -217,6 +407,7 @@ impl egui::plugin::Plugin for MenuInput {
             ) {
                 cursor = None;
                 opening_cursor = None;
+                input.after_application = None;
                 focus_owner = None;
                 defer_menu_focus = true;
             }
@@ -231,6 +422,26 @@ impl egui::plugin::Plugin for MenuInput {
                     opening_cursor = None;
                 }
                 continue;
+            }
+            if let Some(pending) = &mut input.after_application {
+                if MenuKey::from_event(event).is_some() {
+                    pending.keys.push(event.clone());
+                    consumed_keys.push(slot);
+                    continue;
+                }
+                if let Event::Key {
+                    key,
+                    pressed: false,
+                    ..
+                } = event
+                    && pending.keys.iter().any(|held| {
+                        matches!(held, Event::Key { key: held, pressed: true, .. } if held == key)
+                    })
+                {
+                    pending.keys.push(event.clone());
+                    pending.release_slots.push(slot);
+                    continue;
+                }
             }
             let Some((menu, row)) = cursor else {
                 app_key_before_menu_focus |= matches!(
@@ -256,12 +467,17 @@ impl egui::plugin::Plugin for MenuInput {
             } else if let Intent::Focus(next) = intent {
                 cursor = Some((menu, next));
             }
-            set_intent(&mut input.routed, menu.id, intent);
+            set_intent(&mut input.routed, menu.id, intent, follows_primary_release);
         }
         input.focus_owner = focus_owner;
+        let held_releases = input
+            .after_application
+            .as_ref()
+            .map_or(&[][..], |pending| &pending.release_slots);
         let mut slot = 0;
         raw.events.retain(|_| {
             let keep = consumed_keys.binary_search(&slot).is_err()
+                && held_releases.binary_search(&slot).is_err()
                 && (!defer_menu_focus || menu_focus_events.binary_search(&slot).is_err());
             slot += 1;
             keep
@@ -278,18 +494,60 @@ impl egui::plugin::Plugin for MenuInput {
     fn on_end_pass(&mut self, ui: &mut Ui) {
         let context = ui.ctx();
         if let Some(input) = self.viewports.get_mut(&context.viewport_id()) {
-            input.focus_at_end = context.memory(Memory::focused);
+            input.finish(context, context.viewport_id());
         }
     }
 
     fn output_hook(&mut self, context: &Context, _: &mut egui::FullOutput) {
+        let viewport = context.viewport_id();
+        if let Some(input) = self.viewports.get_mut(&viewport)
+            && input.pass.checked_add(1) == Some(context.cumulative_pass_nr_for(viewport))
+        {
+            input.finish(context, viewport);
+        }
         self.viewports.retain(|&viewport, _| {
             viewport == ViewportId::ROOT || context.cumulative_pass_nr_for(viewport) != 0
         });
     }
 }
 
+impl ViewportInput {
+    fn finish(&mut self, context: &Context, viewport: ViewportId) {
+        self.focus_at_end = context.memory(Memory::focused);
+        if let Some(pending) = self.after_application.take()
+            && !pending.keys.is_empty()
+        {
+            self.delivery = Some(FocusedInput {
+                receiver: self.focus_at_end,
+                keys: pending.keys,
+            });
+            context.request_repaint_of(viewport);
+        }
+    }
+}
+
+fn changes_keyboard_owner(event: &Event) -> bool {
+    accesskit_focus_target(event).is_some()
+        || accesskit_click_target(event).is_some()
+        || matches!(
+            event,
+            Event::PointerButton { pressed: true, .. }
+                | Event::Key {
+                    key: Key::Tab,
+                    pressed: true,
+                    ..
+                }
+        )
+}
+
 impl Menu {
+    fn row(&self, target: NodeId) -> Option<Id> {
+        self.rows
+            .iter()
+            .copied()
+            .find(|id| id.accesskit_id() == target)
+    }
+
     fn anchor(&self) -> Option<Id> {
         match self.kind {
             MenuKind::TabList => None,
@@ -330,25 +588,55 @@ impl Menu {
     }
 }
 
-pub(super) fn accesskit_focus_target(event: &Event) -> Option<egui::accesskit::NodeId> {
+pub(super) fn accesskit_focus_target(event: &Event) -> Option<NodeId> {
+    accesskit_target(event, Action::Focus)
+}
+
+pub(super) fn accesskit_click_target(event: &Event) -> Option<NodeId> {
+    accesskit_target(event, Action::Click)
+}
+
+pub(super) fn live_accesskit_click_target(event: &Event, widgets: &WidgetRects) -> Option<NodeId> {
+    accesskit_click_target(event).filter(|target| {
+        widgets.layers().any(|(_, widgets)| {
+            widgets.iter().any(|widget| {
+                widget.enabled
+                    && widget.visible
+                    && widget.sense.senses_click()
+                    && widget.id.accesskit_id() == *target
+            })
+        })
+    })
+}
+
+fn accesskit_target(event: &Event, wanted: Action) -> Option<NodeId> {
     match event {
         Event::AccessKitActionRequest(ActionRequest {
-            action: Action::Focus,
+            action,
             target_node,
             target_tree: TreeId::ROOT,
             data: None,
-        }) => Some(*target_node),
+        }) if *action == wanted => Some(*target_node),
         _ => None,
     }
 }
 
-fn set_intent(routed: &mut Vec<(Id, Intent)>, menu: Id, intent: Intent) {
+fn set_intent(
+    routed: &mut Vec<(Id, OrderedIntent)>,
+    menu: Id,
+    intent: Intent,
+    follows_primary_release: bool,
+) {
+    let ordered = OrderedIntent {
+        intent,
+        follows_primary_release,
+    };
     if let Some((_, previous)) = routed.iter_mut().find(|(id, _)| *id == menu) {
-        if !previous.is_terminal() {
-            *previous = intent;
+        if !previous.intent.is_terminal() {
+            *previous = ordered;
         }
     } else {
-        routed.push((menu, intent));
+        routed.push((menu, ordered));
     }
 }
 

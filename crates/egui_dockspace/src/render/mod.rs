@@ -607,9 +607,9 @@ pub(crate) fn paint_surface(
                         )?;
                     }
                     SurfacePaintProgramStep::RootEnd(_) => {}
-                    SurfacePaintProgramStep::PopupBackdrop(backdrop) => {
-                        tab_chrome::paint_backdrop(&mut context, backdrop);
-                    }
+                    // The paired menu resolves earlier keyboard input before
+                    // registering its backdrop and rows in their paint order.
+                    SurfacePaintProgramStep::PopupBackdrop(_) => {}
                     SurfacePaintProgramStep::PopupMenu { menu, paint } => {
                         tab_chrome::paint_menu(&mut context, menu, paint);
                     }

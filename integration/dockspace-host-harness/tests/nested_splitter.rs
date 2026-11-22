@@ -9,12 +9,12 @@ use dockspace::model::{
 };
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
-    DockPresentationConfig, DockspaceHostFrame, DockspaceManipulationDelivery as Delivery,
-    DockspaceManipulationStatus as Status, DockspaceReceiverDescriptor, DockspaceSession,
-    DockspaceVisualId, HostFrameReport, HostPointerInput, HostPointerRoute, PaintedSurfaceOutput,
-    PresentedDockReceiver, PresentedDockspaceSurface, SurfaceMeasurementAnswer as Answer,
-    SurfaceMeasurementRequest as Question, SurfacePaintPlan,
-    SurfacePaintProgramOperation as Operation, SurfacePaintProgramStep as Step,
+    DockPresentationConfig, DockspaceControlId, DockspaceHostFrame,
+    DockspaceManipulationDelivery as Delivery, DockspaceManipulationStatus as Status,
+    DockspaceReceiverDescriptor, DockspaceSession, HostFrameReport, HostPointerInput,
+    HostPointerRoute, PaintedSurfaceOutput, PresentedDockReceiver, PresentedDockspaceSurface,
+    SplitterPaintRecord, SurfaceMeasurementAnswer as Answer, SurfaceMeasurementRequest as Question,
+    SurfacePaintPlan, SurfacePaintProgramOperation as Operation, SurfacePaintProgramStep as Step,
     SurfacePointerButton as Button, SurfacePointerCapture, SurfacePointerEvent as Event,
     SurfacePointerId, SurfacePointerReceiverFacts, SurfacePresentationResult as Disposition,
     SurfaceSplitterAdjustment, SurfaceUnavailableReason, TabStripMetrics,
@@ -65,7 +65,7 @@ struct Pane {
 
 #[derive(Debug)]
 struct Splitter {
-    visual: DockspaceVisualId,
+    input: DockspaceControlId,
     receiver: DockspaceReceiverDescriptor,
     axis: DockspaceAxis,
     draw: LogicalRect,
@@ -111,9 +111,7 @@ impl Geometry {
                         );
                     }
                     Operation::Splitter(splitter) => geometry.splitters.push(Splitter {
-                        // Semantic actions use the paint record's identity;
-                        // pointer delivery uses its separate receiver identity.
-                        visual: splitter.visual_id(),
+                        input: splitter.input_id(),
                         receiver: plan.receiver_for_splitter(splitter).unwrap(),
                         axis: splitter.axis(),
                         draw: splitter.draw_bounds(),
@@ -526,11 +524,34 @@ fn pointer_resize(
     after
 }
 
-fn semantic_resize(fixture: &mut Fixture, target: DockspaceVisualId) -> HostFrameReport {
+fn splitter_record<'plan>(
+    plan: SurfacePaintPlan<'plan>,
+    target: &DockspaceControlId,
+) -> SplitterPaintRecord<'plan> {
+    let mut record = None;
+    plan.visit_surface_program(|step| {
+        if let Step::Operation {
+            operation: Operation::Splitter(splitter),
+            ..
+        } = step
+            && &splitter.input_id() == target
+        {
+            record = Some(splitter);
+        }
+        Ok::<(), ()>(())
+    })
+    .unwrap();
+    record.expect("the splitter is still present")
+}
+
+fn semantic_resize(fixture: &mut Fixture, target: &DockspaceControlId) -> HostFrameReport {
     let mut frame = fixture.session.begin_host_frame().unwrap();
     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
     let action = plan
-        .prepare_splitter_adjustment(target, SurfaceSplitterAdjustment::Increment)
+        .prepare_splitter_adjustment(
+            splitter_record(plan, target),
+            SurfaceSplitterAdjustment::Increment,
+        )
         .expect("the exact public splitter supports a keyboard adjustment");
     frame.submit_surface_action(action).unwrap();
     measure(&mut frame, fixture.bounds, &fixture.minimums);
@@ -544,12 +565,13 @@ fn semantic_endpoints_and_accessible_range_include_nested_touching_minimums() {
         SurfaceSplitterAdjustment::Maximum,
     ] {
         let (mut fixture, initial) = nested_minimum();
-        let target = initial
+        let target = &initial
             .splitter_at(DockspaceAxis::Horizontal, point(517.0, 128.0))
-            .visual;
+            .input;
         let before = fixture.session.version();
         let mut frame = fixture.session.begin_host_frame().unwrap();
         let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+        let target = splitter_record(plan, target);
         let range = plan.splitter_resize_range(target).unwrap();
         close(range.value(), 0.5);
         // C's touching edge reaches its 96-point minimum after only 32 points.
@@ -608,7 +630,7 @@ fn junction_endpoints_resize_one_axis_atomically_and_preserve_its_perpendicular_
             .unwrap();
             let junction = found.unwrap();
             let action = plan
-                .prepare_splitter_junction_adjustment(junction.visual_id(), axis, adjustment)
+                .prepare_splitter_junction_adjustment(junction, axis, adjustment)
                 .unwrap();
             frame.submit_surface_action(action).unwrap();
             measure(&mut frame, fixture.bounds, &fixture.minimums);
@@ -697,7 +719,7 @@ fn nested_touching_edge_pointer_and_semantic_adjustments_preserve_the_far_pane()
             let (mut semantic, initial) = nested_pair(central);
             assert_pair_initial(&initial);
             assert_eq!(durable(&semantic.session), before);
-            let target = initial.splitter_at(DockspaceAxis::Horizontal, start).visual;
+            let target = &initial.splitter_at(DockspaceAxis::Horizontal, start).input;
             let report = semantic_resize(&mut semantic, target);
             assert!(report.workspace_changed());
             let (geometry, output) = paint(&mut semantic.session);
@@ -740,7 +762,7 @@ fn nested_touching_minimum_clamps_the_shared_delta_once_before_weight_reconstruc
 
         let (mut semantic, initial) = nested_minimum();
         assert_eq!(durable(&semantic.session), before);
-        let target = initial.splitter_at(DockspaceAxis::Horizontal, start).visual;
+        let target = &initial.splitter_at(DockspaceAxis::Horizontal, start).input;
         let report = semantic_resize(&mut semantic, target);
         assert!(report.workspace_changed());
         let (geometry, output) = paint(&mut semantic.session);
@@ -782,9 +804,9 @@ fn single_split_resize_versions() -> (WorkspaceVersion, WorkspaceVersion) {
     let (mut fixture, initial) = nested_junction();
     assert_junction_initial(&initial);
     let before = durable(&fixture.session);
-    let target = initial
+    let target = &initial
         .splitter_at(DockspaceAxis::Horizontal, point(257.0, 386.0))
-        .visual;
+        .input;
     let report = semantic_resize(&mut fixture, target);
     assert!(report.workspace_changed());
     let after = durable(&fixture.session);
@@ -998,7 +1020,7 @@ fn four_arm_junction_semantic_axis_adjustments_share_delta_in_one_workspace_revi
                 assert!(junction.has_axis(axis));
                 let prepared = plan
                     .prepare_splitter_junction_adjustment(
-                        junction.visual_id(),
+                        junction,
                         axis,
                         SurfaceSplitterAdjustment::Increment,
                     )
@@ -1050,8 +1072,8 @@ fn four_arm_junction_semantic_axis_adjustments_share_delta_in_one_workspace_revi
             let new = geometry
                 .splitters
                 .iter()
-                .find(|splitter| splitter.visual == old.visual)
-                .expect("the adjusted boundary retains its public visual identity");
+                .find(|splitter| splitter.input == old.input)
+                .expect("the adjusted boundary retains its input identity");
             close(
                 match axis {
                     DockspaceAxis::Horizontal => new.draw.x() - old.draw.x(),

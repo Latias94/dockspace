@@ -2072,6 +2072,7 @@ fn validate_splitter_geometry(
             || id.index >= children.len().saturating_sub(1)
             || record.after_index() <= id.index
             || record.after_index() >= children.len()
+            || record.split_children() != Some([children[id.index], children[record.after_index()]])
             || !workspace.node_has_visible_content(children[id.index])
             || !workspace.node_has_visible_content(children[record.after_index()])
             || children[id.index + 1..record.after_index()]

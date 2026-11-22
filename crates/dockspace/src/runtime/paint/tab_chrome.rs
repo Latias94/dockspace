@@ -188,6 +188,39 @@ impl RetainedTabListMenu {
 }
 
 impl SurfacePaintPlan<'_> {
+    /// Checks whether the current presented output contains this menu's input scope.
+    ///
+    /// A candidate can update focus and scrolling while the already presented
+    /// rows still identify the same input targets.
+    #[must_use]
+    pub fn tab_list_menu_is_presented(self, menu: TabListMenuPaintRecord<'_>) -> bool {
+        menu.backdrop.belongs_to(&self) && self.presented_tab_list(menu.scope).is_some()
+    }
+
+    /// Checks whether this row had a click target in the latest presented menu.
+    #[must_use]
+    pub fn tab_list_menu_row_is_presented(self, row: TabListMenuRowPaintRecord<'_>) -> bool {
+        row.belongs_to(&self)
+            && self
+                .presented_tab_list(row.scope)
+                .and_then(|menu| menu.rows().get(row.ordinal()))
+                .is_some_and(|presented| {
+                    presented.tab() == row.record.tab() && presented.hit().is_some()
+                })
+    }
+
+    fn presented_tab_list(&self, scope: MenuInputScope) -> Option<&TabListMenuRecord> {
+        let plan = self
+            .candidate
+            .scene()
+            .interaction_projection(self.surface)?
+            .plan();
+        (plan.popup().revision() == scope.revision).then_some(())?;
+        plan.tab_list_menu_records()
+            .iter()
+            .find(|record| record.session() == scope.session)
+    }
+
     /// Retains the exact closed control for input received after an accepted open.
     #[must_use]
     pub fn retain_tab_list_opener(

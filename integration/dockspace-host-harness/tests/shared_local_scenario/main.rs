@@ -112,10 +112,9 @@ fn paint_and_present(session: &mut DockspaceSession, step: SemanticStep) -> Prep
                 SemanticSelector::Splitter(ScenarioAxis::Horizontal),
                 SemanticAction::Increment,
                 Operation::Splitter(splitter),
-            ) if splitter.axis() == DockspaceAxis::Horizontal => plan.prepare_splitter_adjustment(
-                splitter.visual_id(),
-                SurfaceSplitterAdjustment::Increment,
-            ),
+            ) if splitter.axis() == DockspaceAxis::Horizontal => {
+                plan.prepare_splitter_adjustment(splitter, SurfaceSplitterAdjustment::Increment)
+            }
             (
                 SemanticSelector::ContainedResize {
                     item: ItemAlias::Contained,

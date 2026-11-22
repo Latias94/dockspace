@@ -288,11 +288,13 @@ is published and the content widget takes focus. The handoff belongs to one
 viewport and workspace lifetime, and delivers its input once across egui
 retries. A newer focus owner or workspace replacement invalidates the handoff.
 
-Escape dismisses an open tab-list menu and returns keyboard focus to its owning
-tab-list button when that button remains enabled and visible. Repeated encoding
-passes in the same run preserve that handoff, so Enter can reopen the menu after
-the queued dismissal commits. Pointer backdrop dismissal keeps its existing
-focus behavior.
+Escape follows the current keyboard owner. A focused tab list dismisses and
+returns focus to its enabled, visible opener. Explicit row commands apply to a
+presented menu instance. Keys following an accepted opener can wait for that
+instance to present. An application click can transfer focus during widget
+registration, so the menu waits for the application to process the click before
+claiming subsequent keys. Repeated encoding passes preserve the original input
+order and focus handoff.
 
 ## Validation and regression diagnosis
 

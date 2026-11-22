@@ -11,7 +11,7 @@ use crate::interaction::targeting::resolver::{
 };
 use crate::interaction::targeting::targets::DropTargetId;
 
-use super::{DockspacePaintLayer, DockspaceVisualId, VisualIdentity};
+use super::{DockspacePaintLayer, DockspaceSemanticOutput, DockspaceVisualId, VisualIdentity};
 
 /// Public guide-cluster class without the internal target-node identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -117,6 +117,7 @@ impl DropGuideTargetPaintRecord<'_> {
 pub struct DropAffordanceTargetPaintRecord<'plan> {
     target: &'plan DropAffordanceTarget,
     active: Option<DropGuideTargetKey>,
+    pub(super) output: DockspaceSemanticOutput,
 }
 
 impl fmt::Debug for DropAffordanceTargetPaintRecord<'_> {
@@ -176,6 +177,7 @@ impl DropAffordanceTargetPaintRecord<'_> {
 pub struct DropAffordanceClusterPaintRecord<'plan> {
     cluster: &'plan DropAffordanceCluster,
     active: Option<DropGuideTargetKey>,
+    output: DockspaceSemanticOutput,
 }
 
 impl fmt::Debug for DropAffordanceClusterPaintRecord<'_> {
@@ -235,7 +237,11 @@ impl<'plan> DropAffordanceClusterPaintRecord<'plan> {
         self.cluster
             .targets()
             .iter()
-            .map(move |target| DropAffordanceTargetPaintRecord { target, active })
+            .map(move |target| DropAffordanceTargetPaintRecord {
+                target,
+                active,
+                output: self.output,
+            })
     }
 }
 
@@ -243,6 +249,7 @@ impl<'plan> DropAffordanceClusterPaintRecord<'plan> {
 #[derive(Clone, Copy)]
 pub struct DropAffordancePaintRecord<'plan> {
     pub(super) affordance: &'plan DropAffordance,
+    pub(super) output: DockspaceSemanticOutput,
 }
 
 impl fmt::Debug for DropAffordancePaintRecord<'_> {
@@ -273,7 +280,11 @@ impl<'plan> DropAffordancePaintRecord<'plan> {
         self.affordance
             .clusters()
             .iter()
-            .map(move |cluster| DropAffordanceClusterPaintRecord { cluster, active })
+            .map(move |cluster| DropAffordanceClusterPaintRecord {
+                cluster,
+                active,
+                output: self.output,
+            })
     }
 }
 

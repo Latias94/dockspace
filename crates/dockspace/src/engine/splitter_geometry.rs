@@ -9,7 +9,8 @@ use crate::ids::{NodeId, RootId};
 use crate::interaction::{
     ActiveResize, FrozenResizeAxisGroup, FrozenResizeSplit, ResizeAdjustment, ResizeDeltaInterval,
 };
-use crate::presentation::layout::{LayoutProjection, SplitProjection};
+use crate::presentation::config::PaneOverflowPolicy;
+use crate::presentation::layout::{LayoutProjection, SplitProjection, solve_track_extents};
 use crate::presentation::scene::{PresentationLayoutFacts, PresentationPlan, SplitterRecord};
 
 mod auto_reflow;
@@ -181,6 +182,7 @@ fn prepare_linear_resize_axis_groups(
         .map(|(axis, incidents)| {
             let mut group = FrozenResizeAxisGroup {
                 axis,
+                overflow_policy: facts.config().pane_overflow_policy(),
                 splits: Vec::new(),
                 piecewise: None,
                 common_delta: ResizeDeltaInterval {
@@ -192,6 +194,10 @@ fn prepare_linear_resize_axis_groups(
                 .keys()
                 .map(|(root, _)| *root)
                 .collect::<BTreeSet<_>>();
+            let mut cap_contacts = ResizeDeltaInterval {
+                minimum: f64::NEG_INFINITY,
+                maximum: f64::INFINITY,
+            };
             let mut found_incidents = 0;
             for root in incident_roots {
                 let prototype = roots.get(&root)?;
@@ -204,9 +210,9 @@ fn prepare_linear_resize_axis_groups(
                     return None;
                 }
                 let mut projected_nodes = projection.nodes.iter_preorder();
-                let mut pending = vec![(root_node, [0.0, 0.0], false)];
+                let mut pending = vec![(root_node, [0.0, 0.0], false, false)];
                 let mut visited = BTreeSet::new();
-                while let Some((node, outer_edges, check_extent)) = pending.pop() {
+                while let Some((node, outer_edges, check_extent, inherits_slot)) = pending.pop() {
                     if !visited.insert(node) {
                         return None;
                     }
@@ -223,34 +229,66 @@ fn prepare_linear_resize_axis_groups(
                                 .node(node)?
                                 .child_nodes()
                                 .rev()
-                                .map(|(_, child)| (child, [0.0, 0.0], false)),
+                                .map(|(_, child)| (child, [0.0, 0.0], false, false)),
                         );
                         continue;
                     }
+                    let live = workspace.node(node)?;
                     let rect = result.rect;
                     let incident = incidents.get(&(root, node));
                     let affected = outer_edges != [0.0, 0.0] || incident.is_some();
-                    if affected && matches!(workspace.node(node), Some(Node::Grid { .. })) {
+                    if affected && matches!(live, Node::Grid { .. }) {
                         return None;
                     }
                     if affected || check_extent {
-                        // A capped frame inside a larger slot does not share its
-                        // moving edge. This frozen linear frontier cannot cross
-                        // that contact change without a new geometric solve.
-                        if outer_edges[1] != outer_edges[0]
+                        let coefficient = outer_edges[1] - outer_edges[0];
+                        let constraints = result.constraints;
+                        let maximum = size_extent(constraints.max(), axis);
+                        let (bounds, maximum) =
+                            if inherits_slot && projection.caps_frames() && coefficient != 0.0 {
+                                let slot = result.slot;
+                                let offered = rect_extent(slot, axis);
+                                let has_active_layout = match live {
+                                    Node::Split { .. } => true,
+                                    Node::Tabs { .. } => workspace
+                                        .visible_tab_selection(node)
+                                        .and_then(crate::ids::TabKey::layout)
+                                        .is_some(),
+                                    _ => false,
+                                };
+                                if has_active_layout {
+                                    if offered - rect_extent(rect, axis)
+                                        > rect_extent_tolerance(slot, axis)
+                                    {
+                                        return None;
+                                    }
+                                    // A capped child can stop following its slot. Only
+                                    // contacts within the reachable interval affect its tracks.
+                                    let contact = (maximum - offered).max(0.0) / coefficient;
+                                    if coefficient > 0.0 {
+                                        cap_contacts.maximum = cap_contacts.maximum.min(contact);
+                                    } else {
+                                        cap_contacts.minimum = cap_contacts.minimum.max(contact);
+                                    }
+                                }
+                                (slot, f64::MAX)
+                            } else {
+                                (rect, maximum)
+                            };
+                        if coefficient != 0.0
+                            && !inherits_slot
                             && (rect_extent(result.slot, axis) - rect_extent(rect, axis)).abs()
                                 > rect_extent_tolerance(result.slot, axis)
                         {
                             return None;
                         }
-                        let constraints = result.constraints;
                         intersect_extent_interval(
                             &mut group.common_delta,
-                            rect_extent(rect, axis),
+                            rect_extent(bounds, axis),
                             size_extent(constraints.min(), axis),
-                            size_extent(constraints.max(), axis),
-                            outer_edges[1] - outer_edges[0],
-                            rect_extent_tolerance(rect, axis),
+                            maximum,
+                            coefficient,
+                            rect_extent_tolerance(bounds, axis),
                         )?;
                     }
                     let Node::Split {
@@ -258,24 +296,23 @@ fn prepare_linear_resize_axis_groups(
                         children,
                         weights,
                         ..
-                    } = workspace.node(node)?
+                    } = live
                     else {
                         if incident.is_some() {
                             return None;
                         }
-                        pending.extend(workspace.node(node)?.child_nodes().rev().map(
-                            |(_, child)| {
-                                let visible = projection
-                                    .nodes
-                                    .get(&child)
-                                    .is_some_and(|result| result.visible);
-                                (
-                                    child,
-                                    if visible { outer_edges } else { [0.0, 0.0] },
-                                    affected && visible,
-                                )
-                            },
-                        ));
+                        pending.extend(live.child_nodes().rev().map(|(_, child)| {
+                            let visible = projection
+                                .nodes
+                                .get(&child)
+                                .is_some_and(|result| result.visible);
+                            (
+                                child,
+                                if visible { outer_edges } else { [0.0, 0.0] },
+                                affected && visible,
+                                true,
+                            )
+                        }));
                         continue;
                     };
                     let weights = layout.split_weights(root, node, weights);
@@ -336,6 +373,7 @@ fn prepare_linear_resize_axis_groups(
                                 reference: prototype.reference().clone(),
                             },
                             axis: *split_axis,
+                            has_driver: incident.is_some(),
                             bounds,
                             constraints: result.constraints,
                             weights: weights.to_vec(),
@@ -343,6 +381,11 @@ fn prepare_linear_resize_axis_groups(
                                 .children
                                 .iter()
                                 .map(|child| child.extent)
+                                .collect(),
+                            child_visible: split
+                                .children
+                                .iter()
+                                .map(|child| child.visible)
                                 .collect(),
                             child_minimum_extents: split
                                 .children
@@ -370,6 +413,7 @@ fn prepare_linear_resize_axis_groups(
                             child,
                             child_edges,
                             affected && split.children[index].visible,
+                            *split_axis != axis,
                         ));
                     }
                 }
@@ -382,6 +426,8 @@ fn prepare_linear_resize_axis_groups(
                 || !group.common_delta.maximum.is_finite()
                 || group.common_delta.minimum > 0.0
                 || group.common_delta.maximum < 0.0
+                || group.common_delta.minimum <= cap_contacts.minimum
+                || group.common_delta.maximum >= cap_contacts.maximum
             {
                 return None;
             }
@@ -437,7 +483,7 @@ pub(super) fn resize_axis_group_updates(
             continue;
         }
         for split in group.splits.iter().filter(|split| split.axis == group.axis) {
-            let update = split_update(split, shared)?;
+            let update = split_update(split, shared, group.overflow_policy)?;
             if updates
                 .insert((split.source.root(), split.source.node()), update)
                 .is_some()
@@ -729,7 +775,11 @@ fn intersect_split_intervals(
     (interval.minimum <= interval.maximum).then_some(())
 }
 
-fn split_update(split: &FrozenResizeSplit, delta: f64) -> Option<TrackResize> {
+fn split_update(
+    split: &FrozenResizeSplit,
+    delta: f64,
+    overflow_policy: PaneOverflowPolicy,
+) -> Option<TrackResize> {
     let extents = split
         .child_extents
         .iter()
@@ -765,13 +815,53 @@ fn split_update(split: &FrozenResizeSplit, delta: f64) -> Option<TrackResize> {
             0.0,
         )?;
     }
-    let weights = weights_for_extents(
+    let mut weights = weights_for_extents(
         &split.weights,
         &split.child_extents,
         &extents,
         split.central_index,
     )?;
+    if !split.has_driver
+        && weights != split.weights
+        && stored_shares_match_extents(
+            &split.weights,
+            &extents,
+            split
+                .child_minimum_extents
+                .iter()
+                .copied()
+                .zip(&split.child_maximum_extents)
+                .zip(&split.child_visible)
+                .map(|((minimum, &maximum), &visible)| (minimum, maximum, visible)),
+            split.central_index,
+            overflow_policy,
+        )
+    {
+        weights.clone_from(&split.weights);
+    }
     Some(TrackResize::split(split.source.clone(), weights))
+}
+
+fn stored_shares_match_extents(
+    weights: &[SplitWeight],
+    extents: &[f64],
+    constraints: impl Iterator<Item = (f64, f64, bool)> + Clone,
+    central_index: Option<usize>,
+    overflow_policy: PaneOverflowPolicy,
+) -> bool {
+    solve_track_extents(
+        extents.iter().sum(),
+        weights,
+        constraints,
+        central_index,
+        overflow_policy,
+    )
+    .is_ok_and(|solved| {
+        solved.len() == extents.len()
+            && solved.iter().zip(extents).all(|(&actual, &expected)| {
+                (actual - expected).abs() <= tolerance(actual, expected)
+            })
+    })
 }
 
 fn weights_for_extents(

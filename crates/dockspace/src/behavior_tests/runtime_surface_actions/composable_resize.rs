@@ -185,7 +185,7 @@ fn equalize_keeps_the_first_step_when_a_t_junction_becomes_a_cross() {
             let compiled = crate::presentation::compiler::surface_compilation_count();
             let action = plan
                 .prepare_splitter_junction_adjustment_sequence(
-                    id,
+                    tee,
                     DockspaceAxis::Vertical,
                     steps.iter().copied(),
                 )
@@ -201,12 +201,8 @@ fn equalize_keeps_the_first_step_when_a_t_junction_becomes_a_cross() {
             inspect_surface(&mut session, |plan| {
                 assert_eq!(plan.splitter_junctions().next().unwrap().arm_count(), 4);
                 assert!(
-                    plan.prepare_splitter_junction_adjustment(
-                        id,
-                        DockspaceAxis::Vertical,
-                        Equalize
-                    )
-                    .is_none()
+                    plan.splitter_junctions()
+                        .all(|junction| junction.visual_id() != id)
                 );
             });
         }
@@ -252,7 +248,7 @@ fn auto_grid_reversal_materializes_the_current_shape_before_returning_to_the_old
                     .min_by(|a, b| a.draw_bounds().x().total_cmp(&b.draw_bounds().x()))
                     .unwrap();
                 let action = plan
-                    .prepare_splitter_adjustment_sequence(handle.visual_id(), steps.iter().copied())
+                    .prepare_splitter_adjustment_sequence(handle, steps.iter().copied())
                     .unwrap();
                 frame.submit_surface_action(action).unwrap();
                 measure(&mut frame, wide, &[]);
@@ -295,7 +291,7 @@ fn ancestor_splitter_round_trip_preserves_auto_grid_shares_across_reflow() {
             .min_by(|a, b| a.draw_bounds().x().total_cmp(&b.draw_bounds().x()))
             .unwrap();
         let action = plan
-            .prepare_splitter_adjustment_sequence(outer.visual_id(), steps.iter().copied())
+            .prepare_splitter_adjustment_sequence(outer, steps.iter().copied())
             .unwrap();
         frame.submit_surface_action(action).unwrap();
         measure(&mut frame, offered, &[]);
@@ -359,9 +355,7 @@ fn adjust_outer_splitter(
         .filter(|splitter| splitter.axis() == DockspaceAxis::Horizontal)
         .min_by(|a, b| a.draw_bounds().x().total_cmp(&b.draw_bounds().x()))
         .unwrap();
-    if let Some(action) =
-        plan.prepare_splitter_adjustment_sequence(outer.visual_id(), keys.iter().copied())
-    {
+    if let Some(action) = plan.prepare_splitter_adjustment_sequence(outer, keys.iter().copied()) {
         frame.submit_surface_action(action).unwrap();
     }
     measure(&mut frame, offered, hints);
@@ -500,7 +494,7 @@ fn a_deferred_grid_reset_recomputes_current_weights_only_for_the_captured_cell_m
                     .filter(|splitter| splitter.axis() == DockspaceAxis::Horizontal)
                     .collect::<Vec<_>>();
                 dividers.sort_by(|a, b| a.draw_bounds().x().total_cmp(&b.draw_bounds().x()));
-                plan.prepare_splitter_adjustment(dividers[1].visual_id(), reset)
+                plan.prepare_splitter_adjustment(dividers[1], reset)
                     .unwrap()
                     .into_deferred()
             });
@@ -606,10 +600,10 @@ fn grid_keyboard_adjustment_shares_the_column_and_inactive_ancestor_revokes_an_o
             .find(|splitter| splitter.axis() == DockspaceAxis::Horizontal)
             .unwrap();
         let action = plan
-            .prepare_splitter_adjustment(splitter.visual_id(), SurfaceSplitterAdjustment::Increment)
+            .prepare_splitter_adjustment(splitter, SurfaceSplitterAdjustment::Increment)
             .unwrap();
         let stale = plan
-            .prepare_splitter_adjustment(splitter.visual_id(), SurfaceSplitterAdjustment::Increment)
+            .prepare_splitter_adjustment(splitter, SurfaceSplitterAdjustment::Increment)
             .unwrap();
         frame.submit_surface_action(action).unwrap();
         measure(&mut frame, offered, &[]);
@@ -671,12 +665,12 @@ fn outward_accessibility_range_reports_the_whole_owner_boundary_and_reaches_its_
     let mut frame = session.begin_host_frame().unwrap();
     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
     let splitter = plan.splitters().next().unwrap();
-    let range = plan.splitter_resize_range(splitter.visual_id()).unwrap();
+    let range = plan.splitter_resize_range(splitter).unwrap();
     assert!((range.value() - 1.0 / 3.0).abs() < 1e-10);
     assert!((range.minimum() - 20.0 / 300.0).abs() < 1e-10);
     assert!((range.maximum() - 200.0 / 300.0).abs() < 1e-10);
     let action = plan
-        .prepare_splitter_adjustment(splitter.visual_id(), SurfaceSplitterAdjustment::Maximum)
+        .prepare_splitter_adjustment(splitter, SurfaceSplitterAdjustment::Maximum)
         .unwrap();
     frame.submit_surface_action(action).unwrap();
     measure(&mut frame, offered, &hints);
@@ -717,7 +711,7 @@ fn ancestor_resize_reflows_auto_grid_with_the_same_candidate_and_committed_geome
             })
             .unwrap();
         let action = plan
-            .prepare_splitter_adjustment_sequence(outer.visual_id(), adjustments.iter().copied())
+            .prepare_splitter_adjustment_sequence(outer, adjustments.iter().copied())
             .unwrap();
         frame.submit_surface_action(action).unwrap();
         measure(&mut frame, offered, &[]);

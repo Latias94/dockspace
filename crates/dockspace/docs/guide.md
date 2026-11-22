@@ -187,13 +187,14 @@ strip controls, root menu openers, splitters, and contained title and resize
 controls expose it through `input_id()`. Use `group_menu_input_id()` for a tab
 group's menu button and `close_input_id()` for tab and contained close buttons.
 `tab_focus_input_id()` gives a navigation action's destination even when the
-header will first appear in the next output. Use the current paint record to
-prepare an action or declare its receiver. Splitter input identities also
-identify their visible boundary, including the resolved cell map for a Grid.
-Keep `visual_id()` separately if the renderer tracks a divider across reflow.
-Receiver queries for splitters and contained controls require a record from the
-same semantic output. For a contained resize, pass the edge record directly to
-`receiver_for_contained_resize`. The edge already identifies its floating root.
+header will first appear in the next output. Use a paint record from the same
+semantic output to prepare an action or declare a receiver. Matching visual IDs
+can recur on different outputs, including after an aborted frame. Splitter
+input identities bind the visible children on either side of an ordinary Split
+boundary, or the resolved cell map of a Grid. Keep `visual_id()` separately if
+the renderer tracks a divider across reflow. For a contained resize, pass the
+edge record directly to `receiver_for_contained_resize`. The edge already
+identifies its floating root.
 
 To continue queued navigation after a selection presents, ask the new strip
 for `continuation_receiver(previous, committed_tab)`. Also check that the
@@ -208,10 +209,12 @@ focus to the button. Check `can_continue_from()` before resuming queued input on
 a new presentation. For input received after accepting an open, retain the
 closed control with `retain_tab_list_opener` and use `can_continue_opening()` on
 the first menu output. `SurfacePaintPlan::is_presented()` checks whether core
-has accepted a renderer receipt for the plan's semantic output. Resume while
-the menu still owns keyboard input. If a later focus change follows a row
-confirmation, `preserve_tab_list_focus()` keeps the selection while leaving
-framework focus in place.
+has accepted a renderer receipt for the plan's semantic output. Preserve input
+order from the accepted opener through presentation. If a confirmation is
+already queued, a click on the first displayed menu cannot take its place.
+Resume while the menu still owns keyboard input. If a later focus change follows
+a row confirmation, `preserve_tab_list_focus()` keeps the selection while
+leaving framework focus in place.
 
 Keyboard navigation reveals its
 target in the current viewport until manual scrolling takes over. Lay out row
@@ -613,6 +616,10 @@ Scrolling, text wrapping and canvas navigation remain content concerns.
 Hosts can prepare `SurfaceSplitterAdjustment::Minimum` or `Maximum` for a
 separator or one junction axis, in addition to ordinary `Decrement`/`Increment`
 steps. Endpoints use the same full-layout limits; they do not collapse panes.
+Pass the splitter or junction paint record from the current `SurfacePaintPlan`
+to prepare an adjustment. Keep `input_id()` for widget and accessibility
+identity. For an action that must outlive the paint record, retain the prepared
+action with `into_deferred()`.
 `SurfacePaintPlan::splitter_resize_range` resolves current/minimum/maximum
 fractions for a separator from its uncut geometry and all touching descendants.
 This is an on-demand solver query for numeric accessibility or application

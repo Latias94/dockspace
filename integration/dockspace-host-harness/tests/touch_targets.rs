@@ -493,7 +493,7 @@ fn review_expanded_touch_targets_preserve_each_visible_parallel_splitter_center(
                 } = step
                 {
                     assert!(splitter.operable(), "{axis:?}, scale={scale}");
-                    assert!(plan.splitter_resize_range(splitter.visual_id()).is_some());
+                    assert!(plan.splitter_resize_range(splitter).is_some());
                 }
                 Ok::<(), ()>(())
             })

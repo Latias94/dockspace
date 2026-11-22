@@ -45,21 +45,28 @@ fn center(rect: crate::LogicalRect) -> Pos2 {
 }
 
 fn strip(harness: &mut Harness) -> (Pos2, f64) {
+    strips(harness)
+        .pop()
+        .expect("the fixture contains a tab strip")
+}
+
+fn strips(harness: &mut Harness) -> Vec<(Pos2, f64)> {
     let mut frame = harness.dockspace.session.begin_host_frame().unwrap();
     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
-    let mut result = None;
+    let mut result = Vec::new();
     plan.visit_surface_program(|step| {
         if let Step::Operation {
             operation: Operation::TabBar(bar),
             ..
         } = step
         {
-            result = Some((center(bar.viewport()), bar.scroll_offset()));
+            result.push((center(bar.viewport()), bar.scroll_offset()));
         }
         Ok::<(), ()>(())
     })
     .unwrap();
-    result.expect("the fixture contains a tab strip")
+    result.sort_by(|(left, _), (right, _)| left.x.total_cmp(&right.x));
+    result
 }
 
 fn menu(harness: &mut Harness) -> (Pos2, f64) {
@@ -268,6 +275,37 @@ fn official_tab_list_vertical_wheel_scrolls_without_changing_selection() {
 }
 
 #[test]
+fn official_tab_list_wheel_clamps_before_reversing_in_the_same_packet() {
+    for separate in [false, true] {
+        for (deltas, expected) in [([4.0, -4.0], 4.0), ([-4.0, 4.0], 0.0)] {
+            let mut harness = setup();
+            open_menu(&mut harness);
+            let (point, before) = menu(&mut harness);
+            assert_eq!(before, 0.0);
+            harness.run(WIDTH, vec![Event::PointerMoved(point)]);
+            let events = vec![
+                wheel(vec2(0.0, deltas[0])),
+                Event::PointerMoved(point + vec2(1.0, 0.0)),
+                wheel(vec2(0.0, deltas[1])),
+            ];
+            if separate {
+                for event in events {
+                    harness.run(WIDTH, vec![event]);
+                }
+            } else {
+                harness.run(WIDTH, events);
+            }
+            harness.run(WIDTH, Vec::new());
+            assert_eq!(
+                menu(&mut harness).1,
+                expected,
+                "separate={separate}, deltas={deltas:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn official_tab_wheel_respects_framework_units_shift_and_scroll_style() {
     for (unit, delta, modifiers, only_direction) in [
         (
@@ -303,31 +341,55 @@ fn official_tab_wheel_respects_framework_units_shift_and_scroll_style() {
     ] {
         let mut harness = setup();
         let (point, before) = strip(&mut harness);
-        harness.run(WIDTH, vec![Event::PointerMoved(point)]);
-        let mut expected = 0.0;
         run_with(
             &mut harness,
-            vec![Event::MouseWheel {
-                unit,
-                delta,
-                phase: egui::TouchPhase::Move,
-                source: egui::MouseWheelSource::Wheel,
-                modifiers,
-            }],
+            vec![Event::PointerMoved(point)],
             |ui, dockspace, panes| {
                 ui.style_mut().always_scroll_the_only_direction = only_direction;
-                let delta = ui.input(|input| input.smooth_scroll_delta());
-                expected = -f64::from(delta.x)
-                    - if only_direction {
-                        f64::from(delta.y)
-                    } else {
-                        0.0
-                    };
                 dockspace.show_single_surface(SURFACE, ui, panes).unwrap();
             },
         );
+        let event = Event::MouseWheel {
+            unit,
+            delta,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers,
+        };
+        let mut expected = 0.0;
+        run_with(&mut harness, vec![event.clone()], |ui, dockspace, panes| {
+            ui.style_mut().always_scroll_the_only_direction = only_direction;
+            let options = ui.ctx().options(|options| options.input_options);
+            let delta = ui.input(|input| {
+                assert_eq!(input.smooth_scroll_delta(), egui::Vec2::ZERO);
+                egui::InputState::default()
+                    .begin_pass(
+                        RawInput {
+                            screen_rect: Some(input.viewport_rect()),
+                            time: Some(input.time),
+                            predicted_dt: input.stable_dt,
+                            events: vec![event.clone()],
+                            ..Default::default()
+                        },
+                        false,
+                        input.pixels_per_point(),
+                        options,
+                    )
+                    .smooth_scroll_delta()
+            });
+            expected = -f64::from(delta.x)
+                - if only_direction {
+                    f64::from(delta.y)
+                } else {
+                    0.0
+                };
+            dockspace.show_single_surface(SURFACE, ui, panes).unwrap();
+        });
         assert!(expected > 0.0);
-        harness.run(WIDTH, Vec::new());
+        run_with(&mut harness, vec![], |ui, dockspace, panes| {
+            ui.style_mut().always_scroll_the_only_direction = only_direction;
+            dockspace.show_single_surface(SURFACE, ui, panes).unwrap();
+        });
         assert!(
             (strip(&mut harness).1 - before - expected).abs() < 1e-6,
             "tab scrolling must use egui's normalized units, modifiers and direction policy"
@@ -532,6 +594,224 @@ fn official_pane_content_keeps_its_own_vertical_scroll() {
 }
 
 #[test]
+fn official_tab_list_owns_wheel_before_pane_content_runs() {
+    #[derive(Default)]
+    struct Document {
+        bounds: Option<Rect>,
+        offset: f32,
+    }
+
+    impl PaneView for Document {
+        fn title(&self, item: ItemId) -> Option<egui::WidgetText> {
+            Some(format!("Document {item}").into())
+        }
+
+        fn ui(&mut self, _: ItemId, ui: &mut Ui) -> PaneResponse {
+            let area = egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    ui.set_min_height(3_200.0);
+                    ui.label("Document behind the tab list")
+                });
+            self.bounds = Some(area.inner_rect);
+            self.offset = area.state.clamped_offset().y;
+            PaneResponse::default()
+                .with_scroll_area(ui, &area)
+                .with_content(&area.inner)
+        }
+    }
+
+    let mut harness = setup();
+    open_menu(&mut harness);
+    let (point, before) = menu(&mut harness);
+    let mut document = Document::default();
+    let mut run = |harness: &mut Harness, events| {
+        harness.frame += 1;
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(WIDTH, 600.0))),
+            time: Some(f64::from(harness.frame) * 0.1),
+            events,
+            ..Default::default()
+        };
+        let (output, _) = harness
+            .dockspace
+            .run_single_surface(&harness.context, input, SURFACE, &mut document)
+            .unwrap();
+        let (mut output, receipt) = output.into_parts();
+        receipt.report(SurfacePresentationResult::Presented);
+        output.textures_delta.clear();
+        assert!(document.bounds.unwrap().contains(point));
+        assert_eq!(document.offset, 0.0);
+    };
+    run(&mut harness, vec![Event::PointerMoved(point)]);
+    run(&mut harness, vec![wheel(vec2(0.0, -120.0))]);
+    for _ in 0..12 {
+        run(&mut harness, vec![]);
+    }
+    assert!((menu(&mut harness).1 - before - 120.0).abs() < 0.001);
+}
+
+#[test]
+fn opposite_wheel_events_reach_both_tab_strips_in_one_packet() {
+    let mut harness = setup();
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(
+            RootId::new(1),
+            DockspaceNode::equal_split(
+                crate::DockspaceAxis::Horizontal,
+                [1..=20, 21..=40].map(|items| DockspaceNode::tabs(items.map(ItemId::new))),
+            )
+            .unwrap(),
+        ),
+    )])
+    .unwrap();
+    harness.dockspace = Dockspace::builder("independent-wheel-strips", layout)
+        .style(DockStyle {
+            tab_min_width: 120.0,
+            tab_max_width: 120.0,
+            ..Default::default()
+        })
+        .build()
+        .unwrap();
+    for _ in 0..3 {
+        harness.run(WIDTH, vec![]);
+    }
+    let positions = strips(&mut harness);
+    let [(left, _), (right, _)] = positions[..] else {
+        panic!("expected two overflowing tab strips")
+    };
+    harness.run(
+        WIDTH,
+        vec![
+            Event::PointerMoved(left),
+            wheel(vec2(-120.0, 0.0)),
+            Event::PointerMoved(right),
+            wheel(vec2(-120.0, 0.0)),
+        ],
+    );
+    for _ in 0..12 {
+        harness.run(WIDTH, vec![]);
+    }
+    let before = strips(&mut harness);
+    assert!(before.iter().all(|(_, offset)| *offset > 60.0));
+    harness.run(
+        WIDTH,
+        vec![
+            Event::PointerMoved(left),
+            wheel(vec2(60.0, 0.0)),
+            Event::PointerMoved(right),
+            wheel(vec2(-60.0, 0.0)),
+        ],
+    );
+    for _ in 0..12 {
+        harness.run(WIDTH, vec![]);
+    }
+    let after = strips(&mut harness);
+    assert!((after[0].1 - before[0].1 + 60.0).abs() < 0.001);
+    assert!((after[1].1 - before[1].1 - 60.0).abs() < 0.001);
+}
+
+#[test]
+fn manual_pass_keeps_wheel_tail_and_trackpad_momentum_with_the_tab_list() {
+    let mut harness = setup();
+    let document = std::cell::Cell::new((Pos2::ZERO, 0.0));
+    let run = |harness: &mut Harness, events| {
+        harness.frame += 1;
+        harness.context.begin_pass(RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(WIDTH, 600.0))),
+            time: Some(f64::from(harness.frame) * 0.1),
+            events,
+            ..Default::default()
+        });
+        harness.context.root_ui(|ui| {
+            ui.columns(2, |columns| {
+                let [dock, app] = columns else { unreachable!() };
+                let area = egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(app, |ui| {
+                        ui.set_min_height(3_200.0);
+                        ui.label("Adjacent application document");
+                    });
+                document.set((area.inner_rect.center(), area.state.clamped_offset().y));
+                dock.shrink_clip_rect(dock.available_rect_before_wrap());
+                harness
+                    .dockspace
+                    .show_single_surface(SURFACE, dock, &mut harness.panes)
+                    .unwrap();
+            });
+        });
+        let mut output = harness.context.end_pass();
+        output.textures_delta.clear();
+        output
+    };
+    run(&mut harness, vec![]);
+    let output = run(&mut harness, vec![]);
+    let trigger = nodes(&output)
+        .iter()
+        .find_map(|(id, node)| (node.label() == Some("List tabs")).then_some(*id))
+        .unwrap();
+    run(
+        &mut harness,
+        vec![accesskit_scroll_event(
+            trigger,
+            egui::accesskit::Action::Click,
+        )],
+    );
+    run(&mut harness, vec![]);
+    run(&mut harness, vec![]);
+    let (point, before) = menu(&mut harness);
+    let app = document.get().0;
+    run(
+        &mut harness,
+        vec![Event::PointerMoved(point), wheel(vec2(0.0, -120.0))],
+    );
+    run(
+        &mut harness,
+        vec![Event::PointerMoved(app), wheel(vec2(0.0, -4.0))],
+    );
+    for _ in 0..12 {
+        run(&mut harness, vec![]);
+    }
+    assert!((menu(&mut harness).1 - before - 120.0).abs() < 0.001);
+    assert_eq!(document.get().1, 4.0);
+
+    use egui::{
+        MouseWheelSource::{Momentum, Trackpad},
+        TouchPhase::{End, Move, Start},
+    };
+    let phase = |source, phase, y| Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, y),
+        phase,
+        modifiers: egui::Modifiers::NONE,
+        source,
+    };
+    run(
+        &mut harness,
+        vec![Event::PointerMoved(point), phase(Trackpad, Start, 0.0)],
+    );
+    run(
+        &mut harness,
+        vec![
+            Event::PointerMoved(point + vec2(1.0, 0.0)),
+            phase(Trackpad, Move, -20.0),
+        ],
+    );
+    run(
+        &mut harness,
+        vec![Event::PointerMoved(app), phase(Trackpad, Move, -30.0)],
+    );
+    run(&mut harness, vec![phase(Trackpad, End, 0.0)]);
+    run(&mut harness, vec![phase(Momentum, Start, 0.0)]);
+    run(&mut harness, vec![phase(Momentum, Move, -10.0)]);
+    run(&mut harness, vec![phase(Momentum, End, 0.0)]);
+    run(&mut harness, vec![]);
+    assert!((menu(&mut harness).1 - before - 180.0).abs() < 0.001);
+    assert_eq!(document.get().1, 4.0);
+}
+
+#[test]
 fn official_tab_strip_does_not_acquire_pane_content_smoothing_tail() {
     #[derive(Default)]
     struct WideContent {
@@ -612,26 +892,29 @@ fn official_tab_strip_continues_its_own_smoothing_tail() {
     let mut harness = setup();
     let (point, before) = strip(&mut harness);
     harness.run(WIDTH, vec![Event::PointerMoved(point)]);
-    let mut first = 0.0;
     run_with(
         &mut harness,
         vec![wheel(vec2(-90.0, 0.0))],
         |ui, dockspace, panes| {
-            first = -f64::from(ui.input(egui::InputState::smooth_scroll_delta).x);
+            assert_eq!(ui.input(egui::InputState::smooth_scroll_delta).x, 0.0);
             dockspace.show_single_surface(SURFACE, ui, panes).unwrap();
         },
     );
-    let mut tail = 0.0;
     run_with(&mut harness, Vec::new(), |ui, dockspace, panes| {
-        tail = -f64::from(ui.input(egui::InputState::smooth_scroll_delta).x);
+        assert_eq!(ui.input(egui::InputState::smooth_scroll_delta).x, 0.0);
         dockspace.show_single_surface(SURFACE, ui, panes).unwrap();
     });
-    assert!(first > 0.0 && tail > 0.0);
+    let first = strip(&mut harness).1 - before;
+    assert!(first > 0.0 && first < 90.0);
     harness.run(WIDTH, Vec::new());
     assert!(
-        (strip(&mut harness).1 - before - first - tail).abs() < 1e-6,
+        strip(&mut harness).1 - before > first,
         "a header's acquired wheel keeps its own subsequent smoothing sample"
     );
+    for _ in 0..8 {
+        harness.run(WIDTH, Vec::new());
+    }
+    assert!((strip(&mut harness).1 - before - 90.0).abs() < 1e-5);
 }
 
 #[test]

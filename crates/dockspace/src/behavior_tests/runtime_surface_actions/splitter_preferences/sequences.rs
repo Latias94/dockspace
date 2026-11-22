@@ -174,7 +174,7 @@ impl Expected {
                 splitter.operable(),
                 "an exact two-leaf partition stays operable"
             );
-            let range = plan.splitter_resize_range(splitter.visual_id()).unwrap();
+            let range = plan.splitter_resize_range(splitter).unwrap();
             assert_close(range.value(), self.first_width() / self.width);
             assert_close(range.minimum(), self.profile().minimum() / self.width);
             assert_close(
@@ -191,7 +191,7 @@ impl Expected {
         let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
         let splitter = outer_splitter(plan);
         let stale = plan
-            .prepare_splitter_adjustment(splitter.visual_id(), SurfaceSplitterAdjustment::Increment)
+            .prepare_splitter_adjustment(splitter, SurfaceSplitterAdjustment::Increment)
             .expect("fresh exact partition grants the adjustment");
         match action {
             Action::HostWidth(width) => self.width = f64::from(width),
@@ -222,7 +222,7 @@ impl Expected {
                     self.fraction = after / self.width;
                 }
                 let prepared = plan
-                    .prepare_splitter_adjustment(splitter.visual_id(), adjustment)
+                    .prepare_splitter_adjustment(splitter, adjustment)
                     .unwrap();
                 frame.submit_surface_action(prepared).unwrap();
             }
@@ -336,16 +336,10 @@ fn hiding_and_remeasuring_a_capped_descendant_preserves_piecewise_contacts() {
             assert_close(splitter.before_bounds().width(), width);
             assert_close(splitter.after_bounds().width(), 600.0 - width);
             assert_eq!(splitter.operable(), operable);
+            assert_eq!(plan.splitter_resize_range(splitter).is_some(), operable);
             assert_eq!(
-                plan.splitter_resize_range(splitter.visual_id()).is_some(),
-                operable
-            );
-            assert_eq!(
-                plan.prepare_splitter_adjustment(
-                    splitter.visual_id(),
-                    SurfaceSplitterAdjustment::Preferred
-                )
-                .is_some(),
+                plan.prepare_splitter_adjustment(splitter, SurfaceSplitterAdjustment::Preferred)
+                    .is_some(),
                 operable
             );
             assert_eq!(plan.receiver_for_splitter(splitter).is_some(), operable);
@@ -392,7 +386,7 @@ fn fresh_measurements_revoke_old_adjustments_without_changing_the_workspace_vers
         let mut session = pair_session([1.0, 1.0], &original);
         let stale = inspect_surface(&mut session, |plan| {
             plan.prepare_splitter_adjustment(
-                outer_splitter(plan).visual_id(),
+                outer_splitter(plan),
                 SurfaceSplitterAdjustment::Preferred,
             )
             .unwrap()
@@ -422,10 +416,7 @@ fn fresh_measurements_revoke_old_adjustments_without_changing_the_workspace_vers
         let mut fresh = session.begin_host_frame().unwrap();
         let plan = fresh.paint_plan(SURFACE).unwrap().unwrap();
         let action = plan
-            .prepare_splitter_adjustment(
-                outer_splitter(plan).visual_id(),
-                SurfaceSplitterAdjustment::Preferred,
-            )
+            .prepare_splitter_adjustment(outer_splitter(plan), SurfaceSplitterAdjustment::Preferred)
             .expect("fresh measurements restore adjustment authority");
         fresh.submit_surface_action(action).unwrap();
         measure_at(&mut fresh, &hints, bounds);

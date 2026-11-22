@@ -584,13 +584,12 @@ fn semantic_resize_action(
             && let Step::Operation { operation, .. } = step
         {
             action = match operation {
-                Operation::Splitter(record) if !junction => plan.prepare_splitter_adjustment(
-                    record.visual_id(),
-                    SurfaceSplitterAdjustment::Increment,
-                ),
+                Operation::Splitter(record) if !junction => {
+                    plan.prepare_splitter_adjustment(record, SurfaceSplitterAdjustment::Increment)
+                }
                 Operation::SplitterJunction(record) if junction => plan
                     .prepare_splitter_junction_adjustment(
-                        record.visual_id(),
+                        record,
                         DockspaceAxis::Vertical,
                         SurfaceSplitterAdjustment::Increment,
                     ),

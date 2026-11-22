@@ -23,6 +23,7 @@ fn drag_outer_splitter(
     offered: LogicalRect,
     hints: &[(ItemId, PaneSizing)],
     y: f64,
+    delta: f64,
 ) -> Vec<(ItemId, LogicalRect)> {
     present_pointer_surface(session);
     let split = bounds(session)
@@ -31,7 +32,7 @@ fn drag_outer_splitter(
         .unwrap()
         .1;
     let start = LogicalPoint::new(split.max().x() + 2.0, y).unwrap();
-    let end = LogicalPoint::new(start.x() + 20.0, y).unwrap();
+    let end = LogicalPoint::new(start.x() + delta, y).unwrap();
     for (event, point) in [
         (
             SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary),
@@ -66,6 +67,70 @@ fn pane_bounds(panes: &[(ItemId, LogicalRect)], item: u64) -> LogicalRect {
         .find(|(key, _)| *key == ItemId::new(item))
         .unwrap()
         .1
+}
+
+#[test]
+fn capped_nested_split_keeps_both_resize_directions_at_a_frame_contact() {
+    use SurfaceSplitterAdjustment::{Decrement, Increment};
+
+    let offered = LogicalRect::new(0.0, 0.0, 204.0, 228.0).unwrap();
+    let top = DockspaceNode::equal_split(DockspaceAxis::Horizontal, [pane(2), pane(3)]).unwrap();
+    let left = DockspaceNode::equal_split(DockspaceAxis::Vertical, [top, pane(1)]).unwrap();
+    let content = DockspaceNode::equal_split(DockspaceAxis::Horizontal, [left, pane(4)]).unwrap();
+    let config = DockPresentationConfig::builder()
+        .minimum_pane_size(1.0, 1.0)
+        .splitter_thickness(4.0)
+        .splitter_keyboard_step(5.0)
+        .build()
+        .unwrap();
+    for minimum in [45.0, 46.0, 47.0] {
+        let hints = [
+            (
+                SECOND,
+                PaneSizing::builder().max_width(90.0).build().unwrap(),
+            ),
+            (
+                THIRD,
+                PaneSizing::builder().max_width(60.0).build().unwrap(),
+            ),
+            (
+                FOURTH,
+                PaneSizing::builder().min_width(minimum).build().unwrap(),
+            ),
+        ];
+        for (delta, adjustment) in [(-5.0, Decrement), (5.0, Increment)] {
+            let mut pointer = session_with_config(content.clone(), offered, config.clone(), &hints);
+            let dragged = drag_outer_splitter(&mut pointer, offered, &hints, 170.0, delta);
+            let mut semantic =
+                session_with_config(content.clone(), offered, config.clone(), &hints);
+            let mut frame = semantic.begin_host_frame().unwrap();
+            let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+            let outer = plan
+                .splitters()
+                .find(|splitter| {
+                    splitter
+                        .draw_bounds()
+                        .contains(LogicalPoint::new(102.0, 170.0).unwrap())
+                })
+                .unwrap();
+            let range = plan.splitter_resize_range(outer).unwrap();
+            assert_eq!(
+                (range.minimum(), range.value(), range.maximum()),
+                (0.265, 0.5, 0.56)
+            );
+            let action = plan.prepare_splitter_adjustment(outer, adjustment).unwrap();
+            frame.submit_surface_action(action).unwrap();
+            measure(&mut frame, offered, &hints);
+            assert!(frame.commit().unwrap().workspace_changed());
+            assert_eq!(bounds(&mut semantic), dragged);
+            for (item, expected) in [100.0 + delta, 48.0, 48.0 + delta, 100.0 - delta]
+                .into_iter()
+                .enumerate()
+            {
+                assert_eq!(pane_bounds(&dragged, item as u64 + 1).width(), expected);
+            }
+        }
+    }
 }
 
 #[cfg(feature = "serde")]
@@ -137,7 +202,7 @@ fn remapped_grid_keeps_a_child_divider_whose_slot_still_follows_the_drag() {
             assert_eq!(pane_bounds(&original, 2).x(), pane_bounds(&original, 6).x());
             assert_eq!(pane_bounds(&original, 3).x(), 272.5);
             let resized = if pointer {
-                drag_outer_splitter(&mut session, offered, &[], 44.0)
+                drag_outer_splitter(&mut session, offered, &[], 44.0, 20.0)
             } else {
                 assert!(adjust_outer_splitter(
                     &mut session,
@@ -198,7 +263,7 @@ fn resizing_a_grid_column_keeps_the_split_in_the_stationary_column() {
             assert_eq!(pane_bounds(&original, 4).x(), 420.0);
             assert_eq!(pane_bounds(&original, 6).y(), pane_bounds(&original, 7).y());
             let resized = if pointer {
-                drag_outer_splitter(&mut session, offered, &hints, 44.0)
+                drag_outer_splitter(&mut session, offered, &hints, 44.0, 20.0)
             } else {
                 assert!(adjust_outer_splitter(
                     &mut session,
@@ -251,9 +316,13 @@ fn junction_batch_stops_when_its_orthogonal_grid_boundary_changes_cells() {
             let adjust = |session: &mut DockspaceSession, steps: &[SurfaceSplitterAdjustment]| {
                 let mut frame = session.begin_host_frame().unwrap();
                 let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+                let junction = plan
+                    .splitter_junctions()
+                    .find(|junction| junction.visual_id() == id)
+                    .unwrap();
                 let action = plan
                     .prepare_splitter_junction_adjustment_sequence(
-                        id,
+                        junction,
                         DockspaceAxis::Horizontal,
                         steps.iter().copied(),
                     )
@@ -309,7 +378,7 @@ fn dragging_an_outer_split_preserves_a_capped_far_grid_track() {
             let far = pane_bounds(&before, 3);
             assert_eq!(pane_bounds(&before, 2).width(), 112.0);
             assert_eq!(far.x(), 320.0);
-            let committed = drag_outer_splitter(&mut session, offered, &hints, 44.0);
+            let committed = drag_outer_splitter(&mut session, offered, &hints, 44.0, 20.0);
             assert!((pane_bounds(&committed, 1).width() - 220.0).abs() < 1e-8);
             assert!((pane_bounds(&committed, 2).width() - 92.0).abs() < 1e-8);
             assert!((pane_bounds(&committed, 3).x() - far.x()).abs() < 1e-8);
@@ -345,7 +414,7 @@ fn a_parent_grid_settles_before_measuring_its_nested_grid_transfer() {
         assert_eq!(pane_bounds(&before, 3).x(), 524.0);
         assert_eq!(pane_bounds(&before, 9).x(), 612.0);
 
-        let resized = drag_outer_splitter(&mut session, offered, &hints, 44.0);
+        let resized = drag_outer_splitter(&mut session, offered, &hints, 44.0, 20.0);
         assert_eq!(pane_bounds(&resized, 1).width(), 424.0);
         assert_eq!(pane_bounds(&resized, 2).width(), 92.0);
         assert_eq!(pane_bounds(&resized, 3).x(), 524.0);
@@ -380,7 +449,7 @@ fn moving_a_divider_accepts_rounding_in_small_stationary_tracks() {
             })
             .unwrap();
         let action = plan
-            .prepare_splitter_adjustment(divider.visual_id(), SurfaceSplitterAdjustment::Increment)
+            .prepare_splitter_adjustment(divider, SurfaceSplitterAdjustment::Increment)
             .unwrap();
         frame.submit_surface_action(action).unwrap();
         measure(&mut frame, offered, &[]);
@@ -480,11 +549,8 @@ fn independent_grid_transfers_share_projection_passes() {
                 .expect("outer split is the first horizontal divider");
             let before = auto_reflow_projection_count();
             assert!(
-                plan.prepare_splitter_adjustment(
-                    divider.visual_id(),
-                    SurfaceSplitterAdjustment::Increment
-                )
-                .is_some()
+                plan.prepare_splitter_adjustment(divider, SurfaceSplitterAdjustment::Increment)
+                    .is_some()
             );
             auto_reflow_projection_count() - before
         })
@@ -541,6 +607,167 @@ fn one_cell_auto_grid_does_not_reproject_ancestor_transfers() {
     }
 }
 
+#[test]
+fn adjacent_boundary_grows_an_uncapped_band_past_its_capped_peer() {
+    use crate::presentation::layout::auto_reflow_projection_count;
+
+    let offered = LogicalRect::new(0.0, 0.0, 308.0, 228.0).unwrap();
+    let hints = [(
+        FIRST,
+        PaneSizing::builder().max_width(100.0).build().unwrap(),
+    )];
+    let left = DockspaceNode::equal_split(DockspaceAxis::Vertical, [pane(1), pane(2)]).unwrap();
+    let right = DockspaceNode::grid(DockspaceGridShape::Auto, [pane(4)]).unwrap();
+    let content =
+        DockspaceNode::equal_split(DockspaceAxis::Horizontal, [left, pane(3), right]).unwrap();
+    for pointer in [false, true] {
+        let mut session = session(
+            content.clone(),
+            offered,
+            ResizePropagation::Adjacent,
+            &hints,
+        );
+        let count = auto_reflow_projection_count();
+        inspect_surface(&mut session, |plan| {
+            let divider = plan
+                .splitters()
+                .find(|divider| divider.draw_bounds().x() == 100.0)
+                .unwrap();
+            let range = plan.splitter_resize_range(divider).unwrap();
+            assert!((range.maximum() * 300.0 - 199.0).abs() < 1e-8);
+        });
+        let resized = if pointer {
+            drag_outer_splitter(&mut session, offered, &hints, 65.0, 20.0)
+        } else {
+            assert!(adjust_outer_splitter(
+                &mut session,
+                offered,
+                &hints,
+                &[SurfaceSplitterAdjustment::Increment],
+            ));
+            measured_bounds(&mut session, offered, &hints)
+        };
+        for (item, x, width) in [
+            (1, 0.0, 100.0),
+            (2, 0.0, 120.0),
+            (3, 124.0, 80.0),
+            (4, 208.0, 100.0),
+        ] {
+            let rect = pane_bounds(&resized, item);
+            assert!(
+                (rect.x() - x).abs() < 1e-8 && (rect.width() - width).abs() < 1e-8,
+                "{resized:?}"
+            );
+        }
+        assert_eq!(auto_reflow_projection_count(), count);
+    }
+}
+
+#[test]
+fn widening_a_sparse_grid_preserves_the_capacity_of_its_empty_column() {
+    let offered = LogicalRect::new(0.0, 0.0, 404.0, 96.0).unwrap();
+    let left = DockspaceNode::grid(DockspaceGridShape::Auto, [pane(1)]).unwrap();
+    let right = grid(
+        fixed(2, 2),
+        [pane(2), pane(3), pane(4)],
+        [1.0; 2],
+        [3.0, 1.0],
+    );
+    let content = grid(fixed(1, 2), [left, right], [1.0], [3.0, 1.0]);
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(ROOT, content),
+    )])
+    .unwrap()
+    .with_hidden_items([SECOND, FOURTH])
+    .unwrap();
+    let config = config(ResizePropagation::Outward)
+        .to_builder()
+        .splitter_keyboard_step(64.0)
+        .build()
+        .unwrap();
+    for pointer in [false, true] {
+        let mut session = DockspaceSession::from_layout_with_presentation_config(
+            layout.clone(),
+            DockPolicy::default(),
+            config.clone(),
+        )
+        .unwrap();
+        let before = measured_bounds(&mut session, offered, &[]);
+        assert_eq!(pane_bounds(&before, 1).width(), 300.0);
+        assert_eq!(pane_bounds(&before, 3).width(), 24.0);
+        let after = if pointer {
+            drag_outer_splitter(&mut session, offered, &[], 44.0, -64.0)
+        } else {
+            assert!(adjust_outer_splitter(
+                &mut session,
+                offered,
+                &[],
+                &[SurfaceSplitterAdjustment::Decrement],
+            ));
+            measured_bounds(&mut session, offered, &[])
+        };
+        assert!((pane_bounds(&after, 1).width() - 236.0).abs() < 1e-8);
+        assert!(
+            (pane_bounds(&after, 3).x() - 344.0).abs() < 1e-8,
+            "{after:?}"
+        );
+        assert!(
+            (pane_bounds(&after, 3).width() - 60.0).abs() < 1e-8,
+            "{after:?}"
+        );
+    }
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn capped_inherited_split_keeps_its_shares_after_document_restore() {
+    let offered = LogicalRect::new(0.0, 0.0, 404.0, 96.0).unwrap();
+    let hints = [(
+        THIRD,
+        PaneSizing::builder().max_width(40.0).build().unwrap(),
+    )];
+    let right = DockspaceNode::equal_split(DockspaceAxis::Horizontal, [pane(2), pane(3)]).unwrap();
+    let left = DockspaceNode::grid(DockspaceGridShape::Auto, [pane(1)]).unwrap();
+    let content = grid(fixed(1, 2), [left, right], [1.0], [1.0; 2]);
+    for mode in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
+        for pointer in [false, true] {
+            let mut session = persistent_session(content.clone(), 3, mode);
+            let before = measured_bounds(&mut session, offered, &hints);
+            assert_eq!(pane_bounds(&before, 2).width(), 156.0);
+            let resized = if pointer {
+                drag_outer_splitter(&mut session, offered, &hints, 44.0, 20.0)
+            } else {
+                assert!(adjust_outer_splitter(
+                    &mut session,
+                    offered,
+                    &hints,
+                    &[SurfaceSplitterAdjustment::Increment],
+                ));
+                measured_bounds(&mut session, offered, &hints)
+            };
+            assert!(
+                (pane_bounds(&resized, 2).width() - 136.0).abs() < 1e-8,
+                "{resized:?}"
+            );
+            assert!(
+                (pane_bounds(&resized, 3).width() - 40.0).abs() < 1e-8,
+                "{resized:?}"
+            );
+
+            let mut reopened = reopen(&mut session, mode);
+            assert_eq!(measured_bounds(&mut reopened, offered, &hints), resized);
+            let relaxed = measured_bounds(&mut reopened, offered, &[]);
+            for id in [2, 3] {
+                assert!(
+                    (pane_bounds(&relaxed, id).width() - 88.0).abs() < 1e-8,
+                    "{mode:?}: {relaxed:?}"
+                );
+            }
+        }
+    }
+}
+
 #[cfg(feature = "serde")]
 #[test]
 fn resizing_a_neighbor_keeps_stationary_grid_tracks_after_reopening() {
@@ -563,7 +790,7 @@ fn resizing_a_neighbor_keeps_stationary_grid_tracks_after_reopening() {
         let before = measured_bounds(&mut session, offered, &hints);
         assert_eq!(pane_bounds(&before, 4).x(), 420.0);
 
-        let resized = drag_outer_splitter(&mut session, offered, &hints, 44.0);
+        let resized = drag_outer_splitter(&mut session, offered, &hints, 44.0, 20.0);
         let mut reopened = reopen(&mut session, propagation);
         for bounds in [resized, measured_bounds(&mut reopened, offered, &hints)] {
             for (item, width) in [(1, 214.0), (2, 174.0), (3, 20.0)] {
@@ -600,7 +827,7 @@ fn dragging_an_outer_split_does_not_store_the_auto_grids_temporary_columns() {
         let mut session = persistent_session(content, 7, propagation);
         let before = measured_bounds(&mut session, offered, &hints);
         assert_eq!(pane_bounds(&before, 2).y(), pane_bounds(&before, 4).y());
-        let committed = drag_outer_splitter(&mut session, offered, &hints, 44.0);
+        let committed = drag_outer_splitter(&mut session, offered, &hints, 44.0, 20.0);
         assert_ne!(
             pane_bounds(&committed, 2).y(),
             pane_bounds(&committed, 4).y()
@@ -663,7 +890,7 @@ fn an_inherited_grid_transfer_leaves_a_constrained_sibling_grids_shares_intact()
         )
         .unwrap();
         measured_bounds(&mut session, offered, &hints);
-        let committed = drag_outer_splitter(&mut session, offered, &hints, 44.0);
+        let committed = drag_outer_splitter(&mut session, offered, &hints, 44.0, 20.0);
         assert!((pane_bounds(&committed, 2).width() - 48.0).abs() < 1e-8);
 
         let mut frame = session.begin_host_frame().unwrap();
@@ -697,7 +924,7 @@ fn a_child_grid_retains_its_shares_when_the_parent_finishes_the_transfer() {
     let content = DockspaceNode::equal_split(DockspaceAxis::Horizontal, [left, right]).unwrap();
     for propagation in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
         let mut session = session(content.clone(), offered, propagation, &hints);
-        let committed = drag_outer_splitter(&mut session, offered, &hints, 44.0);
+        let committed = drag_outer_splitter(&mut session, offered, &hints, 44.0, 20.0);
         for (item, expected) in [(2, 26.0), (3, 50.0), (4, 100.0)] {
             assert!((pane_bounds(&committed, item).width() - expected).abs() < 1e-8);
         }
@@ -810,7 +1037,7 @@ fn outward_endpoint_with_an_empty_grid_track_still_compiles_after_commit() {
         })
         .unwrap();
     let action = plan
-        .prepare_splitter_adjustment(outer.visual_id(), SurfaceSplitterAdjustment::Maximum)
+        .prepare_splitter_adjustment(outer, SurfaceSplitterAdjustment::Maximum)
         .unwrap();
     frame.submit_surface_action(action).unwrap();
     assert!(frame.commit().unwrap().workspace_changed());
@@ -908,7 +1135,7 @@ fn deferred_grid_reset_rejects_a_new_active_pane_in_a_previously_empty_cell() {
                 .splitters()
                 .find(|splitter| splitter.axis() == DockspaceAxis::Horizontal)
                 .unwrap();
-            plan.prepare_splitter_adjustment(boundary.visual_id(), step)
+            plan.prepare_splitter_adjustment(boundary, step)
                 .unwrap()
                 .into_deferred()
         });
@@ -962,8 +1189,8 @@ fn fixed_grid_batch_continues_after_an_equalize_without_feasible_geometry() {
                 .splitters()
                 .min_by(|a, b| a.draw_bounds().y().total_cmp(&b.draw_bounds().y()))
                 .unwrap();
-            if let Some(action) = plan
-                .prepare_splitter_adjustment_sequence(boundary.visual_id(), steps.iter().copied())
+            if let Some(action) =
+                plan.prepare_splitter_adjustment_sequence(boundary, steps.iter().copied())
             {
                 frame.submit_surface_action(action).unwrap();
             }

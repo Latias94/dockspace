@@ -499,11 +499,11 @@ fn splitter_action(
         if let Step::Operation { operation, .. } = step {
             match operation {
                 Operation::Splitter(record) if !junction && action.is_none() => {
-                    action = plan.prepare_splitter_adjustment(record.visual_id(), adjustment);
+                    action = plan.prepare_splitter_adjustment(record, adjustment);
                 }
                 Operation::SplitterJunction(record) if junction && action.is_none() => {
                     action = plan.prepare_splitter_junction_adjustment(
-                        record.visual_id(),
+                        record,
                         DockspaceAxis::Vertical,
                         adjustment,
                     );

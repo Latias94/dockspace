@@ -19,6 +19,8 @@ pub struct GridTrackProjection {
     pub minimum: f64,
     /// Envelope of active incident child frame maxima.
     pub maximum: f64,
+    /// Whether the frame supplies the track maximum because it has no visible cell.
+    pub(crate) maximum_follows_frame: bool,
     /// Shared slot extent allocated by the bounded axis solver.
     pub extent: f64,
     /// Full owner strip allocated to this track.
@@ -40,33 +42,6 @@ pub struct GridAxisProjection {
     pub overflow: f64,
     /// Extent left unused after all tracks reached their maxima.
     pub unallocated: f64,
-}
-
-pub(crate) fn solve_grid_axis(
-    extent: f64,
-    weights: &[SplitWeight],
-    constraints: impl IntoIterator<Item = (f64, f64)>,
-    central_index: Option<usize>,
-    overflow_policy: PaneOverflowPolicy,
-) -> Result<Vec<f64>, LayoutError> {
-    let constraints = constraints
-        .into_iter()
-        .map(|(min, max)| AxisConstraint { min, max })
-        .collect::<Vec<_>>();
-    let mut sizes = vec![0.0; weights.len()];
-    solve_axis_into(
-        extent,
-        &weights
-            .iter()
-            .map(|weight| weight.get())
-            .collect::<Vec<_>>(),
-        &constraints,
-        central_index,
-        &mut sizes,
-        &mut Vec::new(),
-        overflow_policy,
-    )?;
-    Ok(sizes)
 }
 
 /// Frozen dimensions, actual cell owners, and both shared axes.
@@ -189,7 +164,7 @@ fn track_constraints(
     shape: ResolvedGridShape,
     axis: Axis,
     neutral_maximum: f64,
-) -> Vec<AxisConstraint> {
+) -> (Vec<AxisConstraint>, Vec<bool>) {
     let count = match axis {
         Axis::Horizontal => shape.columns,
         Axis::Vertical => shape.rows,
@@ -214,12 +189,12 @@ fn track_constraints(
         tracks[track].max = tracks[track].max.max(maximum);
         occupied[track] = true;
     }
-    for (track, occupied) in tracks.iter_mut().zip(occupied) {
+    for (track, &occupied) in tracks.iter_mut().zip(&occupied) {
         if !occupied {
             track.max = neutral_maximum;
         }
     }
-    tracks
+    (tracks, occupied)
 }
 
 pub(super) fn grid_constraints(
@@ -234,8 +209,9 @@ pub(super) fn grid_constraints(
         unreachable!()
     };
     let children = &topology.children[children.clone()];
-    let columns = track_constraints(children, values, shape, Axis::Horizontal, neutral.width());
-    let rows = track_constraints(children, values, shape, Axis::Vertical, neutral.height());
+    let (columns, _) =
+        track_constraints(children, values, shape, Axis::Horizontal, neutral.width());
+    let (rows, _) = track_constraints(children, values, shape, Axis::Vertical, neutral.height());
     let sum = |tracks: &[AxisConstraint], maximum: bool| {
         checked_sum(
             tracks
@@ -375,7 +351,7 @@ pub(super) fn prepare_grid_projection(
             Axis::Vertical => bounds.height(),
         };
         let (gaps, thickness) = projected_splitter_geometry(node.id, count, extent, metrics)?;
-        let constraints = track_constraints(
+        let (constraints, occupied) = track_constraints(
             child_rows,
             &projection.nodes.values,
             shape,
@@ -404,7 +380,9 @@ pub(super) fn prepare_grid_projection(
             Axis::Vertical => bounds.y(),
         };
         let mut tracks = Vec::with_capacity(count);
-        for (index, (&size, constraint)) in sizes.iter().zip(&constraints).enumerate() {
+        for (index, ((&size, constraint), occupied)) in
+            sizes.iter().zip(&constraints).zip(occupied).enumerate()
+        {
             let rect = match axis {
                 Axis::Horizontal => LogicalRect::new(cursor, bounds.y(), size, bounds.height())?,
                 Axis::Vertical => LogicalRect::new(bounds.x(), cursor, bounds.width(), size)?,
@@ -427,6 +405,7 @@ pub(super) fn prepare_grid_projection(
             tracks.push(GridTrackProjection {
                 minimum: constraint.min,
                 maximum: constraint.max,
+                maximum_follows_frame: !occupied,
                 extent: size,
                 bounds: rect,
                 following_gap,

@@ -33,9 +33,7 @@ impl SurfacePaintPlan<'_> {
         let root = pane.root();
         let unavailable = |reason| {
             PresentationCommandPaintRecord::unavailable(
-                self.authority_domain,
-                self.version,
-                self.scene,
+                self,
                 root,
                 kind,
                 DockspacePresentationCommandUnavailable::Action(reason),
@@ -80,10 +78,8 @@ impl SurfacePaintPlan<'_> {
         Ok(Some(
             match self.candidate.prepare_product_action_if_available(action)? {
                 Ok(prepared) => {
-                    let (domain, version, action, _) = prepared.into_parts();
-                    PresentationCommandPaintRecord::ready(
-                        domain, version, self.scene, root, kind, action,
-                    )
+                    let (_, _, action, _) = prepared.into_parts();
+                    PresentationCommandPaintRecord::ready(self, root, kind, action)
                 }
                 Err(reason) => unavailable(reason),
             },
@@ -113,10 +109,7 @@ impl SurfacePaintPlan<'_> {
 
     fn pane_menu_is_operable(self, pane: PanePaintRecord<'_>) -> bool {
         let clip = pane.content_geometry().clip();
-        self.plan
-            .pane_records()
-            .iter()
-            .any(|row| std::ptr::eq(row, pane.record))
+        pane.output == self.semantic_output()
             && clip.width() > 0.0
             && clip.height() > 0.0
             && self.plan.region_is_operable(clip, pane.record.layer())

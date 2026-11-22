@@ -11,8 +11,11 @@ use crate::presentation::layout::{
     FrozenRootLayout, GridProjection, LayoutProjection, NodeResult, measure_resize_geometry,
 };
 
-use super::piecewise::{FrozenTracks, TrackAllocation, grid_shares_match_extents};
-use super::{FrozenPiecewiseAxis, merge_axis_update, rect_extent, rect_start, tolerance};
+use super::piecewise::{FrozenTracks, TrackAllocation};
+use super::{
+    FrozenPiecewiseAxis, merge_axis_update, rect_extent, rect_start, stored_shares_match_extents,
+    tolerance,
+};
 
 pub(super) fn finish_auto_reflow(
     samples: &[(&FrozenPiecewiseAxis, f64)],
@@ -104,17 +107,42 @@ impl InheritedTrackTransfer<'_> {
         self.origin_matches(node) && (actual - expected).abs() <= tolerance(actual, expected)
     }
 
-    fn can_reuse_grid_shares(&self, grid: &GridProjection) -> bool {
-        let axis = grid.axis(self.axis);
-        grid_shares_match_extents(
-            self.tracks.weights(),
-            &self.expected.extents,
-            axis.tracks
-                .iter()
-                .map(|track| (track.minimum, track.maximum)),
-            axis.central_index,
-            self.overflow_policy,
-        )
+    fn required_shares(
+        &self,
+        tracks: impl ExactSizeIterator<Item = (f64, f64, f64, bool)> + Clone,
+        central_index: Option<usize>,
+        state: &TransferState,
+    ) -> (bool, Option<TransferState>) {
+        if self.extents_match(tracks.clone().map(|(extent, _, _, _)| extent)) {
+            return (true, None);
+        }
+        let preserves_offers = match state {
+            TransferState::Stored => {
+                if stored_shares_match_extents(
+                    self.tracks.weights(),
+                    &self.expected.extents,
+                    tracks.map(|(_, minimum, maximum, visible)| (minimum, maximum, visible)),
+                    central_index,
+                    self.overflow_policy,
+                ) {
+                    return (false, None);
+                }
+                false
+            }
+            TransferState::Resize {
+                preserves_offers: false,
+                ..
+            } => true,
+            _ => return (false, None),
+        };
+        let update = self
+            .tracks
+            .resize_inherited(self.axis, &self.expected, preserves_offers)
+            .map(|update| TransferState::Resize {
+                update,
+                preserves_offers,
+            });
+        (false, update)
     }
 }
 
@@ -179,37 +207,29 @@ fn project_inherited_transfers(
                         }
                         continue;
                     }
-                    let extents_match = if let Some(grid) = grid {
-                        target.extents_match(grid.axis(target.axis).tracks.iter().map(|t| t.extent))
+                    let (extents_match, update) = if let Some(grid) = grid {
+                        let axis = grid.axis(target.axis);
+                        target.required_shares(
+                            axis.tracks
+                                .iter()
+                                .map(|track| (track.extent, track.minimum, track.maximum, true)),
+                            axis.central_index,
+                            &transfer.state,
+                        )
                     } else {
                         let split = projection.splits.get(&node.id)?;
-                        target.extents_match(split.children.iter().map(|t| t.extent))
+                        target.required_shares(
+                            split.children.iter().map(|track| {
+                                (track.extent, track.minimum, track.maximum, track.visible)
+                            }),
+                            split.central_index,
+                            &transfer.state,
+                        )
                     };
                     allocations_match &= extents_match && target.origin_matches(result);
-                    if !extents_match {
-                        let preserve_offers = match transfer.state {
-                            TransferState::Stored
-                                if !grid.is_some_and(|grid| target.can_reuse_grid_shares(grid)) =>
-                            {
-                                false
-                            }
-                            TransferState::Resize {
-                                preserves_offers: false,
-                                ..
-                            } => true,
-                            _ => continue,
-                        };
-                        if let Some(update) = target.tracks.resize_inherited(
-                            target.axis,
-                            &target.expected,
-                            preserve_offers,
-                        ) {
-                            transfer.state = TransferState::Resize {
-                                update,
-                                preserves_offers: preserve_offers,
-                            };
-                            changed = true;
-                        }
+                    if let Some(update) = update {
+                        transfer.state = update;
+                        changed = true;
                     }
                 }
             }
