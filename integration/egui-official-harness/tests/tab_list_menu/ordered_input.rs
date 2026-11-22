@@ -235,6 +235,30 @@ fn a_retired_toolbar_click_cannot_confirm_the_old_close_entry() {
 }
 
 #[test]
+fn a_repeated_toolbar_click_preserves_the_application_confirmation() {
+    for batched in [false, true] {
+        let mut app = Application::new();
+        let menu = app.open_layout_menu();
+        let close = node(&menu, Role::MenuItem, "Close Layout").0;
+        let toolbar = node(&menu, Role::Button, "Focus app command").0;
+        app.send(vec![accesskit(close, Action::Focus)], true);
+
+        app.send(
+            vec![
+                accesskit(toolbar, Action::Click),
+                key(Key::Enter),
+                accesskit(toolbar, Action::Click),
+            ],
+            batched,
+        );
+
+        assert_eq!(app.toolbar_clicks, if batched { 1 } else { 2 });
+        assert_eq!(app.activations, 1, "batched: {batched}");
+        assert!(app.closed.is_empty(), "batched: {batched}");
+    }
+}
+
+#[test]
 fn an_application_confirmation_can_restore_menu_focus_without_reusing_enter() {
     for batched in [false, true] {
         let mut app = Application::new();

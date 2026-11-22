@@ -26,6 +26,7 @@ struct ViewportInput {
 
 struct AfterApplication {
     menu: Id,
+    target: NodeId,
     keys: Vec<Event>,
     release_slots: Vec<usize>,
 }
@@ -223,7 +224,7 @@ impl egui::plugin::Plugin for MenuInput {
         let mut app_key_before_menu_focus = false;
         let mut defer_menu_focus = false;
         for (slot, event) in raw.events.iter().enumerate() {
-            if accesskit_click_target(event).is_some() {
+            if let Some(clicked) = accesskit_click_target(event) {
                 let target = context.viewport_for(viewport, |previous| {
                     live_accesskit_click_target(event, &previous.prev_pass.widgets)
                 });
@@ -249,9 +250,17 @@ impl egui::plugin::Plugin for MenuInput {
                     .take()
                     .map(|(menu, _)| menu.id)
                     .or_else(|| input.after_application.as_ref().map(|pending| pending.menu));
-                if let Some(menu) = owner {
+                if let Some(menu) = owner
+                    && input
+                        .after_application
+                        .as_ref()
+                        .is_none_or(|pending| pending.target != clicked)
+                {
+                    // egui reports repeated clicks on the same widget in a pass
+                    // as one click. Their unresolved keyboard suffix is shared.
                     input.after_application = Some(AfterApplication {
                         menu,
+                        target: clicked,
                         keys: Vec::new(),
                         release_slots: Vec::new(),
                     });
