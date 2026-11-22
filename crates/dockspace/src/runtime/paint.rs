@@ -2656,6 +2656,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
             })
     }
 
+    #[cfg(test)]
     pub(crate) fn splitter_junctions(
         self,
     ) -> impl ExactSizeIterator<Item = SplitterJunctionPaintRecord<'frame>> {

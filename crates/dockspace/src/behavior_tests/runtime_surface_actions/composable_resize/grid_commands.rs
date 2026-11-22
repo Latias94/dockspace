@@ -69,6 +69,70 @@ fn pane_bounds(panes: &[(ItemId, LogicalRect)], item: u64) -> LogicalRect {
         .1
 }
 
+#[test]
+fn capped_nested_split_keeps_both_resize_directions_at_a_frame_contact() {
+    use SurfaceSplitterAdjustment::{Decrement, Increment};
+
+    let offered = LogicalRect::new(0.0, 0.0, 204.0, 228.0).unwrap();
+    let top = DockspaceNode::equal_split(DockspaceAxis::Horizontal, [pane(2), pane(3)]).unwrap();
+    let left = DockspaceNode::equal_split(DockspaceAxis::Vertical, [top, pane(1)]).unwrap();
+    let content = DockspaceNode::equal_split(DockspaceAxis::Horizontal, [left, pane(4)]).unwrap();
+    let config = DockPresentationConfig::builder()
+        .minimum_pane_size(1.0, 1.0)
+        .splitter_thickness(4.0)
+        .splitter_keyboard_step(5.0)
+        .build()
+        .unwrap();
+    for minimum in [45.0, 46.0, 47.0] {
+        let hints = [
+            (
+                SECOND,
+                PaneSizing::builder().max_width(90.0).build().unwrap(),
+            ),
+            (
+                THIRD,
+                PaneSizing::builder().max_width(60.0).build().unwrap(),
+            ),
+            (
+                FOURTH,
+                PaneSizing::builder().min_width(minimum).build().unwrap(),
+            ),
+        ];
+        for (delta, adjustment) in [(-5.0, Decrement), (5.0, Increment)] {
+            let mut pointer = session_with_config(content.clone(), offered, config.clone(), &hints);
+            let dragged = drag_outer_splitter(&mut pointer, offered, &hints, 170.0, delta);
+            let mut semantic =
+                session_with_config(content.clone(), offered, config.clone(), &hints);
+            let mut frame = semantic.begin_host_frame().unwrap();
+            let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+            let outer = plan
+                .splitters()
+                .find(|splitter| {
+                    splitter
+                        .draw_bounds()
+                        .contains(LogicalPoint::new(102.0, 170.0).unwrap())
+                })
+                .unwrap();
+            let range = plan.splitter_resize_range(outer).unwrap();
+            assert_eq!(
+                (range.minimum(), range.value(), range.maximum()),
+                (0.265, 0.5, 0.56)
+            );
+            let action = plan.prepare_splitter_adjustment(outer, adjustment).unwrap();
+            frame.submit_surface_action(action).unwrap();
+            measure(&mut frame, offered, &hints);
+            assert!(frame.commit().unwrap().workspace_changed());
+            assert_eq!(bounds(&mut semantic), dragged);
+            for (item, expected) in [100.0 + delta, 48.0, 48.0 + delta, 100.0 - delta]
+                .into_iter()
+                .enumerate()
+            {
+                assert_eq!(pane_bounds(&dragged, item as u64 + 1).width(), expected);
+            }
+        }
+    }
+}
+
 #[cfg(feature = "serde")]
 fn persistent_session(
     content: DockspaceNode,
@@ -252,9 +316,13 @@ fn junction_batch_stops_when_its_orthogonal_grid_boundary_changes_cells() {
             let adjust = |session: &mut DockspaceSession, steps: &[SurfaceSplitterAdjustment]| {
                 let mut frame = session.begin_host_frame().unwrap();
                 let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+                let junction = plan
+                    .splitter_junctions()
+                    .find(|junction| junction.visual_id() == id)
+                    .unwrap();
                 let action = plan
                     .prepare_splitter_junction_adjustment_sequence(
-                        id,
+                        junction,
                         DockspaceAxis::Horizontal,
                         steps.iter().copied(),
                     )
@@ -381,7 +449,7 @@ fn moving_a_divider_accepts_rounding_in_small_stationary_tracks() {
             })
             .unwrap();
         let action = plan
-            .prepare_splitter_adjustment(divider.visual_id(), SurfaceSplitterAdjustment::Increment)
+            .prepare_splitter_adjustment(divider, SurfaceSplitterAdjustment::Increment)
             .unwrap();
         frame.submit_surface_action(action).unwrap();
         measure(&mut frame, offered, &[]);
@@ -481,11 +549,8 @@ fn independent_grid_transfers_share_projection_passes() {
                 .expect("outer split is the first horizontal divider");
             let before = auto_reflow_projection_count();
             assert!(
-                plan.prepare_splitter_adjustment(
-                    divider.visual_id(),
-                    SurfaceSplitterAdjustment::Increment
-                )
-                .is_some()
+                plan.prepare_splitter_adjustment(divider, SurfaceSplitterAdjustment::Increment)
+                    .is_some()
             );
             auto_reflow_projection_count() - before
         })
@@ -568,7 +633,7 @@ fn adjacent_boundary_grows_an_uncapped_band_past_its_capped_peer() {
                 .splitters()
                 .find(|divider| divider.draw_bounds().x() == 100.0)
                 .unwrap();
-            let range = plan.splitter_resize_range(divider.visual_id()).unwrap();
+            let range = plan.splitter_resize_range(divider).unwrap();
             assert!((range.maximum() * 300.0 - 199.0).abs() < 1e-8);
         });
         let resized = if pointer {
@@ -972,7 +1037,7 @@ fn outward_endpoint_with_an_empty_grid_track_still_compiles_after_commit() {
         })
         .unwrap();
     let action = plan
-        .prepare_splitter_adjustment(outer.visual_id(), SurfaceSplitterAdjustment::Maximum)
+        .prepare_splitter_adjustment(outer, SurfaceSplitterAdjustment::Maximum)
         .unwrap();
     frame.submit_surface_action(action).unwrap();
     assert!(frame.commit().unwrap().workspace_changed());
@@ -1070,7 +1135,7 @@ fn deferred_grid_reset_rejects_a_new_active_pane_in_a_previously_empty_cell() {
                 .splitters()
                 .find(|splitter| splitter.axis() == DockspaceAxis::Horizontal)
                 .unwrap();
-            plan.prepare_splitter_adjustment(boundary.visual_id(), step)
+            plan.prepare_splitter_adjustment(boundary, step)
                 .unwrap()
                 .into_deferred()
         });
@@ -1124,8 +1189,8 @@ fn fixed_grid_batch_continues_after_an_equalize_without_feasible_geometry() {
                 .splitters()
                 .min_by(|a, b| a.draw_bounds().y().total_cmp(&b.draw_bounds().y()))
                 .unwrap();
-            if let Some(action) = plan
-                .prepare_splitter_adjustment_sequence(boundary.visual_id(), steps.iter().copied())
+            if let Some(action) =
+                plan.prepare_splitter_adjustment_sequence(boundary, steps.iter().copied())
             {
                 frame.submit_surface_action(action).unwrap();
             }

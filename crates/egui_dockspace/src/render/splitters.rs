@@ -128,14 +128,13 @@ pub(crate) fn paint_splitter(
     let adjustment = if let Some((origin, adjustment)) = pointer_reset {
         context
             .plan
-            .prepare_splitter_adjustment(splitter.visual_id(), adjustment)
+            .prepare_splitter_adjustment(splitter, adjustment)
             .map(|action| (origin, action))
     } else {
         splitter_adjustment(context.ui, id, horizontal, focused, |adjustments| {
-            context.plan.prepare_splitter_adjustment_sequence(
-                splitter.visual_id(),
-                adjustments.iter().copied(),
-            )
+            context
+                .plan
+                .prepare_splitter_adjustment_sequence(splitter, adjustments.iter().copied())
         })
     };
     if let Some((origin, action)) = adjustment {
@@ -243,7 +242,7 @@ pub(crate) fn paint_junction(
             axis_focused,
             |adjustments| {
                 context.plan.prepare_splitter_junction_adjustment_sequence(
-                    junction.visual_id(),
+                    junction,
                     axis,
                     adjustments.iter().copied(),
                 )
@@ -465,7 +464,7 @@ fn configure_accessibility(
         } else {
             node.set_disabled();
         }
-        if enabled && let Some(range) = plan.splitter_resize_range(splitter.visual_id()) {
+        if enabled && let Some(range) = plan.splitter_resize_range(splitter) {
             node.set_numeric_value(range.value());
             node.set_min_numeric_value(range.minimum());
             node.set_max_numeric_value(range.maximum());

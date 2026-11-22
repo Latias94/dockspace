@@ -213,6 +213,48 @@ fn capped_cross_axis_child_keeps_its_frame_until_the_slot_reaches_the_cap() {
 }
 
 #[test]
+fn a_capped_leaf_keeps_adjacent_queries_on_the_linear_path() {
+    let mut builder = Workspace::builder();
+    let cells = [1, 2, 3, 4].map(|item| builder.insert_node(Node::pane(ItemId::new(item))));
+    let band =
+        builder.insert_node(Node::equal_split(Axis::Vertical, cells[..2].iter().copied()).unwrap());
+    let root = builder.insert_node(
+        Node::split(
+            Axis::Horizontal,
+            [band, cells[2], cells[3]],
+            [100.0, 100.0, 816.0],
+        )
+        .unwrap(),
+    );
+    let workspace = finish(builder, root, None);
+    for cap in [150.0, 900.0] {
+        let fixture = Fixture::with_mode(
+            workspace.clone(),
+            rect(1024.0, 400.0),
+            BTreeMap::from([
+                (cells[0], constraints(1.0, cap)),
+                (cells[1], constraints(1.0, 1200.0)),
+                (cells[2], constraints(1.0, 1200.0)),
+                (cells[3], constraints(1.0, 1200.0)),
+            ]),
+            4.0,
+            ResizePropagation::Adjacent,
+            true,
+        );
+        let groups = fixture.groups(&[(root, 0)]);
+        assert!(groups[0].piecewise.is_none());
+        close(groups[0].common_delta.minimum, -99.0);
+        close(groups[0].common_delta.maximum, 99.0);
+        let updates = resize_axis_group_updates(&groups, [99.0, 0.0]).unwrap();
+        let projected = fixture.project_updates(&updates);
+        close(projected.nodes[&cells[0]].rect.width(), cap.min(199.0));
+        close(projected.nodes[&cells[1]].rect.width(), 199.0);
+        close(projected.nodes[&cells[2]].rect.width(), 1.0);
+        close(projected.nodes[&cells[3]].rect.width(), 816.0);
+    }
+}
+
+#[test]
 fn resizing_an_outer_split_preserves_the_far_grid_column_position() {
     let mut builder = Workspace::builder();
     let cells = [1, 2, 3, 4, 5].map(|item| {

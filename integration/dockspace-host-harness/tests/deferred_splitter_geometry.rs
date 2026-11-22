@@ -42,10 +42,7 @@ fn splitter(plan: SurfacePaintPlan<'_>) -> (f64, DeferredSurfaceAction) {
         } = step
         {
             let action = plan
-                .prepare_splitter_adjustment(
-                    record.visual_id(),
-                    SurfaceSplitterAdjustment::Increment,
-                )
+                .prepare_splitter_adjustment(record, SurfaceSplitterAdjustment::Increment)
                 .expect("splitter increment is available")
                 .into_deferred();
             result = Some((record.draw_bounds().x(), action));

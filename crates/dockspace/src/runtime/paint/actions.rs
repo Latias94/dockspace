@@ -13,8 +13,9 @@ use super::super::{
     SurfaceTabInput, SurfaceTabListNavigation, SurfaceTabNavigation,
 };
 use super::{
-    DockspaceVisualId, SurfacePaintPlan, TabBarPaintRecord, TabListMenuBackdropPaintRecord,
-    TabListMenuPaintRecord, TabListMenuRowPaintRecord, TabStripControlPaintRecord, VisualIdentity,
+    SplitterJunctionPaintRecord, SplitterPaintRecord, SurfacePaintPlan, TabBarPaintRecord,
+    TabListMenuBackdropPaintRecord, TabListMenuPaintRecord, TabListMenuRowPaintRecord,
+    TabStripControlPaintRecord,
 };
 
 /// Product-facing direction of one contained-floating resize handle.
@@ -364,7 +365,7 @@ impl SurfacePaintPlan<'_> {
     #[must_use]
     pub fn prepare_splitter_adjustment(
         self,
-        splitter: DockspaceVisualId,
+        splitter: SplitterPaintRecord<'_>,
         adjustment: SurfaceSplitterAdjustment,
     ) -> Option<PreparedSurfaceAction> {
         self.prepare_splitter_adjustment_sequence(splitter, [adjustment])
@@ -376,22 +377,18 @@ impl SurfacePaintPlan<'_> {
     /// and the same limits as a direct resize. Only the final track weights
     /// are published. A sequence can redistribute space even if the divider
     /// returns to its starting point.
+    /// The splitter record must belong to this output.
     /// Auto steps are checked in order: an infeasible step retains the last
     /// accepted allocation. Failed source or policy checks abort preparation.
     /// An empty sequence or a single infeasible Auto step returns `None`.
     #[must_use]
     pub fn prepare_splitter_adjustment_sequence(
         self,
-        splitter: DockspaceVisualId,
+        splitter: SplitterPaintRecord<'_>,
         adjustments: impl IntoIterator<Item = SurfaceSplitterAdjustment>,
     ) -> Option<PreparedSurfaceAction> {
-        let VisualIdentity::Splitter(id) = splitter.0 else {
-            return None;
-        };
-        let record = self
-            .plan
-            .splitter_record(id)
-            .filter(|record| record.operable() && self.plan.partition_available(id.root))?;
+        let record = self.action_splitter(splitter)?;
+        let id = *record.id();
         let mut adjustments = adjustments.into_iter().peekable();
         let first = adjustments.next()?;
         let reset = if adjustments.peek().is_none() {
@@ -439,7 +436,7 @@ impl SurfacePaintPlan<'_> {
     #[must_use]
     pub fn prepare_splitter_junction_adjustment(
         self,
-        junction: DockspaceVisualId,
+        junction: SplitterJunctionPaintRecord<'_>,
         axis: crate::model::DockspaceAxis,
         adjustment: SurfaceSplitterAdjustment,
     ) -> Option<PreparedSurfaceAction> {
@@ -454,21 +451,17 @@ impl SurfacePaintPlan<'_> {
     /// published together. An infeasible Auto step keeps the last accepted
     /// allocation. Failed source or policy checks abort preparation. An empty
     /// sequence or a single infeasible Auto step returns `None`.
+    /// The junction record must belong to this output.
     #[must_use]
     pub fn prepare_splitter_junction_adjustment_sequence(
         self,
-        junction: DockspaceVisualId,
+        junction: SplitterJunctionPaintRecord<'_>,
         axis: crate::model::DockspaceAxis,
         adjustments: impl IntoIterator<Item = SurfaceSplitterAdjustment>,
     ) -> Option<PreparedSurfaceAction> {
-        let VisualIdentity::SplitterJunction(id) = junction.0 else {
-            return None;
-        };
-        let record = self
-            .splitter_junctions()
-            .find(|record| record.visual_id() == junction)?;
-        self.splitter_junction_axis_operable(record, axis)
+        self.splitter_junction_axis_operable(junction, axis)
             .then_some(())?;
+        let id = junction.record.id();
         let adjustment = self.splitter_adjustment_sequence(
             crate::presentation::scene::SplitterResizeTarget::Junction(id),
             axis.into(),

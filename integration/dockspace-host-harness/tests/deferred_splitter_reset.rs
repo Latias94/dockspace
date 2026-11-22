@@ -128,7 +128,7 @@ fn capture(
     let mut frame = session.begin_host_frame().unwrap();
     measure(&mut frame, 601.0, first, second);
     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
-    plan.prepare_splitter_adjustment(splitter(plan).visual_id(), adjustment)
+    plan.prepare_splitter_adjustment(splitter(plan), adjustment)
         .unwrap()
         .into_deferred()
 }
@@ -179,7 +179,7 @@ fn present_and_capture(
     let splitter = splitter(plan);
     let receiver = plan.receiver_for_splitter(splitter).unwrap();
     let action = plan
-        .prepare_splitter_adjustment(splitter.visual_id(), adjustment)
+        .prepare_splitter_adjustment(splitter, adjustment)
         .unwrap();
     let (_, receipt) = RecordingRenderer::execute(plan).unwrap();
     frame.confirm_surface_painted(receipt).unwrap();
@@ -275,12 +275,12 @@ fn prepared_absolute_reset_keeps_its_strict_contract_after_an_earlier_weight_upd
             let mut frame = session.begin_host_frame().unwrap();
             measure(&mut frame, 601.0, first, second);
             let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
-            let visual = splitter(plan).visual_id();
+            let record = splitter(plan);
             let reset = plan
-                .prepare_splitter_adjustment(visual, adjustment)
+                .prepare_splitter_adjustment(record, adjustment)
                 .unwrap();
             let increment = plan
-                .prepare_splitter_adjustment(visual, Adjustment::Increment)
+                .prepare_splitter_adjustment(record, Adjustment::Increment)
                 .unwrap()
                 .into_deferred();
             commit(frame);
@@ -384,7 +384,7 @@ fn newer_unpainted_measurements_cannot_be_lost_when_weights_change_before_an_old
             measure(&mut frame, 601.0, sizing(Some(200.0), None), second);
             let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
             let reset = plan
-                .prepare_splitter_adjustment(splitter(plan).visual_id(), Adjustment::Preferred)
+                .prepare_splitter_adjustment(splitter(plan), Adjustment::Preferred)
                 .unwrap()
                 .into_deferred();
             if retain_painted_fallback {
@@ -409,7 +409,7 @@ fn newer_unpainted_measurements_cannot_be_lost_when_weights_change_before_an_old
             measure(&mut frame, 601.0, sizing(Some(210.0), None), second);
             let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
             let increment = plan
-                .prepare_splitter_adjustment(splitter(plan).visual_id(), Adjustment::Increment)
+                .prepare_splitter_adjustment(splitter(plan), Adjustment::Increment)
                 .unwrap()
                 .into_deferred();
             assert!(commit(frame).take_painted_outputs().is_empty());
@@ -606,7 +606,7 @@ fn multi_step_restoration_sequence_remains_bound_to_its_original_weights() {
         measure(&mut frame, 601.0, first, second);
         let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
         plan.prepare_splitter_adjustment_sequence(
-            splitter(plan).visual_id(),
+            splitter(plan),
             [Adjustment::Preferred, Adjustment::Increment],
         )
         .unwrap()
@@ -669,7 +669,7 @@ fn absolute_reset_rejects_changed_native_coordinates_even_with_identical_measure
             measure(&mut frame, 601.0, first, second);
             let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
             let action = plan
-                .prepare_splitter_adjustment(splitter(plan).visual_id(), adjustment)
+                .prepare_splitter_adjustment(splitter(plan), adjustment)
                 .unwrap()
                 .into_deferred();
             commit(frame);

@@ -616,6 +616,10 @@ Scrolling, text wrapping and canvas navigation remain content concerns.
 Hosts can prepare `SurfaceSplitterAdjustment::Minimum` or `Maximum` for a
 separator or one junction axis, in addition to ordinary `Decrement`/`Increment`
 steps. Endpoints use the same full-layout limits; they do not collapse panes.
+Pass the splitter or junction paint record from the current `SurfacePaintPlan`
+to prepare an adjustment. Keep `input_id()` for widget and accessibility
+identity. For an action that must outlive the paint record, retain the prepared
+action with `into_deferred()`.
 `SurfacePaintPlan::splitter_resize_range` resolves current/minimum/maximum
 fractions for a separator from its uncut geometry and all touching descendants.
 This is an on-demand solver query for numeric accessibility or application

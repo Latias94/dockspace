@@ -1170,10 +1170,7 @@ fn shared_local_interaction_scenario_maps_to_core_host_semantics() {
                         .find(|splitter| splitter.axis() == DockspaceAxis::Horizontal)
                         .expect("the shared scenario exposes one horizontal splitter");
                     let action = plan
-                        .prepare_splitter_adjustment(
-                            splitter.visual_id(),
-                            SurfaceSplitterAdjustment::Increment,
-                        )
+                        .prepare_splitter_adjustment(splitter, SurfaceSplitterAdjustment::Increment)
                         .expect("the horizontal splitter accepts a semantic increment");
                     frame
                         .submit_surface_action(action)

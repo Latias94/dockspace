@@ -84,6 +84,32 @@ impl Scalar {
             slope: self.slope - other.slope,
         }
     }
+
+    fn cap(self, maximum: f64, delta: f64, mut contact: Option<f64>) -> (Self, Option<f64>) {
+        if self.value < maximum {
+            return (self, contact);
+        }
+        if self.slope * delta > 0.0 {
+            let crossing = delta + (maximum - self.value) / self.slope;
+            if crossing == delta {
+                // At contact the path back toward zero still follows the slot.
+                return (
+                    Self {
+                        value: maximum,
+                        ..self
+                    },
+                    contact,
+                );
+            }
+            if crossing * delta.signum() >= 0.0
+                && crossing.abs() < delta.abs()
+                && contact.is_none_or(|previous| crossing.abs() > previous.abs())
+            {
+                contact = Some(crossing);
+            }
+        }
+        (Self::fixed(maximum), contact)
+    }
 }
 
 pub(super) struct Sample {
@@ -100,7 +126,27 @@ pub(super) struct TrackAllocation {
 #[derive(Debug)]
 enum SampleError {
     Limit(f64),
+    Saturated,
     Invalid,
+}
+
+impl SampleError {
+    fn within_contact(self, contact: Option<f64>, delta: f64) -> Self {
+        let Some(contact) = contact else {
+            return self;
+        };
+        match self {
+            Self::Saturated => Self::Limit(contact),
+            Self::Limit(limit)
+                if !limit.is_finite()
+                    || limit.abs() >= delta.abs()
+                    || (limit - contact) * delta.signum() < 0.0 =>
+            {
+                Self::Limit(contact)
+            }
+            error => error,
+        }
+    }
 }
 
 pub(super) fn prepare(
@@ -682,37 +728,45 @@ impl FrozenPiecewiseAxis {
                 root.source.node(),
                 Scalar::fixed(rect_start(initial.slot, self.axis)),
                 Scalar::fixed(rect_extent(initial.slot, self.axis)),
+                None,
             )];
-            while let Some((id, origin, offered)) = pending.pop() {
+            while let Some((id, origin, offered, contact)) = pending.pop() {
                 let node = root.nodes.get(&id).ok_or(SampleError::Invalid)?;
                 let maximum = size_extent(node.result.constraints.max(), self.axis);
-                let frame = if offered.value >= maximum {
-                    Scalar::fixed(maximum)
-                } else {
-                    offered
-                };
+                let (frame, contact) = offered.cap(maximum, delta, contact);
+                let within_contact = |error: SampleError| error.within_contact(contact, delta);
                 let minimum = size_extent(node.result.constraints.min(), self.axis);
-                require_range(frame, minimum, maximum, delta)?;
+                require_range(frame, minimum, maximum, delta).map_err(within_contact)?;
                 match &node.kind {
                     FrozenKind::Pane => {}
                     FrozenKind::Tabs { child, header } => {
                         if let Some(child) = child {
-                            pending.push((*child, origin.add(*header), frame.add(-*header)));
+                            pending.push((
+                                *child,
+                                origin.add(*header),
+                                frame.add(-*header),
+                                contact,
+                            ));
                         }
                     }
-                    FrozenKind::Parallel(children) => {
-                        pending.extend(children.iter().rev().map(|child| (*child, origin, frame)))
-                    }
+                    FrozenKind::Parallel(children) => pending.extend(
+                        children
+                            .iter()
+                            .rev()
+                            .map(|child| (*child, origin, frame, contact)),
+                    ),
                     FrozenKind::Tracks(tracks) => {
                         let drivers = root.drivers.get(&id).map_or(&[][..], Vec::as_slice);
-                        let (extents, starts) = tracks.allocate(
-                            origin,
-                            frame,
-                            rect_start(node.result.rect, self.axis),
-                            drivers,
-                            delta,
-                            self.propagation,
-                        )?;
+                        let (extents, starts) = tracks
+                            .allocate(
+                                origin,
+                                frame,
+                                rect_start(node.result.rect, self.axis),
+                                drivers,
+                                delta,
+                                self.propagation,
+                            )
+                            .map_err(within_contact)?;
                         let moved = extents
                             .iter()
                             .zip(&tracks.tracks)
@@ -740,6 +794,7 @@ impl FrozenPiecewiseAxis {
                                     value: extents[track],
                                     slope: starts[track + 1].slope - starts[track].slope,
                                 },
+                                contact,
                             ));
                         }
                         sample.tracks.insert(
@@ -1169,7 +1224,7 @@ fn require_transfer(
 
 fn limit_at(value: Scalar, endpoint: f64, delta: f64) -> Result<(), SampleError> {
     if value.slope == 0.0 {
-        return Err(SampleError::Invalid);
+        return Err(SampleError::Saturated);
     }
     let intercept = (-value.slope).mul_add(delta, value.value);
     Err(SampleError::Limit((endpoint - intercept) / value.slope))

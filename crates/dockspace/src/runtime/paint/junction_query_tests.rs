@@ -1,6 +1,6 @@
 use super::*;
 use crate::graph::{Node, RootRecord, Workspace};
-use crate::runtime::{DockspaceSession, UniformSurfaceMetrics};
+use crate::runtime::{DockspaceSession, SurfaceSplitterAdjustment, UniformSurfaceMetrics};
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const ROOT: RootId = RootId::new(2);
@@ -243,6 +243,15 @@ fn a_foreign_junction_cannot_use_current_receiver_or_axis_authority() {
     assert!(!current.splitter_junction_operable(foreign));
     for (axis, expected) in AXES.into_iter().zip([false, true]) {
         assert!(!current.splitter_junction_axis_operable(foreign, axis));
+        assert!(
+            current
+                .prepare_splitter_junction_adjustment(
+                    foreign,
+                    axis,
+                    SurfaceSplitterAdjustment::Increment
+                )
+                .is_none()
+        );
         assert_eq!(
             current.splitter_junction_axis_operable(local, axis),
             expected

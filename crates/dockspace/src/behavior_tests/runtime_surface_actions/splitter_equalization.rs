@@ -36,7 +36,7 @@ fn equalize_with_metrics(
     let splitter = plan.splitters().nth(index).unwrap();
     let source_bounds = (splitter.before_bounds(), splitter.after_bounds());
     let action = plan
-        .prepare_splitter_adjustment(splitter.visual_id(), SurfaceSplitterAdjustment::Equalize)
+        .prepare_splitter_adjustment(splitter, SurfaceSplitterAdjustment::Equalize)
         .unwrap();
     frame.submit_surface_action(action).unwrap();
     frame
@@ -239,7 +239,7 @@ fn equalization_has_a_scale_relative_f64_endpoint_without_suppressing_small_step
         let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
         let action = plan
             .prepare_splitter_adjustment(
-                plan.splitters().next().unwrap().visual_id(),
+                plan.splitters().next().unwrap(),
                 SurfaceSplitterAdjustment::Increment,
             )
             .unwrap();
@@ -375,7 +375,7 @@ fn equalization_uses_actual_equal_geometry_without_rewriting_constrained_weights
     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
     let action = plan
         .prepare_splitter_adjustment(
-            plan.splitters().next().unwrap().visual_id(),
+            plan.splitters().next().unwrap(),
             SurfaceSplitterAdjustment::Equalize,
         )
         .unwrap();
@@ -447,10 +447,10 @@ fn a_nested_touching_minimum_stops_equalization_before_the_remote_pane_moves() {
                 && splitter.before_bounds() == first_container
         })
         .unwrap();
-    let range = plan.splitter_resize_range(outer.visual_id()).unwrap();
+    let range = plan.splitter_resize_range(outer).unwrap();
     assert!(range.maximum() < 0.5);
     let action = plan
-        .prepare_splitter_adjustment(outer.visual_id(), SurfaceSplitterAdjustment::Equalize)
+        .prepare_splitter_adjustment(outer, SurfaceSplitterAdjustment::Equalize)
         .unwrap();
     frame.submit_surface_action(action).unwrap();
     frame
@@ -510,7 +510,7 @@ fn junction_equalization_changes_only_one_axis_and_one_workspace_revision() {
         let junction = plan.splitter_junctions().next().unwrap();
         let action = plan
             .prepare_splitter_junction_adjustment(
-                junction.visual_id(),
+                junction,
                 axis,
                 SurfaceSplitterAdjustment::Equalize,
             )
@@ -557,11 +557,8 @@ fn equalization_respects_axis_policy_and_discarded_or_stale_actions() {
     inspect_surface(&mut disabled, |plan| {
         let splitter = plan.splitters().next().unwrap();
         assert!(
-            plan.prepare_splitter_adjustment(
-                splitter.visual_id(),
-                SurfaceSplitterAdjustment::Equalize
-            )
-            .is_none()
+            plan.prepare_splitter_adjustment(splitter, SurfaceSplitterAdjustment::Equalize)
+                .is_none()
         );
     });
 
@@ -573,7 +570,7 @@ fn equalization_respects_axis_policy_and_discarded_or_stale_actions() {
         let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
         let action = plan
             .prepare_splitter_adjustment(
-                plan.splitters().next().unwrap().visual_id(),
+                plan.splitters().next().unwrap(),
                 SurfaceSplitterAdjustment::Equalize,
             )
             .unwrap();
@@ -584,7 +581,7 @@ fn equalization_respects_axis_policy_and_discarded_or_stale_actions() {
 
     let stale = inspect_surface(&mut session, |plan| {
         plan.prepare_splitter_adjustment(
-            plan.splitters().next().unwrap().visual_id(),
+            plan.splitters().next().unwrap(),
             SurfaceSplitterAdjustment::Equalize,
         )
         .unwrap()

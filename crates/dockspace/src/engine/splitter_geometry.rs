@@ -194,6 +194,10 @@ fn prepare_linear_resize_axis_groups(
                 .keys()
                 .map(|(root, _)| *root)
                 .collect::<BTreeSet<_>>();
+            let mut cap_contacts = ResizeDeltaInterval {
+                minimum: f64::NEG_INFINITY,
+                maximum: f64::INFINITY,
+            };
             let mut found_incidents = 0;
             for root in incident_roots {
                 let prototype = roots.get(&root)?;
@@ -237,27 +241,54 @@ fn prepare_linear_resize_axis_groups(
                         return None;
                     }
                     if affected || check_extent {
-                        // A frame can stop following the changing slot when it
-                        // reaches its cap. The piecewise solver handles that
-                        // contact without stopping other children in the slot.
+                        let coefficient = outer_edges[1] - outer_edges[0];
                         let constraints = result.constraints;
-                        if outer_edges[1] != outer_edges[0]
-                            && ((rect_extent(result.slot, axis) - rect_extent(rect, axis)).abs()
+                        let maximum = size_extent(constraints.max(), axis);
+                        let (bounds, maximum) =
+                            if inherits_slot && projection.caps_frames() && coefficient != 0.0 {
+                                let slot = result.slot;
+                                let offered = rect_extent(slot, axis);
+                                let has_active_layout = match live {
+                                    Node::Split { .. } => true,
+                                    Node::Tabs { .. } => workspace
+                                        .visible_tab_selection(node)
+                                        .and_then(crate::ids::TabKey::layout)
+                                        .is_some(),
+                                    _ => false,
+                                };
+                                if has_active_layout {
+                                    if offered - rect_extent(rect, axis)
+                                        > rect_extent_tolerance(slot, axis)
+                                    {
+                                        return None;
+                                    }
+                                    // A capped child can stop following its slot. Only
+                                    // contacts within the reachable interval affect its tracks.
+                                    let contact = (maximum - offered).max(0.0) / coefficient;
+                                    if coefficient > 0.0 {
+                                        cap_contacts.maximum = cap_contacts.maximum.min(contact);
+                                    } else {
+                                        cap_contacts.minimum = cap_contacts.minimum.max(contact);
+                                    }
+                                }
+                                (slot, f64::MAX)
+                            } else {
+                                (rect, maximum)
+                            };
+                        if coefficient != 0.0
+                            && !inherits_slot
+                            && (rect_extent(result.slot, axis) - rect_extent(rect, axis)).abs()
                                 > rect_extent_tolerance(result.slot, axis)
-                                || (inherits_slot
-                                    && projection.caps_frames()
-                                    && size_extent(constraints.max(), axis)
-                                        < rect_extent(root_facts.content_bounds(), axis)))
                         {
                             return None;
                         }
                         intersect_extent_interval(
                             &mut group.common_delta,
-                            rect_extent(rect, axis),
+                            rect_extent(bounds, axis),
                             size_extent(constraints.min(), axis),
-                            size_extent(constraints.max(), axis),
-                            outer_edges[1] - outer_edges[0],
-                            rect_extent_tolerance(rect, axis),
+                            maximum,
+                            coefficient,
+                            rect_extent_tolerance(bounds, axis),
                         )?;
                     }
                     let Node::Split {
@@ -395,6 +426,8 @@ fn prepare_linear_resize_axis_groups(
                 || !group.common_delta.maximum.is_finite()
                 || group.common_delta.minimum > 0.0
                 || group.common_delta.maximum < 0.0
+                || group.common_delta.minimum <= cap_contacts.minimum
+                || group.common_delta.maximum >= cap_contacts.maximum
             {
                 return None;
             }

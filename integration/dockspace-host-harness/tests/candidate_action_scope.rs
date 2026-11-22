@@ -75,10 +75,8 @@ fn splitter_action(plan: SurfacePaintPlan<'_>) -> dockspace::runtime::PreparedSu
             ..
         } = step
         {
-            action = plan.prepare_splitter_adjustment(
-                splitter.visual_id(),
-                SurfaceSplitterAdjustment::Increment,
-            );
+            action =
+                plan.prepare_splitter_adjustment(splitter, SurfaceSplitterAdjustment::Increment);
         }
         Ok::<(), ()>(())
     })

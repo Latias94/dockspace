@@ -2,10 +2,10 @@
 
 use crate::graph::Axis;
 use crate::interaction::ResizeAdjustment;
-use crate::presentation::scene::SplitterResizeTarget;
+use crate::presentation::scene::{SplitterRecord, SplitterResizeTarget};
 
 use super::super::SurfaceSplitterAdjustment;
-use super::{DockspaceVisualId, SurfacePaintPlan, VisualIdentity};
+use super::{DockspaceVisualId, SplitterPaintRecord, SurfacePaintPlan, VisualIdentity};
 
 /// Current and reachable position of a boundary within its track owner.
 ///
@@ -57,24 +57,20 @@ impl SurfacePaintPlan<'_> {
 
     /// Resolves a proven resize interval for a splitter in this candidate.
     ///
-    /// Returns `None` when resizing is unavailable or the layout cannot prove
-    /// its limits. Auto endpoints must also preserve exact final geometry; an
-    /// unprovable endpoint returns `None` without searching for another bound.
+    /// The splitter record must belong to this output. Returns `None` when
+    /// resizing is unavailable or the layout cannot prove its limits. Auto
+    /// endpoints must also preserve exact final geometry; an unprovable
+    /// endpoint returns `None` without searching for another bound.
     /// This walks the root's touching layout and allocates temporary
     /// solver state. Query it when numeric accessibility values or application
     /// controls need the range, rather than for ordinary splitter drawing.
     #[must_use]
     pub fn splitter_resize_range(
         self,
-        splitter: DockspaceVisualId,
+        splitter: SplitterPaintRecord<'_>,
     ) -> Option<SurfaceSplitterRange> {
-        let VisualIdentity::Splitter(id) = splitter.0 else {
-            return None;
-        };
-        let record = self
-            .plan
-            .splitter_record(id)
-            .filter(|record| record.operable())?;
+        let record = self.action_splitter(splitter)?;
+        let id = *record.id();
         let limits = self
             .candidate
             .checked_splitter_resize_range(self.plan, id)?;
@@ -88,6 +84,16 @@ impl SurfacePaintPlan<'_> {
             minimum: ((before + limits.minimum) / total).clamp(0.0, 1.0),
             maximum: ((before + limits.maximum) / total).clamp(0.0, 1.0),
         })
+    }
+
+    pub(super) fn action_splitter<'record>(
+        self,
+        splitter: SplitterPaintRecord<'record>,
+    ) -> Option<&'record SplitterRecord> {
+        (splitter.output == self.semantic_output()
+            && splitter.operable()
+            && self.plan.partition_available(splitter.root()))
+        .then_some(splitter.record)
     }
 
     pub(super) fn splitter_adjustment_sequence(
@@ -111,7 +117,7 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use super::*;
-    use crate::geometry::{LogicalRect, PaneSizing};
+    use crate::geometry::{LogicalRect, LogicalSize, PaneSizing};
     use crate::ids::{ItemId, RootId, SurfaceId};
     use crate::model::{
         DockspaceAxis, DockspaceGridShape, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
@@ -121,6 +127,7 @@ mod tests {
     use crate::runtime::{
         DockPresentationConfig, DockspaceHostFrame, DockspaceRuntimeError, DockspaceSession,
         ResizePropagation, SurfaceMeasurementAnswer, SurfaceMeasurementRequest, TabStripMetrics,
+        UniformSurfaceMetrics,
     };
 
     const ROOT: RootId = RootId::new(1201);
@@ -201,6 +208,89 @@ mod tests {
     }
 
     #[test]
+    fn splitter_commands_reject_a_reused_visual_slot_after_reorder() {
+        use crate::model::DockPlacement;
+
+        let content = DockspaceNode::equal_split(
+            DockspaceAxis::Vertical,
+            (1..=5).map(|item| DockspaceNode::pane(ItemId::new(item))),
+        )
+        .unwrap();
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(ROOT, content),
+        )])
+        .unwrap();
+        let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+        let metrics = UniformSurfaceMetrics::new(
+            LogicalRect::new(0.0, 0.0, 640.0, 600.0).unwrap(),
+            LogicalSize::new(20.0, 30.0).unwrap(),
+            100.0,
+        )
+        .unwrap();
+        let measure_now = |frame: &mut DockspaceHostFrame<'_>| {
+            frame.measure_surface(SURFACE, metrics).unwrap();
+        };
+        let (old_record, old_output) = {
+            let mut frame = session.begin_host_frame().unwrap();
+            measure_now(&mut frame);
+            let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+            let divider = plan.splitters().nth(1).unwrap();
+            let carried = (divider.record.clone(), divider.output);
+            frame.commit().unwrap();
+            carried
+        };
+        let old = SplitterPaintRecord {
+            record: &old_record,
+            output: old_output,
+        };
+        let mut frame = session.begin_host_frame().unwrap();
+        frame
+            .dock_item_current(PEER, DockPlacement::After(ItemId::new(5)))
+            .unwrap();
+        measure_now(&mut frame);
+        assert!(frame.commit().unwrap().workspace_changed());
+
+        let mut frame = session.begin_host_frame().unwrap();
+        let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+        let reused = plan
+            .splitters()
+            .find(|record| record.visual_id() == old.visual_id())
+            .unwrap();
+        let live = plan
+            .splitters()
+            .find(|record| record.input_id() == old.input_id())
+            .unwrap();
+        assert_ne!(reused.input_id(), old.input_id());
+        assert_ne!(live.visual_id(), old.visual_id());
+        assert!(
+            plan.prepare_splitter_adjustment(old, SurfaceSplitterAdjustment::Increment)
+                .is_none()
+        );
+        assert!(plan.splitter_resize_range(old).is_none());
+        let action = plan
+            .prepare_splitter_adjustment(live, SurfaceSplitterAdjustment::Increment)
+            .unwrap();
+        let height = |plan: SurfacePaintPlan<'_>, item| {
+            plan.panes()
+                .find(|pane| pane.item() == ItemId::new(item))
+                .unwrap()
+                .content_geometry()
+                .layout_bounds()
+                .height()
+        };
+        let before = [2, 3, 4].map(|item| height(plan, item));
+        frame.submit_surface_action(action).unwrap();
+        measure_now(&mut frame);
+        assert!(frame.commit().unwrap().workspace_changed());
+        let mut frame = session.begin_host_frame().unwrap();
+        let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+        assert!(height(plan, 2) > before[0]);
+        assert!(height(plan, 3) < before[1]);
+        assert!((height(plan, 4) - before[2]).abs() < 1.0e-9);
+    }
+
+    #[test]
     fn auto_range_omits_an_endpoint_that_exact_reflow_cannot_reach() {
         for propagation in [ResizePropagation::Adjacent, ResizePropagation::Outward] {
             let mut session = session(DockspaceGridShape::Auto, 120.0, propagation);
@@ -212,12 +302,9 @@ mod tests {
                 .unwrap();
             assert!(outer.operable());
             assert!(plan.receiver_for_splitter(outer).is_some());
-            assert!(plan.splitter_resize_range(outer.visual_id()).is_none());
+            assert!(plan.splitter_resize_range(outer).is_none());
             let action = plan
-                .prepare_splitter_adjustment(
-                    outer.visual_id(),
-                    SurfaceSplitterAdjustment::Increment,
-                )
+                .prepare_splitter_adjustment(outer, SurfaceSplitterAdjustment::Increment)
                 .unwrap();
             frame.submit_surface_action(action).unwrap();
             measure(&mut frame, 120.0);
@@ -253,15 +340,12 @@ mod tests {
                     .splitters()
                     .find(|splitter| splitter.before_bounds().width() == 500.0)
                     .unwrap();
-                let range = plan.splitter_resize_range(outer.visual_id()).unwrap();
+                let range = plan.splitter_resize_range(outer).unwrap();
                 assert_eq!(range.value(), 0.5);
                 assert!((range.minimum() - 0.001).abs() < 1.0e-10);
                 assert!((range.maximum() - maximum).abs() < 1.0e-10);
                 let action = plan
-                    .prepare_splitter_adjustment(
-                        outer.visual_id(),
-                        SurfaceSplitterAdjustment::Maximum,
-                    )
+                    .prepare_splitter_adjustment(outer, SurfaceSplitterAdjustment::Maximum)
                     .unwrap();
                 frame.submit_surface_action(action).unwrap();
                 measure(&mut frame, minimum_height);
@@ -303,10 +387,8 @@ mod tests {
                             .total_cmp(&right.before_bounds().width())
                     })
                     .unwrap();
-                let action = plan.prepare_splitter_adjustment_sequence(
-                    outer.visual_id(),
-                    adjustments.iter().copied(),
-                );
+                let action =
+                    plan.prepare_splitter_adjustment_sequence(outer, adjustments.iter().copied());
                 if let Some(action) = action {
                     frame.submit_surface_action(action).unwrap();
                     measure(&mut frame, 120.0);

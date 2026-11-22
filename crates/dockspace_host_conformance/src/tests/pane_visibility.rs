@@ -213,10 +213,7 @@ fn shared_l08_pane_visibility_preserves_durable_layout_and_current_public_contro
                     let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
                     let splitter = program_records(plan).splitters[0];
                     let action = plan
-                        .prepare_splitter_adjustment(
-                            splitter.visual_id(),
-                            SurfaceSplitterAdjustment::Increment,
-                        )
+                        .prepare_splitter_adjustment(splitter, SurfaceSplitterAdjustment::Increment)
                         .unwrap();
                     frame.submit_surface_action(action).unwrap();
                 });

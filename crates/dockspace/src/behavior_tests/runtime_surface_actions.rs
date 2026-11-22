@@ -2130,7 +2130,7 @@ fn split_control_identity_follows_the_visible_pair_after_closing_a_sibling() {
     let (before, late) = inspect_surface(&mut session, |plan| {
         let boundary = plan.splitters().nth(1).unwrap();
         let action = plan
-            .prepare_splitter_adjustment(boundary.visual_id(), SurfaceSplitterAdjustment::Increment)
+            .prepare_splitter_adjustment(boundary, SurfaceSplitterAdjustment::Increment)
             .unwrap()
             .into_deferred();
         (
@@ -3149,7 +3149,7 @@ fn exact_surface_splitter_adjustment_uses_the_local_ready_candidate() {
         .next()
         .expect("the equal split has one splitter");
     let action = plan
-        .prepare_splitter_adjustment(splitter.visual_id(), SurfaceSplitterAdjustment::Increment)
+        .prepare_splitter_adjustment(splitter, SurfaceSplitterAdjustment::Increment)
         .expect("the operable splitter prepares an adjustment");
     frame
         .submit_surface_action(action)
@@ -3205,7 +3205,7 @@ fn exact_junction_axis_adjustment_updates_only_that_axis_in_one_revision() {
     );
     let action = plan
         .prepare_splitter_junction_adjustment(
-            junction.visual_id(),
+            junction,
             DockspaceAxis::Horizontal,
             SurfaceSplitterAdjustment::Increment,
         )
@@ -3254,7 +3254,7 @@ fn junction_axis_action_is_absent_when_that_axis_is_not_operable() {
     assert!(!plan.splitter_junction_axis_operable(junction, DockspaceAxis::Vertical));
     assert!(
         plan.prepare_splitter_junction_adjustment(
-            junction.visual_id(),
+            junction,
             DockspaceAxis::Horizontal,
             SurfaceSplitterAdjustment::Increment,
         )
@@ -3262,7 +3262,7 @@ fn junction_axis_action_is_absent_when_that_axis_is_not_operable() {
     );
     assert!(
         plan.prepare_splitter_junction_adjustment(
-            junction.visual_id(),
+            junction,
             DockspaceAxis::Vertical,
             SurfaceSplitterAdjustment::Increment,
         )

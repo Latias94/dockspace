@@ -230,10 +230,8 @@ fn cross_axis_slack_preserves_a_complete_horizontal_resize_frontier() {
             && splitter.axis() == DockspaceAxis::Horizontal
         {
             assert!(splitter.operable());
-            action = plan.prepare_splitter_adjustment(
-                splitter.visual_id(),
-                SurfaceSplitterAdjustment::Increment,
-            );
+            action =
+                plan.prepare_splitter_adjustment(splitter, SurfaceSplitterAdjustment::Increment);
         }
         Ok::<(), ()>(())
     })

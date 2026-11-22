@@ -468,9 +468,9 @@ mod tests {
                                 .unwrap();
                             assert!(splitter.operable());
                             assert!(plan.receiver_for_splitter(splitter).is_some());
-                            assert!(plan.splitter_resize_range(splitter.visual_id()).is_some());
+                            assert!(plan.splitter_resize_range(splitter).is_some());
                             let action = plan
-                                .prepare_splitter_adjustment(splitter.visual_id(), adjustment)
+                                .prepare_splitter_adjustment(splitter, adjustment)
                                 .unwrap();
                             frame.submit_surface_action(action).unwrap();
                         }
@@ -591,14 +591,14 @@ mod tests {
             .unwrap();
         assert!(outer.operable());
         assert!(plan.receiver_for_splitter(outer).is_some());
-        assert!(plan.splitter_resize_range(outer.visual_id()).is_some());
+        assert!(plan.splitter_resize_range(outer).is_some());
         for adjustment in [
             SurfaceSplitterAdjustment::Increment,
             SurfaceSplitterAdjustment::Equalize,
             SurfaceSplitterAdjustment::Preferred,
         ] {
             assert!(
-                plan.prepare_splitter_adjustment(outer.visual_id(), adjustment)
+                plan.prepare_splitter_adjustment(outer, adjustment)
                     .is_some()
             );
         }
@@ -705,13 +705,10 @@ mod tests {
                     .unwrap();
                 assert!(!outer.operable(), "{axis:?}/{policy:?}");
                 assert!(plan.receiver_for_splitter(outer).is_none());
-                assert!(plan.splitter_resize_range(outer.visual_id()).is_none());
+                assert!(plan.splitter_resize_range(outer).is_none());
                 assert!(
-                    plan.prepare_splitter_adjustment(
-                        outer.visual_id(),
-                        SurfaceSplitterAdjustment::Increment,
-                    )
-                    .is_none()
+                    plan.prepare_splitter_adjustment(outer, SurfaceSplitterAdjustment::Increment,)
+                        .is_none()
                 );
             }
         }
