@@ -89,7 +89,7 @@ pub(super) fn paint_tab(
     };
     let mut child = context.ui.new_child(
         UiBuilder::new()
-            .id_salt((context.instance_id, "tab-ui", record.visual_id()))
+            .scope_id(context.instance_id.with(("tab-ui", record.input_id())))
             .max_rect(content_rect)
             .layout(Layout::left_to_right(Align::Center)),
     );
@@ -134,12 +134,11 @@ pub(super) fn paint_bar_slots(
         }
         let mut child = context.ui.new_child(
             UiBuilder::new()
-                .id_salt((
-                    context.instance_id,
-                    "tab-bar-slot",
-                    record.visual_id(),
-                    slot,
-                ))
+                .scope_id(
+                    context
+                        .instance_id
+                        .with(("tab-bar-slot", record.visual_id(), slot)),
+                )
                 .max_rect(bounds)
                 .layout(Layout::left_to_right(Align::Center)),
         );

@@ -30,6 +30,8 @@ use crate::{DockspaceActionOutcome, DockspaceActionStatus, DockspaceErrorKind};
 
 mod geometry_change;
 mod modal_docking;
+mod pane_focus;
+mod tab_header;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const FIRST: ItemId = ItemId::new(1);

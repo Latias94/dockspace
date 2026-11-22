@@ -168,25 +168,10 @@ pub(crate) fn paint_pane(
                 .as_ref()
                 .map(|_| super::tab_shortcuts::TabKeyboard::for_replayed_pane(context, pane));
             let pane_response = context.panes.ui(item, child_ui);
-            let registered_target = context.panes.focus_target(item).filter(|target| {
-                child_ui.ctx().viewport(|viewport| {
-                    viewport
-                        .this_pass
-                        .widgets
-                        .get(*target)
-                        .is_some_and(|widget| {
-                            widget.enabled
-                                && widget.visible
-                                && widget.sense.is_focusable()
-                                && widget.layer_id == child_ui.layer_id()
-                                && widget.rect.is_finite()
-                                && widget.rect.is_positive()
-                                && content_rect.contains_rect(widget.rect)
-                                && widget.interact_rect.is_positive()
-                                && clip.contains_rect(widget.interact_rect)
-                        })
-                })
-            });
+            let registered_target = context
+                .panes
+                .focus_target(item)
+                .filter(|target| crate::focus::pane_registered_focus_target(child_ui, *target));
             if preapplied
                 && focus_target != registered_target
                 && let Some(target) = focus_target

@@ -16,7 +16,7 @@ use dockspace::model::{DockspaceSurfaceView, ItemId};
 use dockspace::runtime::{
     DockspaceHostFocus, DockspacePaneFocusObservation, DockspacePaneFocusRequest,
 };
-use egui::{Context, Id, Rect};
+use egui::{Context, Id, Rect, Ui};
 
 use crate::pane::{PaneFocusState, PaneView};
 
@@ -117,6 +117,44 @@ pub(crate) fn input_may_surrender_focus(context: &Context) -> bool {
         egui::SurrenderFocusOn::Presses => input.pointer.any_pressed(),
         egui::SurrenderFocusOn::Clicks => input.pointer.any_click(),
         egui::SurrenderFocusOn::Never => false,
+    })
+}
+
+pub(crate) fn pane_registered_focus_target(ui: &Ui, target: Id) -> bool {
+    ui.ctx().viewport(|viewport| {
+        let widgets = &viewport.this_pass.widgets;
+        let Some(widget) = widgets.get(target) else {
+            return false;
+        };
+        if !widget.enabled
+            || !widget.visible
+            || !widget.sense.is_focusable()
+            || widget.layer_id != ui.layer_id()
+            || !widget.rect.is_finite()
+            || !widget.rect.is_positive()
+            || !widget.interact_rect.is_finite()
+            || !widget.interact_rect.is_positive()
+            || !ui.clip_rect().contains_rect(widget.interact_rect)
+        {
+            return false;
+        }
+
+        // UI ancestry proves ownership even when a scroll area clips the editor.
+        // Parents are registered first, so an ID collision cannot form a cycle.
+        let mut id = target;
+        while id != ui.unique_id() {
+            let (Some(widget), Some((layer, order))) = (widgets.get(id), widgets.order(id)) else {
+                return false;
+            };
+            let Some((parent_layer, parent_order)) = widgets.order(widget.parent_id) else {
+                return false;
+            };
+            if layer != parent_layer || parent_order >= order {
+                return false;
+            }
+            id = widget.parent_id;
+        }
+        true
     })
 }
 
