@@ -322,7 +322,7 @@ impl Fixture {
             assert_eq!(cx.hovered_window().window(), Some(window.window_handle()));
             assert!(frame.capture.is_captured(window));
             assert_eq!(
-                input::logical_point(position, frame.bounds),
+                input::logical_point(position, frame.geometry),
                 Some(request.position())
             );
             assert!(
@@ -481,6 +481,93 @@ mod chrome_regressions {
         fixture
             .visual
             .update(|window, _| window.rendered_frame_revision())
+    }
+
+    #[open_gpui::test]
+    fn clicks_follow_the_displayed_tab_after_its_parent_transforms(cx: &mut TestAppContext) {
+        use open_gpui::{SubtreeTransform, SubtreeTransformExt, SubtreeTransformOrigin};
+
+        struct TransformedRoot {
+            dock: GpuiDockspace,
+            transform: Rc<Cell<SubtreeTransform>>,
+        }
+
+        impl Render for TransformedRoot {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(
+                    div()
+                        .w(px(600.0))
+                        .h(px(260.0))
+                        .child(self.dock.element())
+                        .with_subtree_transform(self.transform.get()),
+                )
+            }
+        }
+
+        let transform = Rc::new(Cell::new(SubtreeTransform::identity()));
+        cx.defer_next_window_frame_requests();
+        let window = cx.open_window(size(px(1000.0), px(500.0)), |_, cx| {
+            let items = [1, 2, 3].map(ItemId::new);
+            let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+                SURFACE,
+                DockspaceRootLayout::new(RootId::new(1), DockspaceNode::tabs(items)),
+            )])
+            .unwrap();
+            let mut policy = DockPolicy::default();
+            policy.set_close_capability(CloseCapability::Disabled);
+            policy.set_allow_native_surfaces(false);
+            let session = DockspaceSession::from_layout(layout, policy).unwrap();
+            let panes = items.map(|item| {
+                DockPane::new(
+                    item,
+                    format!("Document {}", item.get()),
+                    cx.new(|_| Document),
+                )
+            });
+            TransformedRoot {
+                dock: GpuiDockspace::new(session, SURFACE, panes, Default::default(), cx).unwrap(),
+                transform: transform.clone(),
+            }
+        });
+        let host = window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |root, _| root.dock.host.clone());
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        visual.update(|window, _| {
+            let _ = window.activate_window();
+        });
+        visual.set_platform_hovered_window(Some(window.into()));
+        let mut fixture = Fixture { host, visual };
+        fixture.present();
+        let center_of = |fixture: &mut Fixture, item| {
+            fixture
+                .visual
+                .debug_bounds(&format!("dockspace:tab:{item}"))
+                .unwrap()
+                .center()
+        };
+        let second = center_of(&mut fixture, 2);
+        let third = center_of(&mut fixture, 3);
+        for (scale, offset) in [(1.0, third.x - second.x), (1.5, px(0.0))] {
+            transform.set(
+                SubtreeTransform::try_new(
+                    size(scale, scale),
+                    point(offset, px(0.0)),
+                    SubtreeTransformOrigin::TOP_LEFT,
+                )
+                .unwrap(),
+            );
+            fixture.present();
+            let first = center_of(&mut fixture, 1);
+            fixture.visual.simulate_click(first, Modifiers::none());
+            fixture.present();
+            assert!(fixture.selected(1));
+            let second = center_of(&mut fixture, 2);
+            fixture.visual.simulate_click(second, Modifiers::none());
+            fixture.present();
+            assert!(fixture.selected(2), "scale={scale}, offset={offset:?}");
+        }
     }
 
     #[open_gpui::test]

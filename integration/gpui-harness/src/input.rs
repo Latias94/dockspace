@@ -8,7 +8,7 @@ use dockspace::{
         SurfacePointerReceiverFacts,
     },
 };
-use open_gpui::{Bounds, HitboxId, Modifiers, Pixels, Point, Window};
+use open_gpui::{ElementGeometry, HitboxId, Modifiers, Pixels, Point, Window};
 
 use crate::HostState;
 
@@ -59,13 +59,13 @@ pub(super) fn queue(
     serial: u64,
     event: SurfacePointerEvent,
     position: Point<Pixels>,
-    bounds: Bounds<Pixels>,
+    geometry: ElementGeometry,
     hitboxes: &[HitboxId],
     captured: bool,
     modifiers: Modifiers,
     window: &Window,
 ) -> bool {
-    let Some(point) = logical_point(position, bounds) else {
+    let Some(point) = logical_point(position, geometry) else {
         return false;
     };
     let clear = hitboxes
@@ -122,13 +122,10 @@ pub(super) fn queue(
 
 pub(super) fn logical_point(
     position: Point<Pixels>,
-    bounds: Bounds<Pixels>,
+    geometry: ElementGeometry,
 ) -> Option<LogicalPoint> {
-    LogicalPoint::new(
-        f64::from(f32::from(position.x - bounds.origin.x)),
-        f64::from(f32::from(position.y - bounds.origin.y)),
-    )
-    .ok()
+    let local = geometry.window_to_local_point(position).ok()?;
+    LogicalPoint::new(f64::from(f32::from(local.x)), f64::from(f32::from(local.y))).ok()
 }
 
 pub(super) fn is_presented(host: &HostState, serial: u64) -> bool {

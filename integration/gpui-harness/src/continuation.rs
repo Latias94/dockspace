@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use dockspace::runtime::DockspacePointerContinuation;
 use open_gpui::{
-    App, Bounds, HitboxId, Pixels, PlatformHoveredWindow, PointerCaptureHandle, Task, Window,
+    App, ElementGeometry, HitboxId, PlatformHoveredWindow, PointerCaptureHandle, Task, Window,
 };
 
 use crate::{HostState, SharedHost, input};
@@ -12,7 +12,7 @@ use crate::{HostState, SharedHost, input};
 #[derive(Clone)]
 pub(super) struct InputFrame {
     pub(super) serial: u64,
-    pub(super) bounds: Bounds<Pixels>,
+    pub(super) geometry: ElementGeometry,
     pub(super) hitboxes: Vec<HitboxId>,
     pub(super) capture: PointerCaptureHandle,
 }
@@ -104,7 +104,7 @@ fn wake(
         || !window.is_window_active()
         || !window_hovered
         || !frame.capture.is_captured(window)
-        || input::logical_point(position, frame.bounds) != Some(request.position())
+        || input::logical_point(position, frame.geometry) != Some(request.position())
         || !frame
             .hitboxes
             .iter()
@@ -118,7 +118,7 @@ fn wake(
         serial,
         request.event(),
         position,
-        frame.bounds,
+        frame.geometry,
         &frame.hitboxes,
         true,
         window.modifiers(),

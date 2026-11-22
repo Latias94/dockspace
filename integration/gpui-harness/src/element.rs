@@ -13,9 +13,9 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId, HitboxBehavior,
-    HitboxId, Hsla, InspectorElementId, IntoElement, KeyDownEvent, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PointerCaptureHandle,
+    AnyElement, App, AvailableSpace, Bounds, Element, ElementGeometry, ElementId, GlobalElementId,
+    HitboxBehavior, HitboxId, Hsla, InspectorElementId, IntoElement, KeyDownEvent, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PointerCaptureHandle,
     PreparedSubtreeClip, Style, SubtreeClip, TextRun, Window, div, fill, point, prelude::*, px,
     relative, size,
 };
@@ -103,7 +103,7 @@ pub(crate) struct PreparedFrame {
     tabs: Vec<(TabKey, HitboxId)>,
     capture: PointerCaptureHandle,
     serial: u64,
-    bounds: Bounds<Pixels>,
+    geometry: ElementGeometry,
 }
 
 pub(crate) enum PreparedState {
@@ -301,6 +301,7 @@ impl DockspaceElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<PreparedFrame> {
+        let geometry = window.try_element_geometry(bounds)?;
         let logical = LogicalRect::new(
             0.0,
             0.0,
@@ -481,7 +482,7 @@ impl DockspaceElement {
         let accepted_tabs = tabs.clone();
         let input_frame = InputFrame {
             serial,
-            bounds,
+            geometry,
             hitboxes: hitboxes.clone(),
             capture,
         };
@@ -506,7 +507,7 @@ impl DockspaceElement {
             tabs,
             capture,
             serial,
-            bounds,
+            geometry,
         })
     }
 
@@ -528,7 +529,7 @@ impl DockspaceElement {
         let hitboxes = prepared.hitboxes.clone();
         let capture = prepared.capture;
         let serial = prepared.serial;
-        let bounds = prepared.bounds;
+        let geometry = prepared.geometry;
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
             if !phase.bubble() || event.button != MouseButton::Left {
                 return;
@@ -547,7 +548,7 @@ impl DockspaceElement {
                 serial,
                 SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary),
                 event.position,
-                bounds,
+                geometry,
                 &hitboxes,
                 true,
                 event.modifiers,
@@ -572,7 +573,7 @@ impl DockspaceElement {
                 serial,
                 SurfacePointerEvent::Moved,
                 event.position,
-                bounds,
+                geometry,
                 &hitboxes,
                 true,
                 event.modifiers,
@@ -593,7 +594,7 @@ impl DockspaceElement {
                 serial,
                 SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary),
                 event.position,
-                bounds,
+                geometry,
                 &hitboxes,
                 true,
                 event.modifiers,
@@ -620,7 +621,7 @@ impl DockspaceElement {
                 serial,
                 SurfacePointerEvent::DockingEnabledChanged { enabled },
                 position,
-                bounds,
+                geometry,
                 &hitboxes,
                 true,
                 event.modifiers,
@@ -649,7 +650,7 @@ impl DockspaceElement {
                     SurfacePointerCancelReason::ExplicitCancellation,
                 ),
                 window.mouse_position(),
-                bounds,
+                geometry,
                 &hitboxes,
                 true,
                 event.keystroke.modifiers,
@@ -681,7 +682,7 @@ impl DockspaceElement {
                     SurfacePointerCancelReason::ExplicitPlatformCancellation,
                 ),
                 position,
-                bounds,
+                geometry,
                 &hitboxes,
                 false,
                 window.modifiers(),
