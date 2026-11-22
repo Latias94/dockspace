@@ -1,7 +1,7 @@
 //! Unowned callbacks must retire tab-list clicks at window-focus boundaries.
 
 use egui::accesskit::{Action, ActionRequest, Node, NodeId, Role, TreeId};
-use egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Ui, vec2};
+use egui::{Context, Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, Ui, vec2};
 
 use crate::{
     DockStyle, Dockspace, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
@@ -210,5 +210,63 @@ fn unowned_tab_list_backdrop_rejects_a_release_after_window_focus_loss() {
                 .all(|(_, node)| node.role() != Role::MenuItem),
             "{boundary:?}: a fresh backdrop click must still dismiss the menu"
         );
+    }
+}
+
+#[test]
+fn unowned_tab_list_uses_the_first_confirmation_in_pointer_and_keyboard_packets() {
+    for backdrop in [false, true] {
+        for pointer_first in [false, true] {
+            for batched in [false, true] {
+                let mut harness = Harness::open();
+                let position = if backdrop {
+                    egui::pos2(620.0, 460.0)
+                } else {
+                    harness.row_center("B")
+                };
+                harness.step(vec![Event::PointerMoved(position)]);
+                harness.step(vec![primary(position, true)]);
+                let keyboard = vec![
+                    Event::AccessKitActionRequest(ActionRequest {
+                        action: Action::Focus,
+                        target_tree: TreeId::ROOT,
+                        target_node: harness.node(Role::MenuItem, "A").0,
+                        data: None,
+                    }),
+                    Event::Key {
+                        key: Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                ];
+                let mut packets = [vec![primary(position, false)], keyboard];
+                if !pointer_first {
+                    packets.reverse();
+                }
+                if batched {
+                    harness.step(packets.concat());
+                } else {
+                    for packet in packets {
+                        harness.step(packet);
+                    }
+                }
+                harness.settle();
+                let expected = if pointer_first { SECOND } else { FIRST };
+                let case = (backdrop, pointer_first, batched);
+                assert!(
+                    harness.dockspace.view().item(expected).unwrap().is_active(),
+                    "{case:?}"
+                );
+                assert!(
+                    harness
+                        .nodes
+                        .iter()
+                        .all(|(_, node)| node.role() != Role::MenuItem),
+                    "{case:?}"
+                );
+            }
+        }
     }
 }

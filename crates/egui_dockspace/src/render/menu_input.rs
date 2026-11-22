@@ -13,7 +13,7 @@ struct ViewportInput {
     pass: u64,
     menus: Vec<Menu>,
     opening: Option<(Id, u64)>,
-    routed: Vec<(Id, Intent)>,
+    routed: Vec<(Id, OrderedIntent)>,
     opening_keys: Vec<MenuKey>,
     after_application: Option<AfterApplication>,
     delivery: Option<FocusedInput>,
@@ -63,6 +63,13 @@ impl Intent {
 pub(super) struct RoutedInput {
     pub(super) intent: Intent,
     pub(super) retains_focus: bool,
+    pub(super) follows_primary_release: bool,
+}
+
+#[derive(Clone, Copy)]
+struct OrderedIntent {
+    intent: Intent,
+    follows_primary_release: bool,
 }
 
 pub(super) fn awaits_application(ui: &Ui, menu: Id) -> bool {
@@ -168,12 +175,13 @@ pub(super) fn register(
             });
         }
         let index = input.routed.iter().position(|(menu, _)| *menu == id)?;
-        let intent = input.routed.remove(index).1;
+        let ordered = input.routed.remove(index).1;
         Some(RoutedInput {
-            intent,
+            intent: ordered.intent,
             // The application may explicitly move focus while building its UI.
             // The menu still applies its semantic input without reclaiming focus.
             retains_focus: input.focus_owner == Some(id) && input.focus_before_ui == focused,
+            follows_primary_release: ordered.follows_primary_release,
         })
     })
 }
@@ -273,7 +281,16 @@ impl egui::plugin::Plugin for MenuInput {
         let mut menu_focus_events = Vec::new();
         let mut app_key_before_menu_focus = false;
         let mut defer_menu_focus = false;
+        let mut follows_primary_release = false;
         for (slot, event) in raw.events.iter().enumerate() {
+            follows_primary_release |= matches!(
+                event,
+                Event::PointerButton {
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    ..
+                }
+            );
             if let Some(clicked) = accesskit_click_target(event) {
                 let target = context.viewport_for(viewport, |previous| {
                     live_accesskit_click_target(event, &previous.prev_pass.widgets)
@@ -285,7 +302,12 @@ impl egui::plugin::Plugin for MenuInput {
                         .find_map(|menu| Some((menu, menu.row(target)?)))
                 }) {
                     input.after_application = None;
-                    set_intent(&mut input.routed, menu.id, Intent::Click(row));
+                    set_intent(
+                        &mut input.routed,
+                        menu.id,
+                        Intent::Click(row),
+                        follows_primary_release,
+                    );
                     if cursor.is_some_and(|(owner, _)| owner.id == menu.id) {
                         cursor = None;
                     }
@@ -331,7 +353,7 @@ impl egui::plugin::Plugin for MenuInput {
                     if input
                         .routed
                         .iter()
-                        .any(|(id, intent)| *id == menu.id && intent.is_terminal())
+                        .any(|(id, ordered)| *id == menu.id && ordered.intent.is_terminal())
                     {
                         consumed_keys.push(slot);
                         cursor = target_menu;
@@ -343,7 +365,12 @@ impl egui::plugin::Plugin for MenuInput {
                     opening_cursor = None;
                     focus_owner = Some(menu.id);
                     input.focus_before_ui = Some(row);
-                    set_intent(&mut input.routed, menu.id, Intent::Focus(row));
+                    set_intent(
+                        &mut input.routed,
+                        menu.id,
+                        Intent::Focus(row),
+                        follows_primary_release,
+                    );
                 } else if let Some(target) = context.viewport_for(viewport, |viewport| {
                     viewport
                         .prev_pass
@@ -440,7 +467,7 @@ impl egui::plugin::Plugin for MenuInput {
             } else if let Intent::Focus(next) = intent {
                 cursor = Some((menu, next));
             }
-            set_intent(&mut input.routed, menu.id, intent);
+            set_intent(&mut input.routed, menu.id, intent, follows_primary_release);
         }
         input.focus_owner = focus_owner;
         let held_releases = input
@@ -594,13 +621,22 @@ fn accesskit_target(event: &Event, wanted: Action) -> Option<NodeId> {
     }
 }
 
-fn set_intent(routed: &mut Vec<(Id, Intent)>, menu: Id, intent: Intent) {
+fn set_intent(
+    routed: &mut Vec<(Id, OrderedIntent)>,
+    menu: Id,
+    intent: Intent,
+    follows_primary_release: bool,
+) {
+    let ordered = OrderedIntent {
+        intent,
+        follows_primary_release,
+    };
     if let Some((_, previous)) = routed.iter_mut().find(|(id, _)| *id == menu) {
-        if !previous.is_terminal() {
-            *previous = intent;
+        if !previous.intent.is_terminal() {
+            *previous = ordered;
         }
     } else {
-        routed.push((menu, intent));
+        routed.push((menu, ordered));
     }
 }
 

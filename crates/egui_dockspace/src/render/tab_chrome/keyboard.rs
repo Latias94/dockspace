@@ -1,7 +1,8 @@
 //! Ordered tab-list commands retain one cursor and one final core action.
 
 use dockspace::runtime::{
-    RetainedTabListOpener, TabListMenuPaintRecord, TabStripControlPaintRecord,
+    PreparedSurfaceAction, RetainedTabListOpener, TabListMenuPaintRecord,
+    TabStripControlPaintRecord,
 };
 use egui::{Event, EventFilter, Id, Key, PointerButton, Ui};
 
@@ -11,9 +12,10 @@ use super::super::menu_input::{
 };
 use super::super::{
     RenderContext,
-    actions::{effective_enabled, focus_uninterrupted},
+    actions::{effective_enabled, focus_uninterrupted, unambiguous_pointer_click},
+    geometry::egui_rect,
 };
-use super::MenuRow;
+use super::{MenuRow, backdrop_id};
 
 #[derive(Clone)]
 struct PendingOpening {
@@ -32,6 +34,7 @@ struct PaintedOpener {
 }
 
 pub(super) enum OpeningInput {
+    LocalClick,
     AwaitingPresentation {
         terminal: bool,
     },
@@ -44,6 +47,7 @@ pub(super) enum OpeningInput {
 impl OpeningInput {
     pub(super) fn terminal(&self) -> bool {
         match self {
+            Self::LocalClick => true,
             Self::AwaitingPresentation { terminal } => *terminal,
             Self::Ready { outcome, .. } => outcome.is_some_and(Outcome::is_terminal),
         }
@@ -205,7 +209,7 @@ fn retain_opening(
 }
 
 pub(super) fn take_menu_input(
-    context: &RenderContext<'_, '_, '_>,
+    context: &mut RenderContext<'_, '_, '_>,
     menu: TabListMenuPaintRecord<'_>,
     id: Id,
     opener: Id,
@@ -217,20 +221,28 @@ pub(super) fn take_menu_input(
     // Expose the targets for the next input packet. A command addressed to a
     // row needs a presented menu at delivery; only opener keys can wait for it.
     let routed = menu_input::register(ui, id, rows.iter().map(|row| row.id), MenuKind::TabList)
-        .filter(|_| presented)
-        .and_then(|routed| {
-            let row_index = |id| rows.iter().position(|row| row.id == id);
-            let outcome = match routed.intent {
-                Intent::Focus(row) => row_index(row).map(Outcome::Navigate),
-                Intent::Click(row) => row_index(row)
-                    .filter(|&index| row_click_is_presented(context, rows[index].record))
-                    .map(Outcome::Activate),
-                Intent::Activate(row) => row_index(row).map(Outcome::Activate),
-                Intent::Dismiss(row) => row_index(row).map(|_| Outcome::Dismiss),
-                Intent::Back(_) => None,
-            }?;
-            Some((outcome, routed.retains_focus))
-        });
+        .filter(|_| presented);
+    if routed
+        .as_ref()
+        .is_some_and(|input| input.follows_primary_release)
+        && let Some((origin, action)) = earlier_local_menu_click(context, menu, rows)
+    {
+        context.push_local_action(origin, action);
+        return Some(OpeningInput::LocalClick);
+    }
+    let routed = routed.and_then(|routed| {
+        let row_index = |id| rows.iter().position(|row| row.id == id);
+        let outcome = match routed.intent {
+            Intent::Focus(row) => row_index(row).map(Outcome::Navigate),
+            Intent::Click(row) => row_index(row)
+                .filter(|&index| row_click_is_presented(context, rows[index].record))
+                .map(Outcome::Activate),
+            Intent::Activate(row) => row_index(row).map(Outcome::Activate),
+            Intent::Dismiss(row) => row_index(row).map(|_| Outcome::Dismiss),
+            Intent::Back(_) => None,
+        }?;
+        Some((outcome, routed.retains_focus))
+    });
     let ready = || {
         routed
             .map(|(outcome, retains_focus)| OpeningInput::Ready {
@@ -323,6 +335,44 @@ pub(super) fn take_menu_input(
     })
 }
 
+fn earlier_local_menu_click(
+    context: &RenderContext<'_, '_, '_>,
+    menu: TabListMenuPaintRecord<'_>,
+    rows: &[MenuRow<'_>],
+) -> Option<(Id, PreparedSurfaceAction)> {
+    if !context.pointer_authority.accepts_local_pointer_actions() {
+        return None;
+    }
+    let ui = &*context.ui;
+    // Use egui's resolved click from the preceding widget registrations and
+    // recheck the hit against the menu's current bounds and prepared action.
+    let id = ui.ctx().interaction_snapshot(|snapshot| snapshot.clicked)?;
+    let mut response = ui.ctx().read_response(id)?;
+    let backdrop = menu.backdrop();
+    let (hit, action) = if id == backdrop_id(context, backdrop) {
+        (
+            backdrop.bounds(),
+            context.plan.prepare_tab_list_menu_dismiss(backdrop),
+        )
+    } else {
+        let row = rows.iter().find(|row| row.id == id)?.record;
+        if context.plan.receiver_for_tab_list_menu_row(row).is_none() {
+            return None;
+        }
+        (
+            row.interaction_bounds()?,
+            context.plan.prepare_tab_list_menu_row_activation(row),
+        )
+    };
+    let hit = egui_rect(hit)?;
+    response.interact_rect = response
+        .interact_rect
+        .intersect(hit)
+        .intersect(ui.clip_rect());
+    unambiguous_pointer_click(ui, &response, PointerButton::Primary)
+        .then_some((id.with("pointer-click"), action?))
+}
+
 pub(super) fn row_click_is_presented(
     context: &RenderContext<'_, '_, '_>,
     row: dockspace::runtime::TabListMenuRowPaintRecord<'_>,
@@ -340,7 +390,9 @@ pub(super) fn capture(
     opening: bool,
     opening_input: Option<OpeningInput>,
 ) {
-    if !effective_enabled(context.ui, true) {
+    if !effective_enabled(context.ui, true)
+        || matches!(opening_input, Some(OpeningInput::LocalClick))
+    {
         return;
     }
     let focused = context.ui.memory(egui::Memory::focused);

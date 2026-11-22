@@ -223,6 +223,17 @@ fn configure_control_accessibility(
     });
 }
 
+fn backdrop_id(
+    context: &RenderContext<'_, '_, '_>,
+    backdrop: TabListMenuBackdropPaintRecord,
+) -> Id {
+    context.ui.make_persistent_id((
+        context.instance_id,
+        "tab-list-menu-backdrop",
+        backdrop.visual_id(),
+    ))
+}
+
 fn paint_backdrop(
     context: &mut RenderContext<'_, '_, '_>,
     backdrop: TabListMenuBackdropPaintRecord,
@@ -231,11 +242,7 @@ fn paint_backdrop(
     let Some(bounds) = egui_rect(backdrop.bounds()) else {
         return;
     };
-    let id = context.ui.make_persistent_id((
-        context.instance_id,
-        "tab-list-menu-backdrop",
-        backdrop.visual_id(),
-    ));
+    let id = backdrop_id(context, backdrop);
     let enabled = effective_enabled(context.ui, true);
     let receiver = (enabled && !terminal)
         .then(|| context.plan.receiver_for_tab_list_menu_backdrop(backdrop))
