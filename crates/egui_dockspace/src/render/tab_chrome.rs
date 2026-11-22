@@ -67,6 +67,9 @@ fn paint_control_records(
             paint_control(context, control, bounds, &response, enabled);
         }
         configure_control_accessibility(context, control, id, response.interact_rect, enabled);
+        if enabled && control.kind() == TabStripControlKind::TabListMenu && !control.menu_open() {
+            keyboard::remember_pointer_opener(context, control, id);
+        }
 
         let activation = enabled
             .then(|| button_activation(context.ui, &response, context.pointer_authority))
@@ -396,12 +399,16 @@ pub(crate) fn paint_menu(
                 .as_ref()
                 .is_none_or(keyboard::OpeningInput::retains_focus)
         {
+            let initial_focus = super::menu_input::initial_focus(context.ui);
             let can_retarget = context.ui.memory(|memory| {
                 let focused = memory.focused();
                 let newly_focused = focused.is_some_and(|id| !memory.had_focus_last_frame(id));
-                let still_on_previous = opening
-                    || focused.is_none()
-                    || previous.is_some_and(|(_, row_id)| focused == row_id);
+                let still_on_previous = if opening {
+                    focused == Some(opener)
+                        || (focused.is_none() && initial_focus.is_none_or(|id| id == opener))
+                } else {
+                    focused.is_none() || previous.is_some_and(|(_, row_id)| focused == row_id)
+                };
                 !newly_focused && still_on_previous
             });
             if can_retarget {
@@ -447,7 +454,9 @@ fn paint_menu_row(
     let (click, reveal) = if enabled {
         context.ui.input(|input| {
             (
-                can_click && input.has_accesskit_action_request(id, Action::Click),
+                can_click
+                    && input.has_accesskit_action_request(id, Action::Click)
+                    && keyboard::row_click_is_presented(context, row),
                 input.has_accesskit_action_request(id, Action::ScrollIntoView),
             )
         })

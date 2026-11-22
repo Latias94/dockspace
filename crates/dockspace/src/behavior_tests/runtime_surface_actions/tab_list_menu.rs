@@ -1,7 +1,9 @@
 //! Regression coverage for popup placement and scrolling through host actions.
 
 use super::*;
-use crate::runtime::{DockspaceHostFrame, DockspaceRuntimeError, SurfaceTabListNavigation};
+use crate::runtime::{
+    DockspaceHostFrame, DockspaceRuntimeError, SurfaceTabInput, SurfaceTabListNavigation,
+};
 
 fn measure(
     frame: &mut DockspaceHostFrame<'_>,
@@ -185,6 +187,7 @@ fn a_presented_sibling_tab_stays_operable_while_another_surface_toggles_its_list
         let select = plan
             .prepare_tab_select(target)
             .map(PreparedSurfaceAction::into_deferred);
+        let strip = plan.retain_tab_strip(plan.tab_bars().next().unwrap());
         let receipt = plan.execute_surface_program(|_| Ok::<_, ()>(())).unwrap();
         frame.confirm_surface_painted(receipt).unwrap();
         frame
@@ -197,7 +200,7 @@ fn a_presented_sibling_tab_stays_operable_while_another_surface_toggles_its_list
                 .unwrap();
         }
         session.begin_host_frame().unwrap().commit().unwrap();
-        (toggle, select, opener.menu_open())
+        (toggle, select, opener.menu_open(), strip)
     };
 
     for (opener_surface, close_menu) in [(SURFACE, false), (SURFACE, true), (TARGET_SURFACE, false)]
@@ -205,8 +208,9 @@ fn a_presented_sibling_tab_stays_operable_while_another_surface_toggles_its_list
         let mut session =
             DockspaceSession::from_layout(layout.clone(), DockPolicy::default()).unwrap();
         let sibling_tab = ItemId::new(14);
-        let (open_a, _, a_open) = paint(&mut session, SURFACE, SECOND, None);
-        let (open_b, select_b, b_open) = paint(&mut session, TARGET_SURFACE, sibling_tab, None);
+        let (open_a, _, a_open, _) = paint(&mut session, SURFACE, SECOND, None);
+        let (open_b, select_b, b_open, original_strip) =
+            paint(&mut session, TARGET_SURFACE, sibling_tab, None);
         assert!(!a_open && !b_open);
         let presented_b = session.presented_surface(TARGET_SURFACE).unwrap();
         let (opener, item) = if opener_surface == SURFACE {
@@ -214,10 +218,10 @@ fn a_presented_sibling_tab_stays_operable_while_another_surface_toggles_its_list
         } else {
             (open_b, sibling_tab)
         };
-        let (dismiss, _, opened) = paint(&mut session, opener_surface, item, Some(opener));
+        let (dismiss, _, opened, _) = paint(&mut session, opener_surface, item, Some(opener));
         assert!(opened);
         if close_menu {
-            let (_, _, opened) = paint(&mut session, opener_surface, item, Some(dismiss));
+            let (_, _, opened, _) = paint(&mut session, opener_surface, item, Some(dismiss));
             assert!(!opened);
         }
 
@@ -236,14 +240,51 @@ fn a_presented_sibling_tab_stays_operable_while_another_surface_toggles_its_list
             session.view().item(sibling_tab).unwrap().is_active(),
             unchanged
         );
+        let (_, _, opened, current_strip) = paint(&mut session, TARGET_SURFACE, sibling_tab, None);
         if unchanged {
-            let (_, _, opened) = paint(&mut session, TARGET_SURFACE, sibling_tab, None);
             assert!(!opened);
+            let current = current_strip.unwrap();
+            let last = sibling_tab.into();
+            let receiver = current
+                .continuation_receiver(&original_strip.unwrap(), last)
+                .expect("another surface's popup leaves the committed strip operable");
+            let first = ItemId::new(13);
+            let activation = current
+                .resolve(
+                    receiver,
+                    last,
+                    [
+                        SurfaceTabInput::Navigate(SurfaceTabNavigation::First),
+                        SurfaceTabInput::Activate,
+                    ],
+                )
+                .unwrap();
+            assert_eq!(activation.tab_focus_target(), Some(first.into()));
+            let mut frame = session.begin_host_frame().unwrap();
+            frame.submit_deferred_surface_action(activation).unwrap();
+            assert!(frame.commit().unwrap().workspace_changed());
+            assert!(session.view().item(first).unwrap().is_active());
         } else {
             assert!(matches!(
                 report.inputs(),
                 [HostInputOutcome::StaleRejected { .. }]
             ));
+            assert!(
+                !current_strip
+                    .unwrap()
+                    .same_navigation_scope(&original_strip.unwrap())
+            );
+            let _ = paint(&mut session, SURFACE, SECOND, None);
+            session.enable_surface_pointer(SURFACE).unwrap();
+            let mut frame = session.begin_host_frame().unwrap();
+            let plan = frame.paint_plan(TARGET_SURFACE).unwrap().unwrap();
+            let menu = plan.tab_list_menus().next().unwrap();
+            assert!(plan.tab_list_menu_is_presented(menu));
+            let row = menu
+                .rows()
+                .find(|row| row.interaction_bounds().is_some())
+                .unwrap();
+            assert!(plan.tab_list_menu_row_is_presented(row));
         }
     }
 }

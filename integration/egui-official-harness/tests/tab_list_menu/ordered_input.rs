@@ -6,6 +6,11 @@ struct Application {
     activations: usize,
     button: Option<egui::Id>,
     closed: Vec<ItemId>,
+    toolbar_visible: bool,
+    toolbar_focuses_confirm: bool,
+    toolbar_clicks: usize,
+    focus_confirm: bool,
+    return_focus_after_confirm: Option<egui::Id>,
 }
 
 impl Application {
@@ -19,6 +24,11 @@ impl Application {
             activations: 0,
             button: None,
             closed: Vec::new(),
+            toolbar_visible: true,
+            toolbar_focuses_confirm: true,
+            toolbar_clicks: 0,
+            focus_confirm: false,
+            return_focus_after_confirm: None,
         }
     }
 
@@ -37,20 +47,38 @@ impl Application {
                         .exact_size(44.0)
                         .frame(egui::Frame::NONE)
                         .show(ui, |ui| {
-                            if ui.input_mut(|input| {
-                                input.consume_key(egui::Modifiers::NONE, Key::F7)
-                            }) && let Some(button) = self.button
+                            if (std::mem::take(&mut self.focus_confirm)
+                                || ui.input_mut(|input| {
+                                    input.consume_key(egui::Modifiers::NONE, Key::F7)
+                                }))
+                                && let Some(button) = self.button
                             {
                                 ui.memory_mut(|memory| memory.request_focus(button));
                             }
                             ui.horizontal(|ui| {
-                                if ui.button("Focus app command").clicked()
-                                    && let Some(button) = self.button
+                                if self.toolbar_visible
+                                    && ui
+                                        .push_id("toolbar-focus", |ui| {
+                                            ui.button("Focus app command")
+                                        })
+                                        .inner
+                                        .clicked()
                                 {
-                                    ui.memory_mut(|memory| memory.request_focus(button));
+                                    self.toolbar_clicks += 1;
+                                    if self.toolbar_focuses_confirm
+                                        && let Some(button) = self.button
+                                    {
+                                        ui.memory_mut(|memory| memory.request_focus(button));
+                                    }
                                 }
-                                let button = ui.button("App command");
-                                self.activations += usize::from(button.clicked());
+                                let button =
+                                    ui.push_id("confirm", |ui| ui.button("App command")).inner;
+                                if button.clicked() {
+                                    self.activations += 1;
+                                    if let Some(target) = self.return_focus_after_confirm {
+                                        ui.memory_mut(|memory| memory.request_focus(target));
+                                    }
+                                }
                                 self.button = Some(button.id);
                             });
                             let editor = ui.add(egui::TextEdit::singleline(&mut self.editor));
@@ -116,6 +144,26 @@ impl Application {
         )
         .0
     }
+
+    fn open_layout_menu(&mut self) -> FullOutput {
+        self.fixture.dock = Dockspace::builder(
+            "ordered-layout-menu",
+            DockspaceLayout::new([DockspaceSurfaceLayout::new(
+                SURFACE,
+                DockspaceRootLayout::new(
+                    RootId::new(1),
+                    DockspaceNode::central_tabs((2..=4).map(ItemId::new)),
+                ),
+            )])
+            .unwrap(),
+        )
+        .build()
+        .unwrap();
+        self.run(Vec::new());
+        let output = self.run(Vec::new());
+        let opener = node(&output, Role::Button, "Layout actions").0;
+        self.send(vec![accesskit(opener, Action::Click)], true)
+    }
 }
 
 #[test]
@@ -163,6 +211,167 @@ fn application_click_hands_confirmation_off_from_a_product_menu() {
             );
             assert!((2..=4).all(|item| app.fixture.dock.view().item(ItemId::new(item)).is_some()));
         }
+    }
+}
+
+#[test]
+fn a_retired_toolbar_click_cannot_confirm_the_old_close_entry() {
+    for batched in [false, true] {
+        let mut app = Application::new();
+        let menu = app.open_layout_menu();
+        let close = node(&menu, Role::MenuItem, "Close Layout").0;
+        let toolbar = node(&menu, Role::Button, "Focus app command").0;
+        app.toolbar_visible = false;
+        app.send(vec![accesskit(close, Action::Focus)], true);
+        app.focus_confirm = true;
+        app.send(
+            vec![accesskit(toolbar, Action::Click), key(Key::Enter)],
+            batched,
+        );
+        assert!(app.closed.is_empty());
+        assert_eq!(app.toolbar_clicks, 0);
+        assert_eq!(app.activations, 1);
+    }
+}
+
+#[test]
+fn an_application_confirmation_can_restore_menu_focus_without_reusing_enter() {
+    for batched in [false, true] {
+        let mut app = Application::new();
+        let menu = app.open_layout_menu();
+        let close = node(&menu, Role::MenuItem, "Close Layout").0;
+        let toolbar = node(&menu, Role::Button, "Focus app command").0;
+        app.send(vec![accesskit(close, Action::Focus)], true);
+        let focus = app.fixture.context.memory(egui::Memory::focused).unwrap();
+        assert_eq!(focus.accesskit_id(), close);
+        app.return_focus_after_confirm = Some(focus);
+
+        let mut release = key(Key::Enter);
+        if let Event::Key { pressed, .. } = &mut release {
+            *pressed = false;
+        }
+        let output = app.send(
+            vec![accesskit(toolbar, Action::Click), key(Key::Enter), release],
+            batched,
+        );
+        assert_eq!(app.toolbar_clicks, 1, "batched: {batched}");
+        assert_eq!(app.activations, 1, "batched: {batched}");
+        assert!(app.closed.is_empty(), "batched: {batched}");
+        assert_eq!(
+            output.platform_output.accesskit_update.unwrap().focus,
+            close
+        );
+        assert!(
+            !app.fixture
+                .context
+                .input(|input| input.key_down(Key::Enter))
+        );
+    }
+}
+
+#[test]
+fn a_passive_toolbar_click_preserves_explicit_menu_focus() {
+    for batched in [false, true] {
+        let mut app = Application::new();
+        let menu = app.open_layout_menu();
+        let panes = node(&menu, Role::MenuItem, "Active Panes…").0;
+        let toolbar = node(&menu, Role::Button, "Focus app command").0;
+        let confirm = node(&menu, Role::Button, "App command").0;
+        app.send(vec![accesskit(confirm, Action::Focus)], true);
+        app.toolbar_focuses_confirm = false;
+        let output = app.send(
+            vec![
+                accesskit(panes, Action::Focus),
+                accesskit(toolbar, Action::Click),
+                key(Key::Enter),
+            ],
+            batched,
+        );
+        assert_eq!(app.toolbar_clicks, 1);
+        assert_eq!(app.activations, 0);
+        assert!(app.closed.is_empty());
+        let first = node(
+            &output,
+            Role::MenuItem,
+            &app.fixture.panes.label(ItemId::new(2)),
+        )
+        .0;
+        assert_eq!(
+            output.platform_output.accesskit_update.unwrap().focus,
+            first
+        );
+    }
+}
+
+#[test]
+fn a_passive_application_click_preserves_repeated_menu_navigation() {
+    let mut app = Application::new();
+    let menu = app.open_menu();
+    let toolbar = node(&menu, Role::Button, "Focus app command").0;
+    let row = |app: &Application, output: &FullOutput, item| {
+        node(
+            output,
+            Role::MenuItem,
+            &app.fixture.panes.label(ItemId::new(item)),
+        )
+        .0
+    };
+    app.toolbar_focuses_confirm = false;
+    app.send(vec![accesskit(row(&app, &menu, 35), Action::Focus)], true);
+    let output = app.send(vec![key(Key::ArrowDown)], true);
+    assert_eq!(
+        output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .focus,
+        row(&app, &output, 36)
+    );
+    let output = app.send(
+        vec![accesskit(toolbar, Action::Click), key(Key::ArrowDown)],
+        true,
+    );
+    assert_eq!(app.toolbar_clicks, 1);
+    assert_eq!(
+        output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .focus,
+        row(&app, &output, 37)
+    );
+}
+
+#[test]
+fn an_accessible_row_click_precedes_later_focus_and_confirmation() {
+    for batched in [false, true] {
+        let mut app = Application::new();
+        let menu = app.open_menu();
+        let clicked = app.target_row(&menu);
+        let later = node(
+            &menu,
+            Role::MenuItem,
+            &app.fixture.panes.label(ItemId::new(34)),
+        )
+        .0;
+        app.send(
+            vec![
+                accesskit(clicked, Action::Click),
+                accesskit(later, Action::Focus),
+                key(Key::Enter),
+            ],
+            batched,
+        );
+        assert!(
+            app.fixture
+                .dock
+                .view()
+                .item(ItemId::new(35))
+                .unwrap()
+                .is_active()
+        );
     }
 }
 
@@ -585,6 +794,146 @@ fn a_row_can_receive_focus_and_confirmation_after_its_first_presentation() {
             "batched: {batched}"
         );
     }
+}
+
+#[test]
+fn a_discarded_menu_row_does_not_confirm_when_a_later_output_presents() {
+    for direct_click in [false, true] {
+        let mut fixture = Fixture::new(Panes::default());
+        let output = fixture.settle();
+        let opener = node(&output, Role::Button, "List tabs").0;
+        fixture.run(vec![accesskit(opener, Action::Click)]);
+        let draw = |fixture: &mut Fixture, events| {
+            let input = fixture.input(events, 200.0);
+            let (mut output, receipt) = fixture
+                .dock
+                .run_single_surface(&fixture.context, input, SURFACE, &mut fixture.panes)
+                .unwrap()
+                .0
+                .into_parts();
+            output.textures_delta.clear();
+            (output, receipt)
+        };
+        let (first, pending) = draw(&mut fixture, Vec::new());
+        let name = fixture.panes.label(ItemId::new(35));
+        let row = node(&first, Role::MenuItem, &name).0;
+        let events = if direct_click {
+            vec![accesskit(row, Action::Click)]
+        } else {
+            vec![accesskit(row, Action::Focus), key(Key::Enter)]
+        };
+        for events in [events, Vec::new()] {
+            let (_, receipt) = draw(&mut fixture, events);
+            receipt.report(SurfacePresentationResult::Dropped);
+        }
+        pending.report(SurfacePresentationResult::Dropped);
+
+        let output = fixture.settle();
+        assert!(fixture.dock.view().item(SELECTED).unwrap().is_active());
+        let row = node(&output, Role::MenuItem, &name).0;
+        fixture.run(vec![accesskit(row, Action::Click)]);
+        fixture.settle();
+        assert!(
+            fixture
+                .dock
+                .view()
+                .item(ItemId::new(35))
+                .unwrap()
+                .is_active()
+        );
+    }
+}
+
+#[test]
+fn a_row_revealed_only_by_a_dropped_scroll_output_cannot_be_clicked() {
+    let mut fixture = Fixture::new(Panes::default());
+    let output = fixture.settle();
+    let opener = node(&output, Role::Button, "List tabs").0;
+    fixture.run(vec![accesskit(opener, Action::Click)]);
+    let output = fixture.settle();
+    let target = ItemId::new(1);
+    let name = fixture.panes.label(target);
+    let (row, info) = node(&output, Role::MenuItem, &name);
+    assert!(info.bounds().is_none());
+    fixture.run(vec![accesskit(*row, Action::ScrollIntoView)]);
+
+    let input = fixture.input(Vec::new(), 200.0);
+    let (mut scrolled, receipt) = fixture
+        .dock
+        .run_single_surface(&fixture.context, input, SURFACE, &mut fixture.panes)
+        .unwrap()
+        .0
+        .into_parts();
+    receipt.report(SurfacePresentationResult::Dropped);
+    scrolled.textures_delta.clear();
+    let (revealed, info) = node(&scrolled, Role::MenuItem, &name);
+    assert_eq!(revealed, row);
+    assert!(info.bounds().is_some());
+
+    fixture.run(vec![accesskit(*revealed, Action::Click)]);
+    let output = fixture.settle();
+    assert!(fixture.dock.view().item(SELECTED).unwrap().is_active());
+    let row = node(&output, Role::MenuItem, &name).0;
+    fixture.run(vec![accesskit(row, Action::Click)]);
+    fixture.settle();
+    assert!(fixture.dock.view().item(target).unwrap().is_active());
+}
+
+#[test]
+fn a_first_presented_list_leaves_escape_for_the_focused_application() {
+    let mut fixture = Fixture::new(Panes::default());
+    let mut app_escapes = 0;
+    let mut run = |events| {
+        let mut input = fixture.input(events, 260.0);
+        input.screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(1_200.0, 260.0)));
+        let (mut output, receipt) = egui_dockspace::run_ui(&fixture.context, input, |ui| {
+            ui.columns(2, |columns| {
+                let [dock, app] = columns else { unreachable!() };
+                dock.shrink_clip_rect(dock.available_rect_before_wrap());
+                fixture
+                    .dock
+                    .show_single_surface(SURFACE, dock, &mut fixture.panes)
+                    .unwrap();
+                let button = app.button("Application Escape command");
+                if button.has_focus() {
+                    app.memory_mut(|memory| {
+                        memory.set_focus_lock_filter(
+                            button.id,
+                            egui::EventFilter {
+                                escape: true,
+                                ..Default::default()
+                            },
+                        )
+                    });
+                }
+                app_escapes += usize::from(
+                    app.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape)),
+                );
+            });
+        })
+        .into_parts();
+        receipt.report(SurfacePresentationResult::Presented);
+        output.textures_delta.clear();
+        output
+    };
+    run(Vec::new());
+    let output = run(Vec::new());
+    let opener = node(&output, Role::Button, "List tabs").0;
+    let app = node(&output, Role::Button, "Application Escape command").0;
+    run(vec![
+        accesskit(opener, Action::Click),
+        accesskit(app, Action::Focus),
+    ]);
+    run(Vec::new());
+    run(vec![key(Key::Escape)]);
+    let output = run(Vec::new());
+    assert!(
+        nodes(&output)
+            .iter()
+            .any(|(_, node)| node.role() == Role::Menu)
+    );
+    assert_eq!(output.platform_output.accesskit_update.unwrap().focus, app);
+    assert_eq!(app_escapes, 1);
 }
 
 #[test]

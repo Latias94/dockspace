@@ -24,6 +24,12 @@ struct PendingOpening {
     retains_focus: bool,
 }
 
+#[derive(Clone)]
+struct PaintedOpener {
+    pass: u64,
+    opener: RetainedTabListOpener,
+}
+
 pub(super) enum OpeningInput {
     AwaitingPresentation {
         terminal: bool,
@@ -61,6 +67,21 @@ fn opening_slot(context: &RenderContext<'_, '_, '_>) -> Id {
     ))
 }
 
+pub(super) fn remember_pointer_opener(
+    context: &RenderContext<'_, '_, '_>,
+    control: TabStripControlPaintRecord,
+    id: Id,
+) {
+    if context.pointer_authority.supports_preview_gestures()
+        && let Some(opener) = context.plan.retain_tab_list_opener(control)
+    {
+        let pass = context.ui.ctx().cumulative_pass_nr();
+        context.ui.ctx().data_mut(|data| {
+            data.insert_temp(id.with("pointer-opener"), PaintedOpener { pass, opener });
+        });
+    }
+}
+
 pub(super) fn register_opening(
     context: &RenderContext<'_, '_, '_>,
     control: TabStripControlPaintRecord,
@@ -70,6 +91,15 @@ pub(super) fn register_opening(
     let Some(opener) = context.plan.retain_tab_list_opener(control) else {
         return;
     };
+    retain_opening(context, opener, id, start);
+}
+
+fn retain_opening(
+    context: &RenderContext<'_, '_, '_>,
+    opener: RetainedTabListOpener,
+    id: Id,
+    start: usize,
+) {
     let ui = &*context.ui;
     let focused = ui.memory(egui::Memory::focused);
     // An application widget already built in this pass may have seen Enter.
@@ -164,13 +194,19 @@ pub(super) fn take_menu_input(
     rows: &[MenuRow<'_>],
 ) -> Option<OpeningInput> {
     let ui = &*context.ui;
-    // Publish the first menu's targets before acceptance so AccessKit can name
-    // them in the next packet. Apply the routed input only after acceptance.
+    let presented = !context.pointer_authority.supports_preview_gestures()
+        || context.plan.tab_list_menu_is_presented(menu);
+    // Expose the targets for the next input packet. A command addressed to a
+    // row needs a presented menu at delivery; only opener keys can wait for it.
     let routed = menu_input::register(ui, id, rows.iter().map(|row| row.id), MenuKind::TabList)
+        .filter(|_| presented)
         .and_then(|routed| {
             let row_index = |id| rows.iter().position(|row| row.id == id);
             let outcome = match routed.intent {
                 Intent::Focus(row) => row_index(row).map(Outcome::Navigate),
+                Intent::Click(row) => row_index(row)
+                    .filter(|&index| row_click_is_presented(context, rows[index].record))
+                    .map(Outcome::Activate),
                 Intent::Activate(row) => row_index(row).map(Outcome::Activate),
                 Intent::Dismiss(row) => row_index(row).map(|_| Outcome::Dismiss),
                 Intent::Back(_) => None,
@@ -178,13 +214,35 @@ pub(super) fn take_menu_input(
             Some((outcome, routed.retains_focus))
         });
     let ready = || {
-        routed.map(|(outcome, retains_focus)| OpeningInput::Ready {
-            outcome: Some(outcome),
-            retains_focus,
-        })
+        routed
+            .map(|(outcome, retains_focus)| OpeningInput::Ready {
+                outcome: Some(outcome),
+                retains_focus,
+            })
+            .or_else(|| {
+                (!presented).then_some(OpeningInput::AwaitingPresentation { terminal: false })
+            })
     };
     let frame = ui.ctx().cumulative_frame_nr();
     let slot = opening_slot(context);
+    if !presented
+        && !ui
+            .ctx()
+            .data(|data| data.get_temp::<PendingOpening>(slot).is_some())
+        && let Some(start) = after_opening_click(ui, opener).filter(|start| *start > 0)
+        && let Some(previous) = ui
+            .ctx()
+            .data(|data| data.get_temp::<PaintedOpener>(opener.with("pointer-opener")))
+        && previous.pass.checked_add(1) == Some(ui.ctx().cumulative_pass_nr())
+        && context
+            .plan
+            .retain_tab_list_menu(menu)
+            .is_some_and(|list| list.can_continue_opening(&previous.opener))
+    {
+        // Pointer ingress may open the menu before egui builds the surface.
+        // Retain only the keys after the witnessed release.
+        retain_opening(context, previous.opener, opener, start);
+    }
     let Some(mut pending) = ui.ctx().data(|data| data.get_temp::<PendingOpening>(slot)) else {
         return ready();
     };
@@ -228,7 +286,7 @@ pub(super) fn take_menu_input(
         pending.outcome = Some(outcome);
         pending.retains_focus = retains_focus;
     }
-    if context.pointer_authority.supports_preview_gestures() && !context.plan.is_presented() {
+    if !presented {
         // The open intent owns these keys until a renderer accepts its menu.
         let terminal = pending.outcome.is_some_and(Outcome::is_terminal);
         if pending.retains_focus && !terminal {
@@ -245,6 +303,14 @@ pub(super) fn take_menu_input(
         outcome: pending.outcome,
         retains_focus: pending.retains_focus,
     })
+}
+
+pub(super) fn row_click_is_presented(
+    context: &RenderContext<'_, '_, '_>,
+    row: dockspace::runtime::TabListMenuRowPaintRecord<'_>,
+) -> bool {
+    !context.pointer_authority.supports_preview_gestures()
+        || context.plan.tab_list_menu_row_is_presented(row)
 }
 
 pub(super) fn capture(
@@ -288,6 +354,14 @@ pub(super) fn capture(
             retains_focus,
             None,
         );
+        return;
+    }
+    if menu_input::awaits_application(context.ui, id)
+        || (!opening
+            && menu_input::started_outside(context.ui, id, |initial| {
+                initial == opener || rows.iter().any(|row| row.id == initial)
+            }))
+    {
         return;
     }
     let start = if opening {
@@ -471,7 +545,7 @@ fn step(cursor: &mut Option<usize>, last: Option<usize>, key: MenuKey) -> Option
             Some(Outcome::Navigate(next))
         }
         (MenuKey::Activate, Some(index), _) => Some(Outcome::Activate(index)),
-        (MenuKey::Dismiss, _, _) => Some(Outcome::Dismiss),
+        (MenuKey::Dismiss, Some(_), _) => Some(Outcome::Dismiss),
         _ => None,
     }
 }

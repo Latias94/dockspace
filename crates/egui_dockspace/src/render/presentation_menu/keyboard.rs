@@ -86,14 +86,23 @@ pub(super) fn capture(
                 Outcome::Focus(target)
             }
             Intent::Back(target) if target == anchor => Outcome::Focus(anchor),
-            Intent::Activate(target) if entries.contains(&target) => Outcome::Activate {
-                target,
-                retains_focus: routed.retains_focus,
-            },
+            Intent::Click(target) | Intent::Activate(target) if entries.contains(&target) => {
+                Outcome::Activate {
+                    target,
+                    retains_focus: routed.retains_focus,
+                }
+            }
             Intent::Dismiss(_) => Outcome::Dismiss,
             _ => return None,
         };
         return Some(apply(ui, anchor, outcome, routed.retains_focus));
+    }
+    if menu_input::awaits_application(ui, id)
+        || menu_input::started_outside(ui, id, |initial| {
+            initial == anchor || entries.contains(&initial)
+        })
+    {
+        return None;
     }
     let (events, outcome) = ui.ctx().viewport(|viewport| {
         let mut events = Vec::new();
