@@ -34,6 +34,10 @@ impl TabKeyboard {
             pane_input::PaneInputState::Ready(delivery) => context.pane_input = Some(delivery),
             pane_input::PaneInputState::Waiting => {}
             pane_input::PaneInputState::None => {
+                context.pane_input = PaneInputDelivery::for_focus_request(context);
+                if context.pane_input.is_some() {
+                    return Self::Done;
+                }
                 if can_capture(context) {
                     return Self::prepare_keys(context);
                 }

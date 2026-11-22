@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use dockspace::geometry::{LogicalRect, LogicalSize};
 use dockspace::model::{
-    DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, RootId,
-    SurfaceId,
+    DockspaceAxis, DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout,
+    ItemId, RootId, SurfaceId,
 };
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
@@ -381,6 +381,94 @@ fn logical_center(bounds: dockspace::geometry::LogicalRect) -> Pos2 {
         (bounds.x() + bounds.width() * 0.5) as f32,
         (bounds.y() + bounds.height() * 0.5) as f32,
     )
+}
+
+#[test]
+fn native_paint_delivers_a_focus_handoff_packet_to_only_the_new_editor() {
+    struct Editors([String; 2]);
+
+    impl PaneView for Editors {
+        fn title(&self, item: ItemId) -> Option<eframe::egui::WidgetText> {
+            Some(format!("Document {}", item.get()).into())
+        }
+
+        fn focus_target(&self, item: ItemId) -> Option<Id> {
+            Some(Id::unique(("native-document-editor", item)))
+        }
+
+        fn ui(&mut self, item: ItemId, ui: &mut Ui) -> PaneResponse {
+            let id = self.focus_target(item).unwrap();
+            let text = &mut self.0[usize::from(item == SECOND)];
+            let editor = ui.add(TextEdit::multiline(text).id(id).desired_width(160.0));
+            if item == SECOND {
+                let clip = ui.clip_rect();
+                ui.shrink_clip_rect(Rect::from_min_max(
+                    clip.left_bottom() - vec2(0.0, 24.0),
+                    clip.max,
+                ));
+                assert!(!ui.clip_rect().intersects(editor.interact_rect));
+            }
+            (&editor).into()
+        }
+    }
+
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(
+            ROOT,
+            DockspaceNode::equal_split(
+                DockspaceAxis::Horizontal,
+                [FIRST, SECOND].map(|item| DockspaceNode::tabs([item])),
+            )
+            .unwrap(),
+        ),
+    )])
+    .unwrap();
+    let style = DockStyle::default();
+    let mut session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        DockPolicy::default(),
+        style.presentation_config().unwrap(),
+    )
+    .unwrap();
+    let context = Context::default();
+    let mut editors = Editors(["first".into(), "second".into()]);
+    for (item, events) in [(FIRST, Vec::new()), (SECOND, vec![Event::Text("!".into())])] {
+        let mut frame = session.begin_host_frame().unwrap();
+        frame.select_item_current(item).unwrap();
+        frame.commit().unwrap();
+        let mut frame = session.begin_host_frame().unwrap();
+        let mut output = context.run_ui(input(events), |ui| {
+            let bounds = ui.available_rect_before_wrap();
+            native_support::measure_surface(
+                &mut frame, SURFACE, ui, bounds, bounds, &editors, &style,
+            )
+            .unwrap();
+            let mut register = |ui: &Ui, rect, id| {
+                let hit = ui.register_scroll_hit_candidate(rect, id);
+                (hit.id(), hit.layer_id())
+            };
+            let paint = native_support::paint_surface(
+                &mut frame,
+                Id::unique("native-editor-handoff"),
+                SURFACE,
+                ui,
+                &mut editors,
+                &style,
+                &egui_dockspace::DockInputConfig::default(),
+                &mut register,
+            )
+            .unwrap();
+            assert!(paint.had_ready_plan());
+        });
+        output.textures_delta.clear();
+        frame.commit().unwrap();
+        assert_eq!(
+            context.memory(eframe::egui::Memory::focused),
+            editors.focus_target(item)
+        );
+    }
+    assert_eq!(editors.0, ["first", "second!"]);
 }
 
 #[test]

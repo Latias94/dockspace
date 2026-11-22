@@ -139,12 +139,24 @@ pub(crate) fn paint_pane(
                         && effective_enabled(child_ui, true)
                         && !*context.pane_focus_target_requested
                 });
-            let focus_before_contents =
-                focus_request.and_then(|_| child_ui.memory(egui::Memory::focused));
+            let mut delivery = super::tab_shortcuts::PaneInputDelivery::take_for(
+                &mut context.pane_input,
+                child_ui,
+                pane,
+            );
+            let focus_before_contents = focus_request.and_then(|_| {
+                delivery.as_ref().map_or_else(
+                    || child_ui.memory(egui::Memory::focused),
+                    |delivery| delivery.prior_focus(child_ui),
+                )
+            });
             let focus_target = focus_request.and_then(|_| context.panes.focus_target(item));
             let preapplied = match (focus_request, focus_target) {
                 (Some(request), Some(target))
-                    if !crate::focus::input_may_surrender_focus(context.ui.ctx()) =>
+                    if !crate::focus::input_may_surrender_focus(context.ui.ctx())
+                        && delivery
+                            .as_ref()
+                            .is_none_or(|delivery| delivery.permits_preapply(child_ui, clip)) =>
                 {
                     // The application names its target before registering it.
                     // Deliver ordinary input now, then verify the registration.
@@ -158,20 +170,17 @@ pub(crate) fn paint_pane(
                 }
                 _ => false,
             };
-            let replay = super::tab_shortcuts::PaneInputDelivery::take_for(
-                &mut context.pane_input,
-                child_ui,
-                pane,
-            )
-            .map(|delivery| delivery.replay(child_ui.ctx()));
+            let replay = delivery
+                .as_ref()
+                .is_some_and(|delivery| delivery.can_replay(child_ui, clip))
+                .then(|| delivery.take().unwrap().replay(child_ui.ctx()));
             let keyboard = replay
                 .as_ref()
                 .map(|_| super::tab_shortcuts::TabKeyboard::for_replayed_pane(context, pane));
             let pane_response = context.panes.ui(item, child_ui);
-            let registered_target = context
-                .panes
-                .focus_target(item)
-                .filter(|target| crate::focus::pane_registered_focus_target(child_ui, *target));
+            let registered_target = context.panes.focus_target(item).filter(|target| {
+                crate::focus::pane_registered_focus_target(child_ui, clip, *target, false)
+            });
             if preapplied
                 && focus_target != registered_target
                 && let Some(target) = focus_target
@@ -200,6 +209,9 @@ pub(crate) fn paint_pane(
                     );
                     *context.pane_focus_target_requested = true;
                     *context.pane_focus_target = Some(target);
+                }
+                if let Some(delivery) = delivery {
+                    delivery.defer_after_registration(context, target);
                 }
             }
             if let Some(keyboard) = keyboard {

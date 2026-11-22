@@ -4,7 +4,7 @@ use dockspace::{
     model::{ItemId, TabKey},
     runtime::{DockspaceContentId, PanePaintRecord},
 };
-use egui::{Context, Event, FocusDirection, Id, Key, Ui};
+use egui::{Context, Event, FocusDirection, Id, Key, Rect, Ui};
 
 use super::super::RenderContext;
 
@@ -36,6 +36,11 @@ pub(in crate::render) struct PaneInputDelivery {
     item: ItemId,
     widget: Id,
     events: Vec<Event>,
+    focus_handoff: Option<FocusHandoff>,
+}
+
+struct FocusHandoff {
+    prior_focus: Option<Id>,
 }
 
 pub(super) fn activate(
@@ -121,7 +126,11 @@ pub(super) fn prepare(context: &RenderContext<'_, '_, '_>) -> PaneInputState {
 
     let focused = context.ui.memory(egui::Memory::focused);
     let widget = match pending.handoff {
-        Handoff::Continuation { widget } if focused == Some(widget) => {
+        Handoff::Continuation { widget }
+            if focused == Some(widget)
+                && (context.pane_focus_request.is_none()
+                    || context.pane_focus_request == pending.previous_request) =>
+        {
             pending.events.extend(take_keys_after(context.ui, 0));
             widget
         }
@@ -162,6 +171,7 @@ pub(super) fn prepare(context: &RenderContext<'_, '_, '_>) -> PaneInputState {
         item: pending.item,
         widget,
         events: pending.events,
+        focus_handoff: None,
     })
 }
 
@@ -175,6 +185,36 @@ fn store(context: &RenderContext<'_, '_, '_>, pending: PendingInput) {
 }
 
 impl PaneInputDelivery {
+    pub(super) fn for_focus_request(context: &RenderContext<'_, '_, '_>) -> Option<Self> {
+        if !context.pointer_authority.supports_preview_gestures()
+            || !super::super::actions::effective_enabled(context.ui, true)
+            || !super::super::actions::focus_uninterrupted(context.ui)
+            || crate::focus::input_may_surrender_focus(context.ui.ctx())
+            || !context
+                .ui
+                .input(|input| input.events.iter().any(is_keyboard_input))
+        {
+            return None;
+        }
+        let request = context.pane_focus_request?;
+        let item = request.item()?;
+        let widget = context.panes.focus_target(item)?;
+        let prior_focus = context.ui.memory(egui::Memory::focused);
+        crate::focus::pane_focus_handoff_pending(
+            context.ui.ctx(),
+            context.instance_id,
+            request,
+            widget,
+            prior_focus,
+        )
+        .then(|| Self {
+            item,
+            widget,
+            events: take_keys_after(context.ui, 0),
+            focus_handoff: Some(FocusHandoff { prior_focus }),
+        })
+    }
+
     pub(in crate::render) fn targets(&self, item: ItemId) -> bool {
         self.item == item
     }
@@ -185,11 +225,38 @@ impl PaneInputDelivery {
         pane: PanePaintRecord<'_>,
     ) -> Option<Self> {
         let expected = delivery.as_ref()?;
-        (expected.targets(pane.item())
-            && super::super::actions::effective_enabled(ui, true)
-            && ui.memory(|memory| memory.has_focus(expected.widget)))
-        .then(|| delivery.take())
-        .flatten()
+        (expected.targets(pane.item()) && super::super::actions::effective_enabled(ui, true))
+            .then(|| delivery.take())
+            .flatten()
+    }
+
+    pub(in crate::render) fn prior_focus(&self, ui: &Ui) -> Option<Id> {
+        self.focus_handoff.as_ref().map_or_else(
+            || ui.memory(egui::Memory::focused),
+            |handoff| handoff.prior_focus,
+        )
+    }
+
+    pub(in crate::render) fn permits_preapply(&self, ui: &Ui, clip: Rect) -> bool {
+        self.focus_handoff.is_none()
+            || crate::focus::pane_registered_focus_target(ui, clip, self.widget, true)
+    }
+
+    pub(in crate::render) fn can_replay(&self, ui: &Ui, clip: Rect) -> bool {
+        self.permits_preapply(ui, clip) && ui.memory(|memory| memory.has_focus(self.widget))
+    }
+
+    pub(in crate::render) fn defer_after_registration(
+        self,
+        context: &RenderContext<'_, '_, '_>,
+        target: Id,
+    ) {
+        if self.focus_handoff.is_some()
+            && target == self.widget
+            && context.ui.memory(|memory| memory.has_focus(target))
+        {
+            continue_at(context, self.item, target, self.events);
+        }
     }
 
     pub(in crate::render) fn replay(self, context: &Context) -> ScopedPaneInput {

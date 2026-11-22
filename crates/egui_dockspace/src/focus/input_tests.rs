@@ -301,7 +301,7 @@ fn an_unsuperseded_tab_press_hands_focus_to_its_content_once() {
 }
 
 #[test]
-fn a_new_pane_focus_request_delivers_the_first_frames_text() {
+fn a_new_pane_focus_request_delivers_the_first_text_after_registration() {
     for owned in [true, false] {
         for new_target in [false, true] {
             let (context, mut dockspace, mut pane, _) = presented_editor(owned);
@@ -326,14 +326,24 @@ fn a_new_pane_focus_request_delivers_the_first_frames_text() {
             )
             .into_parts();
             output.textures_delta.clear();
-            assert_eq!(
-                pane.text, "first focused frame",
-                "a plain focus request must reach the registered editor before its input callback, owned={owned}, focus_trace={:?}",
-                pane.focus_trace,
-            );
             assert_eq!(context.memory(egui::Memory::focused), Some(pane.target));
             output.drop_without_applying_deltas();
             receipt.report(SurfacePresentationResult::Presented);
+            if new_target {
+                assert!(
+                    pane.text.is_empty(),
+                    "an unknown target must register first"
+                );
+                let (output, receipt) =
+                    run(owned, &context, &mut dockspace, &mut pane, 1.1, Vec::new()).into_parts();
+                output.drop_without_applying_deltas();
+                receipt.report(SurfacePresentationResult::Presented);
+            }
+            assert_eq!(
+                pane.text, "first focused frame",
+                "the registered editor must receive the first text once, owned={owned}, focus_trace={:?}",
+                pane.focus_trace,
+            );
         }
     }
 }

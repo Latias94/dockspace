@@ -134,11 +134,11 @@ pub(super) fn paint_bar_slots(
         }
         let mut child = context.ui.new_child(
             UiBuilder::new()
-                .scope_id(
-                    context
-                        .instance_id
-                        .with(("tab-bar-slot", record.visual_id(), slot)),
-                )
+                .scope_id(context.instance_id.with((
+                    "tab-bar-slot",
+                    record.group_menu_input_id(),
+                    slot,
+                )))
                 .max_rect(bounds)
                 .layout(Layout::left_to_right(Align::Center)),
         );

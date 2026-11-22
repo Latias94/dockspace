@@ -71,23 +71,7 @@ pub(crate) fn apply_pane_focus_request(
     focus_before_contents: Option<Id>,
 ) -> bool {
     let focused = context.memory(egui::Memory::focused);
-    let explicit_focus = focused
-        .filter(|focused| *focused != target)
-        .is_some_and(|focused| {
-            context.input(|input| {
-                input.raw.events.iter().rev().find_map(|event| {
-                    if let egui::Event::AccessKitActionRequest(request) = event
-                        && request.action == egui::accesskit::Action::Focus
-                        && request.target_tree == egui::accesskit::TreeId::ROOT
-                        && request.data.is_none()
-                    {
-                        Some(request.target_node)
-                    } else {
-                        None
-                    }
-                }) == Some(focused.accesskit_id())
-            })
-        });
+    let explicit_focus = explicitly_focused_elsewhere(context, focused, target);
     let apply = with_framework_focus(context, instance, context.viewport_id(), request, |state| {
         !std::mem::replace(&mut state.applied, true)
             // egui applies explicit accessibility focus before this callback.
@@ -109,6 +93,39 @@ pub(crate) fn apply_pane_focus_request(
     apply
 }
 
+pub(crate) fn pane_focus_handoff_pending(
+    context: &Context,
+    instance: Id,
+    request: DockspacePaneFocusRequest,
+    target: Id,
+    focused: Option<Id>,
+) -> bool {
+    !explicitly_focused_elsewhere(context, focused, target)
+        && with_framework_focus(context, instance, context.viewport_id(), request, |state| {
+            !state.applied && state.tab_target.is_none_or(|tab| focused == Some(tab))
+        })
+}
+
+fn explicitly_focused_elsewhere(context: &Context, focused: Option<Id>, target: Id) -> bool {
+    focused
+        .filter(|focused| *focused != target)
+        .is_some_and(|focused| {
+            context.input(|input| {
+                input.raw.events.iter().rev().find_map(|event| {
+                    if let egui::Event::AccessKitActionRequest(request) = event
+                        && request.action == egui::accesskit::Action::Focus
+                        && request.target_tree == egui::accesskit::TreeId::ROOT
+                        && request.data.is_none()
+                    {
+                        Some(request.target_node)
+                    } else {
+                        None
+                    }
+                }) == Some(focused.accesskit_id())
+            })
+        })
+}
+
 /// Pointer chrome may clear a target during its own widget registration.
 /// Ordinary keyboard and IME frames must receive focus before content runs.
 pub(crate) fn input_may_surrender_focus(context: &Context) -> bool {
@@ -120,9 +137,18 @@ pub(crate) fn input_may_surrender_focus(context: &Context) -> bool {
     })
 }
 
-pub(crate) fn pane_registered_focus_target(ui: &Ui, target: Id) -> bool {
+pub(crate) fn pane_registered_focus_target(
+    ui: &Ui,
+    clip: Rect,
+    target: Id,
+    previous: bool,
+) -> bool {
     ui.ctx().viewport(|viewport| {
-        let widgets = &viewport.this_pass.widgets;
+        let widgets = if previous {
+            &viewport.prev_pass.widgets
+        } else {
+            &viewport.this_pass.widgets
+        };
         let Some(widget) = widgets.get(target) else {
             return false;
         };
@@ -134,7 +160,7 @@ pub(crate) fn pane_registered_focus_target(ui: &Ui, target: Id) -> bool {
             || !widget.rect.is_positive()
             || !widget.interact_rect.is_finite()
             || !widget.interact_rect.is_positive()
-            || !ui.clip_rect().contains_rect(widget.interact_rect)
+            || !clip.contains_rect(widget.interact_rect)
         {
             return false;
         }
