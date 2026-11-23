@@ -13,6 +13,7 @@ struct EditingDocuments {
     grid_after_editor: bool,
     select_all_on_focus: bool,
     expose_second_target_on_first_draw: bool,
+    unlock_arrows: bool,
     first_tab: Option<Id>,
 }
 
@@ -51,11 +52,11 @@ impl PaneView for EditingDocuments {
         }
         let target = editor_id(item);
         let mut show_edit = |ui: &mut Ui| {
-            crate::pane_text_edit(
-                ui,
-                target,
-                egui::TextEdit::singleline(&mut self.text[usize::from(item == SECOND)]),
-            )
+            let mut edit = egui::TextEdit::singleline(&mut self.text[usize::from(item == SECOND)]);
+            if self.unlock_arrows {
+                edit = edit.event_filter(egui::EventFilter::default());
+            }
+            crate::pane_text_edit(ui, target, edit)
         };
         let response = match (item, self.scroll, self.editor_layout) {
             (SECOND, Some(offset), _) => {
@@ -415,10 +416,11 @@ fn an_old_edit_cannot_reach_a_reopened_item_with_the_same_id() {
 }
 
 #[test]
-fn unlocked_arrow_navigation_rebinds_the_following_packet_to_the_search_field() {
+fn framework_navigation_delivers_the_following_packet_to_its_destination() {
     struct SideBySide {
         body: EditingDocuments,
         search: String,
+        start_in_search: bool,
     }
 
     impl PaneView for SideBySide {
@@ -427,7 +429,11 @@ fn unlocked_arrow_navigation_rebinds_the_following_packet_to_the_search_field() 
         }
 
         fn focus_target(&self, item: ItemId) -> Option<Id> {
-            self.body.focus_target(item)
+            if self.start_in_search && item == SECOND {
+                Some(DocumentsWithSearch::search_id())
+            } else {
+                self.body.focus_target(item)
+            }
         }
 
         fn accepts_deferred_keyboard_input(&self, _: ItemId) -> bool {
@@ -457,7 +463,15 @@ fn unlocked_arrow_navigation_rebinds_the_following_packet_to_the_search_field() 
         }
     }
 
-    for owned in [true, false] {
+    let child = ViewportId::from_hash_of("editor navigation viewport");
+    for (owned, start_in_search, viewport) in [
+        (true, false, ViewportId::ROOT),
+        (false, false, ViewportId::ROOT),
+        (true, true, ViewportId::ROOT),
+        (false, true, ViewportId::ROOT),
+        (false, false, child),
+        (true, false, child),
+    ] {
         let context = Context::default();
         let mut dock = editing_dock(false);
         let mut docs = SideBySide {
@@ -466,13 +480,19 @@ fn unlocked_arrow_navigation_rebinds_the_following_packet_to_the_search_field() 
                 ..Default::default()
             },
             search: "F".into(),
+            start_in_search,
         };
         let mut time = 0.0;
         let mut saved = Vec::new();
         let mut paint = |dock: &mut Dockspace, docs: &mut SideBySide, events| {
             time += 0.1;
-            paint_editor_frame(dock, &context, input(time, events), docs, owned);
-            if consume_save(&context) {
+            let mut raw = input(time, events);
+            raw.viewport_id = viewport;
+            raw.viewports.entry(viewport).or_default();
+            paint_editor_frame(dock, &context, raw, docs, owned);
+            if context.input_mut_for(viewport, |input| {
+                input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::S))
+            }) {
                 saved.push((docs.body.text[1].clone(), docs.search.clone()));
             }
         };
@@ -481,13 +501,17 @@ fn unlocked_arrow_navigation_rebinds_the_following_packet_to_the_search_field() 
         paint(&mut dock, &mut docs, vec![]);
         select_document(&mut dock, SECOND);
         paint(&mut dock, &mut docs, vec![Event::Paste("X".into())]);
+        let (key, modifiers) = if start_in_search {
+            (Key::Tab, Modifiers::SHIFT)
+        } else {
+            (Key::ArrowRight, Modifiers::NONE)
+        };
         paint(
             &mut dock,
             &mut docs,
-            vec![
-                key_event(Key::ArrowRight, Modifiers::NONE, true),
-                key_event(Key::ArrowRight, Modifiers::NONE, false),
-            ],
+            [true, false]
+                .map(|pressed| key_event(key, modifiers, pressed))
+                .into(),
         );
         paint(
             &mut dock,
@@ -497,13 +521,160 @@ fn unlocked_arrow_navigation_rebinds_the_following_packet_to_the_search_field() 
         for _ in 0..4 {
             paint(&mut dock, &mut docs, vec![]);
         }
-        assert_eq!(docs.body.text, ["alpha", "BX"], "owned={owned}");
-        assert_eq!(docs.search, "FN");
-        assert_eq!(saved, [("BX".into(), "FN".into())]);
+        let (body, search, focus) = if start_in_search {
+            ("BN", "FX", editor_id(SECOND))
+        } else {
+            ("BX", "FN", DocumentsWithSearch::search_id())
+        };
         assert_eq!(
-            context.memory(egui::Memory::focused),
-            Some(DocumentsWithSearch::search_id())
+            docs.body.text,
+            ["alpha", body],
+            "owned={owned}, key={key:?}, viewport={viewport:?}"
         );
+        assert_eq!(docs.search, search);
+        assert_eq!(
+            saved,
+            [(body.into(), search.into())],
+            "viewport={viewport:?}"
+        );
+        assert_eq!(context.memory(egui::Memory::focused), Some(focus));
+    }
+}
+
+#[test]
+fn an_editor_refocused_after_navigation_does_not_receive_the_old_cut() {
+    for owned in [true, false] {
+        let context = Context::default();
+        let mut dock = editing_dock(false);
+        let mut docs = EditingDocuments {
+            text: ["alpha".into(), "draft lin".into()],
+            unlock_arrows: true,
+            ..Default::default()
+        };
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), "draft line").unwrap();
+        let mut clipboard = Vec::new();
+        let mut time = 0.0;
+        let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
+            time += 0.1;
+            let output = run_editor_frame(dock, &context, input(time, events), docs, owned);
+            clipboard.extend(clipboard_text(&output));
+            output.drop_without_applying_deltas();
+            if consume_save(&context) {
+                std::fs::write(file.path(), &docs.text[1]).unwrap();
+            }
+        };
+        paint(&mut dock, &mut docs, vec![]);
+        select_document(&mut dock, FIRST);
+        paint(&mut dock, &mut docs, vec![]);
+        select_document(&mut dock, SECOND);
+        paint(&mut dock, &mut docs, vec![Event::Paste("e".into())]);
+        paint(
+            &mut dock,
+            &mut docs,
+            vec![key_event(Key::ArrowLeft, Modifiers::NONE, true)],
+        );
+        paint(
+            &mut dock,
+            &mut docs,
+            vec![command(Key::A), Event::Cut, command(Key::S)],
+        );
+        assert_eq!(docs.text, ["alpha", "draft line"], "owned={owned}");
+        assert!(context.memory(|memory| !memory.has_focus(editor_id(SECOND))));
+        context
+            .read_response(editor_id(SECOND))
+            .unwrap()
+            .request_focus();
+        for _ in 0..4 {
+            paint(&mut dock, &mut docs, vec![]);
+        }
+        assert_eq!(docs.text, ["alpha", "draft line"], "owned={owned}");
+        assert!(clipboard.is_empty(), "owned={owned}, copies={clipboard:?}");
+        assert_eq!(std::fs::read_to_string(file.path()).unwrap(), "draft line");
+    }
+}
+
+#[test]
+fn find_previous_uses_the_delivered_shortcut_modifiers() {
+    struct Search {
+        selected_match: usize,
+        first: String,
+        text: String,
+    }
+
+    impl PaneView for Search {
+        fn title(&self, _: ItemId) -> Option<egui::WidgetText> {
+            Some("Search".into())
+        }
+
+        fn focus_target(&self, item: ItemId) -> Option<Id> {
+            Some(editor_id(item))
+        }
+
+        fn accepts_deferred_keyboard_input(&self, _: ItemId) -> bool {
+            true
+        }
+
+        fn ui(&mut self, item: ItemId, ui: &mut Ui) -> crate::PaneResponse {
+            let id = editor_id(item);
+            if item == FIRST {
+                return crate::PaneResponse::from(
+                    &ui.add(egui::TextEdit::singleline(&mut self.first).id(id)),
+                );
+            }
+            let response =
+                crate::with_pane_keyboard_input(ui, id, egui::EventFilter::default(), |ui| {
+                    let response = ui.add(egui::TextEdit::singleline(&mut self.text).id(id));
+                    if response.has_focus()
+                        && ui.input_mut(|input| {
+                            input
+                                .consume_shortcut(&KeyboardShortcut::new(Modifiers::SHIFT, Key::F3))
+                        })
+                    {
+                        self.selected_match -= 1;
+                    }
+                    response
+                });
+            crate::PaneResponse::from(&response)
+        }
+    }
+
+    for owned in [true, false] {
+        for handoff in [false, true] {
+            let context = Context::default();
+            let mut dock = editing_dock(false);
+            let mut search = Search {
+                selected_match: 3,
+                first: String::new(),
+                text: String::new(),
+            };
+            paint_editor_frame(&mut dock, &context, input(0.0, vec![]), &mut search, owned);
+            context.memory_mut(|memory| memory.request_focus(editor_id(FIRST)));
+            select_document(&mut dock, SECOND);
+            if !handoff {
+                paint_editor_frame(&mut dock, &context, input(0.1, vec![]), &mut search, owned);
+            }
+            let pressed = input(
+                0.2,
+                vec![
+                    Event::ModifiersChanged(Modifiers::SHIFT),
+                    key_event(Key::F3, Modifiers::SHIFT, true),
+                ],
+            );
+            paint_editor_frame(&mut dock, &context, pressed, &mut search, owned);
+            if handoff {
+                assert_eq!(search.selected_match, 3);
+            }
+            let released = input(
+                0.3,
+                vec![
+                    Event::ModifiersChanged(Modifiers::NONE),
+                    key_event(Key::F3, Modifiers::NONE, false),
+                ],
+            );
+            paint_editor_frame(&mut dock, &context, released, &mut search, owned);
+            assert_eq!(search.selected_match, 2, "owned={owned}, handoff={handoff}");
+        }
     }
 }
 

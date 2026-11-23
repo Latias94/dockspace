@@ -202,9 +202,20 @@ first draw registers that target. Other panes keep egui's ordinary input handlin
 During a handoff, later keyboard packets can wait for the earlier packet to
 finish. Layout retries cannot advance the queue. Closing a pane ends that
 input lifetime even if it immediately reopens under the same item ID.
-Replacing the receiver or losing viewport focus also retires pending packets.
+When egui resolves focus navigation, pending edits follow its destination
+within the pane. Navigation out of the pane retires those edits, as do
+replacing the receiver and losing viewport focus. For spatial navigation in a
+nested viewport, Dockspace uses that viewport's final AccessKit focus to bind
+the pending edits.
 Unmounting leaves new input with egui. Unconsumed keys and host commands
 following a focus surrender are available after the docking call.
+
+Custom editors should read shortcut modifiers from the delivered key event.
+`InputState::modifiers` and `InputState::key_down` report the state of the
+current egui pass. A deferred `Event::Key` keeps the modifiers from when the
+key was pressed. Inside the widget's callback, call `InputState::consume_shortcut`
+with `KeyboardShortcut::new(Modifiers::SHIFT, Key::F3)` to handle Find Previous
+even if Shift has since been released.
 
 The composition callback runs before Dockspace validates a tab-list opener. A
 focused application widget can receive confirmation from the same input packet

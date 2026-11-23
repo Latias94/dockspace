@@ -26,9 +26,16 @@ enum Handoff {
     Continuation,
     FrameworkTraversal {
         pane: Id,
+        settlement: TraversalSettlement,
     },
     RetryRegistration,
     RetryDelivery,
+}
+
+#[derive(Clone, Copy)]
+enum TraversalSettlement {
+    PassEnd(u64),
+    NextPassStart,
 }
 
 impl Handoff {
@@ -72,6 +79,50 @@ struct ViewportKeyboard {
     host_keys_on_retry: egui::IdMap<Vec<Event>>,
 }
 
+impl ViewportKeyboard {
+    fn settle_traversal(
+        &mut self,
+        context: &Context,
+        viewport: ViewportId,
+        pane: Id,
+        focused: Option<Id>,
+    ) {
+        let Some(widget) = focused.filter(|&widget| {
+            context.viewport_for(viewport, |viewport| {
+                crate::focus::widget_belongs_to_pane(&viewport.prev_pass.widgets, widget, pane)
+            })
+        }) else {
+            self.retire_input();
+            return;
+        };
+        if let Some(pending) = self.handoff.as_mut() {
+            let old = pending.packet.target;
+            let target = PaneInputTarget {
+                widget: Some(widget),
+                ..old
+            };
+            pending.handoff = Handoff::Continuation;
+            pending.packet.target = target;
+            self.rebind_packets(old, target);
+        }
+    }
+
+    fn rebind_packets(&mut self, old: PaneInputTarget, target: PaneInputTarget) {
+        if old != target {
+            for packet in &mut self.later_packets {
+                if packet.target == old {
+                    packet.target = target;
+                }
+            }
+        }
+    }
+
+    fn retire_input(&mut self) {
+        self.later_packets.clear();
+        self.handoff = None;
+    }
+}
+
 impl egui::plugin::Plugin for PaneKeyboard {
     fn debug_name(&self) -> &'static str {
         "egui_dockspace::pane_keyboard"
@@ -110,13 +161,70 @@ impl egui::plugin::Plugin for PaneKeyboard {
         }
     }
 
+    fn on_begin_pass(&mut self, ui: &mut Ui) {
+        let context = ui.ctx();
+        let viewport = context.viewport_id();
+        let Some(input) = self.viewports.get_mut(&viewport) else {
+            return;
+        };
+        let Some(PendingInput {
+            handoff:
+                Handoff::FrameworkTraversal {
+                    pane,
+                    settlement: TraversalSettlement::NextPassStart,
+                },
+            packet,
+            ..
+        }) = &input.handoff
+        else {
+            return;
+        };
+        // egui applies reverse Tab before the UI can make another focus request.
+        let focused = if has_pointer_or_accessibility_edges(context) {
+            None
+        } else {
+            ui.memory(|memory| {
+                packet
+                    .target
+                    .widget
+                    .filter(|&widget| memory.had_focus_last_frame(widget))?;
+                memory.focused()
+            })
+        };
+        input.settle_traversal(context, viewport, *pane, focused);
+    }
+
     fn on_end_pass(&mut self, ui: &mut Ui) {
         if let Some(input) = self.viewports.get_mut(&ui.ctx().viewport_id()) {
             input.last_focus = ui.memory(egui::Memory::focused);
+            if input.handoff.as_ref().is_some_and(|pending| {
+                matches!(
+                    pending.handoff,
+                    Handoff::FrameworkTraversal {
+                        settlement: TraversalSettlement::PassEnd(_),
+                        ..
+                    }
+                ) && pending.packet.target.widget != input.last_focus
+            }) {
+                input.retire_input();
+            }
         }
     }
 
     fn output_hook(&mut self, context: &Context, output: &mut egui::FullOutput) {
+        for (&viewport, input) in &mut self.viewports {
+            if let Some(Handoff::FrameworkTraversal {
+                pane,
+                settlement: TraversalSettlement::PassEnd(pass),
+            }) = input.handoff.as_ref().map(|pending| pending.handoff)
+                && context.cumulative_pass_nr_for(viewport) == pass + 1
+            {
+                // Spatial navigation settles in egui's end_pass, before the
+                // host can refocus a widget between runs.
+                let focused = terminal_viewport_focus(context, viewport, output);
+                input.settle_traversal(context, viewport, pane, focused);
+            }
+        }
         self.viewports.retain(|viewport, input| {
             (input.handoff.is_some()
                 || !input.later_packets.is_empty()
@@ -134,6 +242,35 @@ impl egui::plugin::Plugin for PaneKeyboard {
             }
         }
     }
+}
+
+fn terminal_viewport_focus(
+    context: &Context,
+    viewport: ViewportId,
+    output: &egui::FullOutput,
+) -> Option<Id> {
+    if viewport == ViewportId::ROOT
+        || crate::pass_settlement::owns_viewport_run(context, viewport)
+        || output
+            .viewport_output
+            .get(&viewport)
+            .is_some_and(|viewport| {
+                viewport.class == egui::ViewportClass::Deferred && viewport.viewport_ui_cb.is_some()
+            })
+    {
+        return context.memory(egui::Memory::focused);
+    }
+    // A nested viewport's output hook can run with the parent's focus memory.
+    let focus = output.platform_output.accesskit_update.as_ref()?.focus;
+    context.viewport_for(viewport, |viewport| {
+        viewport
+            .prev_pass
+            .widgets
+            .layers()
+            .flat_map(|(_, widgets)| widgets)
+            .find(|widget| widget.id.accesskit_id() == focus)
+            .map(|widget| widget.id)
+    })
 }
 
 pub(in crate::render) struct PaneInputDelivery {
@@ -305,22 +442,6 @@ pub(super) fn prepare(context: &RenderContext<'_, '_, '_>) -> PaneInputState {
                     && pointer_keeps_focus(context.ui.ctx(), widget)
             }) && super::can_route_keyboard(context) =>
         {
-            stage_live_input(context, &mut pending.packet);
-            DeliveryPhase::Registered { retry: false }
-        }
-        Handoff::FrameworkTraversal { pane }
-            if super::can_route_keyboard(context)
-                && !has_pointer_or_accessibility_edges(context.ui.ctx()) =>
-        {
-            let Some(focused) = focused.filter(|&widget| {
-                context.ui.ctx().viewport(|viewport| {
-                    crate::focus::widget_belongs_to_pane(&viewport.prev_pass.widgets, widget, pane)
-                })
-            }) else {
-                retire_input(context);
-                return PaneInputState::None;
-            };
-            pending.packet.target = rebind_packets(context, pending.packet.target, focused);
             stage_live_input(context, &mut pending.packet);
             DeliveryPhase::Registered { retry: false }
         }
@@ -591,11 +712,7 @@ fn rebind_packets(
         && let Some(plugin) = ctx.plugin_opt::<PaneKeyboard>()
         && let Some(input) = plugin.lock().viewports.get_mut(&ctx.viewport_id())
     {
-        for packet in &mut input.later_packets {
-            if packet.target == old {
-                packet.target = target;
-            }
-        }
+        input.rebind_packets(old, target);
     }
     target
 }
@@ -605,8 +722,7 @@ fn retire_input(context: &RenderContext<'_, '_, '_>) {
     if let Some(plugin) = ctx.plugin_opt::<PaneKeyboard>()
         && let Some(input) = plugin.lock().viewports.get_mut(&ctx.viewport_id())
     {
-        input.later_packets.clear();
-        input.handoff = None;
+        input.retire_input();
     }
 }
 
@@ -809,9 +925,13 @@ impl ScopedPaneInput {
                 if direction == FocusDirection::Next {
                     settle_framework_keys(context, self.target, focused, tail);
                 } else {
-                    // Spatial navigation settles at the end of the egui pass.
-                    // Reverse Tab can finish when the next pass starts.
-                    defer_framework_traversal(context, self.target, ui.unique_id(), tail);
+                    defer_framework_traversal(
+                        context,
+                        self.target,
+                        ui.unique_id(),
+                        direction,
+                        tail,
+                    );
                 }
             }
             None => {}
@@ -888,6 +1008,7 @@ fn defer_framework_traversal(
     context: &RenderContext<'_, '_, '_>,
     target: PaneInputTarget,
     pane: Id,
+    direction: FocusDirection,
     tail: Vec<Event>,
 ) {
     let ctx = context.ui.ctx();
@@ -907,7 +1028,16 @@ fn defer_framework_traversal(
         })
     };
     if let Some(packet) = packet {
-        defer(context, packet, Handoff::FrameworkTraversal { pane });
+        let settlement = if direction == FocusDirection::Previous {
+            TraversalSettlement::NextPassStart
+        } else {
+            TraversalSettlement::PassEnd(ctx.cumulative_pass_nr())
+        };
+        defer(
+            context,
+            packet,
+            Handoff::FrameworkTraversal { pane, settlement },
+        );
     }
 }
 

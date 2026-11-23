@@ -874,6 +874,14 @@ fn active_run_portal_id() -> Id {
 fn active_run_portal(context: &Context) -> Option<Arc<Mutex<ActiveRunPortal>>> {
     context.data(|data| data.get_temp(active_run_portal_id()))
 }
+
+pub(crate) fn owns_viewport_run(context: &Context, viewport: ViewportId) -> bool {
+    active_run_portal(context).is_some_and(|portal| {
+        let portal = portal.lock().unwrap_or_else(PoisonError::into_inner);
+        portal.viewport == viewport && !portal.poisoned
+    })
+}
+
 fn context_identity(context: &Context) -> Arc<ContextIdentity> {
     let id = Id::unique(("egui_dockspace", "pass_settlement_context_identity"));
     context.data_mut(|data| {
