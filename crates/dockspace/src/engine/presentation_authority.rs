@@ -1274,9 +1274,6 @@ impl DockEngine {
                 target_authority_lost = true;
             }
         }
-        let owner_scene_authority_lost = invalidated_scene_bindings
-            .iter()
-            .any(|binding| dependencies.owner_bindings.contains(binding));
         if let Some(owner) = self.interaction.active_owner()
             && let GestureLane::NativeLocal { binding, .. } = owner.lane()
             && !self
@@ -1291,10 +1288,8 @@ impl DockEngine {
                 InteractionCancelReason::SceneUnavailable,
             );
         }
-        target_authority_lost |= owner_scene_authority_lost;
-        target_authority_lost |= invalidated_scene_bindings
-            .iter()
-            .any(|binding| dependencies.target_bindings.contains(binding));
+        target_authority_lost |= dependencies
+            .has_revoked_coordinates(|binding| invalidated_scene_bindings.contains(&binding));
         let source_input = dependencies
             .route_input
             .unwrap_or(crate::platform::NativeDragSourceInput::Preserve);

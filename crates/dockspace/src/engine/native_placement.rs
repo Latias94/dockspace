@@ -59,6 +59,7 @@ impl DockEngine {
                 }
             }
         }
+        let dependencies = self.platform_interaction_dependencies();
         let changed = self
             .viewport
             .set_surface_placements(window, placements)
@@ -82,11 +83,16 @@ impl DockEngine {
             }
         }
         let placements_changed = !changed.is_empty();
+        let revokes_coordinates =
+            dependencies.has_revoked_coordinates(|binding| changed.contains(&binding.surface()));
         for surface in changed {
             if child.is_none() || self.scene().surface(surface).is_some() {
                 self.invalidate_surface_coordinate_scene(surface)
                     .map_err(|source| Self::scene_revision_error(input, source))?;
             }
+        }
+        if revokes_coordinates {
+            self.clear_platform_drag_feedback(input, false, false, context.interaction_events)?;
         }
         if let Some(child) = child.filter(|_| placements_changed) {
             let actions = self

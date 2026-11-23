@@ -17,12 +17,12 @@ use dockspace::runtime::{
     NativeLocalPointerLocation, NativeLocalToDesktopHandoff, NativePointerButton,
     NativePointerCancelReason, NativePointerEvent, NativePointerHover, NativePointerId,
     NativePointerInput, NativePointerOwner, NativePointerRoster, NativeReceiverAnswer,
-    NativeReceiverPurpose, NativeReceiverQuery, NativeSurfaceBinding, NativeWindowFacts,
-    NativeWindowHit, NativeWindowInputState, NativeWindowPresentationState, NativeWindows,
-    NativeWorkAreaBinding, NativeWorkAreaFacts, NativeWorkAreaRoster, PaintedSurfaceOutput,
-    PointerDeviceKind, PointerEventMetadata, SurfacePaintProgramOperation, SurfacePaintProgramStep,
-    SurfacePresentationArtifact, SurfacePresentationResult, SurfaceUnavailableReason,
-    UniformSurfaceMetrics,
+    NativeReceiverPurpose, NativeReceiverQuery, NativeSurfaceBinding, NativeSurfacePlacement,
+    NativeWindowFacts, NativeWindowHit, NativeWindowInputState, NativeWindowPresentationState,
+    NativeWindows, NativeWorkAreaBinding, NativeWorkAreaFacts, NativeWorkAreaRoster,
+    PaintedSurfaceOutput, PointerDeviceKind, PointerEventMetadata, SurfacePaintProgramOperation,
+    SurfacePaintProgramStep, SurfacePresentationArtifact, SurfacePresentationResult,
+    SurfaceUnavailableReason, UniformSurfaceMetrics,
 };
 use dockspace_host_harness::{OwnedRecord, RecordingRenderer};
 
@@ -37,6 +37,7 @@ struct Scene {
     binding: NativeSurfaceBinding,
     artifact: SurfacePresentationArtifact,
     tab: DockspaceReceiverDescriptor,
+    center: Option<DockspaceReceiverDescriptor>,
 }
 
 struct Fixture {
@@ -66,6 +67,7 @@ impl Fixture {
             NativeHostCapability::AuthoritativeInventory,
             NativeHostCapability::AuthoritativeButtonState,
             NativeHostCapability::PointerHitTestObservation,
+            NativeHostCapability::PointerHitTestControl,
             NativeHostCapability::DesktopPointerPosition,
             NativeHostCapability::HoveredWindow,
             NativeHostCapability::NativeWindowLifecycle,
@@ -341,17 +343,39 @@ fn work_areas() -> NativeWorkAreaRoster {
 }
 
 fn frame(session: &mut DockspaceSession, scene: Option<Scene>) -> DockspaceHostFrame<'_> {
+    frame_with_scenes(session, scene.as_slice())
+}
+
+fn frame_with_scenes<'a>(
+    session: &'a mut DockspaceSession,
+    scenes: &[Scene],
+) -> DockspaceHostFrame<'a> {
+    let scenes = scenes.to_vec();
     let frame = session
-        .begin_native_host_frame(move |query| match (scene, query) {
-            (Some(scene), NativeReceiverQuery::WindowHit(query))
-                if query.window() == scene.binding.window() =>
-            {
-                NativeReceiverAnswer::WindowHit(NativeWindowHit::Surface(scene.artifact))
-            }
-            (Some(scene), NativeReceiverQuery::Surface(query))
-                if query.matches_native_binding(scene.binding) =>
-            {
+        .begin_native_host_frame(move |query| match query {
+            NativeReceiverQuery::WindowHit(query) => scenes
+                .iter()
+                .find(|scene| query.window() == scene.binding.window())
+                .map_or(NativeReceiverAnswer::Unknown, |scene| {
+                    NativeReceiverAnswer::WindowHit(NativeWindowHit::Surface(scene.artifact))
+                }),
+            NativeReceiverQuery::Surface(query) => {
+                let Some(scene) = scenes
+                    .iter()
+                    .find(|scene| query.matches_native_binding(scene.binding))
+                else {
+                    return NativeReceiverAnswer::Unknown;
+                };
                 if matches!(query.purpose(), NativeReceiverPurpose::HoverHit) {
+                    if let Some(center) = scene.center.as_ref().filter(|center| {
+                        query
+                            .point()
+                            .is_some_and(|point| center.bounds().contains(point))
+                    }) {
+                        return query
+                            .bind_receiver(center)
+                            .map_or(NativeReceiverAnswer::Unknown, NativeReceiverAnswer::Dock);
+                    }
                     query.clear_hover_lane(&scene.tab).map_or(
                         NativeReceiverAnswer::Unknown,
                         NativeReceiverAnswer::ClearHoverLane,
@@ -362,7 +386,6 @@ fn frame(session: &mut DockspaceSession, scene: Option<Scene>) -> DockspaceHostF
                         .map_or(NativeReceiverAnswer::Unknown, NativeReceiverAnswer::Dock)
                 }
             }
-            _ => NativeReceiverAnswer::Unknown,
         })
         .unwrap();
     #[cfg(feature = "motion")]
@@ -393,7 +416,15 @@ fn paint(
     binding: NativeSurfaceBinding,
     bounds: PhysicalRect,
 ) -> (Scene, PaintedSurfaceOutput) {
-    let mut frame = frame(session, scene);
+    paint_item(frame(session, scene), binding, bounds, MOVED)
+}
+
+fn paint_item(
+    mut frame: DockspaceHostFrame<'_>,
+    binding: NativeSurfaceBinding,
+    bounds: PhysicalRect,
+    item: ItemId,
+) -> (Scene, PaintedSurfaceOutput) {
     frame
         .measure_surface(
             binding.surface(),
@@ -412,14 +443,15 @@ fn paint(
             operation: SurfacePaintProgramOperation::Tab(record),
             ..
         } = step
-            && record.item() == Some(MOVED)
+            && record.item() == Some(item)
         {
             tab = plan.receiver_for_tab_body(record);
         }
         Ok::<(), ()>(())
     })
     .unwrap();
-    let tab = tab.expect("the moved pane has a presented tab receiver");
+    let tab = tab.expect("the pane has a presented tab receiver");
+    let center = plan.center_drop_receiver_for_item(item);
     let (recording, receipt) = RecordingRenderer::execute(plan).unwrap();
     assert!(recording.records.contains(&OwnedRecord::Receiver(tab)));
     frame.confirm_surface_painted(receipt).unwrap();
@@ -433,6 +465,7 @@ fn paint(
             binding,
             artifact: output.presentation_artifact(),
             tab,
+            center,
         },
         output,
     )
@@ -557,6 +590,216 @@ fn foreign_intent_adopts_the_same_resource_and_waits_for_exact_first_live() {
         assert!(effect.accepted().is_none());
     }
     assert!(fixture.settle().native_admissions().is_empty());
+}
+
+#[test]
+fn changing_the_source_geometry_revokes_a_cross_window_release_before_presentation() {
+    use dockspace::runtime::{DockspaceManipulationCancelReason, DockspaceManipulationStatus};
+
+    for change_placement in [false, true] {
+        let mut fixture = Fixture::new();
+        let drag = fixture.start_drag();
+        let release = fixture.foreign_release(Some(drag));
+        let effect = fixture.release_request(release);
+        let (child, child_bounds) = requested_window(&effect);
+        fixture.observe(
+            child,
+            child_bounds,
+            NativeCreateReadiness::Created,
+            Some(accept(effect)),
+        );
+        fixture.observe(child, child_bounds, NativeCreateReadiness::Prepared, None);
+        let (source, output) = paint(
+            &mut fixture.session,
+            Some(fixture.scene),
+            child,
+            child_bounds,
+        );
+        fixture
+            .session
+            .report_surface_presentation(output, SurfacePresentationResult::Presented)
+            .unwrap();
+        assert_eq!(fixture.settle().native_admissions(), &[child]);
+        let root = fixture.root;
+        let session = &mut fixture.session;
+        let (target, output) = paint_item(frame(session, None), root, root_bounds(), RETAINED);
+        session
+            .report_surface_presentation(output, SurfacePresentationResult::Presented)
+            .unwrap();
+        finish(frame(session, None));
+
+        let point = |scene: Scene, bounds: PhysicalRect| {
+            let local = scene.tab.center();
+            PhysicalPoint::new(bounds.x() + local.x(), bounds.y() + local.y()).unwrap()
+        };
+        let center = target.center.unwrap().center();
+        let destination = PhysicalPoint::new(
+            root_bounds().x() + center.x(),
+            root_bounds().y() + center.y(),
+        )
+        .unwrap();
+        let primary = NativePointerButton::Primary;
+        let source_point = point(source, child_bounds);
+        let moved_in_child = PhysicalPoint::new(source_point.x() + 20.0, source_point.y()).unwrap();
+        let pointer = |event, position, hovered: NativeSurfaceBinding, capture| {
+            NativePointerInput::new(
+                POINTER,
+                event,
+                NativeDesktopPointerLocation::new(
+                    NativeDesktopPosition::Exact(position),
+                    NativePointerHover::Dock(hovered.window()),
+                    None,
+                ),
+                NativePointerOwner::Native(child.window()),
+                capture,
+            )
+        };
+        let capture = NativePointerOwner::Native(child.window());
+        session
+            .record_native_pointer_batch([
+                pointer(
+                    NativePointerEvent::ButtonPressed(primary),
+                    source_point,
+                    child,
+                    capture,
+                ),
+                pointer(NativePointerEvent::Moved, moved_in_child, child, capture),
+            ])
+            .unwrap();
+        let [passthrough] = finish(frame_with_scenes(session, &[source, target]))
+            .take_native_effects()
+            .try_into()
+            .unwrap();
+        assert!(matches!(
+            passthrough.operation(),
+            NativeEffectOperation::SetPointerPassthrough { enabled: true, .. }
+        ));
+        let Some(NativeEffectAcknowledgement::Input(input)) = passthrough.accepted() else {
+            panic!("the child must confirm passthrough before cross-window targeting");
+        };
+        let child_facts =
+            |bounds| window_facts(bounds).with_input(NativeWindowInputState::PassThrough, None);
+        session
+            .report_managed_native_snapshot(
+                [
+                    (root, window_facts(root_bounds())),
+                    (
+                        child,
+                        child_facts(child_bounds)
+                            .with_input(NativeWindowInputState::PassThrough, Some(input)),
+                    ),
+                ],
+                work_areas(),
+            )
+            .unwrap();
+        finish(frame(session, None));
+        session
+            .record_native_pointer_batch([
+                pointer(NativePointerEvent::Moved, destination, root, capture),
+                pointer(
+                    NativePointerEvent::ButtonReleased(primary),
+                    destination,
+                    root,
+                    NativePointerOwner::None,
+                ),
+            ])
+            .unwrap();
+        let version = session.version();
+        let mut release = frame_with_scenes(session, &[source, target]);
+        let receipt = release
+            .paint_plan(HOST)
+            .unwrap()
+            .unwrap()
+            .execute_surface_program(|_| Ok::<(), ()>(()))
+            .unwrap();
+        release.confirm_surface_painted(receipt).unwrap();
+        let mut report = finish(release);
+        let [pending] = report.manipulation_feedback() else {
+            panic!(
+                "release must wait for the target preview: {:?}",
+                report.manipulation_feedback()
+            );
+        };
+        assert!(
+            matches!(pending.status(), DockspaceManipulationStatus::Pending(_)),
+            "{pending:?} {:?}",
+            report.inputs()
+        );
+        let manipulation = pending.manipulation_id();
+        let [preview] = report.take_painted_outputs().try_into().unwrap();
+        let artifact = preview.presentation_artifact();
+
+        let retired = if change_placement {
+            let inset = 48.0;
+            let mut frame = frame(session, None);
+            frame
+                .set_native_surface_placements(
+                    child.window(),
+                    &[NativeSurfacePlacement::new(
+                        child.surface(),
+                        LogicalSize::new(child_bounds.width(), child_bounds.height() - inset)
+                            .unwrap(),
+                        PhysicalPoint::new(0.0, inset).unwrap(),
+                        ScaleFactor::new(1.0).unwrap(),
+                        PhysicalRect::new(
+                            0.0,
+                            inset,
+                            child_bounds.width(),
+                            child_bounds.height() - inset,
+                        )
+                        .unwrap(),
+                    )],
+                )
+                .unwrap();
+            finish(frame)
+        } else {
+            let smaller = PhysicalRect::new(
+                child_bounds.x(),
+                child_bounds.y(),
+                child_bounds.width(),
+                child_bounds.height() - 48.0,
+            )
+            .unwrap();
+            session
+                .report_managed_native_snapshot(
+                    [
+                        (root, window_facts(root_bounds())),
+                        (child, child_facts(smaller)),
+                    ],
+                    work_areas(),
+                )
+                .unwrap();
+            finish(frame(session, None))
+        };
+        assert!(session.presented_surface(child.surface()).is_none());
+        session
+            .report_surface_presentation(preview, SurfacePresentationResult::Presented)
+            .unwrap();
+        let late = finish(frame(session, None));
+        assert!(
+            late.surface_presentation_commits()
+                .iter()
+                .any(|commit| commit.settles(artifact))
+        );
+        assert_eq!(
+            session.view().item(MOVED).unwrap().surface(),
+            child.surface(),
+            "placement change: {change_placement}"
+        );
+        assert_eq!(session.version(), version);
+        assert!(!session.has_pending_presentation());
+        assert!(late.manipulation_feedback().is_empty());
+        let [cancelled] = retired.manipulation_feedback() else {
+            panic!("the geometry change must publish one terminal cancellation");
+        };
+        assert_eq!(cancelled.manipulation_id(), manipulation);
+        assert_eq!(
+            cancelled.status(),
+            DockspaceManipulationStatus::Cancelled(
+                DockspaceManipulationCancelReason::SceneUnavailable
+            )
+        );
+    }
 }
 
 #[test]

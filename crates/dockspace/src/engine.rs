@@ -1303,6 +1303,18 @@ struct PlatformInteractionDependencies {
     native: bool,
 }
 
+impl PlatformInteractionDependencies {
+    fn has_revoked_coordinates(
+        &self,
+        mut revoked: impl FnMut(crate::platform::viewport::ViewportBinding) -> bool,
+    ) -> bool {
+        self.owner_bindings
+            .iter()
+            .chain(&self.target_bindings)
+            .any(|&binding| revoked(binding))
+    }
+}
+
 #[derive(Default)]
 struct InvalidatedSurfaceSceneAuthorities {
     surfaces: BTreeSet<crate::ids::SurfaceId>,
