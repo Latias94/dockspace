@@ -71,7 +71,7 @@ pub(crate) fn apply_pane_focus_request(
     focus_before_contents: Option<Id>,
 ) -> bool {
     let focused = context.memory(egui::Memory::focused);
-    let explicit_focus = explicitly_focused_elsewhere(context, focused, target);
+    let explicit_focus = explicitly_focused_elsewhere(context, focused, Some(target));
     let apply = with_framework_focus(context, instance, context.viewport_id(), request, |state| {
         !std::mem::replace(&mut state.applied, true)
             // egui applies explicit accessibility focus before this callback.
@@ -97,7 +97,7 @@ pub(crate) fn pane_focus_handoff_pending(
     context: &Context,
     instance: Id,
     request: DockspacePaneFocusRequest,
-    target: Id,
+    target: Option<Id>,
     focused: Option<Id>,
 ) -> bool {
     !explicitly_focused_elsewhere(context, focused, target)
@@ -106,9 +106,13 @@ pub(crate) fn pane_focus_handoff_pending(
         })
 }
 
-fn explicitly_focused_elsewhere(context: &Context, focused: Option<Id>, target: Id) -> bool {
+fn explicitly_focused_elsewhere(
+    context: &Context,
+    focused: Option<Id>,
+    target: Option<Id>,
+) -> bool {
     focused
-        .filter(|focused| *focused != target)
+        .filter(|focused| Some(*focused) != target)
         .is_some_and(|focused| {
             context.input(|input| {
                 input.raw.events.iter().rev().find_map(|event| {

@@ -8,7 +8,14 @@ struct EditingDocuments {
     scroll: Option<f32>,
     editor: Option<Rect>,
     grid_before_editor: bool,
+    grid_after_editor: bool,
     select_all_on_focus: bool,
+    expose_second_target_on_first_draw: bool,
+    first_tab: Option<Id>,
+}
+
+fn editor_id(item: ItemId) -> Id {
+    Id::unique(("focus-handoff-document", item))
 }
 
 impl PaneView for EditingDocuments {
@@ -17,7 +24,15 @@ impl PaneView for EditingDocuments {
     }
 
     fn focus_target(&self, item: ItemId) -> Option<Id> {
-        Some(Id::unique(("focus-handoff-document", item)))
+        (!(self.expose_second_target_on_first_draw && item == SECOND && self.editor.is_none()))
+            .then(|| editor_id(item))
+    }
+
+    fn tab_ui(&mut self, ui: &mut Ui, tab: &crate::Tab<'_>) -> crate::TabVisuals {
+        if tab.item() == Some(FIRST) {
+            self.first_tab = Some(tab.response.id);
+        }
+        tab.paint(ui)
     }
 
     fn ui(&mut self, item: ItemId, ui: &mut Ui) -> crate::PaneResponse {
@@ -28,7 +43,7 @@ impl PaneView for EditingDocuments {
                 ui.end_row();
             });
         }
-        let target = self.focus_target(item).unwrap();
+        let target = editor_id(item);
         let mut show_edit = |ui: &mut Ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.text[usize::from(item == SECOND)]).id(target),
@@ -59,6 +74,13 @@ impl PaneView for EditingDocuments {
                         egui::text::CCursor::new(self.text[1].chars().count()),
                     )));
                 state.store(ui.ctx(), target);
+            }
+            if self.grid_after_editor {
+                egui::Grid::new("document-footer").show(ui, |ui| {
+                    ui.label("Language");
+                    ui.label("English");
+                    ui.end_row();
+                });
             }
         }
         (&response).into()
@@ -291,6 +313,360 @@ fn a_discarded_grid_measurement_keeps_the_pending_paste_and_save() {
 }
 
 #[test]
+fn a_layout_retry_cannot_edit_the_document_after_a_save_in_the_same_run() {
+    let context = Context::default();
+    let mut dock = editing_dock(false);
+    let mut docs = EditingDocuments {
+        text: ["alpha".into(), "bravo".into()],
+        ..Default::default()
+    };
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let mut time = 0.0;
+    let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
+        time += 0.1;
+        let mut save = false;
+        let (out, receipt) = crate::run_ui(&context, input(time, events), |ui| {
+            dock.show_single_surface(SURFACE, ui, docs).unwrap();
+            save |= ui.input_mut(|input| {
+                input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::S))
+            });
+        })
+        .into_parts();
+        let passes = out.platform_output.num_completed_passes;
+        out.drop_without_applying_deltas();
+        receipt.report(SurfacePresentationResult::Presented);
+        if save {
+            std::fs::write(file.path(), &docs.text[1]).unwrap();
+        }
+        passes
+    };
+    paint(&mut dock, &mut docs, vec![]);
+    select_document(&mut dock, FIRST);
+    paint(&mut dock, &mut docs, vec![]);
+    select_document(&mut dock, SECOND);
+    paint(
+        &mut dock,
+        &mut docs,
+        vec![Event::Paste("X".into()), command(Key::S)],
+    );
+    docs.grid_after_editor = true;
+    assert_eq!(
+        paint(&mut dock, &mut docs, vec![command(Key::A), Event::Cut]),
+        2
+    );
+    assert_eq!(std::fs::read_to_string(file.path()).unwrap(), "bravoX");
+    assert_eq!(docs.text, ["alpha", "bravoX"]);
+    paint(&mut dock, &mut docs, vec![]);
+    assert_eq!(docs.text, ["alpha", ""]);
+}
+
+struct DocumentsWithSearch {
+    docs: EditingDocuments,
+    search: String,
+}
+
+impl DocumentsWithSearch {
+    fn search_id() -> Id {
+        Id::unique("search-document")
+    }
+}
+
+impl PaneView for DocumentsWithSearch {
+    fn title(&self, item: ItemId) -> Option<egui::WidgetText> {
+        self.docs.title(item)
+    }
+
+    fn focus_target(&self, item: ItemId) -> Option<Id> {
+        self.docs.focus_target(item)
+    }
+
+    fn focus_state(&self, item: ItemId, ctx: &Context) -> crate::PaneFocusState {
+        if item == SECOND && ctx.memory(|m| m.has_focus(Self::search_id())) {
+            crate::PaneFocusState::Focused
+        } else {
+            self.docs.focus_state(item, ctx)
+        }
+    }
+
+    fn ui(&mut self, item: ItemId, ui: &mut Ui) -> crate::PaneResponse {
+        let body = self.docs.ui(item, ui);
+        if item == SECOND {
+            if ui.memory(|m| m.has_focus(Self::search_id())) {
+                ui.input_mut(|input| {
+                    input.consume_shortcut(&KeyboardShortcut::new(Modifiers::CTRL, Key::Tab));
+                });
+            }
+            body.with_content(
+                &ui.add(egui::TextEdit::singleline(&mut self.search).id(Self::search_id())),
+            )
+        } else {
+            body
+        }
+    }
+}
+
+fn paint_editor_frame(
+    dock: &mut Dockspace,
+    context: &Context,
+    raw: RawInput,
+    panes: &mut dyn PaneView,
+    owned: bool,
+) {
+    let output = if owned {
+        dock.run_single_surface(context, raw, SURFACE, panes)
+            .unwrap()
+            .0
+    } else {
+        crate::run_ui(context, raw, |ui| {
+            dock.show_single_surface(SURFACE, ui, panes).unwrap();
+        })
+    };
+    let (output, receipt) = output.into_parts();
+    output.drop_without_applying_deltas();
+    receipt.report(SurfacePresentationResult::Presented);
+}
+
+fn key_event(key: Key, modifiers: Modifiers, pressed: bool) -> Event {
+    Event::Key {
+        key,
+        physical_key: Some(key),
+        pressed,
+        repeat: false,
+        modifiers,
+    }
+}
+
+#[test]
+fn a_delayed_focus_key_is_processed_before_later_text() {
+    for owned in [true, false] {
+        for key in [Key::Tab, Key::Escape] {
+            let context = Context::default();
+            let mut dock = editing_dock(false);
+            let mut docs = DocumentsWithSearch {
+                docs: EditingDocuments {
+                    text: ["alpha".into(), "bravo".into()],
+                    ..Default::default()
+                },
+                search: "find".into(),
+            };
+            let mut time = 0.0;
+            let mut paint = |dock: &mut Dockspace, docs: &mut DocumentsWithSearch, events| {
+                time += 0.1;
+                paint_editor_frame(dock, &context, input(time, events), docs, owned);
+            };
+            paint(&mut dock, &mut docs, vec![]);
+            select_document(&mut dock, FIRST);
+            paint(
+                &mut dock,
+                &mut docs,
+                vec![key_event(Key::F6, Modifiers::NONE, true)],
+            );
+            assert!(context.input(|input| input.key_down(Key::F6)));
+            select_document(&mut dock, SECOND);
+            paint(&mut dock, &mut docs, vec![Event::Paste("X".into())]);
+            paint(
+                &mut dock,
+                &mut docs,
+                vec![
+                    key_event(key, Modifiers::NONE, true),
+                    key_event(Key::F6, Modifiers::NONE, false),
+                ],
+            );
+            assert!(!context.input(|input| input.key_down(Key::F6)));
+            assert!(context.input(|input| input.key_down(key)));
+            paint(
+                &mut dock,
+                &mut docs,
+                vec![
+                    key_event(key, Modifiers::NONE, false),
+                    Event::Text("Y".into()),
+                ],
+            );
+            paint(&mut dock, &mut docs, vec![]);
+            assert_eq!(
+                docs.docs.text,
+                ["alpha", "bravoX"],
+                "owned={owned}, key={key:?}"
+            );
+            let (focus, search) = if key == Key::Tab {
+                (Some(DocumentsWithSearch::search_id()), "findY")
+            } else {
+                (None, "find")
+            };
+            assert_eq!(context.memory(egui::Memory::focused), focus);
+            assert_eq!(docs.search, search);
+            assert!(!context.input(|input| input.key_down(key)));
+        }
+    }
+}
+
+#[test]
+fn keyboard_activation_can_address_an_editor_registered_during_its_first_draw() {
+    for owned in [true, false] {
+        let context = Context::default();
+        let mut dock = editing_dock(true);
+        let mut docs = EditingDocuments {
+            text: ["alpha".into(), "bravo".into()],
+            expose_second_target_on_first_draw: true,
+            ..Default::default()
+        };
+        let mut time = 0.0;
+        let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
+            time += 0.1;
+            paint_editor_frame(dock, &context, input(time, events), docs, owned);
+        };
+        paint(&mut dock, &mut docs, vec![]);
+        select_document(&mut dock, FIRST);
+        paint(&mut dock, &mut docs, vec![]);
+        let tab = docs.first_tab.unwrap();
+        context.memory_mut(|memory| memory.request_focus(tab));
+        paint(&mut dock, &mut docs, vec![]);
+        assert!(docs.focus_target(SECOND).is_none());
+        paint(
+            &mut dock,
+            &mut docs,
+            vec![
+                key_event(Key::ArrowRight, Modifiers::NONE, true),
+                key_event(Key::Enter, Modifiers::NONE, true),
+                command(Key::A),
+                Event::Cut,
+            ],
+        );
+        for _ in 0..3 {
+            paint(&mut dock, &mut docs, vec![]);
+        }
+        assert_eq!(
+            context.memory(egui::Memory::focused),
+            Some(editor_id(SECOND))
+        );
+        assert_eq!(docs.text, ["alpha", ""], "owned={owned}");
+    }
+}
+
+#[test]
+fn an_independent_save_shortcut_reaches_panels_during_an_owned_run() {
+    let context = Context::default();
+    let mut dock = editing_dock(false);
+    let mut docs = EditingDocuments {
+        text: ["alpha".into(), "bravo".into()],
+        ..Default::default()
+    };
+    let mut time = 0.0;
+    let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
+        time += 0.1;
+        let mut save = false;
+        let (output, _) = dock
+            .run_single_surface_with_ui(&context, input(time, events), SURFACE, docs, |ui| {
+                save |= ui.input_mut(|input| {
+                    input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::S))
+                });
+            })
+            .unwrap();
+        let (output, receipt) = output.into_parts();
+        output.drop_without_applying_deltas();
+        receipt.report(SurfacePresentationResult::Presented);
+        save
+    };
+    paint(&mut dock, &mut docs, vec![]);
+    select_document(&mut dock, FIRST);
+    paint(&mut dock, &mut docs, vec![]);
+    select_document(&mut dock, SECOND);
+    paint(&mut dock, &mut docs, vec![Event::Paste("X".into())]);
+    assert!(paint(&mut dock, &mut docs, vec![command(Key::S)]));
+    assert_eq!(docs.text, ["alpha", "bravoX"]);
+    assert!(!paint(&mut dock, &mut docs, vec![]));
+}
+
+#[test]
+fn a_pane_shortcut_continues_at_its_focused_subfield() {
+    for owned in [true, false] {
+        let context = Context::default();
+        let mut dock = editing_dock(true);
+        dock.set_input(crate::DockInputConfig {
+            next_tab: Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Tab)),
+            ..Default::default()
+        });
+        let mut docs = DocumentsWithSearch {
+            docs: EditingDocuments {
+                text: ["alpha".into(), "bravo".into()],
+                ..Default::default()
+            },
+            search: "find".into(),
+        };
+        let paint = |dock: &mut Dockspace, docs: &mut DocumentsWithSearch, time, events| {
+            paint_editor_frame(dock, &context, input(time, events), docs, owned);
+        };
+        paint(&mut dock, &mut docs, 0.1, vec![]);
+        select_document(&mut dock, SECOND);
+        paint(&mut dock, &mut docs, 0.2, vec![]);
+        context.memory_mut(|memory| memory.request_focus(DocumentsWithSearch::search_id()));
+        paint(&mut dock, &mut docs, 0.3, vec![]);
+        paint(
+            &mut dock,
+            &mut docs,
+            0.4,
+            vec![
+                key_event(Key::Tab, Modifiers::CTRL, true),
+                Event::Text("X".into()),
+            ],
+        );
+        paint(&mut dock, &mut docs, 0.5, vec![Event::Text("Y".into())]);
+        assert_eq!(docs.search, "findXY", "owned={owned}");
+        assert_eq!(docs.docs.text, ["alpha", "bravo"]);
+    }
+}
+
+#[test]
+fn unmounting_dockspace_releases_the_viewport_keyboard() {
+    let context = Context::default();
+    let mut dock = editing_dock(false);
+    let mut docs = EditingDocuments {
+        text: ["alpha".into(), "bravo".into()],
+        ..Default::default()
+    };
+    let paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, time, events| {
+        paint_editor_frame(dock, &context, input(time, events), docs, false);
+    };
+    paint(&mut dock, &mut docs, 0.1, vec![]);
+    select_document(&mut dock, FIRST);
+    paint(&mut dock, &mut docs, 0.2, vec![]);
+    select_document(&mut dock, SECOND);
+    paint(&mut dock, &mut docs, 0.3, vec![Event::Paste("X".into())]);
+    paint(&mut dock, &mut docs, 0.4, vec![command(Key::A), Event::Cut]);
+    assert_eq!(docs.text, ["alpha", "bravoX"]);
+    let mut draft = String::from("draft");
+    let editor = Id::unique("independent-editor");
+    let mut saved = false;
+    let mut repaint_delay = Duration::ZERO;
+    for (time, events) in [
+        (0.5, vec![Event::Text("Y".into())]),
+        (0.6, vec![Event::Paste("Z".into()), command(Key::S)]),
+        (0.7, vec![]),
+        (0.8, vec![]),
+        (0.9, vec![]),
+    ] {
+        let output = context.run_ui(input(time, events), |ui| {
+            if !ui.memory(|m| m.has_focus(editor)) {
+                ui.memory_mut(|m| m.request_focus(editor));
+            }
+            ui.add(egui::TextEdit::singleline(&mut draft).id(editor));
+            saved |= ui.input_mut(|input| {
+                input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::S))
+            });
+        });
+        repaint_delay = output.viewport_output[&ViewportId::ROOT].repaint_delay;
+        output.drop_without_applying_deltas();
+    }
+    assert_eq!(draft, "draftYZ");
+    assert!(saved);
+    assert_eq!(docs.text, ["alpha", "bravoX"]);
+    assert!(
+        !repaint_delay.is_zero(),
+        "unmounting must end keyboard polling"
+    );
+}
+
+#[test]
 fn a_queued_cut_cannot_reach_a_different_editor() {
     for owned in [false, true] {
         for replace_workspace in [false, true] {
@@ -357,10 +733,10 @@ fn a_queued_cut_cannot_reach_a_different_editor() {
 }
 
 #[test]
-fn a_registered_editor_observes_focus_before_its_pending_paste() {
-    for grid_before_editor in [false, true] {
+fn an_editor_observes_focus_before_its_pending_paste() {
+    for (tabs, grid_before_editor) in [(false, false), (false, true), (true, false), (true, true)] {
         let context = Context::default();
-        let mut dock = editing_dock(false);
+        let mut dock = editing_dock(tabs);
         let mut docs = EditingDocuments {
             text: ["alpha".into(), "bravo".into()],
             select_all_on_focus: true,
@@ -387,7 +763,7 @@ fn a_registered_editor_observes_focus_before_its_pending_paste() {
         assert_eq!(
             docs.text,
             ["alpha", "X"],
-            "Grid before editor: {grid_before_editor}"
+            "tabs={tabs}, Grid before editor={grid_before_editor}"
         );
     }
 }

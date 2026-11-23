@@ -190,9 +190,11 @@ take the document snapshot after the run. Processing Save in `before_docking`
 can see the document before a paste from that packet reaches its editor.
 
 During a pane focus handoff, a later keyboard packet may wait for the earlier
-packet to finish. The queued packet belongs to the original pane and focus
-widget. Changing the receiver or replacing the workspace retires that input.
-Unconsumed keys from a delivered packet are available after the docking call.
+packet to finish. A layout retry within the same egui run cannot advance that
+queue. Deferred edits belong to the original pane and focused widget. Replacing
+the receiver or unmounting the docking surface retires those edits and releases
+subsequent input to the viewport. Unconsumed keys from a delivered packet are
+available after the docking call.
 
 The composition callback runs before Dockspace validates a tab-list opener. A
 focused application widget can receive confirmation from the same input packet

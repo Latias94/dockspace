@@ -696,7 +696,7 @@ pub(crate) fn paint_surface(
             })
             .map_err(SurfacePaintProgramVisitError::into_runtime_error)?;
         if let Some(delivery) = context.pane_input.take() {
-            delivery.release_shortcuts(context.pane_shortcuts);
+            delivery.retire(&mut context);
         }
         let pane_output_valid = context
             .paint_audit

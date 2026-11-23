@@ -156,7 +156,7 @@ pub(crate) fn paint_pane(
                             child_ui, clip, target, true,
                         ) || delivery
                             .as_ref()
-                            .is_some_and(|input| input.qualified_focus_in_discarded_pass())) =>
+                            .is_some_and(|input| input.awaits_registration())) =>
                 {
                     if delivery
                         .as_ref()
@@ -168,7 +168,7 @@ pub(crate) fn paint_pane(
                             child_ui.ctx(),
                             context.instance_id,
                             request,
-                            target,
+                            Some(target),
                             focus_before_contents,
                         );
                         if pending {
@@ -239,13 +239,13 @@ pub(crate) fn paint_pane(
                 }
             }
             if let Some(delivery) = delivery {
-                delivery.settle_registration(context, registered_target, preapplied);
+                delivery.settle_registration(context, registered_target);
             }
             if let Some(keyboard) = keyboard {
                 keyboard.capture(context);
             }
             if let Some(replay) = replay {
-                replay.finish(context.pane_shortcuts);
+                replay.finish(context, child_ui, clip);
             }
             if let Some(receiver) = pane_receiver
                 && pane_rect.is_finite()
