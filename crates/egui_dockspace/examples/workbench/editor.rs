@@ -554,11 +554,13 @@ impl PaneView for DemoPanes {
                             .code_editor()
                             .frame(Frame::new())
                             .desired_width(f32::INFINITY);
-                        let edit = egui_dockspace::with_pane_keyboard_input(
+                        let bounds = ui.available_rect_before_wrap();
+                        let edit = egui_dockspace::with_pane_keyboard_input_at(
                             ui,
                             id,
                             editor.get_event_filter(),
-                            |ui| ui.add_sized(ui.available_size(), editor),
+                            bounds,
+                            |ui| ui.put(bounds, editor),
                         );
                         pane.editor = Some(edit.rect);
                         content = content.with_content(&edit);

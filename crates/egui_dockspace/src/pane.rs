@@ -335,8 +335,8 @@ pub trait PaneView {
 
     /// Opts this pane into keyboard delivery across a Dockspace focus transition.
     ///
-    /// Wrap each editor that can receive deferred input in
-    /// [`crate::with_pane_keyboard_input`]. The adapter delivers to the exact
+    /// Use [`crate::pane_text_edit`] or wrap a custom editor in
+    /// [`crate::with_pane_keyboard_input_at`]. The adapter delivers to the exact
     /// widget only while it remains focused and attached to this pane. A focus
     /// target of `None` with this opt-in means the target will be registered on
     /// the first draw. The default leaves keyboard events with egui.

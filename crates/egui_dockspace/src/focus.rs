@@ -169,23 +169,26 @@ pub(crate) fn pane_registered_focus_target(
             return false;
         }
 
-        // UI ancestry proves ownership even when a scroll area clips the editor.
-        // Parents are registered first, so an ID collision cannot form a cycle.
-        let mut id = target;
-        while id != ui.unique_id() {
-            let (Some(widget), Some((layer, order))) = (widgets.get(id), widgets.order(id)) else {
-                return false;
-            };
-            let Some((parent_layer, parent_order)) = widgets.order(widget.parent_id) else {
-                return false;
-            };
-            if layer != parent_layer || parent_order >= order {
-                return false;
-            }
-            id = widget.parent_id;
-        }
-        true
+        widget_belongs_to_pane(widgets, target, ui.unique_id())
     })
+}
+
+pub(crate) fn widget_belongs_to_pane(widgets: &egui::WidgetRects, mut id: Id, pane: Id) -> bool {
+    // Parents register first. This proves ancestry even inside a clipped
+    // scroll area, and an ID collision cannot form a cycle.
+    while id != pane {
+        let (Some(widget), Some((layer, order))) = (widgets.get(id), widgets.order(id)) else {
+            return false;
+        };
+        let Some((parent_layer, parent_order)) = widgets.order(widget.parent_id) else {
+            return false;
+        };
+        if layer != parent_layer || parent_order >= order {
+            return false;
+        }
+        id = widget.parent_id;
+    }
+    true
 }
 
 impl DeferredTabFocus {

@@ -959,10 +959,14 @@ impl PaneView for ExamplePanes {
                 .interactive(self.text_editable)
                 .desired_width(f32::INFINITY)
                 .font(egui::TextStyle::Monospace);
-            let response =
-                egui_dockspace::with_pane_keyboard_input(ui, id, editor.get_event_filter(), |ui| {
-                    ui.add_sized(ui.available_size(), editor)
-                });
+            let bounds = ui.available_rect_before_wrap();
+            let response = egui_dockspace::with_pane_keyboard_input_at(
+                ui,
+                id,
+                editor.get_event_filter(),
+                bounds,
+                |ui| ui.put(bounds, editor),
+            );
             content = content.with_content(&response);
             if item == EDITOR
                 && let Some(probe) = &self.probe

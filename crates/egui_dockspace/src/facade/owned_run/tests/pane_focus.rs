@@ -7,6 +7,8 @@ struct EditingDocuments {
     text: [String; 2],
     scroll: Option<f32>,
     editor: Option<Rect>,
+    editor_layout: Option<egui::Layout>,
+    opt_out: bool,
     grid_before_editor: bool,
     grid_after_editor: bool,
     select_all_on_focus: bool,
@@ -29,7 +31,7 @@ impl PaneView for EditingDocuments {
     }
 
     fn accepts_deferred_keyboard_input(&self, _: ItemId) -> bool {
-        true
+        !self.opt_out
     }
 
     fn tab_ui(&mut self, ui: &mut Ui, tab: &crate::Tab<'_>) -> crate::TabVisuals {
@@ -55,8 +57,8 @@ impl PaneView for EditingDocuments {
                 egui::TextEdit::singleline(&mut self.text[usize::from(item == SECOND)]),
             )
         };
-        let response = match (item, self.scroll) {
-            (SECOND, Some(offset)) => {
+        let response = match (item, self.scroll, self.editor_layout) {
+            (SECOND, Some(offset), _) => {
                 egui::ScrollArea::vertical()
                     .max_height(78.0)
                     .vertical_scroll_offset(offset)
@@ -66,6 +68,17 @@ impl PaneView for EditingDocuments {
                         response
                     })
                     .inner
+            }
+            (SECOND, None, Some(layout)) => {
+                let bounds = Rect::from_min_size(ui.max_rect().min, egui::vec2(240.0, 96.0));
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(bounds).layout(layout),
+                    |ui| {
+                        ui.shrink_clip_rect(bounds);
+                        show_edit(ui)
+                    },
+                )
+                .inner
             }
             _ => show_edit(ui),
         };
@@ -129,6 +142,368 @@ fn command(key: Key) -> Event {
         pressed: true,
         repeat: false,
         modifiers: Modifiers::COMMAND,
+    }
+}
+
+#[test]
+fn clicking_the_destination_editor_preserves_edit_and_save_ownership() {
+    for owned in [true, false] {
+        for queued_paste in [false, true] {
+            let context = Context::default();
+            let mut dock = editing_dock(false);
+            let mut docs = EditingDocuments {
+                text: ["alpha".into(), "bravo".into()],
+                ..Default::default()
+            };
+            let file = tempfile::NamedTempFile::new().unwrap();
+            let mut clipboard = Vec::new();
+            let mut time = 0.0;
+            let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
+                time += 0.1;
+                let output = run_editor_frame(dock, &context, input(time, events), docs, owned);
+                clipboard.extend(clipboard_text(&output));
+                output.drop_without_applying_deltas();
+                if consume_save(&context) {
+                    std::fs::write(file.path(), &docs.text[1]).unwrap();
+                }
+            };
+            paint(&mut dock, &mut docs, vec![]);
+            select_document(&mut dock, FIRST);
+            paint(&mut dock, &mut docs, vec![]);
+            let pos = docs.editor.unwrap().center();
+            paint(&mut dock, &mut docs, vec![Event::PointerMoved(pos)]);
+            select_document(&mut dock, SECOND);
+            let mut batch = vec![editor_button(pos, true)];
+            if queued_paste {
+                paint(&mut dock, &mut docs, vec![Event::Paste("X".into())]);
+                batch.push(editor_button(pos, false));
+            } else {
+                batch.extend([command(Key::A), Event::Cut]);
+            }
+            batch.push(command(Key::S));
+            paint(&mut dock, &mut docs, batch);
+            if !queued_paste {
+                paint(&mut dock, &mut docs, vec![editor_button(pos, false)]);
+            }
+            for _ in 0..3 {
+                paint(&mut dock, &mut docs, vec![]);
+            }
+            let (text, copied) = if queued_paste {
+                ("bravoX", vec![])
+            } else {
+                ("", vec!["bravo"])
+            };
+            assert_eq!(
+                docs.text,
+                ["alpha", text],
+                "owned={owned}, queued_paste={queued_paste}"
+            );
+            assert_eq!(clipboard, copied);
+            assert_eq!(std::fs::read_to_string(file.path()).unwrap(), text);
+        }
+    }
+}
+
+fn editor_button(pos: egui::Pos2, pressed: bool) -> Event {
+    Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    }
+}
+
+fn consume_save(context: &Context) -> bool {
+    context.input_mut(|input| {
+        input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::S))
+    })
+}
+
+#[test]
+fn deferred_paste_uses_the_editors_current_layout_slot() {
+    use egui::{Align, Layout};
+
+    for owned in [true, false] {
+        for layout in [
+            Layout::top_down(Align::Max),
+            Layout::right_to_left(Align::Min),
+            Layout::bottom_up(Align::Min),
+        ] {
+            let context = Context::default();
+            let mut dock = editing_dock(false);
+            let mut docs = EditingDocuments {
+                text: ["alpha".into(), "bravo".into()],
+                editor_layout: Some(layout),
+                ..Default::default()
+            };
+            let mut time = 0.0;
+            let mut saved = Vec::new();
+            let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
+                time += 0.1;
+                paint_editor_frame(dock, &context, input(time, events), docs, owned);
+                if consume_save(&context) {
+                    saved.push(docs.text[1].clone());
+                }
+            };
+            paint(&mut dock, &mut docs, vec![]);
+            select_document(&mut dock, FIRST);
+            paint(&mut dock, &mut docs, vec![]);
+            select_document(&mut dock, SECOND);
+            paint(
+                &mut dock,
+                &mut docs,
+                vec![Event::Paste("X".into()), command(Key::S)],
+            );
+            paint(&mut dock, &mut docs, vec![]);
+            assert_eq!(saved, ["bravoX"], "owned={owned}, layout={layout:?}");
+            assert_eq!(docs.text, ["alpha", "bravoX"]);
+        }
+    }
+}
+
+#[test]
+fn escape_in_a_deferred_packet_leaves_save_and_key_up_for_the_host() {
+    for owned in [true, false] {
+        let context = Context::default();
+        let mut dock = editing_dock(false);
+        let mut docs = EditingDocuments {
+            text: ["alpha".into(), "bravo".into()],
+            ..Default::default()
+        };
+        let mut time = 0.0;
+        let mut saved = Vec::new();
+        let mut release_count = 0;
+        let release = key_event(Key::F8, Modifiers::NONE, false);
+        let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
+            time += 0.1;
+            paint_editor_frame(dock, &context, input(time, events), docs, owned);
+            release_count += context.input(|input| {
+                input
+                    .events
+                    .iter()
+                    .filter(|event| **event == release)
+                    .count()
+            });
+            if consume_save(&context) {
+                saved.push(docs.text[1].clone());
+            }
+        };
+        paint(&mut dock, &mut docs, vec![]);
+        select_document(&mut dock, FIRST);
+        paint(
+            &mut dock,
+            &mut docs,
+            vec![key_event(Key::F8, Modifiers::NONE, true)],
+        );
+        select_document(&mut dock, SECOND);
+        paint(&mut dock, &mut docs, vec![Event::Paste("X".into())]);
+        paint(
+            &mut dock,
+            &mut docs,
+            vec![
+                Event::Text("P".into()),
+                key_event(Key::Escape, Modifiers::NONE, true),
+                release.clone(),
+                command(Key::S),
+            ],
+        );
+        for _ in 0..4 {
+            paint(&mut dock, &mut docs, vec![]);
+        }
+        assert_eq!(saved, ["bravoXP"], "owned={owned}");
+        assert_eq!(release_count, 1);
+        assert!(context.memory(egui::Memory::focused).is_none());
+    }
+}
+
+#[test]
+fn header_activation_in_a_plain_pane_leaves_save_for_the_host() {
+    for owned in [true, false] {
+        let context = Context::default();
+        let mut dock = editing_dock(true);
+        let mut docs = EditingDocuments {
+            opt_out: true,
+            ..Default::default()
+        };
+        paint_editor_frame(&mut dock, &context, input(0.1, vec![]), &mut docs, owned);
+        context.memory_mut(|memory| memory.request_focus(docs.first_tab.unwrap()));
+        paint_editor_frame(&mut dock, &context, input(0.2, vec![]), &mut docs, owned);
+        paint_editor_frame(
+            &mut dock,
+            &context,
+            input(
+                0.3,
+                vec![
+                    key_event(Key::ArrowRight, Modifiers::NONE, true),
+                    key_event(Key::Enter, Modifiers::NONE, true),
+                    command(Key::S),
+                ],
+            ),
+            &mut docs,
+            owned,
+        );
+        assert!(consume_save(&context), "owned={owned}");
+        paint_editor_frame(&mut dock, &context, input(0.4, vec![]), &mut docs, owned);
+        assert!(dock.view().item(SECOND).unwrap().is_active());
+    }
+}
+
+#[test]
+fn an_old_edit_cannot_reach_a_reopened_item_with_the_same_id() {
+    for owned in [true, false] {
+        let context = Context::default();
+        let mut dock = editing_dock(true);
+        let mut docs = EditingDocuments {
+            text: ["alpha".into(), "bravo".into()],
+            ..Default::default()
+        };
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut time = 0.0;
+        let mut clipboard = Vec::new();
+        let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
+            time += 0.1;
+            let output = run_editor_frame(dock, &context, input(time, events), docs, owned);
+            clipboard.extend(clipboard_text(&output));
+            output.drop_without_applying_deltas();
+            if consume_save(&context) {
+                std::fs::write(file.path(), &docs.text[1]).unwrap();
+            }
+        };
+        paint(&mut dock, &mut docs, vec![]);
+        select_document(&mut dock, FIRST);
+        paint(&mut dock, &mut docs, vec![]);
+        select_document(&mut dock, SECOND);
+        paint(&mut dock, &mut docs, vec![Event::Paste("X".into())]);
+        paint(
+            &mut dock,
+            &mut docs,
+            vec![command(Key::A), Event::Cut, command(Key::S)],
+        );
+        assert_eq!(docs.text, ["alpha", "bravoX"]);
+        let request = dock.request_close_item_current(SECOND).unwrap();
+        let crate::DockspaceCloseRequestStatus::Requested(request) = request.status() else {
+            panic!("the editor should have a close plan");
+        };
+        let plan = request.plan();
+        let _ = dock
+            .resolve_close(
+                plan.request(),
+                plan.items()[0].token(),
+                crate::CloseDecision::Allow,
+            )
+            .unwrap();
+        assert!(dock.view().item(SECOND).is_none());
+        let opened = dock
+            .open_item_current(
+                SECOND,
+                crate::DockPlacement::Center(crate::DockAnchor::Item(FIRST)),
+            )
+            .unwrap();
+        assert!(matches!(opened.status(), DockspaceActionStatus::Applied(_)));
+        std::fs::write(file.path(), "reloaded from disk").unwrap();
+        docs.text[1] = std::fs::read_to_string(file.path()).unwrap();
+        for _ in 0..4 {
+            paint(&mut dock, &mut docs, vec![]);
+        }
+        assert_eq!(docs.text, ["alpha", "reloaded from disk"], "owned={owned}");
+        assert!(clipboard.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(file.path()).unwrap(),
+            "reloaded from disk"
+        );
+    }
+}
+
+#[test]
+fn unlocked_arrow_navigation_rebinds_the_following_packet_to_the_search_field() {
+    struct SideBySide {
+        body: EditingDocuments,
+        search: String,
+    }
+
+    impl PaneView for SideBySide {
+        fn title(&self, item: ItemId) -> Option<egui::WidgetText> {
+            self.body.title(item)
+        }
+
+        fn focus_target(&self, item: ItemId) -> Option<Id> {
+            self.body.focus_target(item)
+        }
+
+        fn accepts_deferred_keyboard_input(&self, _: ItemId) -> bool {
+            true
+        }
+
+        fn ui(&mut self, item: ItemId, ui: &mut Ui) -> crate::PaneResponse {
+            if item == FIRST {
+                return self.body.ui(item, ui);
+            }
+            ui.horizontal(|ui| {
+                let body = crate::pane_text_edit(
+                    ui,
+                    editor_id(item),
+                    egui::TextEdit::singleline(&mut self.body.text[1])
+                        .desired_width(70.0)
+                        .event_filter(egui::EventFilter::default()),
+                );
+                let search = crate::pane_text_edit(
+                    ui,
+                    DocumentsWithSearch::search_id(),
+                    egui::TextEdit::singleline(&mut self.search).desired_width(70.0),
+                );
+                crate::PaneResponse::from(&body).with_content(&search)
+            })
+            .inner
+        }
+    }
+
+    for owned in [true, false] {
+        let context = Context::default();
+        let mut dock = editing_dock(false);
+        let mut docs = SideBySide {
+            body: EditingDocuments {
+                text: ["alpha".into(), "B".into()],
+                ..Default::default()
+            },
+            search: "F".into(),
+        };
+        let mut time = 0.0;
+        let mut saved = Vec::new();
+        let mut paint = |dock: &mut Dockspace, docs: &mut SideBySide, events| {
+            time += 0.1;
+            paint_editor_frame(dock, &context, input(time, events), docs, owned);
+            if consume_save(&context) {
+                saved.push((docs.body.text[1].clone(), docs.search.clone()));
+            }
+        };
+        paint(&mut dock, &mut docs, vec![]);
+        select_document(&mut dock, FIRST);
+        paint(&mut dock, &mut docs, vec![]);
+        select_document(&mut dock, SECOND);
+        paint(&mut dock, &mut docs, vec![Event::Paste("X".into())]);
+        paint(
+            &mut dock,
+            &mut docs,
+            vec![
+                key_event(Key::ArrowRight, Modifiers::NONE, true),
+                key_event(Key::ArrowRight, Modifiers::NONE, false),
+            ],
+        );
+        paint(
+            &mut dock,
+            &mut docs,
+            vec![Event::Text("N".into()), command(Key::S)],
+        );
+        for _ in 0..4 {
+            paint(&mut dock, &mut docs, vec![]);
+        }
+        assert_eq!(docs.body.text, ["alpha", "BX"], "owned={owned}");
+        assert_eq!(docs.search, "FN");
+        assert_eq!(saved, [("BX".into(), "FN".into())]);
+        assert_eq!(
+            context.memory(egui::Memory::focused),
+            Some(DocumentsWithSearch::search_id())
+        );
     }
 }
 
@@ -924,10 +1299,17 @@ fn ime_commit_and_save_finish_before_a_grid_retry_and_tab_change() {
         let (passes, saved) = paint(
             &mut dock,
             &mut docs,
-            vec![Event::Ime(ImeEvent::Commit("你".into())), command(Key::S)],
+            vec![
+                Event::Ime(ImeEvent::Preedit {
+                    text: String::new(),
+                    active_range_chars: None,
+                }),
+                Event::Ime(ImeEvent::Commit("你".into())),
+                command(Key::S),
+            ],
         );
         assert_eq!(passes, 2);
-        assert!(saved);
+        assert!(saved, "grid_before_editor={grid_before_editor}");
         select_document(&mut dock, FIRST);
         paint(&mut dock, &mut docs, vec![]);
         assert_eq!(docs.text, ["alpha", "bravo你"]);

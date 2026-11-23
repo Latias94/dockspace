@@ -234,12 +234,11 @@ impl PaneView for Document {
         let editor = egui::TextEdit::multiline(&mut self.text)
             .id(editor_id())
             .desired_width(f32::INFINITY);
-        let editor = egui_dockspace::with_pane_keyboard_input(
-            ui,
-            editor_id(),
-            editor.get_event_filter(),
-            |ui| ui.add_enabled(enabled, editor),
-        );
+        let editor = ui
+            .add_enabled_ui(enabled, |ui| {
+                egui_dockspace::pane_text_edit(ui, editor_id(), editor)
+            })
+            .inner;
         PaneResponse::from(&editor)
     }
 

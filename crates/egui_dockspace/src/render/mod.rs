@@ -50,7 +50,8 @@ use crate::{DockInputConfig, DockMenuAction, DockMenuButton};
 pub(crate) use measurement::measure_surface;
 pub(crate) use measurement::{PaintResources, prepare_surface};
 pub(crate) use presentation_menu::prepare_layer as prepare_menu_layer;
-pub use tab_shortcuts::{pane_text_edit, with_pane_keyboard_input};
+pub(crate) use tab_shortcuts::release_host_keys;
+pub use tab_shortcuts::{pane_text_edit, with_pane_keyboard_input, with_pane_keyboard_input_at};
 
 /// One action captured from a stable egui widget and response source.
 ///
@@ -706,11 +707,7 @@ pub(crate) fn paint_surface(
         execution_receipt =
             (transient_visuals_complete && pane_output_valid).then_some(completed_program);
     }
-    if !pane_shortcuts.is_empty() {
-        ui.input_mut(|input| {
-            drop(input.events.splice(..0, pane_shortcuts));
-        });
-    }
+    release_host_keys(ui, instance_id, plan.surface(), pane_shortcuts);
     debug_assert_eq!(
         terminal_semantic_output,
         Some(plan.semantic_output()),

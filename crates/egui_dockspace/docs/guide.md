@@ -191,17 +191,20 @@ can see the document before a paste from that packet reaches its editor.
 
 A pane can opt into deferred keyboard input with
 `PaneView::accepts_deferred_keyboard_input`. Use `pane_text_edit` in place of
-`ui.add` for each participating `TextEdit`. For a custom editor or an editor
-that needs `ui.add_sized`, wrap that widget alone in `with_pane_keyboard_input`
-with its egui event filter. `focus_target` identifies the default destination
-for a focus request. An opted-in pane can return `None` until its first draw
-registers that target. Other panes keep egui's ordinary input handling.
+`ui.add` for each participating `TextEdit`. For a custom editor, pass its
+current allocated rectangle and egui event filter to
+`with_pane_keyboard_input_at`. Wrap only the widget that owns the supplied ID.
+`with_pane_keyboard_input` also supports widgets placed directly at the current
+layout cursor using their previous size. `focus_target` identifies the default
+destination for a focus request. An opted-in pane can return `None` until its
+first draw registers that target. Other panes keep egui's ordinary input handling.
 
 During a handoff, later keyboard packets can wait for the earlier packet to
-finish. Layout retries cannot advance the queue. Replacing the receiver or
-losing viewport focus retires pending packets, including shortcuts the
-application has yet to consume. Unmounting leaves new input with egui.
-Unconsumed keys from a delivered packet are available after the docking call.
+finish. Layout retries cannot advance the queue. Closing a pane ends that
+input lifetime even if it immediately reopens under the same item ID.
+Replacing the receiver or losing viewport focus also retires pending packets.
+Unmounting leaves new input with egui. Unconsumed keys and host commands
+following a focus surrender are available after the docking call.
 
 The composition callback runs before Dockspace validates a tab-list opener. A
 focused application widget can receive confirmation from the same input packet

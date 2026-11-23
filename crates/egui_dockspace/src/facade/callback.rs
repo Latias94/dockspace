@@ -243,6 +243,7 @@ impl Dockspace {
                 }
                 had_plan = true;
             } else {
+                render::release_host_keys(ui, self.id, surface, Vec::new());
                 ui.allocate_rect(dock_rect, Sense::hover());
                 let visuals = self.style.resolved_visuals(ui.visuals());
                 ui.painter()

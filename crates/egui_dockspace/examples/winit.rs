@@ -71,10 +71,14 @@ impl PaneView for Documents {
         let editor = egui::TextEdit::multiline(&mut self.0[index])
             .id(id)
             .frame(egui::Frame::NONE);
-        let response =
-            egui_dockspace::with_pane_keyboard_input(ui, id, editor.get_event_filter(), |ui| {
-                ui.add_sized(ui.available_size(), editor)
-            });
+        let bounds = ui.available_rect_before_wrap();
+        let response = egui_dockspace::with_pane_keyboard_input_at(
+            ui,
+            id,
+            editor.get_event_filter(),
+            bounds,
+            |ui| ui.put(bounds, editor),
+        );
         PaneResponse::from(&response)
     }
 

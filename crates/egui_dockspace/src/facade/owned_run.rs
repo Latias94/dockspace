@@ -514,7 +514,10 @@ impl Dockspace {
                                 )
                                 .map_err(DockspaceError::from_detail)?,
                             ),
-                            SurfaceWork::Deferred(_) => None,
+                            SurfaceWork::Deferred(_) => {
+                                render::release_host_keys(ui, self.id, surface, Vec::new());
+                                None
+                            }
                         };
                         let had_plan = paint.is_some();
                         let mut pass = EncodedPass {
