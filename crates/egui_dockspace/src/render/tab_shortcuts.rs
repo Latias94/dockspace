@@ -15,6 +15,10 @@ use super::{RenderContext, actions::effective_enabled, geometry::egui_rect};
 
 pub(super) use pane_input::PaneInputDelivery;
 
+pub(super) fn has_live_keyboard_input(context: &egui::Context) -> bool {
+    context.input(|input| input.events.iter().any(pane_input::is_keyboard_input))
+}
+
 pub(super) struct PaneCycle {
     item: ItemId,
     focused: Id,
@@ -155,12 +159,15 @@ fn prepare_pane_cycle(
 }
 
 fn can_capture(context: &RenderContext<'_, '_, '_>) -> bool {
+    can_route_keyboard(context) && !context.ui.input(|input| input.pointer.any_down())
+}
+
+fn can_route_keyboard(context: &RenderContext<'_, '_, '_>) -> bool {
     effective_enabled(context.ui, true)
         && super::actions::focus_uninterrupted(context.ui)
         && !context.plan.has_manipulation_preview()
         && context.plan.prepare_gesture_cancel().is_none()
         && context.ui.ctx().dragged_id().is_none()
-        && !context.ui.input(|input| input.pointer.any_down())
         && !egui::Popup::is_any_open(context.ui.ctx())
         && !context.ui.ctx().any_popup_open()
 }

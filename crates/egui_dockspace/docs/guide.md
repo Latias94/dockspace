@@ -688,8 +688,11 @@ the same ID from `PaneView::focus_target`; the small
 target keeps its ongoing IME composition while its presentation acknowledgement
 is pending. Each request applies framework focus once; a later application click
 or focus transfer takes precedence while its exact renderer acknowledgement is
-still pending. Stable unfocused observations remain available without requesting
-continuous repaints. A new explicit selection can request pane focus again.
+still pending. When a request changes the focused editor, input from the handoff
+frame follows the editor on its next pass after the target registers with a
+visible interaction region. Unconsumed key shortcuts return to the host after
+that pane draws. Stable unfocused observations remain available without
+requesting continuous repaints. A new explicit selection can request pane focus again.
 Applications continue to own document text and composition behavior.
 
 ## Motion

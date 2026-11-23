@@ -189,6 +189,7 @@ struct RenderContext<'ui, 'plan, 'scroll> {
     pane_focus_target: &'ui mut Option<Id>,
     pane_focus_bindings: &'ui mut Vec<(ItemId, Id)>,
     pane_input: Option<tab_shortcuts::PaneInputDelivery>,
+    pane_shortcuts: &'ui mut Vec<egui::Event>,
     local_actions: &'ui mut Vec<EguiSurfaceAction>,
     menu_action: &'ui mut Option<DockMenuAction>,
     receivers: &'ui mut Vec<ProductReceiverBinding>,
@@ -473,6 +474,7 @@ pub(crate) fn paint_surface(
     let mut pane_focus_target_requested = false;
     let mut pane_focus_target = None;
     let mut pane_focus_bindings = Vec::new();
+    let mut pane_shortcuts = Vec::new();
     let mut local_actions = Vec::new();
     let mut menu_action = None;
     let mut receivers = Vec::new();
@@ -540,6 +542,7 @@ pub(crate) fn paint_surface(
             pane_focus_target: &mut pane_focus_target,
             pane_focus_bindings: &mut pane_focus_bindings,
             pane_input: None,
+            pane_shortcuts: &mut pane_shortcuts,
             local_actions: &mut local_actions,
             menu_action: &mut menu_action,
             receivers: &mut receivers,
@@ -692,11 +695,20 @@ pub(crate) fn paint_surface(
                 Ok(())
             })
             .map_err(SurfacePaintProgramVisitError::into_runtime_error)?;
-        let pane_output_valid = paint_audit
-            .as_ref()
+        if let Some(delivery) = context.pane_input.take() {
+            delivery.release_shortcuts(context.pane_shortcuts);
+        }
+        let pane_output_valid = context
+            .paint_audit
+            .as_deref()
             .is_none_or(crate::output_proof::PaintAudit::is_valid);
         execution_receipt =
             (transient_visuals_complete && pane_output_valid).then_some(completed_program);
+    }
+    if !pane_shortcuts.is_empty() {
+        ui.input_mut(|input| {
+            drop(input.events.splice(..0, pane_shortcuts));
+        });
     }
     debug_assert_eq!(
         terminal_semantic_output,

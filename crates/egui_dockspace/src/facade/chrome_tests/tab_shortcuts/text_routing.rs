@@ -220,7 +220,18 @@ fn an_activation_followed_by_another_cycle_routes_the_replayed_suffix_in_order()
                 }
             }
             fixture.settle();
-            assert_selected(&fixture.harness, 1);
+            fixture.run(Vec::new());
+            assert!(
+                fixture
+                    .harness
+                    .dockspace
+                    .view()
+                    .item(ItemId::new(1))
+                    .unwrap()
+                    .is_active(),
+                "{entry:?}, batched={batched}, text={:?}",
+                fixture.editors.text
+            );
             assert_eq!(
                 fixture.editors.text,
                 ["", "first"],

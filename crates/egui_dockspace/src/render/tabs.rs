@@ -144,24 +144,21 @@ pub(crate) fn paint_pane(
                 child_ui,
                 pane,
             );
-            let focus_before_contents = focus_request.and_then(|_| {
-                delivery.as_ref().map_or_else(
-                    || child_ui.memory(egui::Memory::focused),
-                    |delivery| delivery.prior_focus(child_ui),
-                )
-            });
+            let focus_before_contents =
+                focus_request.and_then(|_| child_ui.memory(egui::Memory::focused));
             let focus_target = focus_request.and_then(|_| context.panes.focus_target(item));
             let preapplied = match (focus_request, focus_target) {
                 (Some(request), Some(target))
-                    if !crate::focus::input_may_surrender_focus(context.ui.ctx())
-                        && delivery
-                            .as_ref()
-                            .is_none_or(|delivery| delivery.permits_preapply(child_ui, clip)) =>
+                    if !crate::focus::input_may_surrender_focus(child_ui.ctx())
+                        && !super::tab_shortcuts::has_live_keyboard_input(child_ui.ctx())
+                        && crate::focus::pane_registered_focus_target(
+                            child_ui, clip, target, true,
+                        ) =>
                 {
-                    // The application names its target before registering it.
-                    // Deliver ordinary input now, then verify the registration.
+                    // A known widget can observe gained_focus while painting.
+                    // Editing input stays held until the new registration qualifies.
                     crate::focus::apply_pane_focus_request(
-                        context.ui.ctx(),
+                        child_ui.ctx(),
                         context.instance_id,
                         request,
                         target,
@@ -170,10 +167,16 @@ pub(crate) fn paint_pane(
                 }
                 _ => false,
             };
-            let replay = delivery
+            let replay = if delivery
                 .as_ref()
                 .is_some_and(|delivery| delivery.can_replay(child_ui, clip))
-                .then(|| delivery.take().unwrap().replay(child_ui.ctx()));
+            {
+                delivery
+                    .take()
+                    .map(|delivery| delivery.replay(child_ui.ctx()))
+            } else {
+                None
+            };
             let keyboard = replay
                 .as_ref()
                 .map(|_| super::tab_shortcuts::TabKeyboard::for_replayed_pane(context, pane));
@@ -184,9 +187,9 @@ pub(crate) fn paint_pane(
             if preapplied
                 && focus_target != registered_target
                 && let Some(target) = focus_target
-                && context.ui.memory(|memory| memory.has_focus(target))
+                && child_ui.memory(|memory| memory.has_focus(target))
             {
-                context.ui.memory_mut(|memory| {
+                child_ui.memory_mut(|memory| {
                     memory.surrender_focus(target);
                     if let Some(previous) =
                         focus_before_contents.filter(|previous| *previous != target)
@@ -210,14 +213,16 @@ pub(crate) fn paint_pane(
                     *context.pane_focus_target_requested = true;
                     *context.pane_focus_target = Some(target);
                 }
-                if let Some(delivery) = delivery {
-                    delivery.defer_after_registration(context, target);
-                }
+            }
+            if let Some(delivery) = delivery {
+                delivery.settle_registration(context, registered_target);
             }
             if let Some(keyboard) = keyboard {
                 keyboard.capture(context);
             }
-            drop(replay);
+            if let Some(replay) = replay {
+                replay.finish(context.pane_shortcuts);
+            }
             if let Some(receiver) = pane_receiver
                 && pane_rect.is_finite()
                 && pane_rect.is_positive()
