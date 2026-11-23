@@ -215,6 +215,17 @@ pub struct DockspaceContentId {
     item: ItemId,
 }
 
+/// Identity of an item's current open lifetime within a workspace.
+///
+/// Use this to associate delayed editor input with the pane that received it.
+/// Moving or hiding a pane preserves its lifetime. Closing and reopening the
+/// same item starts a new lifetime. This identity grants no input authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DockspaceOpenItemId {
+    content: DockspaceContentId,
+    opened: Option<crate::ids::WorkspaceRevision>,
+}
+
 /// Exact workspace revision within one independently constructed session.
 ///
 /// Renderers can dismiss cached menus when this changes, including after a
@@ -1814,6 +1825,15 @@ impl<'frame> SurfacePaintPlan<'frame> {
             domain: self.authority_domain,
             epoch: self.version.epoch(),
             item,
+        }
+    }
+
+    /// Returns the open lifetime of an item from this paint plan.
+    #[must_use]
+    pub fn open_item_identity(self, item: ItemId) -> DockspaceOpenItemId {
+        DockspaceOpenItemId {
+            content: self.content_identity(item),
+            opened: self.candidate.item_open_revision(item),
         }
     }
 

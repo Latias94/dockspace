@@ -69,6 +69,7 @@ impl DockEngine {
             None => self.presentation_identity.observe_workspace(workspace),
         }
         self.workspace = replacement;
+        self.item_open_revisions = std::sync::Arc::default();
         self.host_surfaces = host_surfaces;
         self.surface_recovery.clear();
         self.root_recovery_anchors.clear();
