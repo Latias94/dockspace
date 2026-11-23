@@ -149,7 +149,10 @@ pub(crate) fn paint_pane(
             let focus_target = focus_request.and_then(|_| context.panes.focus_target(item));
             let preapplied = match (focus_request, focus_target) {
                 (Some(request), Some(target))
-                    if !crate::focus::input_may_surrender_focus(child_ui.ctx())
+                    if !delivery
+                        .as_ref()
+                        .is_some_and(|input| input.awaits_registration())
+                        && !crate::focus::input_may_surrender_focus(child_ui.ctx())
                         && !super::tab_shortcuts::has_live_keyboard_input(child_ui.ctx())
                         && crate::focus::pane_registered_focus_target(
                             child_ui, clip, target, true,
@@ -181,8 +184,12 @@ pub(crate) fn paint_pane(
                 .as_ref()
                 .map(|_| super::tab_shortcuts::TabKeyboard::for_replayed_pane(context, pane));
             let pane_response = context.panes.ui(item, child_ui);
+            let retry = delivery
+                .as_ref()
+                .is_some_and(|input| input.awaits_registration())
+                && child_ui.ctx().will_discard();
             let registered_target = context.panes.focus_target(item).filter(|target| {
-                crate::focus::pane_registered_focus_target(child_ui, clip, *target, false)
+                !retry && crate::focus::pane_registered_focus_target(child_ui, clip, *target, false)
             });
             if preapplied
                 && focus_target != registered_target

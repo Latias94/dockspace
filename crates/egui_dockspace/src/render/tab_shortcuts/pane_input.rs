@@ -1,10 +1,14 @@
 //! Viewport-local keyboard input awaiting an exact pane focus handoff.
 
+use std::{collections::VecDeque, time::Duration};
+
 use dockspace::{
     model::{ItemId, TabKey},
     runtime::{DockspaceContentId, PanePaintRecord},
 };
-use egui::{Context, Event, FocusDirection, Id, Key, Rect, Ui};
+use egui::{
+    Context, Event, FocusDirection, Id, Key, RawInput, Rect, Ui, ViewportId, ViewportIdMap,
+};
 
 use super::super::RenderContext;
 
@@ -17,11 +21,13 @@ enum Handoff {
     Continuation {
         widget: Id,
     },
+    RetryRegistration {
+        widget: Id,
+    },
 }
 
-#[derive(Clone)]
 struct PendingInput {
-    frame: u64,
+    ready: bool,
     item: ItemId,
     content: DockspaceContentId,
     previous_request: Option<dockspace::runtime::DockspacePaneFocusRequest>,
@@ -29,8 +35,89 @@ struct PendingInput {
     events: Vec<Event>,
 }
 
-#[derive(Clone, Default)]
-struct InputSlot(Option<PendingInput>);
+#[derive(Default)]
+struct PaneKeyboard {
+    viewports: ViewportIdMap<ViewportKeyboard>,
+}
+
+#[derive(Default)]
+struct ViewportKeyboard {
+    handoff: Option<(Id, PendingInput)>,
+    later_packets: VecDeque<Vec<Event>>,
+}
+
+impl egui::plugin::Plugin for PaneKeyboard {
+    fn debug_name(&self) -> &'static str {
+        "egui_dockspace::pane_keyboard"
+    }
+
+    fn input_hook(&mut self, context: &Context, raw: &mut RawInput) {
+        let viewport = raw.viewport_id;
+        if !raw.focused
+            || raw.events.contains(&Event::WindowFocused(false))
+            || (viewport != ViewportId::ROOT && context.cumulative_pass_nr_for(viewport) == 0)
+        {
+            self.viewports.remove(&viewport);
+            return;
+        }
+        let Some(input) = self.viewports.get_mut(&viewport) else {
+            return;
+        };
+        if context.viewport_for(viewport, |state| state.output.num_completed_passes != 0) {
+            return;
+        }
+        // Count original input passes at ingress. egui's frame number is only
+        // advanced by run_ui, and a sizing pass does not deliver another packet.
+        if let Some((_, pending)) = &mut input.handoff {
+            if pending.ready || matches!(pending.handoff, Handoff::RetryRegistration { .. }) {
+                input.handoff = None;
+            } else {
+                pending.ready = true;
+            }
+        }
+        // Pure edits can share an already validated widget. A packet containing
+        // command keys needs its own pass so application callbacks observe its
+        // original place in the input sequence.
+        let waits_for_handoff = input.handoff.as_ref().is_some_and(|(_, pending)| {
+            !pending.events.is_empty()
+                && (!input.later_packets.is_empty()
+                    || pending.events.iter().any(is_key_event)
+                    || raw.events.iter().any(is_key_event))
+        });
+        if waits_for_handoff || !input.later_packets.is_empty() {
+            // Commands can change focus or read the document. Dispatch the next
+            // keyboard packet only after the older packet has reached the pane
+            // and its remaining shortcuts have reached the application.
+            let next: Vec<_> = raw
+                .events
+                .extract_if(.., |event| is_keyboard_input(event))
+                .collect();
+            if !next.is_empty() {
+                input.later_packets.push_back(next);
+            }
+            if !waits_for_handoff && let Some(packet) = input.later_packets.pop_front() {
+                drop(raw.events.splice(..0, packet));
+            }
+        }
+    }
+
+    fn output_hook(&mut self, context: &Context, output: &mut egui::FullOutput) {
+        self.viewports.retain(|viewport, input| {
+            (input.handoff.is_some() || !input.later_packets.is_empty())
+                && (*viewport == ViewportId::ROOT || context.cumulative_pass_nr_for(*viewport) != 0)
+        });
+        // egui has already popped the viewport which just ended. Wake the
+        // viewports that actually hold input, including native children.
+        for (&viewport, input) in &self.viewports {
+            if !input.later_packets.is_empty() {
+                context.request_repaint_of(viewport);
+                if let Some(output) = output.viewport_output.get_mut(&viewport) {
+                    output.repaint_delay = Duration::ZERO;
+                }
+            }
+        }
+    }
+}
 
 pub(in crate::render) struct PaneInputDelivery {
     item: ItemId,
@@ -82,7 +169,7 @@ pub(super) fn continue_at(
 
 fn defer(context: &RenderContext<'_, '_, '_>, item: ItemId, handoff: Handoff, events: Vec<Event>) {
     let pending = PendingInput {
-        frame: context.ui.ctx().cumulative_frame_nr(),
+        ready: false,
         item,
         content: context.plan.content_identity(item),
         previous_request: context.pane_focus_request,
@@ -99,30 +186,29 @@ pub(in crate::render) enum PaneInputState {
 }
 
 pub(super) fn prepare(context: &RenderContext<'_, '_, '_>) -> PaneInputState {
-    let id = slot_id(context);
-    let Some(mut pending) = context
-        .ui
-        .ctx()
-        .data_mut(|data| data.remove_temp::<InputSlot>(id).and_then(|slot| slot.0))
-    else {
+    let Some(mut pending) = take(context) else {
         return PaneInputState::None;
     };
-    let frame = context.ui.ctx().cumulative_frame_nr();
     if pending.content != context.plan.content_identity(pending.item) {
         return PaneInputState::None;
     }
-    if frame == pending.frame {
+    if let Handoff::RetryRegistration { widget } = pending.handoff {
+        return if context.pane_focus_request == pending.previous_request {
+            PaneInputState::Ready(PaneInputDelivery {
+                item: pending.item,
+                widget,
+                events: pending.events,
+                phase: DeliveryPhase::AwaitingRegistration,
+            })
+        } else {
+            PaneInputState::None
+        };
+    }
+    if !pending.ready {
         // A layout retry has no new input and must not reapply the handoff.
-        context
-            .ui
-            .ctx()
-            .data_mut(|data| data.insert_temp(id, InputSlot(Some(pending))));
+        store(context, pending);
         return PaneInputState::Waiting;
     }
-    if pending.frame.checked_add(1) != Some(frame) {
-        return PaneInputState::None;
-    }
-
     let focused = context.ui.memory(egui::Memory::focused);
     let (widget, phase) = match pending.handoff {
         Handoff::Continuation { widget }
@@ -152,7 +238,7 @@ pub(super) fn prepare(context: &RenderContext<'_, '_, '_>) -> PaneInputState {
                 if !awaiting_publication {
                     // An activation reduced in this frame becomes an admitted
                     // request only upon publication. Save its input for one run.
-                    pending.frame = frame;
+                    pending.ready = false;
                     pending.handoff = Handoff::Activation {
                         header,
                         awaiting_publication: true,
@@ -194,12 +280,28 @@ fn pointer_keeps_focus(context: &Context, widget: Id) -> bool {
 }
 
 fn store(context: &RenderContext<'_, '_, '_>, pending: PendingInput) {
-    let id = slot_id(context);
-    context
-        .ui
-        .ctx()
-        .data_mut(|data| data.insert_temp(id, InputSlot(Some(pending))));
-    context.ui.ctx().request_repaint();
+    let ctx = context.ui.ctx();
+    let retry = matches!(pending.handoff, Handoff::RetryRegistration { .. });
+    ctx.plugin_or_default::<PaneKeyboard>()
+        .lock()
+        .viewports
+        .entry(ctx.viewport_id())
+        .or_default()
+        .handoff = Some((slot_id(context), pending));
+    if !retry {
+        ctx.request_repaint();
+    }
+}
+
+fn take(context: &RenderContext<'_, '_, '_>) -> Option<PendingInput> {
+    let ctx = context.ui.ctx();
+    ctx.plugin_opt::<PaneKeyboard>()?
+        .lock()
+        .viewports
+        .get_mut(&ctx.viewport_id())?
+        .handoff
+        .take_if(|(id, _)| *id == slot_id(context))
+        .map(|(_, pending)| pending)
 }
 
 impl PaneInputDelivery {
@@ -248,6 +350,10 @@ impl PaneInputDelivery {
         self.item == item
     }
 
+    pub(in crate::render) fn awaits_registration(&self) -> bool {
+        matches!(self.phase, DeliveryPhase::AwaitingRegistration)
+    }
+
     pub(in crate::render) fn take_for(
         delivery: &mut Option<Self>,
         ui: &Ui,
@@ -270,7 +376,16 @@ impl PaneInputDelivery {
         context: &mut RenderContext<'_, '_, '_>,
         target: Option<Id>,
     ) {
-        if matches!(self.phase, DeliveryPhase::AwaitingRegistration)
+        if self.awaits_registration() && context.ui.ctx().will_discard() {
+            defer(
+                context,
+                self.item,
+                Handoff::RetryRegistration {
+                    widget: self.widget,
+                },
+                self.events,
+            );
+        } else if self.awaits_registration()
             && target == Some(self.widget)
             && context.ui.memory(|memory| memory.has_focus(self.widget))
         {
@@ -337,11 +452,9 @@ fn is_key_event(event: &Event) -> bool {
 }
 
 fn slot_id(context: &RenderContext<'_, '_, '_>) -> Id {
-    context.instance_id.with((
-        "pane-keyboard-handoff",
-        context.ui.ctx().viewport_id(),
-        context.plan.surface(),
-    ))
+    context
+        .instance_id
+        .with(("pane-keyboard-handoff", context.plan.surface()))
 }
 
 /// Takes the keyboard portion of a suffix while leaving pointer and system events in place.

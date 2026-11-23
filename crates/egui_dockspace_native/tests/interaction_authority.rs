@@ -433,15 +433,12 @@ fn native_paint_delivers_a_focus_handoff_packet_to_only_the_new_editor() {
     .unwrap();
     let context = Context::default();
     let mut editors = Editors(["first".into(), "second".into()]);
-    for (item, events) in [(FIRST, Vec::new()), (SECOND, vec![Event::Text("!".into())])] {
-        let mut frame = session.begin_host_frame().unwrap();
-        frame.select_item_current(item).unwrap();
-        frame.commit().unwrap();
+    let paint = |session: &mut DockspaceSession, editors: &mut Editors, events| {
         let mut frame = session.begin_host_frame().unwrap();
         let mut output = context.run_ui(input(events), |ui| {
             let bounds = ui.available_rect_before_wrap();
             native_support::measure_surface(
-                &mut frame, SURFACE, ui, bounds, bounds, &editors, &style,
+                &mut frame, SURFACE, ui, bounds, bounds, editors, &style,
             )
             .unwrap();
             let mut register = |ui: &Ui, rect, id| {
@@ -453,7 +450,7 @@ fn native_paint_delivers_a_focus_handoff_packet_to_only_the_new_editor() {
                 Id::unique("native-editor-handoff"),
                 SURFACE,
                 ui,
-                &mut editors,
+                editors,
                 &style,
                 &egui_dockspace::DockInputConfig::default(),
                 &mut register,
@@ -463,12 +460,20 @@ fn native_paint_delivers_a_focus_handoff_packet_to_only_the_new_editor() {
         });
         output.textures_delta.clear();
         frame.commit().unwrap();
+    };
+    for (item, events) in [(FIRST, Vec::new()), (SECOND, vec![Event::Text("!".into())])] {
+        let mut frame = session.begin_host_frame().unwrap();
+        frame.select_item_current(item).unwrap();
+        frame.commit().unwrap();
+        paint(&mut session, &mut editors, events);
         assert_eq!(
             context.memory(eframe::egui::Memory::focused),
             editors.focus_target(item)
         );
     }
-    assert_eq!(editors.0, ["first", "second!"]);
+    assert_eq!(editors.0, ["first", "second"]);
+    paint(&mut session, &mut editors, vec![Event::Text("?".into())]);
+    assert_eq!(editors.0, ["first", "second!?"]);
 }
 
 #[test]

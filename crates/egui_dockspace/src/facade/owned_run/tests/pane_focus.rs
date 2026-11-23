@@ -1,11 +1,13 @@
 use super::*;
 
-use egui::{Id, ImeEvent, Key, KeyboardShortcut, Modifiers};
+use egui::{Id, ImeEvent, Key, KeyboardShortcut, Modifiers, ViewportId};
 
+#[derive(Default)]
 struct EditingDocuments {
     text: [String; 2],
     scroll: Option<f32>,
     editor: Option<Rect>,
+    grid_before_editor: bool,
 }
 
 impl PaneView for EditingDocuments {
@@ -18,6 +20,13 @@ impl PaneView for EditingDocuments {
     }
 
     fn ui(&mut self, item: ItemId, ui: &mut Ui) -> crate::PaneResponse {
+        if item == SECOND && self.grid_before_editor {
+            egui::Grid::new("document-metadata").show(ui, |ui| {
+                ui.label("Language");
+                ui.label("English");
+                ui.end_row();
+            });
+        }
         let target = self.focus_target(item).unwrap();
         let mut show_edit = |ui: &mut Ui| {
             ui.add(
@@ -90,7 +99,7 @@ fn rejected_editor_handoff_does_not_cut_a_scrolled_out_document() {
         let mut docs = EditingDocuments {
             text: ["alpha".into(), "bravo".into()],
             scroll: Some(0.0),
-            editor: None,
+            ..Default::default()
         };
         let mut time = 0.0;
         let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
@@ -176,8 +185,7 @@ fn clicking_or_reselecting_the_same_editor_keeps_its_pending_input() {
                 let mut dock = editing_dock(true);
                 let mut docs = EditingDocuments {
                     text: ["a".into(), "b".into()],
-                    scroll: None,
-                    editor: None,
+                    ..Default::default()
                 };
                 let mut time = 0.0;
                 let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
@@ -228,41 +236,210 @@ fn clicking_or_reselecting_the_same_editor_keeps_its_pending_input() {
 
 #[test]
 fn application_save_observes_the_paste_from_the_editor_handoff() {
+    for (first, next, saved_text, final_text) in [
+        (
+            vec![Event::Paste("X".into()), command(Key::S)],
+            vec![Event::Text("Y".into())],
+            "bX",
+            "bXY",
+        ),
+        (
+            vec![command(Key::S)],
+            vec![command(Key::A), Event::Cut],
+            "b",
+            "",
+        ),
+    ] {
+        for idle_between in [false, true] {
+            for viewport in [ViewportId::ROOT, ViewportId::from_hash_of("editor window")] {
+                assert_save_before_next_input(
+                    viewport,
+                    &first,
+                    &next,
+                    idle_between,
+                    false,
+                    saved_text,
+                    final_text,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_discarded_grid_measurement_keeps_the_pending_paste_and_save() {
+    assert_save_before_next_input(
+        ViewportId::ROOT,
+        &[Event::Paste("X".into()), command(Key::S)],
+        &[],
+        false,
+        true,
+        "bX",
+        "bX",
+    );
+}
+
+fn assert_save_before_next_input(
+    viewport: ViewportId,
+    first: &[Event],
+    next: &[Event],
+    idle_between: bool,
+    grid_before_editor: bool,
+    saved_text: &str,
+    final_text: &str,
+) {
     let context = Context::default();
     let mut dock = editing_dock(false);
     let mut docs = EditingDocuments {
         text: ["a".into(), "b".into()],
-        scroll: None,
-        editor: None,
+        ..Default::default()
     };
     let mut saved = Vec::new();
+    let saved_file = tempfile::NamedTempFile::new().unwrap();
     let mut time = 0.0;
     let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
         time += 0.1;
-        let output = crate::run_ui(&context, input(time, events), |ui| {
+        let mut raw = input(time, events);
+        raw.viewport_id = viewport;
+        raw.viewports.entry(viewport).or_default();
+        let output = crate::run_ui(&context, raw, |ui| {
             dock.show_single_surface(SURFACE, ui, docs).unwrap();
             if ui.input_mut(|input| {
                 input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::S))
             }) {
                 saved.push(docs.text[1].clone());
+                std::fs::write(saved_file.path(), &docs.text[1]).unwrap();
             }
         });
         let (output, receipt) = output.into_parts();
+        let passes = output.platform_output.num_completed_passes;
+        let repaint_delay = output.viewport_output[&viewport].repaint_delay;
         output.drop_without_applying_deltas();
         receipt.report(SurfacePresentationResult::Presented);
+        (passes, repaint_delay)
     };
     paint(&mut dock, &mut docs, vec![]);
     select_document(&mut dock, FIRST);
     paint(&mut dock, &mut docs, vec![]);
     select_document(&mut dock, SECOND);
-    paint(
-        &mut dock,
-        &mut docs,
-        vec![Event::Paste("X".into()), command(Key::S)],
-    );
+    docs.grid_before_editor = grid_before_editor;
+    let (passes, _) = paint(&mut dock, &mut docs, first.to_vec());
+    assert_eq!(passes, if grid_before_editor { 2 } else { 1 });
+    if idle_between {
+        paint(&mut dock, &mut docs, vec![]);
+    }
+    let (_, repaint_delay) = paint(&mut dock, &mut docs, next.to_vec());
+    if !idle_between && !next.is_empty() {
+        assert!(
+            repaint_delay.is_zero(),
+            "queued input must wake {viewport:?}"
+        );
+    }
     paint(&mut dock, &mut docs, vec![]);
-    assert_eq!(docs.text, ["a", "bX"]);
-    assert_eq!(saved, ["bX"]);
+    assert_eq!(docs.text, ["a", final_text]);
+    assert_eq!(saved, [saved_text], "idle_between={idle_between}");
+    assert_eq!(
+        std::fs::read_to_string(saved_file.path()).unwrap(),
+        saved_text
+    );
+}
+
+#[test]
+fn a_later_find_shortcut_cannot_redirect_a_pending_cut_or_ime_commit() {
+    struct FindDocuments {
+        docs: EditingDocuments,
+        query: String,
+    }
+    fn find_id() -> Id {
+        Id::unique("find-in-document")
+    }
+    impl PaneView for FindDocuments {
+        fn title(&self, item: ItemId) -> Option<egui::WidgetText> {
+            self.docs.title(item)
+        }
+
+        fn focus_target(&self, item: ItemId) -> Option<Id> {
+            self.docs.focus_target(item)
+        }
+
+        fn ui(&mut self, item: ItemId, ui: &mut Ui) -> crate::PaneResponse {
+            if item == SECOND
+                && ui.input_mut(|input| {
+                    input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::F))
+                })
+            {
+                ui.memory_mut(|memory| memory.request_focus(find_id()));
+            }
+            let document = self.docs.ui(item, ui);
+            if item == SECOND {
+                document.with_content(
+                    &ui.add(egui::TextEdit::singleline(&mut self.query).id(find_id())),
+                )
+            } else {
+                document
+            }
+        }
+    }
+
+    for (events, document, copied) in [
+        (vec![command(Key::A), Event::Cut], "", Some("bravo")),
+        (
+            vec![Event::Ime(ImeEvent::Commit("你".into()))],
+            "bravo你",
+            None,
+        ),
+    ] {
+        for (owned, tabs) in [(true, true), (true, false), (false, true), (false, false)] {
+            let context = Context::default();
+            let mut dock = editing_dock(tabs);
+            let mut docs = FindDocuments {
+                docs: EditingDocuments {
+                    text: ["alpha".into(), "bravo".into()],
+                    ..Default::default()
+                },
+                query: "find".into(),
+            };
+            let mut clipboard = Vec::new();
+            let mut time = 0.0;
+            let mut paint = |dock: &mut Dockspace, docs: &mut FindDocuments, events| {
+                time += 0.1;
+                let raw = input(time, events);
+                let output = if owned {
+                    dock.run_single_surface(&context, raw, SURFACE, docs)
+                        .unwrap()
+                        .0
+                } else {
+                    crate::run_ui(&context, raw, |ui| {
+                        dock.show_single_surface(SURFACE, ui, docs).unwrap();
+                    })
+                };
+                let (output, receipt) = output.into_parts();
+                clipboard.extend(output.platform_output.commands.iter().filter_map(
+                    |cmd| match cmd {
+                        egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                        _ => None,
+                    },
+                ));
+                output.drop_without_applying_deltas();
+                receipt.report(SurfacePresentationResult::Presented);
+            };
+            paint(&mut dock, &mut docs, vec![]);
+            select_document(&mut dock, FIRST);
+            paint(&mut dock, &mut docs, vec![]);
+            select_document(&mut dock, SECOND);
+            paint(&mut dock, &mut docs, events.clone());
+            paint(&mut dock, &mut docs, vec![command(Key::F)]);
+            paint(&mut dock, &mut docs, vec![]);
+            assert_eq!(
+                docs.docs.text,
+                ["alpha", document],
+                "owned={owned}, tabs={tabs}"
+            );
+            assert_eq!(docs.query, "find");
+            assert_eq!(clipboard, copied.into_iter().collect::<Vec<_>>());
+            assert_eq!(context.memory(egui::Memory::focused), Some(find_id()));
+        }
+    }
 }
 
 #[test]
@@ -271,8 +448,7 @@ fn an_editor_handoff_does_not_replay_text_already_delivered_to_an_application_ed
     let mut dock = editing_dock(false);
     let mut docs = EditingDocuments {
         text: ["a".into(), "b".into()],
-        scroll: None,
-        editor: None,
+        ..Default::default()
     };
     let search_id = Id::unique("before-docking-search");
     let mut search = String::new();
