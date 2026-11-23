@@ -1866,6 +1866,147 @@ fn an_unavailable_drag_source_restarts_cross_window_hover_dwell() {
 }
 
 #[test]
+fn a_confirmed_exit_clears_the_latched_split_while_the_source_is_unavailable() {
+    for exit_during_gap in [false, true] {
+        let (mut session, [source, destination], [source_scene, mut target_scene]) =
+            fixture_with_destination(true, false, true, [OTHER, FIFTH]);
+        let pane = target_scene
+            .recording
+            .records
+            .iter()
+            .find_map(|record| match record {
+                OwnedRecord::PaneContent { bounds, .. } => Some(*bounds),
+                _ => None,
+            })
+            .unwrap();
+        let inset = (1.0 - session.presentation_config().magnetic_center_fraction()) * 0.5;
+        let center_edge = pane.x() + pane.width() * inset;
+        let y = pane.y() + pane.height() * 0.5;
+        let split = LogicalPoint::new(center_edge - 0.25, y).unwrap();
+        let merge = LogicalPoint::new(center_edge + 7.5, y).unwrap();
+        let owner = NativePointerOwner::Native(source.window());
+        let over_target = |event, point, millis| {
+            NativePointerInput::new(
+                POINTER,
+                event,
+                desktop_location(destination, desktop_point(B, point)),
+                owner,
+                if event == Event::ButtonReleased(Button::Primary) {
+                    NativePointerOwner::None
+                } else {
+                    owner
+                },
+            )
+            .with_metadata(PointerEventMetadata::new(
+                PointerDeviceKind::Mouse,
+                Duration::from_millis(millis),
+            ))
+        };
+        let reduce = |session: &mut DockspaceSession, target: &Scene, input| {
+            session.record_native_pointer(input).unwrap();
+            finish(
+                session
+                    .begin_native_host_frame(|query| match query {
+                        NativeReceiverQuery::WindowHit(hit) if hit.window() == source.window() => {
+                            source_scene.answer(query)
+                        }
+                        NativeReceiverQuery::Surface(query) if query.surface() == A => {
+                            source_scene.answer(query)
+                        }
+                        NativeReceiverQuery::Surface(query)
+                            if query.surface() == B
+                                && matches!(query.purpose(), NativeReceiverPurpose::HoverHit) =>
+                        {
+                            NativeReceiverAnswer::ClearHoverLane(query.presented_surface())
+                        }
+                        _ => target.answer(query),
+                    })
+                    .unwrap(),
+            )
+        };
+        reduce(
+            &mut session,
+            &target_scene,
+            desktop(
+                source,
+                Event::ButtonPressed(Button::Primary),
+                source_scene.tab(FIRST).receiver.center(),
+            ),
+        );
+        reduce(
+            &mut session,
+            &target_scene,
+            over_target(Event::Moved, split, 60),
+        );
+        let (preview, output) = paint(&mut session, destination);
+        preview.assert_preview(true);
+        present(&mut session, output);
+        target_scene = preview;
+
+        let defer_source = |session: &mut DockspaceSession| {
+            let mut frame = session
+                .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+                .unwrap();
+            frame
+                .defer_surface(A, SurfaceUnavailableReason::SurfaceUnavailable)
+                .unwrap();
+            finish(frame);
+            assert!(session.presented_surface(A).is_none());
+        };
+        if exit_during_gap {
+            defer_source(&mut session);
+        }
+        reduce(
+            &mut session,
+            &target_scene,
+            NativePointerInput::new(
+                POINTER,
+                Event::Moved,
+                NativeDesktopPointerLocation::new(
+                    NativeDesktopPosition::Exact(PhysicalPoint::new(10.0, 10.0).unwrap()),
+                    NativePointerHover::OutsideAll,
+                    None,
+                ),
+                owner,
+                owner,
+            )
+            .with_metadata(PointerEventMetadata::new(
+                PointerDeviceKind::Mouse,
+                Duration::from_millis(90),
+            )),
+        );
+        if !exit_during_gap {
+            defer_source(&mut session);
+        }
+        assert!(session.has_active_gesture());
+        let mut frame = session
+            .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+            .unwrap();
+        measure(&mut frame);
+        finish(frame);
+        let (_, output) = paint(&mut session, source);
+        present(&mut session, output);
+
+        let report = reduce(
+            &mut session,
+            &target_scene,
+            over_target(Event::ButtonReleased(Button::Primary), merge, 120),
+        );
+        assert_delivered(&report);
+        assert!(!session.has_active_gesture());
+        let item = session.view().item(FIRST).unwrap();
+        assert_eq!(item.surface(), B);
+        let group: Vec<_> = item.tabs().unwrap().items().collect();
+        assert_eq!(
+            group.len(),
+            3,
+            "exit during unavailable source: {exit_during_gap}"
+        );
+        assert!(group.contains(&OTHER) && group.contains(&FIFTH));
+    }
+}
+
+#[test]
 fn rejected_mapping_preserves_the_real_local_move_and_release() {
     let (mut session, bindings, [scene, _]) = fixture(true);
     let binding = bindings[0];
