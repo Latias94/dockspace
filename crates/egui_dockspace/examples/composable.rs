@@ -151,12 +151,17 @@ impl PaneView for Documents {
 
     fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> PaneResponse {
         ui.heading(title(item));
-        let response = ui.add(
+        let response = egui_dockspace::pane_text_edit(
+            ui,
+            editor(item),
             egui::TextEdit::multiline(self.text.get_mut(&item).expect("each pane has content"))
-                .id(editor(item))
                 .desired_width(f32::INFINITY),
         );
         PaneResponse::from(&response)
+    }
+
+    fn accepts_deferred_keyboard_input(&self, item: ItemId) -> bool {
+        self.focus_target(item).is_some()
     }
 
     fn focus_target(&self, item: ItemId) -> Option<egui::Id> {

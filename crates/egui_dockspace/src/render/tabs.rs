@@ -193,13 +193,10 @@ pub(crate) fn paint_pane(
             {
                 delivery
                     .take()
-                    .map(|delivery| delivery.replay(child_ui.ctx()))
+                    .map(|delivery| delivery.replay(context, pane))
             } else {
                 None
             };
-            let keyboard = replay
-                .as_ref()
-                .map(|_| super::tab_shortcuts::TabKeyboard::for_replayed_pane(context, pane));
             let pane_response = context.panes.ui(item, child_ui);
             let retry = delivery
                 .as_ref()
@@ -240,9 +237,6 @@ pub(crate) fn paint_pane(
             }
             if let Some(delivery) = delivery {
                 delivery.settle_registration(context, registered_target);
-            }
-            if let Some(keyboard) = keyboard {
-                keyboard.capture(context);
             }
             if let Some(replay) = replay {
                 replay.finish(context, child_ui, clip);

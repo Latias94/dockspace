@@ -50,6 +50,7 @@ use crate::{DockInputConfig, DockMenuAction, DockMenuButton};
 pub(crate) use measurement::measure_surface;
 pub(crate) use measurement::{PaintResources, prepare_surface};
 pub(crate) use presentation_menu::prepare_layer as prepare_menu_layer;
+pub use tab_shortcuts::{pane_text_edit, with_pane_keyboard_input};
 
 /// One action captured from a stable egui widget and response source.
 ///

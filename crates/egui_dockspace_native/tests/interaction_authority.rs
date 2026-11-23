@@ -396,10 +396,18 @@ fn native_paint_delivers_a_focus_handoff_packet_to_only_the_new_editor() {
             Some(Id::unique(("native-document-editor", item)))
         }
 
+        fn accepts_deferred_keyboard_input(&self, _: ItemId) -> bool {
+            true
+        }
+
         fn ui(&mut self, item: ItemId, ui: &mut Ui) -> PaneResponse {
             let id = self.focus_target(item).unwrap();
             let text = &mut self.0[usize::from(item == SECOND)];
-            let editor = ui.add(TextEdit::multiline(text).id(id).desired_width(160.0));
+            let editor = egui_dockspace::pane_text_edit(
+                ui,
+                id,
+                TextEdit::multiline(text).desired_width(160.0),
+            );
             if item == SECOND {
                 let clip = ui.clip_rect();
                 ui.shrink_clip_rect(Rect::from_min_max(
@@ -473,6 +481,8 @@ fn native_paint_delivers_a_focus_handoff_packet_to_only_the_new_editor() {
     }
     assert_eq!(editors.0, ["first", "second"]);
     paint(&mut session, &mut editors, vec![Event::Text("?".into())]);
+    assert_eq!(editors.0, ["first", "second!"]);
+    paint(&mut session, &mut editors, vec![]);
     assert_eq!(editors.0, ["first", "second!?"]);
 }
 

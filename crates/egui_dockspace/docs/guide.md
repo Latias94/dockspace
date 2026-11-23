@@ -189,12 +189,19 @@ with `show_single_surface`, then consume the Save shortcut after
 take the document snapshot after the run. Processing Save in `before_docking`
 can see the document before a paste from that packet reaches its editor.
 
-During a pane focus handoff, a later keyboard packet may wait for the earlier
-packet to finish. A layout retry within the same egui run cannot advance that
-queue. Deferred edits belong to the original pane and focused widget. Replacing
-the receiver or unmounting the docking surface retires those edits and releases
-subsequent input to the viewport. Unconsumed keys from a delivered packet are
-available after the docking call.
+A pane can opt into deferred keyboard input with
+`PaneView::accepts_deferred_keyboard_input`. Use `pane_text_edit` in place of
+`ui.add` for each participating `TextEdit`. For a custom editor or an editor
+that needs `ui.add_sized`, wrap that widget alone in `with_pane_keyboard_input`
+with its egui event filter. `focus_target` identifies the default destination
+for a focus request. An opted-in pane can return `None` until its first draw
+registers that target. Other panes keep egui's ordinary input handling.
+
+During a handoff, later keyboard packets can wait for the earlier packet to
+finish. Layout retries cannot advance the queue. Replacing the receiver or
+losing viewport focus retires pending packets, including shortcuts the
+application has yet to consume. Unmounting leaves new input with egui.
+Unconsumed keys from a delivered packet are available after the docking call.
 
 The composition callback runs before Dockspace validates a tab-list opener. A
 focused application widget can receive confirmation from the same input packet

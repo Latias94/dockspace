@@ -14,6 +14,7 @@ use crate::PaneFocusState;
 use super::{RenderContext, actions::effective_enabled, geometry::egui_rect};
 
 pub(super) use pane_input::PaneInputDelivery;
+pub use pane_input::{pane_text_edit, with_pane_keyboard_input};
 
 pub(super) fn has_live_keyboard_input(context: &egui::Context) -> bool {
     context.input(|input| input.events.iter().any(pane_input::is_keyboard_input))

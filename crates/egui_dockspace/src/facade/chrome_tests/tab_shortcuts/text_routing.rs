@@ -14,14 +14,19 @@ impl PaneView for Editors {
         Some(egui::Id::unique(("tab-routing-editor", item)))
     }
 
+    fn accepts_deferred_keyboard_input(&self, _: ItemId) -> bool {
+        true
+    }
+
     fn ui(&mut self, item: ItemId, ui: &mut Ui) -> PaneResponse {
         let id = self.focus_target(item).unwrap();
         if self.consume_cycle && ui.memory(|memory| memory.has_focus(id)) {
             ui.input_mut(|input| input.consume_shortcut(&bindings().next_tab.unwrap()));
         }
-        let response = ui.add(
-            egui::TextEdit::multiline(&mut self.text[usize::try_from(item.get()).unwrap() - 1])
-                .id(id),
+        let response = crate::pane_text_edit(
+            ui,
+            id,
+            egui::TextEdit::multiline(&mut self.text[usize::try_from(item.get()).unwrap() - 1]),
         );
         PaneResponse::from(&response)
     }

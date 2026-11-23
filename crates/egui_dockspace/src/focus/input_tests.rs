@@ -42,10 +42,11 @@ impl PaneView for EditorPane {
             ui.ctx().cumulative_pass_nr(),
             ui.memory(egui::Memory::focused),
         ));
-        let response = ui.add_sized(
-            ui.available_size(),
-            egui::TextEdit::multiline(&mut self.text).id(self.target),
-        );
+        let editor = egui::TextEdit::multiline(&mut self.text).id(self.target);
+        let response =
+            crate::with_pane_keyboard_input(ui, self.target, editor.get_event_filter(), |ui| {
+                ui.add_sized(ui.available_size(), editor)
+            });
         self.bounds = Some(response.rect);
         self.focus_gains += usize::from(response.gained_focus());
         PaneResponse::from(&response)
@@ -53,6 +54,10 @@ impl PaneView for EditorPane {
 
     fn focus_target(&self, item: ItemId) -> Option<Id> {
         (item == EDITOR).then_some(self.target)
+    }
+
+    fn accepts_deferred_keyboard_input(&self, item: ItemId) -> bool {
+        item == EDITOR
     }
 }
 

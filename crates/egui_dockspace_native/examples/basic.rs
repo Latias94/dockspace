@@ -953,14 +953,16 @@ impl PaneView for ExamplePanes {
                 content = content.with_content(&progress);
             }
         } else {
-            let response = ui.add_sized(
-                ui.available_size(),
-                egui::TextEdit::multiline(&mut pane.text)
-                    .id(pane_focus_id(item))
-                    .interactive(self.text_editable)
-                    .desired_width(f32::INFINITY)
-                    .font(egui::TextStyle::Monospace),
-            );
+            let id = pane_focus_id(item);
+            let editor = egui::TextEdit::multiline(&mut pane.text)
+                .id(id)
+                .interactive(self.text_editable)
+                .desired_width(f32::INFINITY)
+                .font(egui::TextStyle::Monospace);
+            let response =
+                egui_dockspace::with_pane_keyboard_input(ui, id, editor.get_event_filter(), |ui| {
+                    ui.add_sized(ui.available_size(), editor)
+                });
             content = content.with_content(&response);
             if item == EDITOR
                 && let Some(probe) = &self.probe
@@ -986,6 +988,10 @@ impl PaneView for ExamplePanes {
                 self.text_editable && pane.loaded && ![PREVIEW, CONSOLE, PROFILER].contains(&item)
             })
             .map(|_| pane_focus_id(item))
+    }
+
+    fn accepts_deferred_keyboard_input(&self, item: ItemId) -> bool {
+        self.focus_target(item).is_some()
     }
 
     fn sizing(&self, item: ItemId) -> PaneSizing {

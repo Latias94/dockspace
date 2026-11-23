@@ -333,6 +333,17 @@ pub trait PaneView {
         None
     }
 
+    /// Opts this pane into keyboard delivery across a Dockspace focus transition.
+    ///
+    /// Wrap each editor that can receive deferred input in
+    /// [`crate::with_pane_keyboard_input`]. The adapter delivers to the exact
+    /// widget only while it remains focused and attached to this pane. A focus
+    /// target of `None` with this opt-in means the target will be registered on
+    /// the first draw. The default leaves keyboard events with egui.
+    fn accepts_deferred_keyboard_input(&self, _item: ItemId) -> bool {
+        false
+    }
+
     /// Reports the pane's actual focus state after its UI has rendered.
     ///
     /// The default observes the exact [`Self::focus_target`] in egui memory.
@@ -438,6 +449,10 @@ impl<T: PaneView + ?Sized> PaneView for Box<T> {
 
     fn focus_target(&self, item: ItemId) -> Option<Id> {
         (**self).focus_target(item)
+    }
+
+    fn accepts_deferred_keyboard_input(&self, item: ItemId) -> bool {
+        (**self).accepts_deferred_keyboard_input(item)
     }
 
     fn focus_state(&self, item: ItemId, context: &Context) -> PaneFocusState {

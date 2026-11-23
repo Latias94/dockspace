@@ -230,17 +230,25 @@ impl PaneView for Document {
     }
 
     fn ui(&mut self, _item: ItemId, ui: &mut egui::Ui) -> PaneResponse {
-        let editor = ui.add_enabled(
-            !self.saving,
-            egui::TextEdit::multiline(&mut self.text)
-                .id(editor_id())
-                .desired_width(f32::INFINITY),
+        let enabled = !self.saving;
+        let editor = egui::TextEdit::multiline(&mut self.text)
+            .id(editor_id())
+            .desired_width(f32::INFINITY);
+        let editor = egui_dockspace::with_pane_keyboard_input(
+            ui,
+            editor_id(),
+            editor.get_event_filter(),
+            |ui| ui.add_enabled(enabled, editor),
         );
         PaneResponse::from(&editor)
     }
 
     fn focus_target(&self, item: ItemId) -> Option<egui::Id> {
         (item == DOCUMENT).then(editor_id)
+    }
+
+    fn accepts_deferred_keyboard_input(&self, item: ItemId) -> bool {
+        item == DOCUMENT && !self.saving
     }
 }
 

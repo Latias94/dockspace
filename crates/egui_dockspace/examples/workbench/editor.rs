@@ -548,13 +548,17 @@ impl PaneView for DemoPanes {
                         }
                     }
                     _ => {
-                        let edit = ui.add_sized(
-                            ui.available_size(),
-                            egui::TextEdit::multiline(&mut pane.text)
-                                .id(editor_id(item))
-                                .code_editor()
-                                .frame(Frame::new())
-                                .desired_width(f32::INFINITY),
+                        let id = editor_id(item);
+                        let editor = egui::TextEdit::multiline(&mut pane.text)
+                            .id(id)
+                            .code_editor()
+                            .frame(Frame::new())
+                            .desired_width(f32::INFINITY);
+                        let edit = egui_dockspace::with_pane_keyboard_input(
+                            ui,
+                            id,
+                            editor.get_event_filter(),
+                            |ui| ui.add_sized(ui.available_size(), editor),
                         );
                         pane.editor = Some(edit.rect);
                         content = content.with_content(&edit);
@@ -567,6 +571,10 @@ impl PaneView for DemoPanes {
 
     fn focus_target(&self, item: ItemId) -> Option<egui::Id> {
         (item == EDITOR).then(|| editor_id(item))
+    }
+
+    fn accepts_deferred_keyboard_input(&self, item: ItemId) -> bool {
+        item == EDITOR
     }
 
     fn sizing(&self, item: ItemId) -> PaneSizing {

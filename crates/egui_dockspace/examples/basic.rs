@@ -228,13 +228,18 @@ impl PaneView for ExamplePanes {
         let Some(pane) = self.panes.get_mut(&item) else {
             return egui_dockspace::PaneResponse::default();
         };
-        let response = ui.add(
+        let response = egui_dockspace::pane_text_edit(
+            ui,
+            egui::Id::unique(("basic-pane-editor", item)),
             egui::TextEdit::multiline(&mut pane.text)
-                .id(egui::Id::unique(("basic-pane-editor", item)))
                 .code_editor()
                 .desired_width(f32::INFINITY),
         );
         egui_dockspace::PaneResponse::from(&response)
+    }
+
+    fn accepts_deferred_keyboard_input(&self, item: ItemId) -> bool {
+        self.focus_target(item).is_some()
     }
 
     fn focus_target(&self, item: ItemId) -> Option<egui::Id> {

@@ -159,6 +159,7 @@ pub use menu::{
 };
 pub use pane::{PaneFocusState, PaneResponse, PaneView};
 pub use pass_settlement::{DockspaceOutput, DockspaceOutputReceipt, run_ui};
+pub use render::{pane_text_edit, with_pane_keyboard_input};
 pub use response::{
     DockspaceActionResult, DockspaceActionStatus, DockspaceCapability, DockspaceCloseItem,
     DockspaceCloseOutcome, DockspaceClosePlan, DockspaceCloseRequest, DockspaceCloseRequestResult,

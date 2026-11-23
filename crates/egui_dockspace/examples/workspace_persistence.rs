@@ -572,10 +572,10 @@ impl PaneView for PersistencePanes {
             egui::ScrollArea::both()
                 .id_salt(("editor-pane-scroll", item.get()))
                 .show(ui, |ui| {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut pane.text)
-                            .id(egui::Id::unique(("editor-pane-focus", item.get())))
-                            .desired_width(f32::INFINITY),
+                    egui_dockspace::pane_text_edit(
+                        ui,
+                        egui::Id::unique(("editor-pane-focus", item.get())),
+                        egui::TextEdit::multiline(&mut pane.text).desired_width(f32::INFINITY),
                     );
                     if pane.title == "Console" {
                         for line in 0..128 {
@@ -592,6 +592,10 @@ impl PaneView for PersistencePanes {
             .get(&item)
             .filter(|pane| !pane.canvas)
             .map(|_| egui::Id::unique(("editor-pane-focus", item.get())))
+    }
+
+    fn accepts_deferred_keyboard_input(&self, item: ItemId) -> bool {
+        self.focus_target(item).is_some()
     }
 }
 
