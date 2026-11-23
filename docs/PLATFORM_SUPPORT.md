@@ -31,12 +31,16 @@ real Chromium input journeys before producing the deployable artifact.
 ## Logical surfaces and native windows
 
 A logical surface is not an OS window. One external Root window may host several
-independently placed surfaces; a managed Child window hosts one whole-client
-surface. A surface may itself contain split panes and contained floating roots.
+independently placed surfaces. A managed Child window hosts one surface, which
+defaults to the entire client area. A surface may contain split panes and
+contained floating roots.
 
 - Publish the complete Root placement roster atomically, before measurement and
   encoding. Every placement has its own logical size, physical client origin,
   clip and presentation scale. Apply native DPI and placement transforms once.
+- A custom Child window may publish the placement of its one docking region
+  before measurement, including during first-live preparation. A geometry change
+  requires fresh output for the same native binding.
 - Report each physical window once. Source capture, hover, pane focus and exact
   presented output remain independent facts, including between sibling surfaces.
 - Native close captures the complete window's content roster. Deferral or veto

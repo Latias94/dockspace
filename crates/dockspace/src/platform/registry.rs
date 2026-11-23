@@ -128,6 +128,42 @@ struct SurfacePlacementRecord {
     placement: Option<NativeSurfacePlacement>,
 }
 
+impl SurfacePlacementRecord {
+    fn project_coordinates(&self, window: &WindowRecord) -> Option<CoordinateSnapshot> {
+        let coordinates = window.coordinates?;
+        let mapping = if let Some(placement) = self.placement {
+            SurfaceClientGeometry::new(
+                placement.origin(),
+                placement.scale_factor(),
+                placement.clip(),
+            )
+        } else {
+            let scale = window
+                .coordinate_observations
+                .current()?
+                .presentation_scale_factor()
+                .known()
+                .copied()?;
+            SurfaceClientGeometry::whole_client(coordinates.content_size(), scale).ok()?
+        };
+        CoordinateSnapshot::from_window_coordinates(
+            self.binding,
+            self.coordinate_generation,
+            coordinates,
+            mapping,
+        )
+    }
+
+    fn retain_recovery_coordinates(&mut self) {
+        if let Some(coordinates) = self.coordinates {
+            self.recovery_coordinates = Some(self.recovery_coordinates.map_or_else(
+                || RecoveryCoordinateSnapshot::new(coordinates),
+                |recovery| recovery.observe(coordinates),
+            ));
+        }
+    }
+}
+
 /// Borrowed physical facts for one exact real-window lifetime.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WindowRecordView<'registry> {
@@ -1129,30 +1165,7 @@ impl ViewportRegistry {
                     record.admission = ViewportAdmission::Retiring;
                 }
                 if observation.is_some() && !destroyed {
-                    record.coordinates = window.coordinates.and_then(|coordinates| {
-                        let mapping = if let Some(placement) = record.placement {
-                            SurfaceClientGeometry::new(
-                                placement.origin(),
-                                placement.scale_factor(),
-                                placement.clip(),
-                            )
-                        } else {
-                            let scale = window
-                                .coordinate_observations
-                                .current()?
-                                .presentation_scale_factor()
-                                .known()
-                                .copied()?;
-                            SurfaceClientGeometry::whole_client(coordinates.content_size(), scale)
-                                .ok()?
-                        };
-                        CoordinateSnapshot::from_window_coordinates(
-                            record.binding,
-                            record.coordinate_generation,
-                            coordinates,
-                            mapping,
-                        )
-                    });
+                    record.coordinates = record.project_coordinates(window);
                 }
                 let changed = match (before, record.coordinates) {
                     (Some(before), Some(after)) => !before.same_facts(after),
@@ -1213,11 +1226,8 @@ impl ViewportRegistry {
                         binding: record.binding,
                     });
                 }
-                if has_authority && let Some(coordinates) = record.coordinates {
-                    record.recovery_coordinates = Some(record.recovery_coordinates.map_or_else(
-                        || RecoveryCoordinateSnapshot::new(coordinates),
-                        |recovery| recovery.observe(coordinates),
-                    ));
+                if has_authority {
+                    record.retain_recovery_coordinates();
                 }
             }
         }
@@ -1693,7 +1703,8 @@ impl ViewportRegistry {
         ))
     }
 
-    /// Replaces this window's roster and returns the surfaces whose exact bindings changed.
+    /// Replaces a root's roster or reprojects a child's one exact placement.
+    /// Returns the surfaces whose coordinate authority changed.
     pub(crate) fn set_surface_placements(
         &mut self,
         binding: WindowBinding,
@@ -1706,6 +1717,9 @@ impl ViewportRegistry {
             .ok_or(ViewportRegistryError::UnknownWindow { binding })?;
         if placements.is_empty() {
             return Err(ViewportRegistryError::WindowPlacementUnavailable { binding });
+        }
+        if window.role == ViewportRole::Child {
+            return self.set_child_surface_placement(window.observation_binding, placements);
         }
         let frozen = matches!(
             window.lifecycle,
@@ -1739,19 +1753,7 @@ impl ViewportRegistry {
                 return Err(ViewportRegistryError::WindowPlacementUnavailable { binding });
             }
 
-            if placement.size().width() <= 0.0
-                || placement.size().height() <= 0.0
-                || LogicalRect::from_min_size(
-                    crate::geometry::LogicalPoint::new(0.0, 0.0).expect("finite origin"),
-                    placement.size(),
-                )
-                .and_then(|rect| {
-                    rect.to_desktop_physical(placement.origin(), placement.scale_factor())
-                })
-                .is_err()
-            {
-                return Err(ViewportRegistryError::InvalidSurfacePlacement { surface });
-            }
+            Self::validate_surface_placement(placement)?;
             replacements.push(placement);
         }
         let removed: Vec<_> = self
@@ -1786,6 +1788,60 @@ impl ViewportRegistry {
         changed.sort_unstable();
         *self = candidate;
         Ok(changed)
+    }
+
+    fn set_child_surface_placement(
+        &mut self,
+        binding: ViewportBinding,
+        placements: &[NativeSurfacePlacement],
+    ) -> Result<Vec<SurfaceId>, ViewportRegistryError> {
+        let surface = binding.surface();
+        let placement = match placements {
+            [placement] if placement.surface() == surface => *placement,
+            _ => {
+                return Err(ViewportRegistryError::WindowPlacementUnavailable {
+                    binding: binding.window(),
+                });
+            }
+        };
+        let current = self.current_record(binding)?;
+        Self::validate_surface_placement(placement)?;
+        if current.admission() == ViewportAdmission::Retiring {
+            return Ok(Vec::new());
+        }
+        if self.surface_placement(binding) == Some(placement) {
+            let (record, _) = self.current_record_mut(binding)?;
+            record.placement = Some(placement);
+            return Ok(Vec::new());
+        }
+        let generation = self.next_surface_authority(surface)?;
+        let (record, window) = self.current_record_mut(binding)?;
+        record.placement = Some(placement);
+        record.coordinate_generation = generation;
+        record.coordinates = record.project_coordinates(window);
+        if window_has_coordinate_authority(window) {
+            record.retain_recovery_coordinates();
+        }
+        Ok(vec![surface])
+    }
+
+    fn validate_surface_placement(
+        placement: NativeSurfacePlacement,
+    ) -> Result<(), ViewportRegistryError> {
+        if placement.size().width() <= 0.0
+            || placement.size().height() <= 0.0
+            || LogicalRect::from_min_size(
+                crate::geometry::LogicalPoint::new(0.0, 0.0).expect("finite origin"),
+                placement.size(),
+            )
+            .and_then(|rect| rect.to_desktop_physical(placement.origin(), placement.scale_factor()))
+            .is_err()
+        {
+            return Err(ViewportRegistryError::InvalidSurfacePlacement {
+                surface: placement.surface(),
+            });
+        }
+        Ok(())
     }
 
     fn declare_preserved_placements(&mut self, placements: Vec<NativeSurfacePlacement>) {
@@ -1823,33 +1879,20 @@ impl ViewportRegistry {
         let exact =
             ViewportBinding::with_placement_generation(binding, surface, placement_generation);
         let generation = self.next_surface_authority(surface)?;
-        let coordinates = self
+        let mut record = SurfacePlacementRecord {
+            binding: exact,
+            admission: previous_admission,
+            coordinates: None,
+            recovery_coordinates: None,
+            coordinate_generation: generation,
+            placement: Some(placement),
+        };
+        record.coordinates = self
             .windows
             .get(&binding)
-            .and_then(|window| window.coordinates)
-            .and_then(|window| {
-                CoordinateSnapshot::from_window_coordinates(
-                    exact,
-                    generation,
-                    window,
-                    SurfaceClientGeometry::new(
-                        placement.origin(),
-                        placement.scale_factor(),
-                        placement.clip(),
-                    ),
-                )
-            });
-        self.records.insert(
-            surface,
-            SurfacePlacementRecord {
-                binding: exact,
-                admission: previous_admission,
-                coordinates,
-                recovery_coordinates: coordinates.map(RecoveryCoordinateSnapshot::new),
-                coordinate_generation: generation,
-                placement: Some(placement),
-            },
-        );
+            .and_then(|window| record.project_coordinates(window));
+        record.recovery_coordinates = record.coordinates.map(RecoveryCoordinateSnapshot::new);
+        self.records.insert(surface, record);
         Ok(())
     }
 

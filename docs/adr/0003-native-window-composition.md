@@ -2,16 +2,19 @@
 
 A surface identifies docking content; a native window identifies an OS resource
 with its own lifetime. An externally owned Root window may compose several
-surface placements, while a runtime-owned Child has one whole-client placement.
+surface placements. A Child has one placement, which defaults to the whole
+client area and can project a smaller region within custom window chrome.
 Treating those identities as interchangeable would prevent shared-window hosts
 and correlate close, capture and retirement with the wrong resource.
 
 Placements publish as a complete atomic roster. Close and destruction act on the
 physical window's full roster; hit, output and pane-focus authority remain exact
 to each placement. Child creation retains durable source ownership until all
-required fresh first-live outputs are presented. Preparation or visibility alone
-cannot commit that transfer. Root continuation preserves the external resource
-while replacing logical bindings, with fresh presentation required afterward.
+required fresh first-live outputs are presented. A change to the child region
+requires fresh output for the same exact child binding. Preparation or visibility
+alone cannot commit that transfer. Root continuation preserves the external
+resource while replacing logical bindings, with fresh presentation required
+afterward.
 
 An operation captures every physical lifetime needed for completion, including
 the destination of a presentation rehome. Destruction or replacement of that

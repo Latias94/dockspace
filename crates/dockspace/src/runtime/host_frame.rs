@@ -155,14 +155,19 @@ impl<'session> DockspaceHostFrame<'session> {
     /// Measurements and painting in this candidate use the proposed placements.
     /// Dropping the frame preserves the committed roster and exact generations.
     /// The clip is independent of each surface's logical layout size.
+    /// A child accepts only its exact single surface, including during native
+    /// preparation. Changing its geometry revokes old output and input authority
+    /// while preserving the native binding and its close state. A valid geometry
+    /// declaration for a retiring child is inert.
     /// Publish changed placements before a separate workspace replacement frame.
     /// An equivalent declaration preserves its exact identities and may precede replacement.
     ///
     /// # Errors
     ///
-    /// Rejects stale windows, invalid geometry, missing surfaces, surfaces owned
-    /// by another window or a pending native establishment, storage refusal,
-    /// pending native input or an already started presentation phase.
+    /// Rejects stale windows, invalid geometry, invalid child rosters, missing
+    /// root surfaces, surfaces owned by another window or its pending native
+    /// establishment, storage refusal, pending native input or a started
+    /// presentation phase.
     pub fn set_native_surface_placements(
         &mut self,
         window: super::NativeWindowBinding,

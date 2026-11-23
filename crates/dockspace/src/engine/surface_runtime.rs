@@ -831,7 +831,7 @@ impl DockEngine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn reduce_platform_lifecycle_actions(
+    pub(super) fn reduce_platform_lifecycle_actions(
         &mut self,
         input: InputSequence,
         provider: PlatformObservationLease,

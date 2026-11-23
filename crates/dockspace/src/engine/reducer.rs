@@ -1328,6 +1328,12 @@ impl DockEngine {
                 *expected,
                 *window,
                 placements,
+                focus_causal,
+                PlatformSnapshotReductionContext {
+                    application_base,
+                    events,
+                    interaction_events,
+                },
             ),
             EngineInput::RegisterViewport {
                 provider,

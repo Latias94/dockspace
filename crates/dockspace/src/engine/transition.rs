@@ -161,7 +161,7 @@ pub enum InputOutcome {
     /// A complete placement declaration was processed atomically in a native window.
     NativeSurfacePlacementsChanged {
         window: crate::platform::viewport::WindowBinding,
-        /// Whether any exact placement identity changed.
+        /// Whether any surface coordinate authority changed.
         changed: bool,
     },
     /// An existing adapter window was bound to a logical surface.

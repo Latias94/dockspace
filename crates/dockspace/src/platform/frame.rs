@@ -561,6 +561,24 @@ impl ViewportCoordinator {
             .map_err(ViewportCoordinatorError::Registry)
     }
 
+    pub(crate) fn refresh_child_placement_readiness(
+        &mut self,
+        binding: ViewportBinding,
+    ) -> Result<Vec<ViewportLifecycleAction>, ViewportCoordinatorError> {
+        if self
+            .registry
+            .placement_record(binding)
+            .is_some_and(|record| {
+                record.role() == ViewportRole::Child
+                    && record.admission() == ViewportAdmission::Pending
+            })
+        {
+            self.reduce_ready_binding(binding)
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
     /// Registers an existing adapter window without storing its OS handle.
     pub(crate) fn register_existing(
         &mut self,

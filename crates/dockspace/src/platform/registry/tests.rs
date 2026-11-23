@@ -153,6 +153,76 @@ fn shared_placement_refusal_preserves_the_complete_roster_and_generation_frontie
 }
 
 #[test]
+fn child_placement_preserves_the_exact_close_request_and_retirement() {
+    let mut registry = ViewportRegistry::default();
+    let [placement, other] = shared_placements();
+    let binding = registry
+        .register_owned_child(
+            WorkspaceEpoch::new(0),
+            placement.surface(),
+            WindowToken::new(10),
+        )
+        .unwrap();
+    registry
+        .apply_snapshot_for_test(&snapshot(
+            1,
+            vec![ready_window_with_presentation(
+                binding,
+                1,
+                WindowPresentationState::Visible,
+            )],
+        ))
+        .unwrap();
+    registry
+        .apply_close_observation(close_observation(
+            binding,
+            2,
+            WindowCloseState::LiveRequested,
+        ))
+        .unwrap();
+    let before = registry.clone();
+    for invalid in [&[][..], &[other][..], &[placement, other][..]] {
+        assert!(
+            registry
+                .set_surface_placements(binding.window(), invalid, |_| false)
+                .is_err()
+        );
+        assert_eq!(registry, before);
+    }
+
+    assert_eq!(
+        registry
+            .set_surface_placements(binding.window(), &[placement], |_| false)
+            .unwrap(),
+        [binding.surface()]
+    );
+    let record = registry.placement_record(binding).unwrap();
+    let original = before.placement_record(binding).unwrap();
+    assert_eq!(record.window, original.window);
+    assert_eq!(record.lifecycle(), ViewportLifecycle::CloseRequested);
+    assert!(!record.is_routeable());
+    assert!(record.coordinate_generation() > original.coordinate_generation());
+    assert_eq!(registry.surface_placement(binding), Some(placement));
+
+    registry.mark_awaiting_destroyed(binding).unwrap();
+    let retiring = registry.clone();
+    let changed = NativeSurfacePlacement::new(
+        binding.surface(),
+        other.size(),
+        other.origin(),
+        other.scale_factor(),
+        other.clip(),
+    );
+    assert!(
+        registry
+            .set_surface_placements(binding.window(), &[changed], |_| false)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(registry, retiring);
+}
+
+#[test]
 fn detaching_one_shared_placement_cannot_retire_its_populated_sibling_window() {
     let (mut registry, observed) = shared_registry();
     let a = registry.record(SurfaceId::new(1)).unwrap().binding();

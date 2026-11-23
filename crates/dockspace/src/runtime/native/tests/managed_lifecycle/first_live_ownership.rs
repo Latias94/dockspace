@@ -1301,6 +1301,104 @@ fn revoked_prepared_readiness_rejects_old_first_live_output_after_identical_geom
 }
 
 #[test]
+fn native_child_placement_changes_require_fresh_output_on_the_same_binding() {
+    let (mut session, root, child) = pending_first_live_native_create();
+    let surface = child.surface();
+    let original_version = session.version();
+    let original_basis = session.engine.viewport().native_ready_basis(child.binding);
+    let original = emit_first_live_child_output(&mut session, root, child);
+    let placement = |top| {
+        NativeSurfacePlacement::new(
+            surface,
+            LogicalSize::new(420.0, 320.0 - top).unwrap(),
+            PhysicalPoint::new(0.0, top).unwrap(),
+            native_scale(),
+            PhysicalRect::new(0.0, top, 420.0, 320.0 - top).unwrap(),
+        )
+    };
+    let offset = placement(48.0);
+    let publish = |session: &mut DockspaceSession, placement| {
+        let mut frame = session
+            .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+            .unwrap();
+        frame
+            .set_native_surface_placements(child.window(), &[placement])
+            .unwrap();
+        assert_eq!(frame.native_surface_placement(child), Some(placement));
+        assert_eq!(
+            frame
+                .native_surface_bindings_for_window(child.window())
+                .collect::<Vec<_>>(),
+            [child]
+        );
+        frame
+            .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+            .unwrap();
+        let report = frame.commit().unwrap();
+        assert!(report.native_placement_detachments().is_empty());
+        assert!(report.native_admissions().is_empty());
+        assert_eq!(session.native_surface_placement(child), Some(placement));
+    };
+
+    publish(&mut session, offset);
+    assert_pending_first_live_source(&session, root, child, original_version);
+    assert_ne!(
+        session.engine.viewport().native_ready_basis(child.binding),
+        original_basis
+    );
+    session
+        .report_surface_presentation(original, SurfacePresentationResult::Presented)
+        .unwrap();
+    assert!(
+        commit_managed_frame_report(&mut session)
+            .native_admissions()
+            .is_empty()
+    );
+    assert_pending_first_live_source(&session, root, child, original_version);
+
+    let first_live = emit_first_live_child_output(&mut session, root, child);
+    session
+        .report_surface_presentation(first_live, SurfacePresentationResult::Presented)
+        .unwrap();
+    assert_eq!(
+        commit_managed_frame_report(&mut session).native_admissions(),
+        &[child]
+    );
+    assert_first_live_child_admitted(&session, child, original_version);
+    assert!(session.presented_surface(surface).is_some());
+
+    measure_all_surfaces(&mut session);
+    let mut frame = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    let receipt = execute_surface_program(&mut frame, surface);
+    frame.confirm_surface_painted(receipt).unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let old = frame
+        .commit()
+        .unwrap()
+        .take_painted_outputs()
+        .pop()
+        .unwrap();
+    publish(&mut session, placement(72.0));
+    assert!(session.presented_surface(surface).is_none());
+    session
+        .report_surface_presentation(old, SurfacePresentationResult::Presented)
+        .unwrap();
+    assert!(
+        commit_managed_frame_report(&mut session)
+            .native_admissions()
+            .is_empty()
+    );
+    assert!(session.presented_surface(surface).is_none());
+    paint_and_present_all_native_surfaces(&mut session);
+    assert!(session.presented_surface(surface).is_some());
+    assert_first_live_child_admitted(&session, child, original_version);
+}
+
+#[test]
 fn unreported_and_abandoned_first_live_output_preserve_source_ownership() {
     let (mut session, root, child) = pending_first_live_native_create();
     let version = session.version();
