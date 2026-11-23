@@ -1104,6 +1104,20 @@ pub enum EngineInput {
 }
 
 impl EngineInput {
+    pub(super) fn local_surface_action_base(&self) -> Option<WorkspaceVersion> {
+        match self {
+            Self::RequestLocalSceneClose { expected, .. }
+            | Self::RequestLocalRootClose { expected, .. }
+            | Self::SelectLocalSceneTab { expected, .. }
+            | Self::ApplyLocalTabChromeAction { expected, .. }
+            | Self::ApplyLocalPresentationCommand { expected, .. }
+            | Self::AdjustLocalSplitterResize { expected, .. }
+            | Self::AdjustLocalSplitterJunctionResize { expected, .. }
+            | Self::AdjustLocalContainedResize { expected, .. } => Some(*expected),
+            _ => None,
+        }
+    }
+
     /// Returns the diagnostic source class recorded for this input.
     ///
     /// Input classes never reorder a host frame. The frame capability preserves

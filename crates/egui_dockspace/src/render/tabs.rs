@@ -149,24 +149,41 @@ pub(crate) fn paint_pane(
             let focus_target = focus_request.and_then(|_| context.panes.focus_target(item));
             let preapplied = match (focus_request, focus_target) {
                 (Some(request), Some(target))
-                    if !delivery
-                        .as_ref()
-                        .is_some_and(|input| input.awaits_registration())
+                    if !child_ui.ctx().will_discard()
                         && !crate::focus::input_may_surrender_focus(child_ui.ctx())
                         && !super::tab_shortcuts::has_live_keyboard_input(child_ui.ctx())
-                        && crate::focus::pane_registered_focus_target(
+                        && (crate::focus::pane_registered_focus_target(
                             child_ui, clip, target, true,
-                        ) =>
+                        ) || delivery
+                            .as_ref()
+                            .is_some_and(|input| input.qualified_focus_in_discarded_pass())) =>
                 {
-                    // A known widget can observe gained_focus while painting.
-                    // Editing input stays held until the new registration qualifies.
-                    crate::focus::apply_pane_focus_request(
-                        child_ui.ctx(),
-                        context.instance_id,
-                        request,
-                        target,
-                        focus_before_contents,
-                    )
+                    if delivery
+                        .as_ref()
+                        .is_some_and(|input| input.awaits_registration())
+                    {
+                        // Let the widget initialize its selection while holding
+                        // editing input and the focus claim until registration.
+                        let pending = crate::focus::pane_focus_handoff_pending(
+                            child_ui.ctx(),
+                            context.instance_id,
+                            request,
+                            target,
+                            focus_before_contents,
+                        );
+                        if pending {
+                            child_ui.memory_mut(|memory| memory.request_focus(target));
+                        }
+                        pending
+                    } else {
+                        crate::focus::apply_pane_focus_request(
+                            child_ui.ctx(),
+                            context.instance_id,
+                            request,
+                            target,
+                            focus_before_contents,
+                        )
+                    }
                 }
                 _ => false,
             };
@@ -222,7 +239,7 @@ pub(crate) fn paint_pane(
                 }
             }
             if let Some(delivery) = delivery {
-                delivery.settle_registration(context, registered_target);
+                delivery.settle_registration(context, registered_target, preapplied);
             }
             if let Some(keyboard) = keyboard {
                 keyboard.capture(context);

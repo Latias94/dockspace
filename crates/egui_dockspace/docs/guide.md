@@ -182,6 +182,18 @@ passes may invoke it again; application-side mutations are not rolled back by
 a rejected final output. Collect command intents and apply them after success.
 The original `run_single_surface` delegates to this same driver with no panels.
 
+For shortcuts that must observe edits from the same input packet, read the
+shortcut after pane input has run. For example, use `egui_dockspace::run_ui`
+with `show_single_surface`, then consume the Save shortcut after
+`show_single_surface` in the same callback. Record the save intent there and
+take the document snapshot after the run. Processing Save in `before_docking`
+can see the document before a paste from that packet reaches its editor.
+
+During a pane focus handoff, a later keyboard packet may wait for the earlier
+packet to finish. The queued packet belongs to the original pane and focus
+widget. Changing the receiver or replacing the workspace retires that input.
+Unconsumed keys from a delivered packet are available after the docking call.
+
 The composition callback runs before Dockspace validates a tab-list opener. A
 focused application widget can receive confirmation from the same input packet
 as that opener. Once Dockspace accepts the opener, it can capture subsequent

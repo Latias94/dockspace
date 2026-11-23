@@ -1201,6 +1201,12 @@ impl DockEngine {
                 offer.anchor().surface(),
             );
         }
+        if let Some(timed) = &drag.timed {
+            self.insert_current_viewport_binding(
+                &mut dependencies.target_bindings,
+                timed.request().surface,
+            );
+        }
         if let Some(preview) = drag.preview() {
             match preview.public().visual() {
                 PreviewVisual::Dock { surface, .. } | PreviewVisual::Contained { surface, .. } => {
@@ -1392,6 +1398,7 @@ impl DockEngine {
                 input,
                 source: InteractionCounterError::StateInvariant,
             })?;
+        self.clear_drag_continuation(session);
         if preview_was_present {
             interaction_events.push(InteractionEvent::new(
                 input,

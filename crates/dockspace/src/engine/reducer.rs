@@ -1172,6 +1172,19 @@ impl DockEngine {
             events,
             interaction_events,
         )?;
+        let outcome = match (&outcome, input.input.local_surface_action_base()) {
+            (
+                InputOutcome::InteractionProcessed {
+                    outcome: InteractionOutcome::Rejected(InteractionRejection::StaleScene),
+                    ..
+                },
+                Some(expected),
+            ) => InputOutcome::StaleRejected {
+                expected,
+                accepted_base: self.version,
+            },
+            _ => outcome,
+        };
         self.cancel_invalid_pending_release_obligations_caused(cause, interaction_events);
         self.invalidate_pending_presentation_rehome();
         if matches!(

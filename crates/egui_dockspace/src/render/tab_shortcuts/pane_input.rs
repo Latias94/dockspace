@@ -18,21 +18,30 @@ enum Handoff {
         header: Id,
         awaiting_publication: bool,
     },
-    Continuation {
-        widget: Id,
-    },
+    Continuation,
     RetryRegistration {
-        widget: Id,
+        qualified_focus: bool,
     },
+}
+
+#[derive(Clone, Copy)]
+struct PaneInputTarget {
+    slot: Id,
+    item: ItemId,
+    content: DockspaceContentId,
+    widget: Id,
+}
+
+struct PaneInputPacket {
+    target: PaneInputTarget,
+    events: Vec<Event>,
 }
 
 struct PendingInput {
     ready: bool,
-    item: ItemId,
-    content: DockspaceContentId,
     previous_request: Option<dockspace::runtime::DockspacePaneFocusRequest>,
     handoff: Handoff,
-    events: Vec<Event>,
+    packet: PaneInputPacket,
 }
 
 #[derive(Default)]
@@ -42,8 +51,9 @@ struct PaneKeyboard {
 
 #[derive(Default)]
 struct ViewportKeyboard {
-    handoff: Option<(Id, PendingInput)>,
-    later_packets: VecDeque<Vec<Event>>,
+    handoff: Option<PendingInput>,
+    later_packets: VecDeque<PaneInputPacket>,
+    incoming: Vec<Event>,
 }
 
 impl egui::plugin::Plugin for PaneKeyboard {
@@ -68,36 +78,30 @@ impl egui::plugin::Plugin for PaneKeyboard {
         }
         // Count original input passes at ingress. egui's frame number is only
         // advanced by run_ui, and a sizing pass does not deliver another packet.
-        if let Some((_, pending)) = &mut input.handoff {
+        if let Some(pending) = &mut input.handoff {
             if pending.ready || matches!(pending.handoff, Handoff::RetryRegistration { .. }) {
                 input.handoff = None;
             } else {
                 pending.ready = true;
             }
         }
+        input.incoming.clear();
         // Pure edits can share an already validated widget. A packet containing
         // command keys needs its own pass so application callbacks observe its
         // original place in the input sequence.
-        let waits_for_handoff = input.handoff.as_ref().is_some_and(|(_, pending)| {
-            !pending.events.is_empty()
+        let waits_for_handoff = input.handoff.as_ref().is_some_and(|pending| {
+            !pending.packet.events.is_empty()
                 && (!input.later_packets.is_empty()
-                    || pending.events.iter().any(is_key_event)
+                    || pending.packet.events.iter().any(is_key_event)
                     || raw.events.iter().any(is_key_event))
         });
         if waits_for_handoff || !input.later_packets.is_empty() {
-            // Commands can change focus or read the document. Dispatch the next
-            // keyboard packet only after the older packet has reached the pane
-            // and its remaining shortcuts have reached the application.
-            let next: Vec<_> = raw
+            // The render path can see a newer focus request. Assign the incoming
+            // events only after checking the owner of the earlier packet.
+            input.incoming = raw
                 .events
                 .extract_if(.., |event| is_keyboard_input(event))
                 .collect();
-            if !next.is_empty() {
-                input.later_packets.push_back(next);
-            }
-            if !waits_for_handoff && let Some(packet) = input.later_packets.pop_front() {
-                drop(raw.events.splice(..0, packet));
-            }
         }
     }
 
@@ -120,15 +124,13 @@ impl egui::plugin::Plugin for PaneKeyboard {
 }
 
 pub(in crate::render) struct PaneInputDelivery {
-    item: ItemId,
-    widget: Id,
-    events: Vec<Event>,
+    packet: PaneInputPacket,
     phase: DeliveryPhase,
 }
 
 #[derive(Clone, Copy)]
 enum DeliveryPhase {
-    AwaitingRegistration,
+    AwaitingRegistration { qualified_focus: bool },
     Registered,
 }
 
@@ -142,6 +144,9 @@ pub(super) fn activate(
     let Some(item) = context.plan.tab_content_focus_target(tab) else {
         return;
     };
+    let Some(widget) = context.panes.focus_target(item) else {
+        return;
+    };
     let mut events = take_keys_after(context.ui, start);
     if key == Key::Space && matches!(events.first(), Some(Event::Text(text)) if text == " ") {
         // egui-winit emits a text event immediately after the activating Space.
@@ -149,12 +154,11 @@ pub(super) fn activate(
     }
     defer(
         context,
-        item,
+        PaneInputPacket::new(context, item, widget, events),
         Handoff::Activation {
             header,
             awaiting_publication: false,
         },
-        events,
     );
 }
 
@@ -164,17 +168,38 @@ pub(super) fn continue_at(
     widget: Id,
     events: Vec<Event>,
 ) {
-    defer(context, item, Handoff::Continuation { widget }, events);
+    defer(
+        context,
+        PaneInputPacket::new(context, item, widget, events),
+        Handoff::Continuation,
+    );
 }
 
-fn defer(context: &RenderContext<'_, '_, '_>, item: ItemId, handoff: Handoff, events: Vec<Event>) {
+impl PaneInputPacket {
+    fn new(
+        context: &RenderContext<'_, '_, '_>,
+        item: ItemId,
+        widget: Id,
+        events: Vec<Event>,
+    ) -> Self {
+        Self {
+            target: PaneInputTarget {
+                slot: slot_id(context),
+                item,
+                content: context.plan.content_identity(item),
+                widget,
+            },
+            events,
+        }
+    }
+}
+
+fn defer(context: &RenderContext<'_, '_, '_>, packet: PaneInputPacket, handoff: Handoff) {
     let pending = PendingInput {
         ready: false,
-        item,
-        content: context.plan.content_identity(item),
         previous_request: context.pane_focus_request,
         handoff,
-        events,
+        packet,
     };
     store(context, pending);
 }
@@ -189,18 +214,26 @@ pub(super) fn prepare(context: &RenderContext<'_, '_, '_>) -> PaneInputState {
     let Some(mut pending) = take(context) else {
         return PaneInputState::None;
     };
-    if pending.content != context.plan.content_identity(pending.item) {
+    let PaneInputTarget {
+        item,
+        content,
+        widget,
+        ..
+    } = pending.packet.target;
+    if content != context.plan.content_identity(item)
+        || context.panes.focus_target(item) != Some(widget)
+    {
+        retire_input(context);
         return PaneInputState::None;
     }
-    if let Handoff::RetryRegistration { widget } = pending.handoff {
+    if let Handoff::RetryRegistration { qualified_focus } = pending.handoff {
         return if context.pane_focus_request == pending.previous_request {
             PaneInputState::Ready(PaneInputDelivery {
-                item: pending.item,
-                widget,
-                events: pending.events,
-                phase: DeliveryPhase::AwaitingRegistration,
+                packet: pending.packet,
+                phase: DeliveryPhase::AwaitingRegistration { qualified_focus },
             })
         } else {
+            retire_input(context);
             PaneInputState::None
         };
     }
@@ -210,17 +243,18 @@ pub(super) fn prepare(context: &RenderContext<'_, '_, '_>) -> PaneInputState {
         return PaneInputState::Waiting;
     }
     let focused = context.ui.memory(egui::Memory::focused);
-    let (widget, phase) = match pending.handoff {
-        Handoff::Continuation { widget }
+    let phase = match pending.handoff {
+        Handoff::Continuation
             if focused == Some(widget)
                 && context
                     .pane_focus_request
-                    .is_none_or(|request| request.item() == Some(pending.item))
+                    .is_none_or(|request| request.item() == Some(item))
                 && super::can_route_keyboard(context)
                 && pointer_keeps_focus(context.ui.ctx(), widget) =>
         {
-            pending.events.extend(take_keys_after(context.ui, 0));
-            (widget, DeliveryPhase::Registered)
+            queue_incoming(context, pending.packet.target);
+            pending.packet.events.extend(take_keys_after(context.ui, 0));
+            DeliveryPhase::Registered
         }
         Handoff::Activation {
             header,
@@ -230,7 +264,6 @@ pub(super) fn prepare(context: &RenderContext<'_, '_, '_>) -> PaneInputState {
             && !crate::focus::input_may_surrender_focus(context.ui.ctx()) =>
         {
             let request = context.pane_focus_request;
-            pending.events.extend(take_keys_after(context.ui, 0));
             context
                 .ui
                 .memory_mut(|memory| memory.move_focus(FocusDirection::None));
@@ -243,25 +276,31 @@ pub(super) fn prepare(context: &RenderContext<'_, '_, '_>) -> PaneInputState {
                         header,
                         awaiting_publication: true,
                     };
+                    pending.packet.events.extend(take_keys_after(context.ui, 0));
+                    queue_incoming(context, pending.packet.target);
                     store(context, pending);
                     return PaneInputState::Waiting;
                 }
+                retire_input(context);
                 return PaneInputState::None;
             }
-            if request.and_then(|request| request.item()) != Some(pending.item) {
+            if request.and_then(|request| request.item()) != Some(item) {
+                retire_input(context);
                 return PaneInputState::None;
             }
-            let Some(target) = context.panes.focus_target(pending.item) else {
-                return PaneInputState::None;
-            };
-            (target, DeliveryPhase::AwaitingRegistration)
+            pending.packet.events.extend(take_keys_after(context.ui, 0));
+            queue_incoming(context, pending.packet.target);
+            DeliveryPhase::AwaitingRegistration {
+                qualified_focus: false,
+            }
         }
-        _ => return PaneInputState::None,
+        _ => {
+            retire_input(context);
+            return PaneInputState::None;
+        }
     };
     PaneInputState::Ready(PaneInputDelivery {
-        item: pending.item,
-        widget,
-        events: pending.events,
+        packet: pending.packet,
         phase,
     })
 }
@@ -287,7 +326,7 @@ fn store(context: &RenderContext<'_, '_, '_>, pending: PendingInput) {
         .viewports
         .entry(ctx.viewport_id())
         .or_default()
-        .handoff = Some((slot_id(context), pending));
+        .handoff = Some(pending);
     if !retry {
         ctx.request_repaint();
     }
@@ -295,13 +334,55 @@ fn store(context: &RenderContext<'_, '_, '_>, pending: PendingInput) {
 
 fn take(context: &RenderContext<'_, '_, '_>) -> Option<PendingInput> {
     let ctx = context.ui.ctx();
-    ctx.plugin_opt::<PaneKeyboard>()?
-        .lock()
-        .viewports
-        .get_mut(&ctx.viewport_id())?
-        .handoff
-        .take_if(|(id, _)| *id == slot_id(context))
-        .map(|(_, pending)| pending)
+    let plugin = ctx.plugin_opt::<PaneKeyboard>()?;
+    let mut keyboard = plugin.lock();
+    let input = keyboard.viewports.get_mut(&ctx.viewport_id())?;
+    let slot = slot_id(context);
+    if input.handoff.is_some() {
+        return input
+            .handoff
+            .take_if(|pending| pending.packet.target.slot == slot);
+    }
+    input
+        .later_packets
+        .front()
+        .filter(|packet| packet.target.slot == slot)?;
+    Some(PendingInput {
+        ready: true,
+        previous_request: None,
+        handoff: Handoff::Continuation,
+        packet: input.later_packets.pop_front()?,
+    })
+}
+
+fn queue_incoming(context: &RenderContext<'_, '_, '_>, target: PaneInputTarget) {
+    let ctx = context.ui.ctx();
+    if let Some(plugin) = ctx.plugin_opt::<PaneKeyboard>()
+        && let Some(input) = plugin.lock().viewports.get_mut(&ctx.viewport_id())
+        && !input.incoming.is_empty()
+    {
+        input.later_packets.push_back(PaneInputPacket {
+            target,
+            events: std::mem::take(&mut input.incoming),
+        });
+    }
+}
+
+fn retire_input(context: &RenderContext<'_, '_, '_>) {
+    let ctx = context.ui.ctx();
+    if let Some(plugin) = ctx.plugin_opt::<PaneKeyboard>()
+        && let Some(input) = plugin.lock().viewports.get_mut(&ctx.viewport_id())
+    {
+        input.later_packets.clear();
+        // The incoming packet has never been delivered. Let this pass route it.
+        ctx.input_mut(|state| {
+            drop(
+                state
+                    .events
+                    .splice(..0, std::mem::take(&mut input.incoming)),
+            );
+        });
+    }
 }
 
 impl PaneInputDelivery {
@@ -339,19 +420,28 @@ impl PaneInputDelivery {
             prior_focus,
         )
         .then(|| Self {
-            item,
-            widget,
-            events: take_keys_after(context.ui, 0),
-            phase: DeliveryPhase::AwaitingRegistration,
+            packet: PaneInputPacket::new(context, item, widget, take_keys_after(context.ui, 0)),
+            phase: DeliveryPhase::AwaitingRegistration {
+                qualified_focus: false,
+            },
         })
     }
 
     pub(in crate::render) fn targets(&self, item: ItemId) -> bool {
-        self.item == item
+        self.packet.target.item == item
     }
 
     pub(in crate::render) fn awaits_registration(&self) -> bool {
-        matches!(self.phase, DeliveryPhase::AwaitingRegistration)
+        matches!(self.phase, DeliveryPhase::AwaitingRegistration { .. })
+    }
+
+    pub(in crate::render) fn qualified_focus_in_discarded_pass(&self) -> bool {
+        matches!(
+            self.phase,
+            DeliveryPhase::AwaitingRegistration {
+                qualified_focus: true
+            }
+        )
     }
 
     pub(in crate::render) fn take_for(
@@ -367,42 +457,48 @@ impl PaneInputDelivery {
 
     pub(in crate::render) fn can_replay(&self, ui: &Ui, clip: Rect) -> bool {
         matches!(self.phase, DeliveryPhase::Registered)
-            && ui.memory(|memory| memory.has_focus(self.widget))
-            && crate::focus::pane_registered_focus_target(ui, clip, self.widget, true)
+            && ui.memory(|memory| memory.has_focus(self.packet.target.widget))
+            && crate::focus::pane_registered_focus_target(ui, clip, self.packet.target.widget, true)
     }
 
     pub(in crate::render) fn settle_registration(
         self,
         context: &mut RenderContext<'_, '_, '_>,
         target: Option<Id>,
+        preapplied: bool,
     ) {
-        if self.awaits_registration() && context.ui.ctx().will_discard() {
+        if let DeliveryPhase::AwaitingRegistration { qualified_focus } = self.phase
+            && context.ui.ctx().will_discard()
+        {
             defer(
                 context,
-                self.item,
+                self.packet,
                 Handoff::RetryRegistration {
-                    widget: self.widget,
+                    qualified_focus: qualified_focus || preapplied,
                 },
-                self.events,
             );
         } else if self.awaits_registration()
-            && target == Some(self.widget)
-            && context.ui.memory(|memory| memory.has_focus(self.widget))
+            && target == Some(self.packet.target.widget)
+            && context
+                .ui
+                .memory(|memory| memory.has_focus(self.packet.target.widget))
         {
-            continue_at(context, self.item, self.widget, self.events);
+            defer(context, self.packet, Handoff::Continuation);
         } else {
             self.release_shortcuts(context.pane_shortcuts);
         }
     }
 
     pub(in crate::render) fn release_shortcuts(self, shortcuts: &mut Vec<Event>) {
-        shortcuts.extend(self.events.into_iter().filter(is_key_event));
+        if self.awaits_registration() {
+            shortcuts.extend(self.packet.events.into_iter().filter(is_key_event));
+        }
     }
 
     pub(in crate::render) fn replay(self, context: &Context) -> ScopedPaneInput {
         // The ordinary widget API exposes an unaddressed event list. Keep the
         // replay local to this pane, including when another pane paints later.
-        let mut events = self.events;
+        let mut events = self.packet.events;
         context.input_mut(|input| {
             events.append(&mut input.events);
             input.events = events;

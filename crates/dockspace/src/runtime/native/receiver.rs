@@ -33,8 +33,8 @@ pub(super) fn resolve_receiver_observation(
                 let point = probe.client_position();
                 point.x() < 0.0
                     || point.y() < 0.0
-                    || point.x() > coordinates.content_size().width()
-                    || point.y() > coordinates.content_size().height()
+                    || point.x() >= coordinates.content_size().width()
+                    || point.y() >= coordinates.content_size().height()
             });
         if outside_client {
             return Ok((

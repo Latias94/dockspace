@@ -8,6 +8,7 @@ struct EditingDocuments {
     scroll: Option<f32>,
     editor: Option<Rect>,
     grid_before_editor: bool,
+    select_all_on_focus: bool,
 }
 
 impl PaneView for EditingDocuments {
@@ -49,6 +50,16 @@ impl PaneView for EditingDocuments {
         };
         if item == SECOND {
             self.editor = Some(response.interact_rect);
+            if self.select_all_on_focus && response.gained_focus() {
+                let mut state = egui::TextEdit::load_state(ui.ctx(), target).unwrap();
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(0),
+                        egui::text::CCursor::new(self.text[1].chars().count()),
+                    )));
+                state.store(ui.ctx(), target);
+            }
         }
         (&response).into()
     }
@@ -277,6 +288,108 @@ fn a_discarded_grid_measurement_keeps_the_pending_paste_and_save() {
         "bX",
         "bX",
     );
+}
+
+#[test]
+fn a_queued_cut_cannot_reach_a_different_editor() {
+    for owned in [false, true] {
+        for replace_workspace in [false, true] {
+            let context = Context::default();
+            let mut dock = editing_dock(false);
+            let mut docs = EditingDocuments {
+                text: ["alpha".into(), "bravo".into()],
+                ..Default::default()
+            };
+            let mut time = 0.0;
+            let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
+                time += 0.1;
+                let raw = input(time, events);
+                let output = if owned {
+                    dock.run_single_surface(&context, raw, SURFACE, docs)
+                        .unwrap()
+                        .0
+                } else {
+                    crate::run_ui(&context, raw, |ui| {
+                        dock.show_single_surface(SURFACE, ui, docs).unwrap();
+                    })
+                };
+                let (output, receipt) = output.into_parts();
+                let copied = output
+                    .platform_output
+                    .commands
+                    .iter()
+                    .any(|command| matches!(command, egui::OutputCommand::CopyText(_)));
+                output.drop_without_applying_deltas();
+                receipt.report(SurfacePresentationResult::Presented);
+                copied
+            };
+            paint(&mut dock, &mut docs, vec![]);
+            select_document(&mut dock, FIRST);
+            paint(&mut dock, &mut docs, vec![]);
+            select_document(&mut dock, SECOND);
+            paint(&mut dock, &mut docs, vec![Event::Paste("X".into())]);
+            assert!(!paint(
+                &mut dock,
+                &mut docs,
+                vec![command(Key::A), Event::Cut]
+            ));
+            assert_eq!(docs.text, ["alpha", "bravoX"]);
+
+            if replace_workspace {
+                dock = editing_dock(false);
+                docs.text = ["replacement A".into(), "replacement B".into()];
+                // The new workspace deliberately reuses the original widget IDs.
+                assert!(!paint(&mut dock, &mut docs, vec![]));
+                assert_eq!(docs.text, ["replacement A", "replacement B"]);
+            } else {
+                select_document(&mut dock, FIRST);
+                assert!(!paint(&mut dock, &mut docs, vec![Event::Text("?".into())]));
+                assert_eq!(docs.text, ["alpha", "bravoX"]);
+                assert_eq!(
+                    context.memory(egui::Memory::focused),
+                    docs.focus_target(FIRST)
+                );
+                assert!(!paint(&mut dock, &mut docs, vec![]));
+                assert_eq!(docs.text, ["alpha?", "bravoX"]);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_registered_editor_observes_focus_before_its_pending_paste() {
+    for grid_before_editor in [false, true] {
+        let context = Context::default();
+        let mut dock = editing_dock(false);
+        let mut docs = EditingDocuments {
+            text: ["alpha".into(), "bravo".into()],
+            select_all_on_focus: true,
+            ..Default::default()
+        };
+        let mut time = 0.0;
+        let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
+            time += 0.1;
+            let (output, _) = dock
+                .run_single_surface(&context, input(time, events), SURFACE, docs)
+                .unwrap();
+            let (output, receipt) = output.into_parts();
+            output.drop_without_applying_deltas();
+            receipt.report(SurfacePresentationResult::Presented);
+        };
+        paint(&mut dock, &mut docs, vec![]);
+        select_document(&mut dock, FIRST);
+        paint(&mut dock, &mut docs, vec![]);
+        docs.grid_before_editor = grid_before_editor;
+        select_document(&mut dock, SECOND);
+        paint(&mut dock, &mut docs, vec![Event::Paste("X".into())]);
+        assert_eq!(docs.text, ["alpha", "bravo"]);
+        paint(&mut dock, &mut docs, vec![]);
+        assert_eq!(
+            docs.text,
+            ["alpha", "X"],
+            "Grid before editor: {grid_before_editor}"
+        );
+    }
 }
 
 fn assert_save_before_next_input(
