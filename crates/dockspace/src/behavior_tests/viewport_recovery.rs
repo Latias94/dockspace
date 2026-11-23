@@ -25,7 +25,6 @@ use dockspace::ids::{
     FloatingPresentationId, ItemId, NodeId, RootId, StableInputSourceId, SurfaceId,
 };
 use dockspace::input::intent::{Authority, AuthorityUnavailableReason};
-use dockspace::interaction::{InteractionOutcome, InteractionRejection};
 use dockspace::model::DockspaceActionRejection;
 use dockspace::platform::effect::{
     DispatchFailureReason, EffectDispatchResult, EffectId, EffectInvalidation, EffectPhase,
@@ -2291,10 +2290,8 @@ fn destroyed_child_rejects_its_old_candidate_action_later_in_the_same_frame() {
 
     assert!(matches!(
         transition.reduced_inputs()[1].outcome(),
-        InputOutcome::InteractionProcessed {
-            outcome: InteractionOutcome::Rejected(InteractionRejection::StaleScene,),
-            ..
-        }
+        InputOutcome::StaleRejected { expected: action_version, accepted_base }
+            if *action_version == expected && *accepted_base == fixture.engine.version()
     ));
     assert!(matches!(
         fixture.engine.workspace().node(tab.tabs),

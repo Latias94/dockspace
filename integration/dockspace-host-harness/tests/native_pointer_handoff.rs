@@ -23,11 +23,11 @@ use dockspace::runtime::{
     NativeLocalToDesktopHandoff, NativePointerButton as Button, NativePointerEvent as Event,
     NativePointerHover, NativePointerId, NativePointerInput, NativePointerOwner,
     NativePointerRoster, NativeReceiverAnswer, NativeReceiverPurpose, NativeReceiverQuery,
-    NativeSurfaceBinding, NativeWindowFacts, NativeWindowInputState, NativeWindowPresentationState,
-    NativeWorkAreaRoster, PaintedSurfaceOutput, PointerDeviceKind, PointerEventMetadata,
-    SurfacePaintProgramOperation as Operation, SurfacePaintProgramStep as Step,
-    SurfacePresentationResult as Disposition, SurfaceUnavailableReason, SurfaceWork,
-    SurfaceWorkDeferred, UniformSurfaceMetrics,
+    NativeSurfaceBinding, NativeSurfacePlacement, NativeWindowFacts, NativeWindowInputState,
+    NativeWindowPresentationState, NativeWorkAreaRoster, PaintedSurfaceOutput, PointerDeviceKind,
+    PointerEventMetadata, SurfacePaintProgramOperation as Operation,
+    SurfacePaintProgramStep as Step, SurfacePresentationResult as Disposition,
+    SurfaceUnavailableReason, SurfaceWork, SurfaceWorkDeferred, UniformSurfaceMetrics,
 };
 use dockspace_host_harness::{OwnedRecord, RecordingRenderer};
 
@@ -333,12 +333,13 @@ fn fixture_with_routing(
     with_origin: bool,
     routing: bool,
 ) -> (DockspaceSession, [NativeSurfaceBinding; 2], [Scene; 2]) {
-    fixture_with_destination(with_origin, routing, [OTHER])
+    fixture_with_destination(with_origin, routing, false, [OTHER])
 }
 
 fn fixture_with_destination(
     with_origin: bool,
     routing: bool,
+    source_is_child: bool,
     destination: impl IntoIterator<Item = ItemId>,
 ) -> (DockspaceSession, [NativeSurfaceBinding; 2], [Scene; 2]) {
     let layout = DockspaceLayout::new([
@@ -373,16 +374,26 @@ fn fixture_with_destination(
     session
         .configure_managed_native_capabilities(capabilities)
         .unwrap();
-    for (surface, token) in [(A, 1), (B, 2)] {
+    if source_is_child {
         session
-            .register_native_root(surface, HostWindowToken::new(token))
+            .register_native_root(B, HostWindowToken::new(2))
             .unwrap();
+        idle(&mut session);
+        session
+            .register_owned_native_child(A, HostWindowToken::new(1), B)
+            .unwrap();
+    } else {
+        for (surface, token) in [(A, 1), (B, 2)] {
+            session
+                .register_native_root(surface, HostWindowToken::new(token))
+                .unwrap();
+        }
     }
-    let registration = idle(&mut session);
+    idle(&mut session);
     let bindings = [A, B].map(|surface| {
-        *registration
-            .native_bindings()
-            .iter()
+        session
+            .native_window_bindings()
+            .flat_map(|window| session.native_surface_bindings_for_window(window))
             .find(|binding| binding.surface() == surface)
             .unwrap()
     });
@@ -1576,7 +1587,7 @@ fn cross_window_handoff_preserves_root_input_and_delivers_before_the_target_outp
 fn stationary_hover_after_handoff_keeps_source_binding_and_requires_confirmed_cross_window_route() {
     for with_hit_test_control in [false, true] {
         let (mut session, bindings, [source_scene, target_scene]) =
-            fixture_with_destination(true, with_hit_test_control, [OTHER, FIFTH]);
+            fixture_with_destination(true, with_hit_test_control, false, [OTHER, FIFTH]);
         let [source, destination] = bindings;
         start_local_drag(&mut session, source, &source_scene);
         let version = session.version();
@@ -1740,6 +1751,118 @@ fn stationary_hover_after_handoff_keeps_source_binding_and_requires_confirmed_cr
         );
         assert_clean_idle(&mut session);
     }
+}
+
+#[test]
+fn an_unavailable_drag_source_restarts_cross_window_hover_dwell() {
+    let (mut session, bindings, [source_scene, target_scene]) =
+        fixture_with_destination(true, false, true, [OTHER, FIFTH]);
+    let [source, destination] = bindings;
+    let hover = target_scene.insertion(FIFTH, false);
+    let target = desktop_point(B, hover);
+    let owner = NativePointerOwner::Native(source.window());
+    let metadata =
+        |millis| PointerEventMetadata::new(PointerDeviceKind::Mouse, Duration::from_millis(millis));
+    let reduce = |session: &mut DockspaceSession, input: NativePointerInput| {
+        session.record_native_pointer(input).unwrap();
+        finish(
+            session
+                .begin_native_host_frame(|query| match query {
+                    NativeReceiverQuery::WindowHit(hit) if hit.window() == source.window() => {
+                        source_scene.answer(query)
+                    }
+                    NativeReceiverQuery::Surface(hit) if hit.surface() == A => {
+                        source_scene.answer(query)
+                    }
+                    _ => target_scene.answer(query),
+                })
+                .unwrap(),
+        )
+    };
+    let over_target = |event, millis| {
+        NativePointerInput::new(
+            POINTER,
+            event,
+            desktop_location(destination, target),
+            owner,
+            owner,
+        )
+        .with_metadata(metadata(millis))
+    };
+    reduce(
+        &mut session,
+        desktop(
+            source,
+            Event::ButtonPressed(Button::Primary),
+            source_scene.tab(FIRST).receiver.center(),
+        )
+        .with_metadata(metadata(0)),
+    );
+    reduce(&mut session, over_target(Event::Moved, 10));
+    assert!(session.has_active_gesture());
+
+    let mut frame = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame
+        .set_native_surface_placements(
+            source.window(),
+            &[NativeSurfacePlacement::new(
+                A,
+                LogicalSize::new(800.0, 600.0).unwrap(),
+                PhysicalPoint::new(20.0, 0.0).unwrap(),
+                ScaleFactor::new(1.5).unwrap(),
+                PhysicalRect::new(20.0, 0.0, 1180.0, 900.0).unwrap(),
+            )],
+        )
+        .unwrap();
+    finish(frame);
+    refresh(&mut session, bindings);
+    let reopened = reduce(&mut session, over_target(Event::Moved, 30));
+    let old = session
+        .native_pointer_continuation()
+        .unwrap_or_else(|| panic!("hover after reprojecting its source: {reopened:?}"));
+    assert_eq!(old.deadline(), Duration::from_millis(180));
+    let before = session.version();
+
+    let mut frame = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame
+        .defer_surface(A, SurfaceUnavailableReason::SurfaceUnavailable)
+        .unwrap();
+    finish(frame);
+    assert!(session.presented_surface(A).is_none());
+    assert!(session.has_active_gesture());
+    assert!(session.native_pointer_continuation().is_none());
+    reduce(
+        &mut session,
+        NativePointerInput::new(
+            POINTER,
+            Event::Moved,
+            NativeDesktopPointerLocation::new(
+                NativeDesktopPosition::Exact(PhysicalPoint::new(10.0, 10.0).unwrap()),
+                NativePointerHover::OutsideAll,
+                None,
+            ),
+            owner,
+            owner,
+        )
+        .with_metadata(metadata(170)),
+    );
+    refresh(&mut session, bindings);
+    reduce(&mut session, over_target(Event::Moved, 179));
+    let renewed = session.native_pointer_continuation().unwrap();
+    assert_ne!(renewed.token(), old.token());
+    let report = reduce(&mut session, over_target(old.event(), 180));
+    assert!(!report.workspace_changed());
+    assert_eq!(session.version(), before);
+    assert!(!session.view().item(FIFTH).unwrap().is_active());
+    assert_eq!(renewed.deadline(), Duration::from_millis(329));
+    assert!(reduce(&mut session, over_target(renewed.event(), 329)).workspace_changed());
+    assert!(session.view().item(FIFTH).unwrap().is_active());
+    assert_eq!(session.view().item(FIRST).unwrap().surface(), A);
+    assert!(session.has_active_gesture());
 }
 
 #[test]

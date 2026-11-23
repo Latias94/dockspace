@@ -298,18 +298,10 @@ fn tab_body_close_rejects_a_stale_candidate_or_deferred_witness() {
             commit(frame);
             let before = session.version();
             let report = submit(&mut session, action, delivery);
-            match (delivery, invalidation) {
-                (Delivery::CurrentCandidate, Invalidation::PresentationConfig) => {
-                    // Configuration revokes scene authority without changing
-                    // WorkspaceVersion. Candidate interaction rejections do
-                    // not produce a product-level close request.
-                    assert!(report.inputs().is_empty(), "{report:?}");
-                }
-                _ => assert!(
-                    matches!(report.inputs(), [HostInputOutcome::StaleRejected { .. }]),
-                    "{delivery:?}/{invalidation:?}: {report:?}"
-                ),
-            }
+            assert!(
+                matches!(report.inputs(), [HostInputOutcome::StaleRejected { .. }]),
+                "{delivery:?}/{invalidation:?}: {report:?}"
+            );
             assert!(!report.workspace_changed());
             assert_eq!(session.version(), before);
             assert_eq!(session.pending_content_close_plans().count(), 0);

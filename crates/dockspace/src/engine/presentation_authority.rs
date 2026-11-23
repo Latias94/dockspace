@@ -2457,6 +2457,13 @@ impl DockEngine {
                     .active_drag(session)
                     .map_err(|source| Self::contribution_invariant(cause, format!("{source:?}")))?
                     .clone();
+                if changed_surfaces.contains(&drag.source_surface)
+                    && !self.drag_source_presentation_allows_targeting(&drag)
+                {
+                    // A gesture can keep capture while its source is unavailable.
+                    // A dwell cannot span a gap in which motion cannot retarget it.
+                    self.clear_drag_continuation(session);
+                }
                 if matches!(cause, ReductionCause::SurfaceContributionBatch { .. })
                     && drag.preview().is_some_and(|preview| {
                         !matches!(preview.proof(), PreviewProof::Native { .. })

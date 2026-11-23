@@ -754,7 +754,7 @@ fn retained_facts_use_current_drop_policy_without_reauthorizing_old_output() {
     use crate::interaction::targeting::resolver::{
         DropRejectionReason, DropResolution, resolve_drop,
     };
-    use crate::interaction::{DragGeneration, DragSessionId, InteractionRejection};
+    use crate::interaction::{DragGeneration, DragSessionId};
     use crate::policy::{DockTargetRule, DockTargetRuleKey, PolicyRejection};
     use crate::presentation::scene::{TabBarSceneId, TabSceneId};
 
@@ -923,10 +923,8 @@ fn retained_facts_use_current_drop_policy_without_reauthorizing_old_output() {
     .unwrap();
     assert!(matches!(
         transition.reduced_inputs()[0].outcome(),
-        InputOutcome::InteractionProcessed {
-            outcome: InteractionOutcome::Rejected(InteractionRejection::StaleScene),
-            ..
-        }
+        InputOutcome::StaleRejected { expected: action_version, accepted_base }
+            if *action_version == expected && *accepted_base == expected
     ));
     assert_eq!(engine.version(), expected);
     assert!(matches!(
