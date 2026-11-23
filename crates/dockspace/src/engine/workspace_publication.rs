@@ -546,6 +546,9 @@ impl DockEngine {
                 }
                 _ => self.advance_revision(input)?,
             }
+            if let Some(item) = command.opened_item() {
+                Arc::make_mut(&mut self.item_open_revisions).insert(item, self.version.revision());
+            }
             if !matches!(
                 command,
                 WorkspaceCommand::AttachEmptySurface { .. }

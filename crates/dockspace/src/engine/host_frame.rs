@@ -516,6 +516,10 @@ impl<'frame> HostFrameView<'frame> {
         self.engine.authority_domain()
     }
 
+    pub(crate) fn item_open_revision(&self, item: ItemId) -> Option<WorkspaceRevision> {
+        self.engine.item_open_revisions.get(&item).copied()
+    }
+
     #[cfg(feature = "serde")]
     pub(crate) const fn presentation_identity_frontier(&self) -> PresentationIdentityFrontier {
         self.engine.presentation_identity_frontier()

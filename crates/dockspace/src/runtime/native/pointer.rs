@@ -550,11 +550,15 @@ impl NativePointerInput {
         self
     }
 
-    pub(super) const fn pointer(self) -> NativePointerId {
+    /// Returns the pointer that produced this packet.
+    #[must_use]
+    pub const fn pointer(self) -> NativePointerId {
         self.pointer
     }
 
-    pub(super) const fn event(self) -> NativePointerEvent {
+    /// Returns the original pointer event.
+    #[must_use]
+    pub const fn event(self) -> NativePointerEvent {
         self.event
     }
 
@@ -564,12 +568,20 @@ impl NativePointerInput {
         self.location
     }
 
-    pub(super) const fn delivery(self) -> NativePointerOwner {
+    /// Returns the event-time delivery owner as reported by the host.
+    #[must_use]
+    pub const fn delivery(self) -> NativePointerOwner {
         self.delivery
     }
 
     pub(super) const fn capture(self) -> NativePointerOwner {
         self.capture
+    }
+
+    /// Returns the original device, timing and targeting metadata.
+    #[must_use]
+    pub const fn metadata(self) -> crate::runtime::PointerEventMetadata {
+        self.metadata
     }
 }
 

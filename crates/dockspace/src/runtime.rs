@@ -131,7 +131,7 @@ pub use paint::{
     DockspaceContainedTransformPreview, DockspaceContentId, DockspaceControlId,
     DockspaceDragDecoration, DockspaceDragPreview, DockspaceDragSourceKind, DockspaceDropAction,
     DockspaceDropDirection, DockspaceDropEligibility, DockspaceDropTargetFeedback,
-    DockspaceDropTargetScope, DockspaceGuideScope, DockspacePaintLayer,
+    DockspaceDropTargetScope, DockspaceGuideScope, DockspaceOpenItemId, DockspacePaintLayer,
     DockspacePresentationCommandKind, DockspacePresentationCommandUnavailable,
     DockspacePresentationMenuAnchorKind, DockspacePreviewTabBarPaintRecord,
     DockspacePreviewTabPaintRecord, DockspacePreviewVisual, DockspaceReceiverDescriptor,

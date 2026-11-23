@@ -33,6 +33,7 @@ use dockspace_host_harness::{OwnedRecord, RecordingRenderer};
 
 const A: SurfaceId = SurfaceId::new(1);
 const B: SurfaceId = SurfaceId::new(2);
+const OVERLAPPING: SurfaceId = SurfaceId::new(8);
 const FIRST: ItemId = ItemId::new(1);
 const SECOND: ItemId = ItemId::new(2);
 const THIRD: ItemId = ItemId::new(3);
@@ -342,7 +343,17 @@ fn fixture_with_destination(
     source_is_child: bool,
     destination: impl IntoIterator<Item = ItemId>,
 ) -> (DockspaceSession, [NativeSurfaceBinding; 2], [Scene; 2]) {
-    let layout = DockspaceLayout::new([
+    fixture_with_placements(with_origin, routing, source_is_child, destination, false)
+}
+
+fn fixture_with_placements(
+    with_origin: bool,
+    routing: bool,
+    source_is_child: bool,
+    destination: impl IntoIterator<Item = ItemId>,
+    overlapping: bool,
+) -> (DockspaceSession, [NativeSurfaceBinding; 2], [Scene; 2]) {
+    let surfaces = [
         DockspaceSurfaceLayout::new(
             A,
             DockspaceRootLayout::new(
@@ -354,8 +365,17 @@ fn fixture_with_destination(
             B,
             DockspaceRootLayout::new(RootId::new(2), DockspaceNode::central_tabs(destination)),
         ),
-    ])
-    .unwrap();
+    ];
+    let overlap = overlapping.then(|| {
+        DockspaceSurfaceLayout::new(
+            OVERLAPPING,
+            DockspaceRootLayout::new(
+                RootId::new(8),
+                DockspaceNode::central_tabs([ItemId::new(8)]),
+            ),
+        )
+    });
+    let layout = DockspaceLayout::new(surfaces.into_iter().chain(overlap)).unwrap();
     let mut policy = DockPolicy::default();
     policy.set_allow_native_surfaces(true);
     let mut session = DockspaceSession::from_layout(layout, policy).unwrap();
@@ -1867,9 +1887,55 @@ fn an_unavailable_drag_source_restarts_cross_window_hover_dwell() {
 
 #[test]
 fn a_confirmed_exit_clears_the_latched_split_while_the_source_is_unavailable() {
-    for exit_during_gap in [false, true] {
+    for (overlapping, exit_during_gap) in
+        [(false, false), (false, true), (true, false), (true, true)]
+    {
         let (mut session, [source, destination], [source_scene, mut target_scene]) =
-            fixture_with_destination(true, false, true, [OTHER, FIFTH]);
+            fixture_with_placements(true, false, true, [OTHER, FIFTH], overlapping);
+        let overlapping_scene = if overlapping {
+            let mut frame = session
+                .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+                .unwrap();
+            let placement = |surface| {
+                NativeSurfacePlacement::new(
+                    surface,
+                    LogicalSize::new(800.0, 600.0).unwrap(),
+                    PhysicalPoint::new(0.0, 0.0).unwrap(),
+                    ScaleFactor::new(1.5).unwrap(),
+                    PhysicalRect::new(0.0, 0.0, 1200.0, 900.0).unwrap(),
+                )
+            };
+            frame
+                .set_native_surface_placements(
+                    destination.window(),
+                    &[placement(B), placement(OVERLAPPING)],
+                )
+                .unwrap();
+            frame
+                .measure_surface(
+                    OVERLAPPING,
+                    UniformSurfaceMetrics::new(
+                        LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
+                        LogicalSize::new(32.0, 24.0).unwrap(),
+                        96.0,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            finish(frame);
+            let binding = session
+                .native_surface_bindings_for_window(destination.window())
+                .find(|binding| binding.surface() == OVERLAPPING)
+                .unwrap();
+            let (scene, output) = paint(&mut session, binding);
+            present(&mut session, output);
+            let (scene_b, output) = paint(&mut session, destination);
+            present(&mut session, output);
+            target_scene = scene_b;
+            Some(scene)
+        } else {
+            None
+        };
         let pane = target_scene
             .recording
             .records
@@ -1914,7 +1980,7 @@ fn a_confirmed_exit_clears_the_latched_split_while_the_source_is_unavailable() {
                             source_scene.answer(query)
                         }
                         NativeReceiverQuery::Surface(query)
-                            if query.surface() == B
+                            if matches!(query.surface(), B | OVERLAPPING)
                                 && matches!(query.purpose(), NativeReceiverPurpose::HoverHit) =>
                         {
                             NativeReceiverAnswer::ClearHoverLane(query.presented_surface())
@@ -1936,12 +2002,40 @@ fn a_confirmed_exit_clears_the_latched_split_while_the_source_is_unavailable() {
         reduce(
             &mut session,
             &target_scene,
+            over_target(Event::Moved, target_scene.insertion(FIFTH, false), 10),
+        );
+        assert!(session.has_active_gesture());
+        let mut frame = session
+            .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+            .unwrap();
+        frame
+            .set_native_surface_placements(
+                source.window(),
+                &[NativeSurfacePlacement::new(
+                    A,
+                    LogicalSize::new(800.0, 600.0).unwrap(),
+                    PhysicalPoint::new(20.0, 0.0).unwrap(),
+                    ScaleFactor::new(1.5).unwrap(),
+                    PhysicalRect::new(20.0, 0.0, 1180.0, 900.0).unwrap(),
+                )],
+            )
+            .unwrap();
+        finish(frame);
+        // Acquire a fresh split after the drag survives a source reprojection.
+        refresh(&mut session, [source, destination]);
+        let (measured_target, output) = paint(&mut session, destination);
+        present(&mut session, output);
+        target_scene = measured_target;
+        reduce(
+            &mut session,
+            &target_scene,
             over_target(Event::Moved, split, 60),
         );
         let (preview, output) = paint(&mut session, destination);
         preview.assert_preview(true);
         present(&mut session, output);
         target_scene = preview;
+        let source_owner = session.native_pointer_gesture_source().unwrap();
 
         let defer_source = |session: &mut DockspaceSession| {
             let mut frame = session
@@ -1956,29 +2050,52 @@ fn a_confirmed_exit_clears_the_latched_split_while_the_source_is_unavailable() {
         if exit_during_gap {
             defer_source(&mut session);
         }
-        reduce(
-            &mut session,
-            &target_scene,
-            NativePointerInput::new(
-                POINTER,
-                Event::Moved,
-                NativeDesktopPointerLocation::new(
-                    NativeDesktopPosition::Exact(PhysicalPoint::new(10.0, 10.0).unwrap()),
-                    NativePointerHover::OutsideAll,
-                    None,
-                ),
-                owner,
-                owner,
-            )
-            .with_metadata(PointerEventMetadata::new(
-                PointerDeviceKind::Mouse,
-                Duration::from_millis(90),
-            )),
-        );
+        let mut frame = session
+            .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+            .unwrap();
+        let mut action = None;
+        frame
+            .paint_plan(B)
+            .unwrap()
+            .unwrap()
+            .visit_surface_program(|step| {
+                if let Step::DragPreview(preview) = step {
+                    action = preview.target().map(|target| target.action());
+                }
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+        assert!(matches!(
+            action,
+            Some(dockspace::runtime::DockspaceDropAction::Split { .. })
+        ));
+        if let Some(sibling) = overlapping_scene.as_ref() {
+            reduce(&mut session, sibling, over_target(Event::Moved, split, 90));
+        } else {
+            reduce(
+                &mut session,
+                &target_scene,
+                NativePointerInput::new(
+                    POINTER,
+                    Event::Moved,
+                    NativeDesktopPointerLocation::new(
+                        NativeDesktopPosition::Exact(PhysicalPoint::new(10.0, 10.0).unwrap()),
+                        NativePointerHover::OutsideAll,
+                        None,
+                    ),
+                    owner,
+                    owner,
+                )
+                .with_metadata(PointerEventMetadata::new(
+                    PointerDeviceKind::Mouse,
+                    Duration::from_millis(90),
+                )),
+            );
+        }
         if !exit_during_gap {
             defer_source(&mut session);
         }
-        assert!(session.has_active_gesture());
+        assert_eq!(session.native_pointer_gesture_source(), Some(source_owner));
         let mut frame = session
             .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
             .unwrap();
@@ -2000,7 +2117,7 @@ fn a_confirmed_exit_clears_the_latched_split_while_the_source_is_unavailable() {
         assert_eq!(
             group.len(),
             3,
-            "exit during unavailable source: {exit_during_gap}"
+            "overlapping={overlapping}, exit during unavailable source={exit_during_gap}"
         );
         assert!(group.contains(&OTHER) && group.contains(&FIFTH));
     }

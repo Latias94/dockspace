@@ -3,6 +3,7 @@
 use super::contained_geometry::{contained_manipulation_point, contained_move_geometry};
 use super::*;
 use crate::input::intent::PointerId;
+use crate::input::receiver::NativeWindowHitReceipt;
 use crate::presentation::compiler::{contained_minimum_size, pane_outer_sizing};
 use crate::presentation::manifest::PaneSizingKey;
 
@@ -1293,21 +1294,48 @@ impl DockEngine {
             .clone();
         let position = journal_position_key(self, owner.stream(), edge);
         if !self.drag_source_presentation_allows_targeting(&drag) {
-            if matches!(
+            let outside_all = matches!(
                 desktop_hover_route,
                 Some(DesktopRouteValidation::Known(
                     ValidatedDesktopRoute::NoWindow { .. }
                 ))
-            ) {
-                // An authoritative exit needs no source geometry to revoke the old target.
+            );
+            let blocked =
+                matches!(
+                    desktop_hover_route,
+                    Some(DesktopRouteValidation::Known(
+                        ValidatedDesktopRoute::Foreign { .. }
+                    ))
+                ) || matches!(receipt.native_hit(), Some(NativeWindowHitReceipt::Blocked));
+            let left_target = blocked
+                || matches!(
+                    receipt.native_hit(),
+                    Some(NativeWindowHitReceipt::WindowBackground)
+                )
+                || position.surface().is_some_and(|surface| {
+                    drag.target_acquisition()
+                        .is_some_and(|target| target.scene().surface() != surface)
+                });
+            if outside_all || left_target {
+                // The current receiver can revoke a latched target without
+                // source geometry. Acquiring its replacement still needs it.
+                let status = if blocked {
+                    PreviewResolutionStatus::OpaqueBlocker
+                } else {
+                    PreviewResolutionStatus::Unavailable
+                };
+                let decision = PreviewDecision::Clear(status);
+                let evaluation = if outside_all {
+                    PreviewEvaluation::outside_all(decision)
+                } else {
+                    PreviewEvaluation::without_affordance(decision)
+                };
                 let outcome = self.apply_position_evaluation(
                     cause,
                     owner,
                     session,
                     position,
-                    PreviewEvaluation::outside_all(PreviewDecision::Clear(
-                        PreviewResolutionStatus::Unavailable,
-                    )),
+                    evaluation,
                     interaction_events,
                 )?;
                 outcomes.extend(outcome);

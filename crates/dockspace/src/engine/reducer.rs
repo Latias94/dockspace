@@ -195,7 +195,25 @@ impl DockEngine {
         ) -> Result<T, EngineError>,
     ) -> Result<T, EngineError> {
         self.ensure_native_create_settlements_reported()?;
+        let event_start = events.len();
         let outcome = reduce(self, events, interaction_events)?;
+        for event in &events[event_start..] {
+            let WorkspaceEventKind::CloseCommitted(close) = event.kind() else {
+                continue;
+            };
+            let items = match close {
+                CloseCommitOutcome::ItemClosed { item, .. } => std::slice::from_ref(item),
+                CloseCommitOutcome::RootClosed { items, .. }
+                | CloseCommitOutcome::TabsClosed { items, .. }
+                | CloseCommitOutcome::TabClosed { items, .. }
+                | CloseCommitOutcome::SurfaceClosed { items, .. } => items.as_slice(),
+            };
+            for item in items {
+                if self.item_open_revisions.contains_key(item) {
+                    Arc::make_mut(&mut self.item_open_revisions).remove(item);
+                }
+            }
+        }
         for settlement in self.viewport.take_native_create_settlements() {
             if let Some(session) = settlement.drag {
                 interaction_events.push(InteractionEvent::new_caused(
