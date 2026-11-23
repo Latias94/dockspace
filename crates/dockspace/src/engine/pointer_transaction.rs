@@ -1291,14 +1291,33 @@ impl DockEngine {
                 detail: format!("{source:?}"),
             })?
             .clone();
+        let position = journal_position_key(self, owner.stream(), edge);
         if !self.drag_source_presentation_allows_targeting(&drag) {
-            outcomes.push(InteractionOutcome::Rejected(
-                InteractionRejection::StaleScene,
-            ));
+            if matches!(
+                desktop_hover_route,
+                Some(DesktopRouteValidation::Known(
+                    ValidatedDesktopRoute::NoWindow { .. }
+                ))
+            ) {
+                // An authoritative exit needs no source geometry to revoke the old target.
+                let outcome = self.apply_position_evaluation(
+                    cause,
+                    owner,
+                    session,
+                    position,
+                    PreviewEvaluation::outside_all(PreviewDecision::Clear(
+                        PreviewResolutionStatus::Unavailable,
+                    )),
+                    interaction_events,
+                )?;
+                outcomes.extend(outcome);
+            } else {
+                outcomes.push(InteractionOutcome::Rejected(
+                    InteractionRejection::StaleScene,
+                ));
+            }
             return Ok(outcomes);
         }
-        let stream = owner.stream();
-        let position = journal_position_key(self, stream, edge);
         let evaluation = self.resolve_journal_drag_preview(
             cause,
             &drag,
