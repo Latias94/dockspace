@@ -23,6 +23,7 @@ impl DockEngine {
         }
         let changed = self.interaction.set_docking_enabled(enabled);
         if !enabled && let InteractionStatus::Dragging { session } = self.interaction.status() {
+            self.clear_drag_continuation(session);
             let dock_preview = self
                 .interaction
                 .active_drag(session)

@@ -493,6 +493,10 @@ impl DockEngine {
         receipt: &ValidatedPointerReceiverReceipt,
         snapshot: &JournalPresentationSnapshot,
     ) -> Result<(), EngineError> {
+        if !self.interaction.docking_enabled() {
+            self.clear_drag_continuation(session);
+            return Ok(());
+        }
         if self.advance_tab_strip_edge_scroll(cause, owner, session, edge, receipt, snapshot)? {
             return Ok(());
         }
