@@ -3,10 +3,10 @@
 use std::collections::VecDeque;
 
 use super::{
-    NativeCloseEffectAcknowledgement, NativeEffectDispatch, NativeEffectRequest,
+    NativeEffectAcknowledgement, NativeEffectDispatch, NativeEffectOperation, NativeEffectRequest,
     NativeEffectResult, NativeIndeterminateReason,
 };
-use crate::runtime::{NativeWindowBinding, NativeWindowFacts};
+use crate::runtime::{NativeCloseDisposition, NativeWindowBinding, NativeWindowFacts};
 
 /// Holds the core effect FIFO and the single dispatch temporarily owned by a backend ticket.
 ///
@@ -44,6 +44,12 @@ impl<Ticket> NativeEffectOutbox<Ticket> {
     /// Returns the queued requests in dispatch order.
     pub fn queued(&self) -> impl ExactSizeIterator<Item = &NativeEffectRequest> {
         self.queued.iter()
+    }
+
+    /// Returns whether there is any queued request or in-flight dispatch.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.queued.is_empty() && self.pending.is_none()
     }
 
     /// Returns the exact window and callback custody of the in-flight dispatch.
@@ -91,7 +97,7 @@ impl<Ticket> NativeEffectOutbox<Ticket> {
 #[derive(Debug, Default)]
 pub struct NativeWindowObservationOutbox {
     live: Option<NativeWindowFacts>,
-    close: Option<NativeCloseEffectAcknowledgement>,
+    close: Option<NativeEffectDispatch>,
 }
 
 impl NativeWindowObservationOutbox {
@@ -105,19 +111,30 @@ impl NativeWindowObservationOutbox {
         Some(facts)
     }
 
-    /// Holds the close receipt until the corresponding physical destruction.
+    /// Holds the original close dispatch until physical destruction proves it.
     ///
     /// # Errors
     ///
-    /// Returns the receipt when an earlier close already owns destruction.
+    /// Returns the dispatch if it does not request destruction, or if an earlier
+    /// close already owns destruction.
     pub fn await_destruction(
         &mut self,
-        receipt: NativeCloseEffectAcknowledgement,
-    ) -> Result<(), NativeCloseEffectAcknowledgement> {
-        if self.close.is_some() {
-            return Err(receipt);
+        dispatch: NativeEffectDispatch,
+    ) -> Result<(), NativeEffectDispatch> {
+        if self.close.is_some()
+            || !matches!(
+                dispatch.operation(),
+                NativeEffectOperation::ReleaseChild { .. }
+                    | NativeEffectOperation::CompensatingClose { .. }
+                    | NativeEffectOperation::ResolveNativeClose {
+                        resolution: NativeCloseDisposition::Accept,
+                        ..
+                    }
+            )
+        {
+            return Err(dispatch);
         }
-        self.close = Some(receipt);
+        self.close = Some(dispatch);
         Ok(())
     }
 
@@ -130,9 +147,11 @@ impl NativeWindowObservationOutbox {
     /// Observes actual destruction and correlates a retained close receipt exactly once.
     pub fn destroyed(&mut self) -> NativeWindowFacts {
         self.live = None;
-        self.close.take().map_or_else(
-            NativeWindowFacts::destroyed,
-            NativeWindowFacts::destroyed_after,
-        )
+        match self.close.take().and_then(NativeEffectDispatch::accepted) {
+            Some(NativeEffectAcknowledgement::Close(ack)) => {
+                NativeWindowFacts::destroyed_after(ack)
+            }
+            _ => NativeWindowFacts::destroyed(),
+        }
     }
 }

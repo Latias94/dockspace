@@ -1490,6 +1490,40 @@ fn native_window_observations_preserve_both_scales_and_emit_create_receipts_once
 }
 
 #[test]
+fn native_close_dispatch_is_acknowledged_only_at_physical_destruction() {
+    let mut fixture = ManagedLifecycleScenarioFixture::new();
+    let (child, acknowledgement) = fixture.request_child();
+    fixture.present_hidden_child(child, acknowledgement);
+    let mut frame = fixture
+        .host
+        .session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    assert!(frame.cancel_next_native_create().unwrap());
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let mut report = frame.commit().unwrap();
+    let close = take_only_effect(&mut report);
+    assert!(matches!(
+        close.operation(),
+        NativeEffectOperation::CompensatingClose { binding } if *binding == child
+    ));
+
+    let mut observations = NativeWindowObservationOutbox::default();
+    observations
+        .await_destruction(close.begin_dispatch())
+        .unwrap();
+    let live = NativeWindowFacts::live();
+    assert_eq!(observations.observe(live), Some(live));
+    assert!(observations.has_pending_close());
+    let terminal = observations.destroyed();
+    assert_ne!(terminal, NativeWindowFacts::destroyed());
+    assert!(!observations.has_pending_close());
+    assert_eq!(observations.destroyed(), NativeWindowFacts::destroyed());
+}
+
+#[test]
 fn native_lifecycle_scenario_reports_terminality_presentation_first_live_and_quiescence() {
     use crate::scenario::{
         NATIVE_CREATE_REDOCK_RETIREMENT, ScenarioActionTerminality, ScenarioCapability, ScenarioId,
