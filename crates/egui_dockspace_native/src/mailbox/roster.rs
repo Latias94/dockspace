@@ -85,20 +85,10 @@ impl NativeViewportRosterRecord {
     ) -> Result<Self, NativeHostProtocolError> {
         let error = NativeHostProtocolError::NativeReportStorageUnavailable;
         Self::reservation_bytes(window_slots, work_area_slots).ok_or(error)?;
-        let mut observations = Vec::new();
-        observations
-            .try_reserve_exact(window_slots)
-            .map_err(|_| error)?;
-        if observations.capacity() > window_slots {
-            return Err(error);
-        }
-        let mut work_area_spare = Vec::new();
-        work_area_spare
-            .try_reserve_exact(work_area_slots)
-            .map_err(|_| error)?;
-        if work_area_spare.capacity() > work_area_slots {
-            return Err(error);
-        }
+        let observations =
+            crate::bounded_storage::BoundedVec::with_slots(Some(window_slots))?.into_inner();
+        let work_area_spare =
+            crate::bounded_storage::BoundedVec::with_slots(Some(work_area_slots))?.into_inner();
         Ok(Self {
             observations,
             work_areas: Ok(FrozenWorkAreaRoster::Unknown),

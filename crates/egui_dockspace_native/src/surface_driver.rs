@@ -1121,7 +1121,12 @@ impl<P: PaneView> NativeRuntimeState<P> {
         }
         if retain_previous {
             for surface in &publication.surfaces {
-                host_frame.retain_pane_focus(&context, *surface, &self.panes);
+                self.paint_scope.retain_surface_input_state(
+                    &host_frame,
+                    &context,
+                    *surface,
+                    &self.panes,
+                );
             }
             if surface != self.root_surface {
                 bridge.block_semantic_viewport(token.viewport_id());

@@ -296,11 +296,12 @@ fn prepared_capacity_counts_all_retained_vector_backing() {
 #[test]
 fn exact_reservation_rejects_backing_larger_than_planned_slots() {
     let mut routes = Vec::<CommittedRoute>::new();
-    reserve_exact_slots(&mut routes, 4).expect("the exact planned backing reserves");
+    crate::bounded_storage::BoundedVec::reserve(&mut routes, 4)
+        .expect("the exact planned backing reserves");
     assert_eq!(routes.capacity(), 4);
     let pointer = routes.as_ptr();
     assert_eq!(
-        reserve_exact_slots(&mut routes, 3),
+        crate::bounded_storage::BoundedVec::reserve(&mut routes, 3),
         Err(NativeHostProtocolError::NativeReportStorageUnavailable)
     );
     assert_eq!(routes.as_ptr(), pointer);
@@ -308,7 +309,7 @@ fn exact_reservation_rejects_backing_larger_than_planned_slots() {
 
     let mut facts = Vec::<NativeWorkAreaFacts>::new();
     assert_eq!(
-        reserve_exact_slots(&mut facts, usize::MAX),
+        crate::bounded_storage::BoundedVec::reserve(&mut facts, usize::MAX),
         Err(NativeHostProtocolError::NativeReportStorageUnavailable)
     );
     assert_eq!(facts.capacity(), 0);

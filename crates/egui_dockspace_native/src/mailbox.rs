@@ -1069,17 +1069,9 @@ impl NativeHostBridge {
             .window_resources
             .resource_slot_limit()
             .unwrap_or_else(|| records.window_resources.pending_no_frame().count());
-        let mut ready = Vec::new();
-        let mut repaint_viewports = Vec::new();
-        ready
-            .try_reserve_exact(slots)
-            .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        repaint_viewports
-            .try_reserve_exact(slots)
-            .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        if ready.capacity() > slots || repaint_viewports.capacity() > slots {
-            return Err(NativeHostProtocolError::NativeReportStorageUnavailable.into());
-        }
+        let mut ready = crate::bounded_storage::BoundedVec::with_slots(Some(slots))?.into_inner();
+        let mut repaint_viewports =
+            crate::bounded_storage::BoundedVec::with_slots(Some(slots))?.into_inner();
         let NativeHostState {
             window_resources,
             output_resources,

@@ -61,4 +61,14 @@ impl NativePaintScope {
     ) -> Result<NativeSurfacePaint, NativeRuntimeError> {
         frame.paint_surface(self.instance, surface, ui, panes, style)
     }
+
+    pub(super) fn retain_surface_input_state(
+        self,
+        frame: &NativeHostFrame<'_>,
+        context: &egui::Context,
+        surface: SurfaceId,
+        panes: &dyn PaneView,
+    ) {
+        frame.retain_surface_input_state(context, self.instance, surface, panes);
+    }
 }

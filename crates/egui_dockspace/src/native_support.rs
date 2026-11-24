@@ -21,7 +21,9 @@ use crate::pane::PaneView;
 use crate::render;
 use crate::style::DockStyle;
 
-pub use crate::focus::{retain_skipped_pane_focus, sample_host_focus};
+pub use crate::focus::{
+    retain_skipped_pane_focus, retain_skipped_surface_input_state, sample_host_focus,
+};
 pub use crate::render::{DeferredEguiSurfaceAction, EguiSurfaceAction};
 
 /// Validates every surface's exact encoded spans after all renderer output hooks.

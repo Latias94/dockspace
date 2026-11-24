@@ -274,6 +274,8 @@ fn escape_in_a_deferred_packet_leaves_save_and_key_up_for_the_host() {
         let mut time = 0.0;
         let mut saved = Vec::new();
         let mut release_count = 0;
+        let mut escape_count = 0;
+        let escape = key_event(Key::Escape, Modifiers::NONE, true);
         let release = key_event(Key::F8, Modifiers::NONE, false);
         let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, events| {
             time += 0.1;
@@ -285,6 +287,8 @@ fn escape_in_a_deferred_packet_leaves_save_and_key_up_for_the_host() {
                     .filter(|event| **event == release)
                     .count()
             });
+            escape_count += context
+                .input_mut(|input| input.count_and_consume_key(Modifiers::NONE, Key::Escape));
             if consume_save(&context) {
                 saved.push(docs.text[1].clone());
             }
@@ -303,7 +307,7 @@ fn escape_in_a_deferred_packet_leaves_save_and_key_up_for_the_host() {
             &mut docs,
             vec![
                 Event::Text("P".into()),
-                key_event(Key::Escape, Modifiers::NONE, true),
+                escape,
                 release.clone(),
                 command(Key::S),
             ],
@@ -313,8 +317,101 @@ fn escape_in_a_deferred_packet_leaves_save_and_key_up_for_the_host() {
         }
         assert_eq!(saved, ["bravoXP"], "owned={owned}");
         assert_eq!(release_count, 1);
+        assert_eq!(escape_count, 1, "owned={owned}");
         assert!(context.memory(egui::Memory::focused).is_none());
     }
+}
+
+#[test]
+fn a_retained_pass_preserves_the_editor_packet_until_the_pane_returns() {
+    let context = Context::default();
+    let mut dock = editing_dock(false);
+    let mut docs = EditingDocuments {
+        text: ["alpha".into(), "bravo".into()],
+        ..Default::default()
+    };
+    paint_editor_frame(&mut dock, &context, input(0.1, vec![]), &mut docs, false);
+    select_document(&mut dock, FIRST);
+    paint_editor_frame(&mut dock, &context, input(0.2, vec![]), &mut docs, false);
+    select_document(&mut dock, SECOND);
+    paint_editor_frame(
+        &mut dock,
+        &context,
+        input(0.3, vec![Event::Paste("X".into()), command(Key::S)]),
+        &mut docs,
+        false,
+    );
+    assert_eq!(docs.text, ["alpha", "bravo"]);
+
+    for time in [0.4, 0.5] {
+        context
+            .run_ui(input(time, vec![]), |_| {
+                crate::focus::retain_skipped_surface_input_state(
+                    &context,
+                    dock.id,
+                    dock.view().surface(SURFACE).unwrap(),
+                    &docs,
+                );
+            })
+            .drop_without_applying_deltas();
+        assert_eq!(
+            context.memory(egui::Memory::focused),
+            Some(editor_id(SECOND))
+        );
+        assert!(!consume_save(&context));
+    }
+    paint_editor_frame(&mut dock, &context, input(0.6, vec![]), &mut docs, false);
+    assert_eq!(docs.text, ["alpha", "bravo"]);
+    assert!(!consume_save(&context));
+    paint_editor_frame(&mut dock, &context, input(0.7, vec![]), &mut docs, false);
+    assert_eq!(docs.text, ["alpha", "bravoX"]);
+    assert!(consume_save(&context));
+    paint_editor_frame(&mut dock, &context, input(0.8, vec![]), &mut docs, false);
+    assert!(!consume_save(&context));
+    assert_eq!(docs.text, ["alpha", "bravoX"]);
+}
+
+#[test]
+fn forward_tab_out_of_a_pane_preserves_the_packets_host_commands() {
+    let context = Context::default();
+    let mut dock = editing_dock(false);
+    let mut docs = EditingDocuments {
+        text: ["alpha".into(), "bravo".into()],
+        ..Default::default()
+    };
+    let mut saved = Vec::new();
+    let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, time, events| {
+        let (output, receipt) = crate::run_ui(&context, input(time, events), |ui| {
+            dock.show_single_surface(SURFACE, ui, docs).unwrap();
+            let _ = ui.button("Toolbar");
+            if consume_save(ui.ctx()) {
+                saved.push(docs.text[1].clone());
+            }
+        })
+        .into_parts();
+        output.drop_without_applying_deltas();
+        receipt.report(SurfacePresentationResult::Presented);
+    };
+    paint(&mut dock, &mut docs, 0.1, vec![]);
+    select_document(&mut dock, FIRST);
+    paint(&mut dock, &mut docs, 0.2, vec![]);
+    select_document(&mut dock, SECOND);
+    paint(&mut dock, &mut docs, 0.3, vec![Event::Paste("X".into())]);
+    paint(
+        &mut dock,
+        &mut docs,
+        0.4,
+        vec![key_event(Key::Tab, Modifiers::NONE, true), command(Key::S)],
+    );
+    for time in [0.5, 0.6, 0.7, 0.8] {
+        paint(&mut dock, &mut docs, time, vec![]);
+    }
+    assert_eq!(saved, ["bravoX"]);
+    assert_eq!(docs.text, ["alpha", "bravoX"]);
+    assert_ne!(
+        context.memory(egui::Memory::focused),
+        Some(editor_id(SECOND))
+    );
 }
 
 #[test]

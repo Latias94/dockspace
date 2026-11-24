@@ -150,13 +150,10 @@ impl NativeHostBridge {
             return Ok(None);
         }
         let slots = records.retirements.capacity_limit().unwrap_or(count);
-        let mut routes = Vec::new();
-        routes
-            .try_reserve_exact(slots)
-            .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        if count > slots || routes.capacity() > slots {
+        if count > slots {
             return Err(NativeHostProtocolError::NativeReportStorageUnavailable.into());
         }
+        let mut routes = crate::bounded_storage::BoundedVec::with_slots(Some(slots))?.into_inner();
         routes.extend(records.retirements.committed_routes());
         self.prepare_route_retirements_locked(&mut records, routes)
             .map(Some)
@@ -182,13 +179,8 @@ impl NativeHostBridge {
             }
         }
         let token_slots = records.output_resources.maximum_token_count();
-        let mut abandoned = Vec::new();
-        abandoned
-            .try_reserve_exact(token_slots)
-            .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        if abandoned.capacity() > token_slots {
-            return Err(NativeHostProtocolError::NativeReportStorageUnavailable.into());
-        }
+        let abandoned =
+            crate::bounded_storage::BoundedVec::with_slots(Some(token_slots))?.into_inner();
         records
             .viewports
             .prepare_retirements(&routes)

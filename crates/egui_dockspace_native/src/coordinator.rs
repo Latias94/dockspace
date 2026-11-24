@@ -587,16 +587,13 @@ impl NativeCoordinator {
                 return Err(NativeHostProtocolError::NativeReportStorageUnavailable.into());
             }
         }
-        let mut close_decision_scratch = Vec::new();
+        let close_decision_scratch = crate::bounded_storage::BoundedVec::with_slots(
+            owner_limit.map(|limit| limit.close_slots),
+        )?
+        .into_inner();
         if let Some(owners) = owner_limit {
             let bindings = binding_slots.expect("owner storage validates the binding bound");
             bridge.configure_lifecycle_storage(bindings, owners.close_slots)?;
-            close_decision_scratch
-                .try_reserve_exact(owners.close_slots)
-                .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-            if close_decision_scratch.capacity() > owners.close_slots {
-                return Err(NativeHostProtocolError::NativeReportStorageUnavailable.into());
-            }
             bridge.configure_window_resource_storage(
                 owners.resource_slots,
                 owners
@@ -604,9 +601,8 @@ impl NativeCoordinator {
                     .ok_or(NativeHostProtocolError::NativeReportStorageUnavailable)?,
             )?;
         }
-        let mut pending_effect_results = VecDeque::new();
-        if let Some(reports) = storage_limit.and_then(NativeInputStorageLimit::report_storage_limit)
-        {
+        let report_limits = storage_limit.and_then(NativeInputStorageLimit::report_storage_limit);
+        if let Some(reports) = report_limits {
             let slot_bytes = size_of::<PendingNativeEffectResult>();
             let reserved_slot_bytes =
                 size_of::<(NativeEffectResult, Option<NativeHostErrorKind>)>();
@@ -619,13 +615,11 @@ impl NativeCoordinator {
             {
                 return Err(NativeHostProtocolError::NativeReportStorageUnavailable.into());
             }
-            pending_effect_results
-                .try_reserve_exact(reports.effect_slots().get())
-                .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-            if pending_effect_results.capacity() > reports.effect_slots().get() {
-                return Err(NativeHostProtocolError::NativeReportStorageUnavailable.into());
-            }
         }
+        let pending_effect_results = crate::bounded_storage::BoundedVecDeque::with_slots(
+            report_limits.map(|limit| limit.effect_slots().get()),
+        )?
+        .into_inner();
         let mut native = Self {
             session,
             input: DockInputConfig::default(),

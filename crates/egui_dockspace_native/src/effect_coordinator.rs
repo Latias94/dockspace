@@ -73,15 +73,8 @@ impl NativeEffectCoordinator {
     ) -> Result<Self, NativeHostProtocolError> {
         Self::reservation_bytes(effect_slots)
             .ok_or(NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        let mut pending_viewports = Vec::new();
-        if let Some(slots) = effect_slots {
-            pending_viewports
-                .try_reserve_exact(slots)
-                .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-            if pending_viewports.capacity() > slots {
-                return Err(NativeHostProtocolError::NativeReportStorageUnavailable);
-            }
-        }
+        let pending_viewports =
+            crate::bounded_storage::BoundedVec::with_slots(effect_slots)?.into_inner();
         Ok(Self {
             pending_viewports,
             effect_slots,

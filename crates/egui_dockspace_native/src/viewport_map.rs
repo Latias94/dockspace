@@ -145,15 +145,9 @@ impl NativeViewportMap {
     pub(crate) fn with_capacity_limit(slots: usize) -> Result<Self, NativeHostProtocolError> {
         let error = NativeHostProtocolError::NativeReportStorageUnavailable;
         Self::reservation_bytes(slots).ok_or(error)?;
-        let mut viewports = Vec::new();
-        let mut prepared_retirements = Vec::new();
-        viewports.try_reserve_exact(slots).map_err(|_| error)?;
-        prepared_retirements
-            .try_reserve_exact(slots)
-            .map_err(|_| error)?;
-        if viewports.capacity() > slots || prepared_retirements.capacity() > slots {
-            return Err(error);
-        }
+        let viewports = crate::bounded_storage::BoundedVec::with_slots(Some(slots))?.into_inner();
+        let prepared_retirements =
+            crate::bounded_storage::BoundedVec::with_slots(Some(slots))?.into_inner();
         Ok(Self {
             viewports,
             prepared_retirements,

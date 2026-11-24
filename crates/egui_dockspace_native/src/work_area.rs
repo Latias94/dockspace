@@ -218,8 +218,8 @@ impl NativeWorkAreaState {
             .ok_or(NativeHostProtocolError::NativeReportStorageUnavailable)?;
         let mut tokens = Vec::new();
         let mut routes = Vec::new();
-        reserve_exact_slots(&mut tokens, slots)?;
-        reserve_exact_slots(&mut routes, slots)?;
+        crate::bounded_storage::BoundedVec::reserve(&mut tokens, slots)?;
+        crate::bounded_storage::BoundedVec::reserve(&mut routes, slots)?;
         Ok(Self {
             next_token: 1,
             tokens,
@@ -277,10 +277,10 @@ impl NativeWorkAreaState {
                 }
                 let mut facts = Vec::new();
                 let mut routes = Vec::new();
-                reserve_exact_slots(&mut tokens, slots)?;
-                reserve_exact_slots(&mut routes, slots)?;
-                reserve_exact_slots(&mut committed_routes, slots)?;
-                reserve_exact_slots(&mut facts, slots)?;
+                crate::bounded_storage::BoundedVec::reserve(&mut tokens, slots)?;
+                crate::bounded_storage::BoundedVec::reserve(&mut routes, slots)?;
+                crate::bounded_storage::BoundedVec::reserve(&mut committed_routes, slots)?;
+                crate::bounded_storage::BoundedVec::reserve(&mut facts, slots)?;
                 for record in records {
                     let token = match self
                         .tokens
@@ -359,20 +359,6 @@ impl NativeWorkAreaState {
         let binding = matches.next()?.binding;
         matches.next().is_none().then_some(binding)
     }
-}
-
-/// Rejects backing larger than the plan, even if the allocator rounds upward.
-fn reserve_exact_slots<T>(
-    values: &mut Vec<T>,
-    slots: usize,
-) -> Result<(), NativeHostProtocolError> {
-    values
-        .try_reserve_exact(slots.saturating_sub(values.len()))
-        .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-    if values.capacity() > slots {
-        return Err(NativeHostProtocolError::NativeReportStorageUnavailable);
-    }
-    Ok(())
 }
 
 fn compile_work_area(

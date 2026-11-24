@@ -361,6 +361,19 @@ pub fn retain_skipped_pane_focus(
     }
 }
 
+/// Keeps existing focus and queued editor input while the exact surface skips painting.
+#[doc(hidden)]
+#[cfg(any(test, feature = "native-render-support"))]
+pub fn retain_skipped_surface_input_state(
+    context: &Context,
+    instance: Id,
+    surface: DockspaceSurfaceView<'_>,
+    panes: &dyn PaneView,
+) {
+    crate::render::retain_skipped_pane_keyboard(context, instance, surface.id());
+    retain_skipped_pane_focus(context, surface, panes);
+}
+
 fn collect_pane_focus(
     item: ItemId,
     context: &Context,

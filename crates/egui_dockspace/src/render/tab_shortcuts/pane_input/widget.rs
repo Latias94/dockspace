@@ -107,8 +107,8 @@ fn with_widget_input<R>(
         !filter.matches(event) && (framework_traversal(event).is_some() || is_plain_escape(event))
     }) {
         let mut tail = events.split_off(index);
-        let navigation = tail.remove(0);
-        if let Some(direction) = framework_traversal(&navigation) {
+        if let Some(direction) = framework_traversal(&tail[0]) {
+            tail.remove(0);
             ui.memory_mut(|memory| memory.move_focus(direction));
             framework_input = Some(FrameworkInput::Traverse(direction, tail));
         } else {

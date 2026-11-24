@@ -112,13 +112,7 @@ impl NativeWindowResources {
     pub(super) fn with_capacity_limit(slots: usize) -> Result<Self, NativeHostProtocolError> {
         Self::reservation_bytes(slots)
             .ok_or(NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        let mut entries = Vec::new();
-        entries
-            .try_reserve_exact(slots)
-            .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        if entries.capacity() > slots {
-            return Err(NativeHostProtocolError::NativeReportStorageUnavailable);
-        }
+        let entries = crate::bounded_storage::BoundedVec::with_slots(Some(slots))?.into_inner();
         Ok(Self {
             entries,
             slot_limit: Some(slots),

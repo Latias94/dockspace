@@ -127,9 +127,10 @@ impl std::fmt::Debug for NativeHostFrame<'_> {
 }
 
 impl<'session> NativeHostFrame<'session> {
-    pub(crate) fn retain_pane_focus(
+    pub(crate) fn retain_surface_input_state(
         &self,
         context: &egui::Context,
+        instance: egui::Id,
         surface: SurfaceId,
         panes: &dyn PaneView,
     ) {
@@ -150,7 +151,9 @@ impl<'session> NativeHostFrame<'session> {
             return;
         }
         if let Some(surface) = self.frame.view().surface(surface) {
-            egui_dockspace::native_support::retain_skipped_pane_focus(context, surface, panes);
+            egui_dockspace::native_support::retain_skipped_surface_input_state(
+                context, instance, surface, panes,
+            );
         }
     }
 

@@ -233,24 +233,10 @@ impl NativeInputControl {
         Self::reservation_bytes(binding_slots, effect_slots)
             .ok_or(NativeHostProtocolError::NativeReportStorageUnavailable)?;
         let pending_slots = effect_slots.map(|slots| slots + 1);
-        let mut pending = VecDeque::new();
-        let mut observations = Vec::new();
-        if let Some(slots) = pending_slots {
-            pending
-                .try_reserve_exact(slots)
-                .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-            if pending.capacity() > slots {
-                return Err(NativeHostProtocolError::NativeReportStorageUnavailable);
-            }
-        }
-        if let Some(slots) = binding_slots {
-            observations
-                .try_reserve_exact(slots)
-                .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-            if observations.capacity() > slots {
-                return Err(NativeHostProtocolError::NativeReportStorageUnavailable);
-            }
-        }
+        let pending =
+            crate::bounded_storage::BoundedVecDeque::with_slots(pending_slots)?.into_inner();
+        let observations =
+            crate::bounded_storage::BoundedVec::with_slots(binding_slots)?.into_inner();
         Ok(Self {
             pending,
             observations,

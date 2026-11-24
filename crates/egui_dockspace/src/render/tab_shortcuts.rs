@@ -1,6 +1,8 @@
 //! Routes ordered keyboard input through tab chrome and hands content input off at focus changes.
 
 mod pane_input;
+#[cfg(any(test, feature = "native-render-support"))]
+pub(crate) use pane_input::retain_skipped_pane_keyboard;
 
 use dockspace::model::{ItemId, TabKey};
 use dockspace::runtime::{

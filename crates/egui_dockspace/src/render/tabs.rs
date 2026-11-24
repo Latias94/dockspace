@@ -236,7 +236,15 @@ pub(crate) fn paint_pane(
                 }
             }
             if let Some(delivery) = delivery {
-                delivery.settle_registration(context, registered_target);
+                let target = delivery
+                    .registration_target(registered_target)
+                    .filter(|target| {
+                        !retry
+                            && crate::focus::pane_registered_focus_target(
+                                child_ui, clip, *target, false,
+                            )
+                    });
+                delivery.settle_registration(context, target);
             }
             if let Some(replay) = replay {
                 replay.finish(context, child_ui, clip);

@@ -238,9 +238,9 @@ impl PendingPaneFocusObservation {
                     }
                 })
                 .or_else(|| {
-                    (viewport == ViewportId::ROOT).then(|| {
-                        if context.input(|input| input.focused)
-                            && context.memory(|memory| memory.has_focus(target))
+                    terminal_viewport_focus(context, viewport, output).map(|focused| {
+                        if context.input_for(viewport, |input| input.focused)
+                            && focused == Some(target)
                         {
                             PaneFocusState::Focused
                         } else {
@@ -879,6 +879,32 @@ pub(crate) fn owns_viewport_run(context: &Context, viewport: ViewportId) -> bool
     active_run_portal(context).is_some_and(|portal| {
         let portal = portal.lock().unwrap_or_else(PoisonError::into_inner);
         portal.viewport == viewport && !portal.poisoned
+    })
+}
+
+pub(crate) fn terminal_viewport_focus(
+    context: &Context,
+    viewport: ViewportId,
+    output: &FullOutput,
+) -> Option<Option<Id>> {
+    if viewport == ViewportId::ROOT
+        || owns_viewport_run(context, viewport)
+        || output.viewport_output.get(&viewport).is_some_and(|entry| {
+            entry.class == egui::ViewportClass::Deferred && entry.viewport_ui_cb.is_some()
+        })
+    {
+        return Some(context.memory(egui::Memory::focused));
+    }
+    // An immediate child restores the parent's focus memory as its pass ends.
+    let focus = output.platform_output.accesskit_update.as_ref()?.focus;
+    context.viewport_for(viewport, |viewport| {
+        viewport
+            .prev_pass
+            .widgets
+            .layers()
+            .flat_map(|(_, widgets)| widgets)
+            .find(|widget| widget.id.accesskit_id() == focus)
+            .map(|widget| Some(widget.id))
     })
 }
 

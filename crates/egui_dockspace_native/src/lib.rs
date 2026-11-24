@@ -10,6 +10,7 @@
 
 mod app;
 mod application_action;
+mod bounded_storage;
 mod capabilities;
 mod close_control;
 mod command;

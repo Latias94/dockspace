@@ -257,7 +257,12 @@ fn minimized_surface_keeps_editor_focus_without_presented_receiver_authority() {
     for pass in 0..2 {
         context
             .run_ui(egui::RawInput::default(), |_| {
-                skipped.retain_pane_focus(&context, SURFACE, &editor);
+                skipped.retain_surface_input_state(
+                    &context,
+                    egui::Id::unique("minimized-workspace"),
+                    SURFACE,
+                    &editor,
+                );
                 assert!(
                     context.viewport(|viewport| viewport
                         .this_pass
