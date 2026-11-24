@@ -500,7 +500,7 @@ impl std::fmt::Debug for SurfaceOutputProof {
 }
 
 impl SurfaceOutputProof {
-    #[cfg(any(test, feature = "native-render-support"))]
+    #[cfg(feature = "native-render-support")]
     pub(super) fn context(&self) -> &Context {
         &self.context
     }

@@ -875,23 +875,16 @@ fn active_run_portal(context: &Context) -> Option<Arc<Mutex<ActiveRunPortal>>> {
     context.data(|data| data.get_temp(active_run_portal_id()))
 }
 
-pub(crate) fn owns_viewport_run(context: &Context, viewport: ViewportId) -> bool {
-    active_run_portal(context).is_some_and(|portal| {
-        let portal = portal.lock().unwrap_or_else(PoisonError::into_inner);
-        portal.viewport == viewport && !portal.poisoned
-    })
-}
-
 pub(crate) fn terminal_viewport_focus(
     context: &Context,
     viewport: ViewportId,
     output: &FullOutput,
 ) -> Option<Option<Id>> {
     if viewport == ViewportId::ROOT
-        || owns_viewport_run(context, viewport)
-        || output.viewport_output.get(&viewport).is_some_and(|entry| {
-            entry.class == egui::ViewportClass::Deferred && entry.viewport_ui_cb.is_some()
-        })
+        || output
+            .viewport_output
+            .get(&viewport)
+            .is_some_and(|entry| entry.class == egui::ViewportClass::Deferred)
     {
         return Some(context.memory(egui::Memory::focused));
     }

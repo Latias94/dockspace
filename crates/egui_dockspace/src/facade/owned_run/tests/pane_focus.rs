@@ -561,15 +561,30 @@ fn framework_navigation_delivers_the_following_packet_to_its_destination() {
     }
 
     let child = ViewportId::from_hash_of("editor navigation viewport");
-    for (owned, start_in_search, viewport) in [
-        (true, false, ViewportId::ROOT),
-        (false, false, ViewportId::ROOT),
-        (true, true, ViewportId::ROOT),
-        (false, true, ViewportId::ROOT),
-        (false, false, child),
-        (true, false, child),
+    for (owned, start_in_search, viewport, nested) in [
+        (true, false, ViewportId::ROOT, false),
+        (false, false, ViewportId::ROOT, false),
+        (true, true, ViewportId::ROOT, false),
+        (false, true, ViewportId::ROOT, false),
+        (false, false, child, false),
+        (true, false, child, false),
+        (false, false, child, true),
+        (false, true, child, true),
     ] {
         let context = Context::default();
+        context.disable_accesskit();
+        let child_input = std::rc::Rc::new(std::cell::RefCell::new(None));
+        if nested {
+            context.set_embed_viewports(false);
+            let child_input = std::rc::Rc::clone(&child_input);
+            Context::set_immediate_viewport_renderer(move |context, mut viewport| {
+                let raw = child_input.borrow_mut().take().unwrap();
+                let (output, receipt) =
+                    crate::run_ui(context, raw, viewport.viewport_ui_cb.as_mut()).into_parts();
+                output.drop_without_applying_deltas();
+                receipt.report(SurfacePresentationResult::Presented);
+            });
+        }
         let mut dock = editing_dock(false);
         let mut docs = SideBySide {
             body: EditingDocuments {
@@ -585,8 +600,25 @@ fn framework_navigation_delivers_the_following_packet_to_its_destination() {
             time += 0.1;
             let mut raw = input(time, events);
             raw.viewport_id = viewport;
-            raw.viewports.entry(viewport).or_default();
-            paint_editor_frame(dock, &context, raw, docs, owned);
+            let info = raw.viewports.entry(viewport).or_default();
+            if nested {
+                info.parent = Some(ViewportId::ROOT);
+                child_input.replace(Some(raw));
+                context
+                    .run_ui(input(time, vec![]), |_| {
+                        context.show_viewport_immediate(
+                            child,
+                            egui::ViewportBuilder::default(),
+                            |ui, class| {
+                                assert!(matches!(class, egui::ViewportClass::Immediate));
+                                dock.show_single_surface(SURFACE, ui, docs).unwrap();
+                            },
+                        );
+                    })
+                    .drop_without_applying_deltas();
+            } else {
+                paint_editor_frame(dock, &context, raw, docs, owned);
+            }
             if context.input_mut_for(viewport, |input| {
                 input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::S))
             }) {
@@ -626,15 +658,29 @@ fn framework_navigation_delivers_the_following_packet_to_its_destination() {
         assert_eq!(
             docs.body.text,
             ["alpha", body],
-            "owned={owned}, key={key:?}, viewport={viewport:?}"
+            "owned={owned}, key={key:?}, viewport={viewport:?}, nested={nested}"
         );
-        assert_eq!(docs.search, search);
+        assert_eq!(
+            docs.search, search,
+            "owned={owned}, key={key:?}, viewport={viewport:?}, nested={nested}"
+        );
         assert_eq!(
             saved,
             [(body.into(), search.into())],
             "viewport={viewport:?}"
         );
-        assert_eq!(context.memory(egui::Memory::focused), Some(focus));
+        if nested {
+            let mut raw = input(time + 0.1, vec![]);
+            raw.viewport_id = viewport;
+            raw.viewports.entry(viewport).or_default().parent = Some(ViewportId::ROOT);
+            context
+                .run_ui(raw, |ui| {
+                    assert_eq!(ui.memory(egui::Memory::focused), Some(focus))
+                })
+                .drop_without_applying_deltas();
+        } else {
+            assert_eq!(context.memory(egui::Memory::focused), Some(focus));
+        }
     }
 }
 

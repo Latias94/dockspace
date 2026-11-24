@@ -98,6 +98,18 @@ impl ViewportKeyboard {
         self.retire_input();
     }
 
+    fn await_forward_wrap(&mut self, pane: Id, completed: u64) {
+        if let Some(pending) = &mut self.handoff {
+            pending.handoff = Handoff::FrameworkTraversal {
+                pane,
+                settlement: TraversalSettlement::Forward {
+                    pass: completed,
+                    wrap: true,
+                },
+            };
+        }
+    }
+
     fn rebind_packets(&mut self, old: PaneInputTarget, target: PaneInputTarget) {
         if old != target {
             for packet in &mut self.later_packets {
@@ -152,30 +164,54 @@ impl egui::plugin::Plugin for PaneKeyboard {
             return;
         };
         let Some(PendingInput {
-            handoff:
-                Handoff::FrameworkTraversal {
-                    pane,
-                    settlement: TraversalSettlement::NextPassStart,
-                },
+            handoff: Handoff::FrameworkTraversal { pane, settlement },
             packet,
             ..
         }) = &input.handoff
         else {
             return;
         };
-        // egui applies reverse Tab before the UI can make another focus request.
-        let focused = if has_pointer_or_accessibility_edges(context) {
-            None
-        } else {
-            ui.memory(|memory| {
-                packet
-                    .target
-                    .widget
-                    .filter(|&widget| memory.had_focus_last_frame(widget))?;
-                memory.focused()
-            })
-        };
-        input.settle_traversal(context, viewport, *pane, focused);
+        if has_pointer_or_accessibility_edges(context) {
+            input.retire_input();
+            return;
+        }
+        let current = context.cumulative_pass_nr();
+        let pane = *pane;
+        match *settlement {
+            TraversalSettlement::NextPassStart => {
+                // egui applies reverse Tab at the start of the next pass.
+                let focused = ui.memory(|memory| {
+                    packet
+                        .target
+                        .widget
+                        .filter(|&widget| memory.had_focus_last_frame(widget))?;
+                    memory.focused()
+                });
+                input.settle_traversal(context, viewport, pane, focused);
+            }
+            TraversalSettlement::PassEnd(pass) if current == pass + 1 => {
+                // An immediate child without AccessKit can read its terminal
+                // focus again only after egui re-enters that viewport.
+                let focused = focus_from_previous_pass(ui);
+                input.last_focus = focused;
+                input.settle_traversal(context, viewport, pane, focused);
+            }
+            TraversalSettlement::Forward { pass, wrap }
+                if current > pass && context.current_pass_index() == 0 =>
+            {
+                let focused = focus_from_previous_pass(ui);
+                if focused.is_none()
+                    && !wrap
+                    && ui.memory(|memory| memory.focused().is_none())
+                    && !ui.input(|input| input.events.iter().any(is_plain_escape))
+                {
+                    input.await_forward_wrap(pane, current);
+                } else {
+                    input.finish_forward_traversal(context, viewport, pane, focused);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn on_end_pass(&mut self, ui: &mut Ui) {
@@ -225,34 +261,24 @@ impl egui::plugin::Plugin for PaneKeyboard {
                 let completed = context.cumulative_pass_nr_for(viewport);
                 // egui resolves traversal after on_end_pass. Use this exact
                 // completed pass before host code can refocus between runs.
-                let focused =
-                    crate::pass_settlement::terminal_viewport_focus(context, viewport, output);
+                let Some(focused) =
+                    crate::pass_settlement::terminal_viewport_focus(context, viewport, output)
+                else {
+                    continue;
+                };
                 match settlement {
                     TraversalSettlement::PassEnd(pass) if completed == pass + 1 => {
-                        input.settle_traversal(context, viewport, pane, focused.flatten());
+                        input.settle_traversal(context, viewport, pane, focused);
                     }
                     TraversalSettlement::Forward { pass, wrap }
                         if completed > pass && !discarded =>
                     {
-                        if focused == Some(None) && !wrap {
+                        if focused.is_none() && !wrap {
                             // egui gives focus to the first interested widget
                             // of the next pass when Tab reaches the end.
-                            if let Some(pending) = &mut input.handoff {
-                                pending.handoff = Handoff::FrameworkTraversal {
-                                    pane,
-                                    settlement: TraversalSettlement::Forward {
-                                        pass: completed,
-                                        wrap: true,
-                                    },
-                                };
-                            }
+                            input.await_forward_wrap(pane, completed);
                         } else {
-                            input.finish_forward_traversal(
-                                context,
-                                viewport,
-                                pane,
-                                focused.flatten(),
-                            );
+                            input.finish_forward_traversal(context, viewport, pane, focused);
                         }
                     }
                     _ => {}
@@ -280,6 +306,14 @@ impl egui::plugin::Plugin for PaneKeyboard {
             }
         }
     }
+}
+
+fn focus_from_previous_pass(ui: &Ui) -> Option<Id> {
+    ui.memory(|memory| {
+        memory
+            .focused()
+            .filter(|&widget| memory.had_focus_last_frame(widget))
+    })
 }
 
 /// Keeps the exact surface's queued editor input alive through a retained pass.
