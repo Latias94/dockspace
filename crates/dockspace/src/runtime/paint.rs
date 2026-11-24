@@ -917,10 +917,6 @@ impl<'frame> SurfacePaintPlan<'frame> {
             .then(|| PreparedPaneFocusObservation::new(request, observation))
     }
 
-    /// Returns one root-level presentation command frozen from this exact candidate.
-    ///
-    /// A root owned by another surface is not part of this plan and returns `None`.
-
     #[must_use]
     pub fn bounds(&self) -> LogicalRect {
         self.plan.bounds()

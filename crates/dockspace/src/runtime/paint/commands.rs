@@ -3,6 +3,9 @@
 use super::*;
 
 impl<'frame> SurfacePaintPlan<'frame> {
+    /// Returns one root-level presentation command frozen from this exact candidate.
+    ///
+    /// A root owned by another surface is not part of this plan and returns `None`.
     ///
     /// # Errors
     ///
