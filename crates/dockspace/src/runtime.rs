@@ -118,13 +118,18 @@ pub use native::{
     NativeWorkAreaRoster,
 };
 pub use native::{NativePointerCaptureRequest, NativePointerContinuation};
+pub use native::{
+    NativeRegionWindowHit, NativeWindowClientGeometry, NativeWindowFactsSample,
+    compile_native_window_facts, resolve_region_window_hit,
+};
 pub use native::{NativeWindowInsertError, NativeWindowRegistryError, NativeWindows};
 pub use native_effect::{
     NativeCleanupCorrelationFailure, NativeCleanupObservation, NativeCloseDisposition,
     NativeCloseEffectAcknowledgement, NativeCreateEffectAcknowledgement, NativeDispatchFailure,
-    NativeEffectAcknowledgement, NativeEffectDispatch, NativeEffectOperation, NativeEffectRequest,
-    NativeEffectResult, NativeEffectSubmissionError, NativeIndeterminateReason,
-    NativeInputEffectAcknowledgement, NativeSurfaceRole, NativeUnsupportedReason,
+    NativeEffectAcknowledgement, NativeEffectDispatch, NativeEffectOperation, NativeEffectOutbox,
+    NativeEffectRequest, NativeEffectResult, NativeEffectSubmissionError,
+    NativeIndeterminateReason, NativeInputEffectAcknowledgement, NativeSurfaceRole,
+    NativeUnsupportedReason, NativeWindowObservationOutbox,
 };
 pub use paint::{
     ContainedPaintRecord, ContainedResizeDirection, ContainedResizePaintRecord,

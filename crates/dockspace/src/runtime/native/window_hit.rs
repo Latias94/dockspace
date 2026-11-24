@@ -1,7 +1,7 @@
 //! Window hit facts are selected independently from the retained source placement.
 
 use crate::engine::{CoreHostFrame, DockEngine};
-use crate::geometry::PhysicalPoint;
+use crate::geometry::{PhysicalPoint, PhysicalRect};
 use crate::input::journal::NativeSurfacePointerRoute;
 use crate::input::receiver::{
     NativeWindowHitReceipt, PointerReceiverCandidate, PointerReceiverProbeRequest,
@@ -80,6 +80,68 @@ pub enum NativeWindowHit {
     Blocked,
     /// The framework cannot prove the current exposed placement.
     Unknown,
+}
+
+/// A committed region in a framework window's hit-test snapshot.
+#[derive(Debug, Clone, Copy)]
+pub struct NativeRegionWindowHit {
+    artifact: SurfacePresentationArtifact,
+    bounds: PhysicalRect,
+    clip: PhysicalRect,
+    exposed: bool,
+}
+
+impl NativeRegionWindowHit {
+    /// Describes a region in window-client pixels.
+    ///
+    /// `exposed` means the framework's hit test at the queried point selected
+    /// that region or one of its declared docking or content receivers.
+    #[must_use]
+    pub const fn new(
+        artifact: SurfacePresentationArtifact,
+        bounds: PhysicalRect,
+        clip: PhysicalRect,
+        exposed: bool,
+    ) -> Self {
+        Self {
+            artifact,
+            bounds,
+            clip,
+            exposed,
+        }
+    }
+}
+
+/// Resolves a hit from the window's complete committed region roster.
+///
+/// A point outside every clipped region confirms window background. An empty
+/// roster leaves the window geometry unknown, as does ambiguous exposure.
+pub fn resolve_region_window_hit(
+    point: PhysicalPoint,
+    regions: impl IntoIterator<Item = NativeRegionWindowHit>,
+) -> NativeWindowHit {
+    let mut known = false;
+    let mut within_region = false;
+    let mut exposed = None;
+    for region in regions {
+        known = true;
+        if !region.bounds.contains(point) || !region.clip.contains(point) {
+            continue;
+        }
+        within_region = true;
+        if region.exposed && exposed.replace(region.artifact).is_some() {
+            return NativeWindowHit::Unknown;
+        }
+    }
+    if let Some(artifact) = exposed {
+        NativeWindowHit::Surface(artifact)
+    } else if within_region {
+        NativeWindowHit::Blocked
+    } else if known {
+        NativeWindowHit::WindowBackground
+    } else {
+        NativeWindowHit::Unknown
+    }
 }
 
 pub(super) fn validate_window_hit(

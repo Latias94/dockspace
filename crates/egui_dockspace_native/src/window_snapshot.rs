@@ -3,8 +3,9 @@
 use dockspace::geometry::{PhysicalRect, PhysicalSize, ScaleFactor};
 use dockspace::runtime::{
     NativeCreateEffectAcknowledgement, NativeCreateReadiness, NativeInputEffectAcknowledgement,
-    NativeLocalReadiness, NativeSurfaceBinding, NativeWindowFacts, NativeWindowInputState,
-    NativeWindowPresentationState,
+    NativeLocalReadiness, NativeSurfaceBinding, NativeWindowClientGeometry, NativeWindowFacts,
+    NativeWindowFactsSample, NativeWindowInputState, NativeWindowPresentationState,
+    compile_native_window_facts,
 };
 use eframe::{
     NativePhysicalRect, NativeWindowInputState as EframeNativeWindowInputState,
@@ -151,12 +152,13 @@ pub(crate) fn compile_window_observation(
     snapshot: NativeWindowSnapshot,
 ) -> Result<CompiledWindowObservation, NativeHostProtocolError> {
     let snapshot = SnapshotParts::from(snapshot);
+    let facts = compile_window_facts(snapshot)?;
     let focus_reportable = local_readiness(snapshot) == NativeLocalReadiness::Ready
         && !matches!(
-            presentation_state(snapshot.visible, snapshot.minimized),
+            facts.observed_presentation(),
             Some(NativeWindowPresentationState::Hidden | NativeWindowPresentationState::Minimized)
         );
-    compile_window_facts(snapshot).map(|facts| CompiledWindowObservation {
+    Ok(CompiledWindowObservation {
         binding,
         facts,
         input_acknowledgement: None,
@@ -178,26 +180,25 @@ fn compile_window_facts(
         f64::from(snapshot.content_size[1]),
     )
     .map_err(|_| NativeHostProtocolError::InvalidWindowSnapshot)?;
-    let mut facts = NativeWindowFacts::live()
-        .with_content_size(content_size)
-        .with_native_scale_factor(native_scale_factor)
-        .with_presentation_scale_factor(presentation_scale_factor)
-        .with_local_readiness(local_readiness(snapshot))
-        .with_input(input_state(snapshot.input_state), None);
-    if let Some(rect) = snapshot.inner_rect {
+    let client = if let Some(rect) = snapshot.inner_rect {
         let content = physical_rect(rect)?;
         if content.size() != content_size {
             return Err(NativeHostProtocolError::InvalidWindowSnapshot);
         }
-        facts = facts.with_content_bounds(content);
-    }
-    if let Some(rect) = snapshot.outer_rect {
-        facts = facts.with_outer_bounds(physical_rect(rect)?);
-    }
-    if let Some(presentation) = presentation_state(snapshot.visible, snapshot.minimized) {
-        facts = facts.with_presentation(presentation);
-    }
-    Ok(facts)
+        NativeWindowClientGeometry::Bounds(content)
+    } else {
+        NativeWindowClientGeometry::Size(content_size)
+    };
+    Ok(compile_native_window_facts(NativeWindowFactsSample {
+        client: Some(client),
+        outer_bounds: snapshot.outer_rect.map(physical_rect).transpose()?,
+        native_scale: Some(native_scale_factor),
+        presentation_scale: Some(presentation_scale_factor),
+        visible: snapshot.visible,
+        minimized: snapshot.minimized,
+    })
+    .with_local_readiness(local_readiness(snapshot))
+    .with_input(input_state(snapshot.input_state), None))
 }
 
 fn local_readiness(snapshot: SnapshotParts) -> NativeLocalReadiness {
@@ -230,20 +231,6 @@ fn physical_rect(rect: NativePhysicalRect) -> Result<PhysicalRect, NativeHostPro
         f64::from(rect.height()),
     )
     .map_err(|_| NativeHostProtocolError::InvalidWindowSnapshot)
-}
-
-const fn presentation_state(
-    visible: Option<bool>,
-    minimized: Option<bool>,
-) -> Option<NativeWindowPresentationState> {
-    match minimized {
-        Some(true) => Some(NativeWindowPresentationState::Minimized),
-        Some(false) | None => match visible {
-            Some(true) => Some(NativeWindowPresentationState::Visible),
-            Some(false) => Some(NativeWindowPresentationState::Hidden),
-            None => None,
-        },
-    }
 }
 
 #[cfg(test)]
@@ -356,6 +343,19 @@ mod tests {
                 .with_presentation_scale_factor(ScaleFactor::new(1.25).expect("scale validates"),)
                 .with_local_readiness(NativeLocalReadiness::Ready)
                 .with_input(NativeWindowInputState::ReceivesInput, None)
+        );
+    }
+
+    #[test]
+    fn visible_without_a_minimized_observation_keeps_local_readiness() {
+        let mut snapshot = parts();
+        snapshot.minimized = None;
+        let facts = compile_window_facts(snapshot).expect("partial visibility compiles");
+
+        snapshot.visible = None;
+        assert_eq!(
+            facts,
+            compile_window_facts(snapshot).expect("missing visibility compiles")
         );
     }
 

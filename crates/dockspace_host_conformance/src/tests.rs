@@ -19,25 +19,26 @@ use dockspace::runtime::{
     DropGuidePaintRecord, HostCloseRequestOrigin, HostFrameReport, HostInputOutcome,
     HostSurfaceCommitStatus, HostWindowToken, HostWorkAreaToken, NativeCloseState,
     NativeDesktopPointerLocation, NativeDesktopPosition, NativeEffectAcknowledgement,
-    NativeEffectOperation, NativeEffectRequest, NativeGlobalFocus, NativeHostCapabilities,
-    NativeHostCapability, NativeHostErrorKind, NativePointerButton, NativePointerEvent,
-    NativePointerHover, NativePointerId, NativePointerInput, NativePointerOwner,
-    NativePointerRoster, NativeReceiverAnswer, NativeReceiverPurpose, NativeReceiverQuery,
-    NativeScrollDelta, NativeScrollDeviceId, NativeScrollEvent, NativeScrollModifiers,
-    NativeScrollMomentum, NativeScrollPhase, NativeScrollReceiverChallenge, NativeScrollSequenceId,
-    NativeSurfaceBinding, NativeWindowBinding, NativeWindowFacts, NativeWindowHit,
-    NativeWindowInputState, NativeWindowPlacement, NativeWindowPresentationState,
-    NativeWorkAreaFacts, NativeWorkAreaRoster, PanePaintRecord, PresentedDockReceiver,
-    PresentedDockspaceSurface, SplitterJunctionPaintRecord, SplitterPaintRecord,
-    SurfaceContainedResizeAdjustment, SurfaceMeasurementAnswer, SurfaceMeasurementRequest,
-    SurfacePaintPlan, SurfacePaintProgramOperation, SurfacePaintProgramStep, SurfacePointerButton,
-    SurfacePointerCancelReason, SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId,
-    SurfacePointerInput, SurfacePointerPosition, SurfacePointerReceiverFacts,
-    SurfacePresentationArtifact, SurfacePresentationResult, SurfaceScrollDelta,
-    SurfaceScrollDeviceId, SurfaceScrollEvent, SurfaceScrollModifiers, SurfaceScrollMomentum,
-    SurfaceScrollPhase, SurfaceScrollSequenceId, SurfaceSplitterAdjustment,
-    SurfaceUnavailableReason, TabBarPaintRecord, TabPaintRecord, TabStripMetrics,
-    UniformSurfaceMetrics,
+    NativeEffectOperation, NativeEffectOutbox, NativeEffectRequest, NativeGlobalFocus,
+    NativeHostCapabilities, NativeHostCapability, NativeHostErrorKind, NativePointerButton,
+    NativePointerEvent, NativePointerHover, NativePointerId, NativePointerInput,
+    NativePointerOwner, NativePointerRoster, NativeReceiverAnswer, NativeReceiverPurpose,
+    NativeReceiverQuery, NativeRegionWindowHit, NativeScrollDelta, NativeScrollDeviceId,
+    NativeScrollEvent, NativeScrollModifiers, NativeScrollMomentum, NativeScrollPhase,
+    NativeScrollReceiverChallenge, NativeScrollSequenceId, NativeSurfaceBinding,
+    NativeWindowBinding, NativeWindowClientGeometry, NativeWindowFacts, NativeWindowFactsSample,
+    NativeWindowHit, NativeWindowInputState, NativeWindowObservationOutbox, NativeWindowPlacement,
+    NativeWindowPresentationState, NativeWorkAreaFacts, NativeWorkAreaRoster, PanePaintRecord,
+    PresentedDockReceiver, PresentedDockspaceSurface, SplitterJunctionPaintRecord,
+    SplitterPaintRecord, SurfaceContainedResizeAdjustment, SurfaceMeasurementAnswer,
+    SurfaceMeasurementRequest, SurfacePaintPlan, SurfacePaintProgramOperation,
+    SurfacePaintProgramStep, SurfacePointerButton, SurfacePointerCancelReason,
+    SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId, SurfacePointerInput,
+    SurfacePointerPosition, SurfacePointerReceiverFacts, SurfacePresentationArtifact,
+    SurfacePresentationResult, SurfaceScrollDelta, SurfaceScrollDeviceId, SurfaceScrollEvent,
+    SurfaceScrollModifiers, SurfaceScrollMomentum, SurfaceScrollPhase, SurfaceScrollSequenceId,
+    SurfaceSplitterAdjustment, SurfaceUnavailableReason, TabBarPaintRecord, TabPaintRecord,
+    TabStripMetrics, UniformSurfaceMetrics, compile_native_window_facts, resolve_region_window_hit,
 };
 
 mod pane_visibility;
@@ -1423,6 +1424,72 @@ fn native_lifecycle_scenario_names_capability_and_terminal_observations() {
 }
 
 #[test]
+fn native_effect_outbox_releases_only_the_retired_window_dispatch() {
+    let mut fixture = ManagedLifecycleScenarioFixture::new();
+    let (child, create) = fixture.request_child_effect();
+    let before = fixture.host.version();
+    let mut outbox = NativeEffectOutbox::default();
+    outbox.enqueue([create]);
+    let dispatch = outbox
+        .take_next()
+        .expect("create is ready")
+        .begin_dispatch();
+    outbox.await_observation(dispatch, 1_u32).unwrap();
+    assert!(outbox.take_next().is_none());
+    assert!(outbox.retire_pending(fixture.root.window()).is_none());
+    assert_eq!(outbox.pending(), Some((child.window(), &1)));
+
+    let result = outbox
+        .retire_pending(child.window())
+        .expect("a terminal child settles its in-flight create");
+    assert_eq!(result.binding(), child);
+    assert!(outbox.retire_pending(child.window()).is_none());
+    fixture
+        .host
+        .session
+        .report_native_effect_result(result)
+        .unwrap();
+    fixture.commit();
+    assert_eq!(fixture.host.version(), before);
+    assert_eq!(fixture.host.view().item(X).unwrap().surface(), SURFACE);
+}
+
+#[test]
+fn native_window_observations_preserve_both_scales_and_emit_create_receipts_once() {
+    let mut fixture = ManagedLifecycleScenarioFixture::new();
+    let (_, receipt) = fixture.request_child();
+    let size = fixture.child_placement.size();
+    let native = ScaleFactor::new(2.0).unwrap();
+    let renderer = ScaleFactor::new(2.5).unwrap();
+    let facts = compile_native_window_facts(NativeWindowFactsSample {
+        client: Some(NativeWindowClientGeometry::Bounds(fixture.child_placement)),
+        native_scale: Some(native),
+        presentation_scale: Some(renderer),
+        visible: Some(true),
+        ..NativeWindowFactsSample::default()
+    })
+    .with_create_readiness(dockspace::runtime::NativeCreateReadiness::Created, None);
+    assert_eq!(
+        facts,
+        NativeWindowFacts::live()
+            .with_content_size(size)
+            .with_content_bounds(fixture.child_placement)
+            .with_native_scale_factor(native)
+            .with_presentation_scale_factor(renderer)
+            .with_create_readiness(dockspace::runtime::NativeCreateReadiness::Created, None)
+    );
+    let mut observations = NativeWindowObservationOutbox::default();
+    assert_eq!(observations.observe(facts), Some(facts));
+    let acknowledged = facts.with_create_readiness(
+        dockspace::runtime::NativeCreateReadiness::Created,
+        Some(receipt),
+    );
+    assert_eq!(observations.observe(acknowledged), Some(acknowledged));
+    assert_eq!(observations.observe(facts), None);
+    assert_eq!(observations.destroyed(), NativeWindowFacts::destroyed());
+}
+
+#[test]
 fn native_lifecycle_scenario_reports_terminality_presentation_first_live_and_quiescence() {
     use crate::scenario::{
         NATIVE_CREATE_REDOCK_RETIREMENT, ScenarioActionTerminality, ScenarioCapability, ScenarioId,
@@ -1752,6 +1819,15 @@ impl ManagedLifecycleScenarioFixture {
         NativeSurfaceBinding,
         dockspace::runtime::NativeCreateEffectAcknowledgement,
     ) {
+        let (child, effect) = self.request_child_effect();
+        let acknowledgement = match effect.accepted() {
+            Some(NativeEffectAcknowledgement::Create(acknowledgement)) => acknowledgement,
+            acknowledgement => panic!("create returned {acknowledgement:?}"),
+        };
+        (child, acknowledgement)
+    }
+
+    fn request_child_effect(&mut self) -> (NativeSurfaceBinding, NativeEffectRequest) {
         let mut frame = self
             .host
             .session
@@ -1785,11 +1861,7 @@ impl ManagedLifecycleScenarioFixture {
             } if *placement == self.child_placement => *binding,
             operation => panic!("expected one create-window effect, got {operation:?}"),
         };
-        let acknowledgement = match effect.accepted() {
-            Some(NativeEffectAcknowledgement::Create(acknowledgement)) => acknowledgement,
-            acknowledgement => panic!("create returned {acknowledgement:?}"),
-        };
-        (child, acknowledgement)
+        (child, effect)
     }
 
     fn present_hidden_child(
@@ -4139,6 +4211,30 @@ fn managed_native_pointer_uses_synchronous_product_receiver_resolution() {
         .expect("the tab receiver is bound to the accepted output");
     let point = receiver.center();
     let desktop = PhysicalPoint::new(point.x(), point.y()).expect("the desktop point is valid");
+    let displaced_clip = PhysicalRect::new(0.0, 40.0, 640.0, 320.0).unwrap();
+    assert!(!displaced_clip.contains(desktop));
+    assert_eq!(
+        resolve_region_window_hit(
+            desktop,
+            [NativeRegionWindowHit::new(
+                artifact,
+                physical,
+                displaced_clip,
+                true
+            )],
+        ),
+        NativeWindowHit::WindowBackground,
+        "the old hitbox cannot keep a region alive beyond its clip"
+    );
+    assert_eq!(
+        resolve_region_window_hit(
+            desktop,
+            [NativeRegionWindowHit::new(
+                artifact, physical, physical, false
+            )],
+        ),
+        NativeWindowHit::Blocked
+    );
     let location = NativeDesktopPointerLocation::new(
         NativeDesktopPosition::Exact(desktop),
         NativePointerHover::Dock(binding.window()),
@@ -4167,7 +4263,12 @@ fn managed_native_pointer_uses_synchronous_product_receiver_resolution() {
         NativeReceiverQuery::WindowHit(query) => {
             assert_eq!(query.window(), binding.window());
             assert_eq!(query.point(), desktop);
-            NativeReceiverAnswer::WindowHit(NativeWindowHit::Surface(artifact))
+            NativeReceiverAnswer::WindowHit(resolve_region_window_hit(
+                query.point(),
+                [NativeRegionWindowHit::new(
+                    artifact, physical, physical, true,
+                )],
+            ))
         }
         NativeReceiverQuery::Surface(query) => {
             assert_eq!(query.surface(), SURFACE);

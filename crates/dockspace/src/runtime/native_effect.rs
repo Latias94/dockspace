@@ -16,6 +16,9 @@ use crate::platform::effect::{
 use crate::platform::provider::PlatformObservationLease;
 use crate::platform::viewport::{ViewportBinding, ViewportRole};
 
+mod outbox;
+pub use outbox::{NativeEffectOutbox, NativeWindowObservationOutbox};
+
 /// Public native-window ownership role without exposing viewport internals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NativeSurfaceRole {

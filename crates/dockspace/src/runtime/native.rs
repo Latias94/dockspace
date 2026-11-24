@@ -3,6 +3,7 @@
 mod budget;
 mod compiler;
 mod continuation;
+mod facts_compiler;
 mod input_batch;
 mod local_pointer;
 mod pointer;
@@ -47,6 +48,9 @@ use compiler::{
     compile_unknown_inventory_snapshot, snapshot_descendant_capacity_bytes,
 };
 pub use continuation::{NativePointerCaptureRequest, NativePointerContinuation};
+pub use facts_compiler::{
+    NativeWindowClientGeometry, NativeWindowFactsSample, compile_native_window_facts,
+};
 pub(super) use input_batch::PendingNativeReplay;
 pub use local_pointer::{
     NativeLocalCoordinateError, NativeLocalCoordinates, NativeLocalGeometry,
@@ -64,7 +68,10 @@ pub use pointer::{
 };
 pub use storage::{NativeInputStorageLimit, NativeProducerStorageLimit, NativeReportStorageLimit};
 pub use window_binding::NativeWindowBinding;
-pub use window_hit::{NativeWindowHit, NativeWindowHitPurpose, NativeWindowHitQuery};
+pub use window_hit::{
+    NativeRegionWindowHit, NativeWindowHit, NativeWindowHitPurpose, NativeWindowHitQuery,
+    resolve_region_window_hit,
+};
 pub use window_resources::{NativeWindowInsertError, NativeWindowRegistryError, NativeWindows};
 
 /// Opaque native-window resource key.
@@ -630,6 +637,31 @@ struct NativeCloseFact {
 }
 
 impl NativeWindowFacts {
+    /// Returns the window's exact observed presentation state, if known.
+    #[must_use]
+    pub const fn observed_presentation(self) -> Option<NativeWindowPresentationState> {
+        match self.presentation {
+            Some(presentation) => Some(presentation.state),
+            None => None,
+        }
+    }
+
+    pub(super) fn without_effect_acknowledgements(mut self) -> Self {
+        if let NativeWindowLifecycleFact::Destroyed { acknowledgement } = &mut self.lifecycle {
+            *acknowledgement = None;
+        }
+        if let Some(input) = &mut self.input {
+            input.acknowledgement = None;
+        }
+        if let Some(create) = &mut self.create_readiness {
+            create.acknowledgement = None;
+        }
+        if let Some(close) = &mut self.close {
+            close.acknowledgement = None;
+        }
+        self
+    }
+
     /// Reports exact inventory presence while leaving every independent property Unknown.
     #[must_use]
     pub const fn live() -> Self {

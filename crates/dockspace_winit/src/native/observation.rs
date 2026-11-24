@@ -1,5 +1,8 @@
 use dockspace::geometry::{GeometryError, PhysicalRect, PhysicalSize, ScaleFactor};
-use dockspace::runtime::{NativeWindowFacts, NativeWindowPresentationState};
+use dockspace::runtime::{
+    NativeWindowClientGeometry, NativeWindowFacts, NativeWindowFactsSample,
+    compile_native_window_facts,
+};
 use winit::dpi::{PhysicalPosition, PhysicalSize as WindowSize};
 use winit::window::Window;
 
@@ -49,34 +52,36 @@ fn facts(
     sample: Sample,
     presentation_scale: ScaleFactor,
 ) -> Result<NativeWindowFacts, GeometryError> {
-    let mut facts = NativeWindowFacts::live()
-        .with_native_scale_factor(ScaleFactor::new(sample.native_scale)?)
-        .with_presentation_scale_factor(presentation_scale);
-    if sample.client_size.width > 0 && sample.client_size.height > 0 {
-        facts = facts.with_content_size(PhysicalSize::new(
+    let client = if sample.client_size.width == 0 || sample.client_size.height == 0 {
+        None
+    } else if let Some(position) = sample.client_position {
+        Some(NativeWindowClientGeometry::Bounds(rect(
+            position,
+            sample.client_size,
+        )?))
+    } else {
+        let size = PhysicalSize::new(
             f64::from(sample.client_size.width),
             f64::from(sample.client_size.height),
-        )?);
-        if let Some(position) = sample.client_position {
-            facts = facts.with_content_bounds(rect(position, sample.client_size)?);
-        }
-    }
-    if sample.outer_size.width > 0
+        )?;
+        Some(NativeWindowClientGeometry::Size(size))
+    };
+    let outer_bounds = if sample.outer_size.width > 0
         && sample.outer_size.height > 0
         && let Some(position) = sample.outer_position
     {
-        facts = facts.with_outer_bounds(rect(position, sample.outer_size)?);
-    }
-    let presentation = match (sample.visible, sample.minimized) {
-        (_, Some(true)) => Some(NativeWindowPresentationState::Minimized),
-        (Some(false), _) => Some(NativeWindowPresentationState::Hidden),
-        (Some(true), Some(false)) => Some(NativeWindowPresentationState::Visible),
-        _ => None,
+        Some(rect(position, sample.outer_size)?)
+    } else {
+        None
     };
-    if let Some(presentation) = presentation {
-        facts = facts.with_presentation(presentation);
-    }
-    Ok(facts)
+    Ok(compile_native_window_facts(NativeWindowFactsSample {
+        client,
+        outer_bounds,
+        native_scale: Some(ScaleFactor::new(sample.native_scale)?),
+        presentation_scale: Some(presentation_scale),
+        visible: sample.visible,
+        minimized: sample.minimized,
+    }))
 }
 
 fn rect(
@@ -94,6 +99,7 @@ fn rect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dockspace::runtime::NativeWindowPresentationState;
 
     fn sample() -> Sample {
         Sample {
