@@ -646,7 +646,12 @@ impl NativeWindowFacts {
         }
     }
 
-    pub(super) fn without_effect_acknowledgements(mut self) -> Self {
+    /// Returns the window properties without the receipts carried by this observation.
+    ///
+    /// Cache this value when rebuilding a complete inventory from independently
+    /// observed windows. Only the newly observed window should repeat its receipt.
+    #[must_use]
+    pub fn without_effect_acknowledgements(mut self) -> Self {
         if let NativeWindowLifecycleFact::Destroyed { acknowledgement } = &mut self.lifecycle {
             *acknowledgement = None;
         }
