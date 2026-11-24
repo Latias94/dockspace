@@ -104,6 +104,7 @@ fn open_item_identity_exists_only_for_the_current_open_lifetime() {
     let identity =
         |session: &mut DockspaceSession| frame_identity(&mut session.begin_host_frame().unwrap());
     let initial = identity(&mut session).expect("the initial layout owns this pane");
+    assert_eq!(session.open_item_identity(SECOND), Some(initial));
     let mut frame = session.begin_host_frame().unwrap();
     frame.set_item_visibility_current(SECOND, false).unwrap();
     commit(frame);
@@ -123,6 +124,7 @@ fn open_item_identity_exists_only_for_the_current_open_lifetime() {
     commit(frame);
     assert!(session.view().item(SECOND).is_none());
     assert_eq!(identity(&mut session), None);
+    assert_eq!(session.open_item_identity(SECOND), None);
 
     let mut abandoned = session.begin_host_frame().unwrap();
     abandoned
@@ -138,6 +140,7 @@ fn open_item_identity_exists_only_for_the_current_open_lifetime() {
         .unwrap();
     commit(frame);
     let reopened = identity(&mut session).expect("the reopened pane owns a lifetime");
+    assert_eq!(session.open_item_identity(SECOND), Some(reopened));
     assert_ne!(reopened, initial);
     assert_ne!(reopened, discarded);
 

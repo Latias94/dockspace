@@ -226,6 +226,41 @@ pub struct DockspaceOpenItemId {
     generation: OpenItemGeneration,
 }
 
+impl DockspaceOpenItemId {
+    fn in_workspace(
+        stamp: DockspaceWorkspaceStamp,
+        workspace: &crate::graph::Workspace,
+        item: ItemId,
+    ) -> Option<Self> {
+        Some(Self {
+            content: DockspaceContentId {
+                domain: stamp.domain,
+                epoch: stamp.version.epoch(),
+                item,
+            },
+            generation: workspace.open_item_generation(item)?,
+        })
+    }
+}
+
+impl super::DockspaceSession {
+    /// Returns the open lifetime of this item in the committed workspace.
+    ///
+    /// A host can compare this value with a retained paint plan when deciding
+    /// whether an existing application widget may continue receiving input.
+    #[must_use]
+    pub fn open_item_identity(&self, item: ItemId) -> Option<DockspaceOpenItemId> {
+        DockspaceOpenItemId::in_workspace(
+            DockspaceWorkspaceStamp {
+                domain: self.engine.authority_domain(),
+                version: self.version(),
+            },
+            self.engine.workspace(),
+            item,
+        )
+    }
+}
+
 /// Exact workspace revision within one independently constructed session.
 ///
 /// Renderers can dismiss cached menus when this changes, including after a
@@ -1833,10 +1868,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
     /// Hidden items remain open. An absent or closed item returns `None`.
     #[must_use]
     pub fn open_item_identity(self, item: ItemId) -> Option<DockspaceOpenItemId> {
-        Some(DockspaceOpenItemId {
-            content: self.content_identity(item),
-            generation: self.candidate.workspace().open_item_generation(item)?,
-        })
+        DockspaceOpenItemId::in_workspace(self.workspace_stamp(), self.candidate.workspace(), item)
     }
 
     /// Returns whether this output's root has solver-backed partition geometry.
