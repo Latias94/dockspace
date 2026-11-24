@@ -112,6 +112,10 @@ impl TargetAcquisition {
         self.candidate.target()
     }
 
+    pub(crate) const fn observation(self) -> TargetObservation {
+        TargetObservation::surface(self.scene, self.layer, Some(self.candidate))
+    }
+
     const fn candidate(self) -> TargetCandidate {
         self.candidate
     }

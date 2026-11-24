@@ -306,6 +306,9 @@ pub(super) fn activate(
         );
         return;
     }
+    let Some(target) = PaneInputTarget::capture(context, item, widget) else {
+        return;
+    };
     let mut events = take_keys_after(context.ui, start);
     if key == Key::Space && matches!(events.first(), Some(Event::Text(text)) if text == " ") {
         // egui-winit emits a text event immediately after the activating Space.
@@ -313,7 +316,7 @@ pub(super) fn activate(
     }
     defer(
         context,
-        PaneInputPacket::new(context, item, widget, events),
+        PaneInputPacket { target, events },
         Handoff::Activation {
             header,
             awaiting_publication: false,
@@ -330,29 +333,28 @@ pub(super) fn continue_at(
     if !context.panes.accepts_deferred_keyboard_input(item) {
         return;
     }
+    let Some(target) = PaneInputTarget::capture(context, item, Some(widget)) else {
+        return;
+    };
     defer(
         context,
-        PaneInputPacket::new(context, item, Some(widget), events),
+        PaneInputPacket { target, events },
         Handoff::Continuation,
     );
 }
 
-impl PaneInputPacket {
-    fn new(
+impl PaneInputTarget {
+    fn capture(
         context: &RenderContext<'_, '_, '_>,
         item: ItemId,
         widget: Option<Id>,
-        events: Vec<Event>,
-    ) -> Self {
-        Self {
-            target: PaneInputTarget {
-                slot: slot_id(context),
-                item,
-                content: context.plan.open_item_identity(item),
-                widget,
-            },
-            events,
-        }
+    ) -> Option<Self> {
+        Some(Self {
+            slot: slot_id(context),
+            item,
+            content: context.plan.open_item_identity(item)?,
+            widget,
+        })
     }
 }
 
@@ -387,7 +389,7 @@ pub(super) fn prepare(context: &RenderContext<'_, '_, '_>) -> PaneInputState {
         widget,
         ..
     } = pending.packet.target;
-    let current_content = content == context.plan.open_item_identity(item);
+    let current_content = Some(content) == context.plan.open_item_identity(item);
     let focus_moves = context
         .pane_focus_request
         .is_some_and(|request| request.item() != Some(item));
@@ -742,6 +744,7 @@ impl PaneInputDelivery {
             return None;
         }
         let widget = context.panes.focus_target(item);
+        let target = PaneInputTarget::capture(context, item, widget)?;
         if has_pointer_or_accessibility_edges(context.ui.ctx())
             && !widget.is_some_and(|widget| pointer_keeps_focus(context.ui.ctx(), widget))
         {
@@ -768,7 +771,10 @@ impl PaneInputDelivery {
             prior_focus,
         )
         .then(|| Self {
-            packet: PaneInputPacket::new(context, item, widget, take_keys_after(context.ui, 0)),
+            packet: PaneInputPacket {
+                target,
+                events: take_keys_after(context.ui, 0),
+            },
             phase: DeliveryPhase::AwaitingRegistration,
             focus_cleared_by_escape: false,
         })

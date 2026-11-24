@@ -261,6 +261,7 @@ pub(crate) fn prepare_surface_content_closes(
     for prepared in prepared {
         for item in prepared.items() {
             subtract_closed_item(&mut expected_after, *item)?;
+            candidate.retire_open_item(*item);
         }
         for (source, _) in prepared.roots() {
             retire_root(&mut candidate, source.root()).map_err(close_command_error)?;
@@ -548,6 +549,7 @@ pub(crate) fn prepare_content_close(
     match &outcome {
         CloseCommitOutcome::ItemClosed { item, .. } => {
             expected_after.remove(item);
+            candidate.retire_open_item(*item);
         }
         CloseCommitOutcome::RootClosed { items, .. }
         | CloseCommitOutcome::TabsClosed { items, .. }
@@ -561,6 +563,7 @@ pub(crate) fn prepare_content_close(
                         },
                     });
                 }
+                candidate.retire_open_item(*item);
             }
         }
         CloseCommitOutcome::SurfaceClosed { .. } => {

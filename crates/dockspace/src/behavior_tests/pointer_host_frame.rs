@@ -4422,14 +4422,18 @@ fn journal_contained_release_commits_the_release_edge_preview_immediately() {
         [expected_rect],
         "the single delivered contained uses the release edge, not the painted preview"
     );
-    assert_eq!(
+    assert!(matches!(
         release
             .interaction_events()
             .iter()
-            .filter(|event| matches!(event.kind(), InteractionEventKind::Delivered { .. }))
-            .count(),
-        1
-    );
+            .map(|event| event.kind())
+            .collect::<Vec<_>>()
+            .as_slice(),
+        [InteractionEventKind::Delivered {
+            kind: dockspace::interaction::WorkspaceDeliveryKind::Contained,
+            ..
+        }]
+    ));
     assert_eq!(engine.version().epoch(), before_version.epoch());
     assert_eq!(
         engine.version().revision().get(),

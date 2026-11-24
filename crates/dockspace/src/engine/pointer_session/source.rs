@@ -210,68 +210,6 @@ impl DockEngine {
         Ok(valid)
     }
 
-    pub(in crate::engine) fn drag_source_presentation_allows_targeting(
-        &self,
-        drag: &crate::interaction::ActiveDrag,
-    ) -> bool {
-        if !matches!(drag.origin, FrozenDragOrigin::Workspace) {
-            return true;
-        }
-        let surface = drag.source_surface;
-        let captured_coordinates = drag.continuation.as_ref().and_then(|continuation| {
-            match (&continuation.session, &continuation.draft.source) {
-                (
-                    SceneGestureSession::Drag(session),
-                    SceneGestureContinuationSource::Drag {
-                        source_surface,
-                        coordinates,
-                        ..
-                    },
-                ) if *session == drag.session && *source_surface == surface => Some(*coordinates),
-                _ => None,
-            }
-        });
-        if captured_coordinates.is_some_and(|coordinates| {
-            Self::coordinate_capture_matches_current(
-                coordinates,
-                self.viewport.viewport(surface),
-                self.viewport.surface_coordinate_authority(surface),
-            )
-        }) {
-            return true;
-        }
-        self.presentation_authority
-            .scene
-            .interaction_projection(surface)
-            .is_some_and(|projection| {
-                Self::coordinate_capture_matches_current(
-                    projection.output().coordinate_capture(),
-                    self.viewport.viewport(surface),
-                    self.viewport.surface_coordinate_authority(surface),
-                )
-            })
-    }
-
-    pub(in crate::engine) fn frozen_drag_origin_is_current(
-        &self,
-        origin: FrozenDragOrigin,
-    ) -> bool {
-        let FrozenDragOrigin::Contained(origin) = origin else {
-            return true;
-        };
-        self.workspace.presentation_for_root(origin.root)
-            == Some(crate::graph::workspace::RootPresentationOwner::Contained {
-                surface: origin.surface,
-                floating: origin.floating,
-            })
-            && self
-                .workspace
-                .contained_floating(origin.floating)
-                .is_some_and(|record| {
-                    record.root == origin.root && record.rect == origin.source_rect
-                })
-    }
-
     pub(in crate::engine) fn valid_contained_command_structure(
         &self,
         drag: &crate::interaction::ActiveDrag,

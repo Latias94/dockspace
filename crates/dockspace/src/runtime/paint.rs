@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::engine::SurfaceContributionToken;
 use crate::geometry::{LogicalPoint, LogicalRect, LogicalSize, PhysicalRect};
-use crate::graph::Axis;
+use crate::graph::{Axis, OpenItemGeneration};
 use crate::ids::{
     EngineAuthorityDomainId, FloatingPresentationId, HostPresentationAttemptId, ItemId, NodeId,
     RootId, SurfaceId, TabKey, WorkspaceEpoch, WorkspaceRevision,
@@ -223,7 +223,7 @@ pub struct DockspaceContentId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DockspaceOpenItemId {
     content: DockspaceContentId,
-    opened: Option<crate::ids::WorkspaceRevision>,
+    generation: OpenItemGeneration,
 }
 
 /// Exact workspace revision within one independently constructed session.
@@ -1828,13 +1828,15 @@ impl<'frame> SurfacePaintPlan<'frame> {
         }
     }
 
-    /// Returns the open lifetime of an item from this paint plan.
+    /// Returns the lifetime of an item still open in this paint candidate.
+    ///
+    /// Hidden items remain open. An absent or closed item returns `None`.
     #[must_use]
-    pub fn open_item_identity(self, item: ItemId) -> DockspaceOpenItemId {
-        DockspaceOpenItemId {
+    pub fn open_item_identity(self, item: ItemId) -> Option<DockspaceOpenItemId> {
+        Some(DockspaceOpenItemId {
             content: self.content_identity(item),
-            opened: self.candidate.item_open_revision(item),
-        }
+            generation: self.candidate.workspace().open_item_generation(item)?,
+        })
     }
 
     /// Returns whether this output's root has solver-backed partition geometry.

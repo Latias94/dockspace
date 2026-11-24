@@ -3,7 +3,7 @@
 use super::contained_geometry::{contained_manipulation_point, contained_move_geometry};
 use super::*;
 use crate::input::intent::PointerId;
-use crate::input::receiver::NativeWindowHitReceipt;
+use crate::interaction::targeting::{TargetLatchDecision, TargetObservation};
 use crate::presentation::compiler::{contained_minimum_size, pane_outer_sizing};
 use crate::presentation::manifest::PaneSizingKey;
 
@@ -1284,52 +1284,20 @@ impl DockEngine {
         let InteractionStatus::Dragging { session } = status else {
             return Ok(outcomes);
         };
-        let drag = self
-            .interaction
-            .active_drag(session)
-            .map_err(|source| EngineError::PointerInteractionInvariant {
+        let drag = self.interaction.active_drag(session).map_err(|source| {
+            EngineError::PointerInteractionInvariant {
                 cause,
                 detail: format!("{source:?}"),
-            })?
-            .clone();
+            }
+        })?;
         let position = journal_position_key(self, owner.stream(), edge);
-        if !self.drag_source_presentation_allows_targeting(&drag) {
-            let outside_all = matches!(
+        if !self.drag_source_presentation_allows_targeting(drag) {
+            if let Some(evaluation) = Self::drag_exit_without_source_presentation(
+                drag,
+                position,
                 desktop_hover_route,
-                Some(DesktopRouteValidation::Known(
-                    ValidatedDesktopRoute::NoWindow { .. }
-                ))
-            );
-            let blocked =
-                matches!(
-                    desktop_hover_route,
-                    Some(DesktopRouteValidation::Known(
-                        ValidatedDesktopRoute::Foreign { .. }
-                    ))
-                ) || matches!(receipt.native_hit(), Some(NativeWindowHitReceipt::Blocked));
-            let left_target = blocked
-                || matches!(
-                    receipt.native_hit(),
-                    Some(NativeWindowHitReceipt::WindowBackground)
-                )
-                || position.surface().is_some_and(|surface| {
-                    drag.target_acquisition()
-                        .is_some_and(|target| target.scene().surface() != surface)
-                });
-            if outside_all || left_target {
-                // The current receiver can revoke a latched target without
-                // source geometry. Acquiring its replacement still needs it.
-                let status = if blocked {
-                    PreviewResolutionStatus::OpaqueBlocker
-                } else {
-                    PreviewResolutionStatus::Unavailable
-                };
-                let decision = PreviewDecision::Clear(status);
-                let evaluation = if outside_all {
-                    PreviewEvaluation::outside_all(decision)
-                } else {
-                    PreviewEvaluation::without_affordance(decision)
-                };
+                receipt.native_hit(),
+            ) {
                 let outcome = self.apply_position_evaluation(
                     cause,
                     owner,
@@ -1348,7 +1316,7 @@ impl DockEngine {
         }
         let evaluation = self.resolve_journal_drag_preview(
             cause,
-            &drag,
+            drag,
             position,
             edge,
             receipt,
@@ -1544,71 +1512,59 @@ impl DockEngine {
                 }
             }
             InteractionStatus::Dragging { session } => {
-                let drag = self
-                    .interaction
-                    .active_drag(session)
-                    .map_err(|source| EngineError::PointerInteractionInvariant {
+                let drag = self.interaction.active_drag(session).map_err(|source| {
+                    EngineError::PointerInteractionInvariant {
                         cause,
                         detail: format!("{source:?}"),
-                    })?
-                    .clone();
-                let stream = owner.stream();
-                let position = journal_position_key(self, stream, edge);
-                let mut revalidated_preview = None;
-                let prepared_mutation;
+                    }
+                })?;
+                if !self.drag_source_presentation_allows_targeting(drag) {
+                    outcomes.push(self.cancel_drag_release(
+                        cause,
+                        owner,
+                        InteractionCancelReason::SceneUnavailable,
+                        interaction_events,
+                    )?);
+                    return Ok(outcomes);
+                }
+                let position = journal_position_key(self, owner.stream(), edge);
                 // Release is always resolved against its own edge facts. This
                 // keeps same-point blocker/receiver changes from authorizing a
                 // cached preview, while the outside-all native route remains
                 // independently resolvable without a hover receipt.
+                let mut evaluation = self.resolve_journal_drag_preview(
+                    cause,
+                    drag,
+                    position,
+                    edge,
+                    receipt,
+                    snapshot,
+                    desktop_hover_route,
+                    policy,
+                )?;
+                if let Some(preview) =
+                    self.retained_position_preview(cause, drag, position, &mut evaluation)?
                 {
-                    let mut evaluation = self.resolve_journal_drag_preview(
-                        cause,
-                        &drag,
-                        position,
-                        edge,
-                        receipt,
-                        snapshot,
-                        desktop_hover_route,
-                        policy,
-                    )?;
-                    prepared_mutation = evaluation.prepared_mutation.take();
-                    if let Some(outcome) = self.apply_position_evaluation(
-                        cause,
-                        owner,
-                        session,
-                        position,
-                        evaluation,
-                        interaction_events,
-                    )? {
-                        if matches!(outcome, InteractionOutcome::PreviewUpdated { .. }) {
-                            // A release-time preview refresh is an internal
-                            // authority check. It becomes observable only if
-                            // the terminal command must wait for that freshly
-                            // painted preview.
-                            revalidated_preview = Some(outcome);
-                        } else {
-                            outcomes.push(outcome);
-                        }
-                    }
-                    if self.interaction.status() != (InteractionStatus::Dragging { session }) {
-                        return Ok(outcomes);
-                    }
+                    evaluation.decision = Self::frozen_drag_release_decision(preview);
+                    evaluation.observation = drag
+                        .target_acquisition()
+                        .map_or(TargetObservation::Unavailable, |target| {
+                            target.observation()
+                        });
+                    evaluation.target_layout_basis = preview.target_layout_basis();
                 }
-                let outcome = self.finish_drag_release_with_prepared_mutation(
+                let outcome = self.finish_drag_release(
                     cause,
                     focus_causal,
                     owner,
                     session,
-                    prepared_mutation,
+                    Some(position),
+                    evaluation,
                     policy,
+                    &mut outcomes,
                     events,
                     interaction_events,
                 )?;
-                if matches!(outcome, InteractionOutcome::ReleasePending { .. }) {
-                    if let Some(preview) = revalidated_preview {
-                        outcomes.push(preview);
-                    }
-                }
                 outcomes.push(outcome);
             }
             InteractionStatus::Resizing { session } => {
@@ -1638,7 +1594,7 @@ impl DockEngine {
         Ok(outcomes)
     }
 
-    pub(super) fn release_decision_matches_preview(
+    fn release_decision_matches_preview(
         preview: &crate::interaction::PublishedPreview,
         release_decision: &PreviewDecision,
     ) -> bool {
@@ -1657,71 +1613,15 @@ impl DockEngine {
             && preview.public().tab_strip() == tab_strip.as_deref()
     }
 
-    pub(super) fn frozen_drag_release_decision(
-        drag: &crate::interaction::ActiveDrag,
-    ) -> Option<PreviewDecision> {
-        let preview = drag.preview()?;
-        Some(PreviewDecision::Publish {
+    fn frozen_drag_release_decision(
+        preview: &crate::interaction::PublishedPreview,
+    ) -> PreviewDecision {
+        PreviewDecision::Publish {
             scene: preview.public().token().scene(),
             visual: preview.public().visual().clone(),
             proof: Box::new(preview.proof().clone()),
             tab_strip: preview.public().shared_tab_strip(),
-        })
-    }
-
-    pub(super) fn drag_preview_authority_is_current(
-        &self,
-        drag: &crate::interaction::ActiveDrag,
-    ) -> bool {
-        let Some(preview) = drag.preview() else {
-            return false;
-        };
-        if matches!(preview.proof(), PreviewProof::Native { .. }) {
-            return true;
         }
-        if let PreviewProof::Contained { proposal, .. } = preview.proof()
-            && self.current_contained_projection_is_owned(proposal.surface())
-            && self
-                .scene()
-                .ready_candidate(proposal.surface())
-                .is_some_and(|candidate| {
-                    candidate.plan().bounds() == proposal.placement().surface_bounds()
-                })
-        {
-            // Source movement remains valid when beginning the drag changes
-            // destination guides. It carries no acquired docking target.
-            return true;
-        }
-        let scene = preview.public().token().scene();
-        if self
-            .interaction_projection(scene.surface())
-            .is_some_and(|projection| {
-                projection.plan_stamp() == scene
-                    && (preview.target_layout_basis().is_none()
-                        || (preview.target_layout_basis() == Some(scene)
-                            && projection.plan().contained_projection().is_none()))
-            })
-        {
-            return true;
-        }
-        self.presentation_authority
-            .scene
-            .ready_candidate(scene.surface())
-            .is_some_and(|candidate| {
-                candidate.stamp() == scene
-                    || (candidate
-                        .plan()
-                        .contained_projection()
-                        .is_some_and(|projection| {
-                            projection.owner
-                                == crate::presentation::scene::ContainedLayoutOwner::Drag(
-                                    drag.session,
-                                )
-                                && projection.target_basis.is_some()
-                        })
-                        && preview.target_layout_basis()
-                            == self.drag_target_layout_basis(scene.surface(), drag.session))
-            })
     }
 
     #[cfg(test)]
@@ -1736,68 +1636,103 @@ impl DockEngine {
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<InteractionOutcome, EngineError> {
-        self.finish_drag_release_with_prepared_mutation(
+        let drag = self.interaction.active_drag(session).map_err(|source| {
+            EngineError::PointerInteractionInvariant {
+                cause,
+                detail: format!("release lost its active drag: {source:?}"),
+            }
+        })?;
+        if !self.drag_source_presentation_allows_targeting(drag) {
+            return self.cancel_drag_release(
+                cause,
+                owner,
+                InteractionCancelReason::SceneUnavailable,
+                interaction_events,
+            );
+        }
+        let evaluation = PreviewEvaluation::new(
+            drag.preview().map_or(
+                PreviewDecision::Clear(drag.preview_status()),
+                Self::frozen_drag_release_decision,
+            ),
+            drag.drop_affordance().cloned(),
+            drag.target_acquisition()
+                .map_or(TargetObservation::Unavailable, |target| {
+                    target.observation()
+                }),
+            drag.preview()
+                .and_then(|preview| preview.target_layout_basis()),
+        );
+        self.finish_drag_release(
             cause,
             focus_causal,
             owner,
             session,
-            None,
+            drag.last_advanced_position(),
+            evaluation,
             policy,
+            &mut Vec::new(),
             events,
             interaction_events,
         )
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn finish_drag_release_with_prepared_mutation(
+    fn finish_drag_release(
         &mut self,
         cause: ReductionCause,
         focus_causal: FocusCausalStamp,
         owner: GestureOwner,
         session: crate::interaction::DragSessionId,
-        prepared_mutation: Option<PreparedDropMutation>,
+        position: Option<ManipulationPositionKey>,
+        mut evaluation: PreviewEvaluation,
         policy: &DockPolicySnapshot,
+        outcomes: &mut Vec<InteractionOutcome>,
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<InteractionOutcome, EngineError> {
-        let drag = self
-            .interaction
-            .active_drag(session)
-            .map_err(|source| EngineError::PointerInteractionInvariant {
+        let drag = self.interaction.active_drag(session).map_err(|source| {
+            EngineError::PointerInteractionInvariant {
                 cause,
                 detail: format!("release lost its active drag: {source:?}"),
-            })?
-            .clone();
+            }
+        })?;
         if drag.owner != owner {
             return Ok(InteractionOutcome::Rejected(
                 InteractionRejection::SessionMismatch,
             ));
         }
-        let cancellation = if !self.drag_source_presentation_allows_targeting(&drag) {
-            Some(InteractionCancelReason::SceneUnavailable)
-        } else if drag.preview().is_some() && !self.drag_preview_authority_is_current(&drag) {
-            Some(InteractionCancelReason::UnknownTargetAuthority)
-        } else if drag.preview().is_none() {
-            match drag.preview_status() {
-                PreviewResolutionStatus::UnknownAuthority => {
-                    Some(InteractionCancelReason::UnknownTargetAuthority)
-                }
-                PreviewResolutionStatus::OpaqueBlocker => {
-                    Some(InteractionCancelReason::OpaquePointerBlocker)
-                }
-                _ => None,
-            }
-        } else {
-            None
-        };
-        if let Some(reason) = cancellation {
-            return self
-                .cancel_gesture_owner(cause, owner, reason, interaction_events)?
-                .ok_or(EngineError::ReductionCauseInvariant {
-                    detail: "validated release failed to cancel its owner",
-                });
+        if let Some(reason) = self.drag_release_cancellation(drag, &evaluation) {
+            return self.cancel_drag_release(cause, owner, reason, interaction_events);
         }
-        let release_decision = Self::frozen_drag_release_decision(&drag);
+        let existing = drag.preview().filter(|preview| {
+            Self::release_decision_matches_preview(preview, &evaluation.decision)
+        });
+        let awaits_preview = !existing.is_some_and(|preview| preview.painted())
+            && self.drag_release_has_native_resource_obligation(drag, &evaluation.decision);
+        let prepared_mutation = evaluation.prepared_mutation.take();
+        let release_decision = if awaits_preview {
+            // A release-time preview is published only if it becomes an exact
+            // presentation obligation. An already published token is reused.
+            let newly_published = existing.is_none();
+            let decision = evaluation.decision.clone();
+            let outcome = self.apply_preview_evaluation(
+                cause,
+                owner,
+                session,
+                evaluation,
+                interaction_events,
+            )?;
+            if let Some(position) = position {
+                self.advance_drag_position(cause, session, position)?;
+            }
+            if newly_published {
+                outcomes.extend(outcome);
+            }
+            decision
+        } else {
+            evaluation.decision
+        };
         let drag =
             match self
                 .interaction
@@ -1822,20 +1757,12 @@ impl DockEngine {
         } else {
             None
         };
-        let Some(release_decision) = release_decision else {
+        if !matches!(release_decision, PreviewDecision::Publish { .. }) {
             return Ok(InteractionOutcome::Rejected(
                 InteractionRejection::PreviewMissing,
             ));
-        };
-        let preview = drag
-            .preview()
-            .expect("frozen release decision owns its preview");
-        if !Self::release_decision_matches_preview(preview, &release_decision) {
-            return Ok(InteractionOutcome::Rejected(
-                InteractionRejection::TargetChanged,
-            ));
         }
-        if !preview.painted() && self.drag_release_has_native_resource_obligation(&drag) {
+        if awaits_preview {
             return self.defer_drag_release(
                 cause,
                 focus_causal,
@@ -1859,17 +1786,31 @@ impl DockEngine {
         )
     }
 
+    fn cancel_drag_release(
+        &mut self,
+        cause: ReductionCause,
+        owner: GestureOwner,
+        reason: InteractionCancelReason,
+        interaction_events: &mut Vec<InteractionEvent>,
+    ) -> Result<InteractionOutcome, EngineError> {
+        self.cancel_gesture_owner(cause, owner, reason, interaction_events)?
+            .ok_or(EngineError::ReductionCauseInvariant {
+                detail: "validated release failed to cancel its owner",
+            })
+    }
+
     fn drag_release_has_native_resource_obligation(
         &self,
         drag: &crate::interaction::ActiveDrag,
+        decision: &PreviewDecision,
     ) -> bool {
-        let Some(preview) = drag.preview() else {
+        let PreviewDecision::Publish { visual, proof, .. } = decision else {
             return false;
         };
-        if matches!(preview.proof(), PreviewProof::Native { .. }) {
+        if matches!(proof.as_ref(), PreviewProof::Native { .. }) {
             return true;
         }
-        if preview.public().visual().surface() == drag.source_surface
+        if visual.surface() == drag.source_surface
             || !self
                 .bound_surface_recoveries
                 .contains_key(&drag.source_surface)
@@ -2526,7 +2467,7 @@ impl DockEngine {
         ))
     }
 
-    pub(super) fn apply_preview_evaluation(
+    fn apply_preview_evaluation(
         &mut self,
         cause: ReductionCause,
         owner: GestureOwner,
@@ -2541,54 +2482,6 @@ impl DockEngine {
             target_layout_basis,
             prepared_mutation: _,
         } = evaluation;
-        let mut acquisition = observation.acquisition();
-        let mut decision = decision;
-        if let PreviewDecision::Publish {
-            visual,
-            proof,
-            tab_strip,
-            ..
-        } = &decision
-            && let Ok(drag) = self.interaction.active_drag(session)
-            && self.current_contained_projection_is_owned(drag.source_surface)
-            && self.drag_preview_authority_is_current(drag)
-            && drag
-                .drop_affordance()
-                .map(DropAffordance::guide_suppression)
-                == affordance.as_ref().map(DropAffordance::guide_suppression)
-            && let Some(previous) = drag.preview()
-            && previous.public().visual() == visual
-            && previous.public().tab_strip() == tab_strip.as_deref()
-            && previous.target_layout_basis() == target_layout_basis
-        {
-            let same_command = match (previous.proof(), proof.as_ref()) {
-                (
-                    PreviewProof::Dock {
-                        target: old_target,
-                        command: old,
-                    },
-                    PreviewProof::Dock { target, command },
-                ) => old_target == target && old == command,
-                (
-                    PreviewProof::Contained {
-                        command: old,
-                        fallback: old_fallback,
-                        ..
-                    },
-                    PreviewProof::Contained {
-                        command, fallback, ..
-                    },
-                ) => old == command && old_fallback == fallback,
-                _ => false,
-            };
-            if same_command {
-                // Revalidate against the current hover winner, but retain the exact
-                // already-presented token when only its source layout advanced.
-                acquisition = drag.target.acquisition();
-                decision = Self::frozen_drag_release_decision(drag)
-                    .expect("the matching previous preview is present");
-            }
-        }
         self.interaction
             .set_drop_affordance(session, affordance)
             .map_err(|source| EngineError::PointerInteractionInvariant {
@@ -2604,7 +2497,14 @@ impl DockEngine {
             } => {
                 let (preview, changed) = self
                     .interaction
-                    .publish_preview(session, scene, visual, *proof, acquisition, tab_strip)
+                    .publish_preview(
+                        session,
+                        scene,
+                        visual,
+                        *proof,
+                        observation.acquisition(),
+                        tab_strip,
+                    )
                     .map_err(|source| EngineError::PointerInteractionInvariant {
                         cause,
                         detail: format!("{source:?}"),
@@ -2657,58 +2557,38 @@ impl DockEngine {
         }
     }
 
-    pub(super) fn apply_position_evaluation(
-        &mut self,
+    fn retained_position_preview<'drag>(
+        &self,
         cause: ReductionCause,
-        owner: GestureOwner,
-        session: crate::interaction::DragSessionId,
+        drag: &'drag crate::interaction::ActiveDrag,
         position: ManipulationPositionKey,
-        evaluation: PreviewEvaluation,
-        interaction_events: &mut Vec<InteractionEvent>,
-    ) -> Result<Option<InteractionOutcome>, EngineError> {
-        let PreviewEvaluation {
-            decision,
-            mut affordance,
-            observation,
-            target_layout_basis,
-            prepared_mutation: _,
-        } = evaluation;
-        let latch_observation = match observation {
-            crate::interaction::targeting::TargetObservation::Surface {
-                layer, candidate, ..
-            } if self.interaction.active_drag(session).is_ok_and(|drag| {
-                self.current_contained_projection_is_owned(drag.source_surface)
-                    && self.drag_preview_authority_is_current(drag)
-                    && drag
-                        .drop_affordance()
+        evaluation: &mut PreviewEvaluation,
+    ) -> Result<Option<&'drag crate::interaction::PublishedPreview>, EngineError> {
+        let compatible_preview = drag.preview().filter(|preview| {
+            self.current_contained_projection_is_owned(drag.source_surface)
+                && self.drag_preview_authority_is_current(drag)
+                && drag
+                    .drop_affordance()
+                    .map(DropAffordance::guide_suppression)
+                    == evaluation
+                        .affordance
+                        .as_ref()
                         .map(DropAffordance::guide_suppression)
-                        == affordance.as_ref().map(DropAffordance::guide_suppression)
-                    && drag
-                        .preview()
-                        .is_some_and(|preview| preview.target_layout_basis() == target_layout_basis)
-            }) =>
-            {
-                let drag = self
-                    .interaction
-                    .active_drag(session)
-                    .expect("the exact source projection owner was checked");
-                crate::interaction::targeting::TargetObservation::Surface {
-                    scene: drag
-                        .preview()
-                        .expect("the target preview was checked")
-                        .public()
-                        .token()
-                        .scene(),
-                    layer,
-                    candidate,
-                }
-            }
-            _ => observation,
+                && preview.target_layout_basis() == evaluation.target_layout_basis
+        });
+        let latch_observation = match (compatible_preview, evaluation.observation) {
+            (
+                Some(preview),
+                TargetObservation::Surface {
+                    layer, candidate, ..
+                },
+            ) => TargetObservation::surface(preview.public().token().scene(), layer, candidate),
+            _ => evaluation.observation,
         };
-        let latch = self
+        let retain_current = self
             .interaction
             .reconcile_drag_target(
-                session,
+                drag.session,
                 latch_observation,
                 position.logical_point(),
                 self.presentation_config().target_release_hysteresis(),
@@ -2716,50 +2596,118 @@ impl DockEngine {
             .map_err(|source| EngineError::PointerInteractionInvariant {
                 cause,
                 detail: format!("drag target latch rejected the position: {source:?}"),
-            })?;
-        let outcome = match latch {
-            crate::interaction::targeting::TargetLatchDecision::AcceptCandidate => self
-                .apply_preview_evaluation(
+            })?
+            == TargetLatchDecision::RetainCurrent;
+        if retain_current {
+            let target = drag.target_acquisition().ok_or_else(|| {
+                EngineError::PointerInteractionInvariant {
                     cause,
-                    owner,
-                    session,
-                    PreviewEvaluation::new(decision, affordance, observation, target_layout_basis),
-                    interaction_events,
-                )?,
-            crate::interaction::targeting::TargetLatchDecision::RetainCurrent => {
-                let drag = self.interaction.active_drag(session).map_err(|source| {
-                    EngineError::PointerInteractionInvariant {
-                        cause,
-                        detail: format!("latched drag target disappeared: {source:?}"),
-                    }
-                })?;
-                let target = drag.target_acquisition().ok_or_else(|| {
-                    EngineError::PointerInteractionInvariant {
-                        cause,
-                        detail: "latched drag retained no target acquisition".to_owned(),
-                    }
-                })?;
-                let retained_target_is_visible = affordance
-                    .as_mut()
-                    .is_some_and(|next| next.activate_target(target.target()));
-                if !retained_target_is_visible {
-                    affordance = drag.drop_affordance().cloned();
+                    detail: "latched drag retained no target acquisition".to_owned(),
                 }
-                let preview = drag.preview().map(|preview| preview.public().clone());
-                let status = drag.preview_status();
-                self.interaction
-                    .set_drop_affordance(session, affordance)
-                    .map_err(|source| EngineError::PointerInteractionInvariant {
-                        cause,
-                        detail: format!("latched drag lost its affordance: {source:?}"),
-                    })?;
-                Some(InteractionOutcome::PreviewUpdated {
-                    session,
-                    preview,
-                    status,
-                })
+            })?;
+            let retained_target_is_visible = evaluation
+                .affordance
+                .as_mut()
+                .is_some_and(|next| next.activate_target(target.target()));
+            if !retained_target_is_visible {
+                evaluation.affordance = drag.drop_affordance().cloned();
             }
+            return drag.preview().map(Some).ok_or_else(|| {
+                EngineError::PointerInteractionInvariant {
+                    cause,
+                    detail: "retained drag has no preview".to_owned(),
+                }
+            });
+        }
+        // Only the source layout advanced. Preserve an exact preview when
+        // the current hover winner still gives the same command and visual.
+        Ok(compatible_preview
+            .filter(|preview| Self::contains_same_preview_command(preview, &evaluation.decision)))
+    }
+
+    fn contains_same_preview_command(
+        previous: &crate::interaction::PublishedPreview,
+        decision: &PreviewDecision,
+    ) -> bool {
+        let PreviewDecision::Publish {
+            visual,
+            proof,
+            tab_strip,
+            ..
+        } = decision
+        else {
+            return false;
         };
+        if previous.public().visual() != visual
+            || previous.public().tab_strip() != tab_strip.as_deref()
+        {
+            return false;
+        }
+        match (previous.proof(), proof.as_ref()) {
+            (
+                PreviewProof::Dock {
+                    target: old_target,
+                    command: old,
+                },
+                PreviewProof::Dock { target, command },
+            ) => old_target == target && old == command,
+            (
+                PreviewProof::Contained {
+                    command: old,
+                    fallback: old_fallback,
+                    ..
+                },
+                PreviewProof::Contained {
+                    command, fallback, ..
+                },
+            ) => old == command && old_fallback == fallback,
+            _ => false,
+        }
+    }
+
+    fn apply_position_evaluation(
+        &mut self,
+        cause: ReductionCause,
+        owner: GestureOwner,
+        session: crate::interaction::DragSessionId,
+        position: ManipulationPositionKey,
+        mut evaluation: PreviewEvaluation,
+        interaction_events: &mut Vec<InteractionEvent>,
+    ) -> Result<Option<InteractionOutcome>, EngineError> {
+        let drag = self.interaction.active_drag(session).map_err(|source| {
+            EngineError::PointerInteractionInvariant {
+                cause,
+                detail: format!("{source:?}"),
+            }
+        })?;
+        let outcome = if let Some(preview) =
+            self.retained_position_preview(cause, drag, position, &mut evaluation)?
+        {
+            let preview = preview.public().clone();
+            self.interaction
+                .set_drop_affordance(session, evaluation.affordance)
+                .map_err(|source| EngineError::PointerInteractionInvariant {
+                    cause,
+                    detail: format!("retained drag lost its affordance: {source:?}"),
+                })?;
+            Some(InteractionOutcome::PreviewUpdated {
+                session,
+                preview: Some(preview),
+                status: PreviewResolutionStatus::Resolved,
+            })
+        } else {
+            self.apply_preview_evaluation(cause, owner, session, evaluation, interaction_events)?
+        };
+        self.advance_drag_position(cause, session, position)?;
+        Ok(outcome)
+    }
+
+    fn advance_drag_position(
+        &mut self,
+        cause: ReductionCause,
+        session: crate::interaction::DragSessionId,
+        position: ManipulationPositionKey,
+    ) -> Result<(), EngineError> {
         if self.interaction.status() == (InteractionStatus::Dragging { session }) {
             self.interaction
                 .set_drag_position(session, position)
@@ -2768,7 +2716,7 @@ impl DockEngine {
                     detail: format!("drag lost its exact advanced position: {source:?}"),
                 })?;
         }
-        Ok(outcome)
+        Ok(())
     }
 
     pub(super) fn prepare_journal_tab_gesture(

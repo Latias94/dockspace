@@ -1930,7 +1930,8 @@ impl DragTargetState {
         }
     }
 
-    pub(crate) const fn status(&self) -> PreviewResolutionStatus {
+    #[cfg(test)]
+    const fn status(&self) -> PreviewResolutionStatus {
         match &self.preview {
             DragPreviewState::Published { .. } => PreviewResolutionStatus::Resolved,
             DragPreviewState::Unresolved { status, .. } => *status,
@@ -2172,6 +2173,7 @@ impl ActiveDrag {
         self.target.preview()
     }
 
+    #[cfg(test)]
     pub(crate) const fn preview_status(&self) -> PreviewResolutionStatus {
         self.target.status()
     }

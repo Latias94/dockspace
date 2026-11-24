@@ -84,6 +84,74 @@ fn requested_plan(
 }
 
 #[test]
+fn open_item_identity_exists_only_for_the_current_open_lifetime() {
+    let mut session = session();
+    let frame_identity = |frame: &mut DockspaceHostFrame<'_>| {
+        frame
+            .measure_surface(
+                SURFACE,
+                UniformSurfaceMetrics::new(
+                    LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
+                    LogicalSize::new(64.0, 48.0).unwrap(),
+                    96.0,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+        plan.open_item_identity(SECOND)
+    };
+    let identity =
+        |session: &mut DockspaceSession| frame_identity(&mut session.begin_host_frame().unwrap());
+    let initial = identity(&mut session).expect("the initial layout owns this pane");
+    let mut frame = session.begin_host_frame().unwrap();
+    frame.set_item_visibility_current(SECOND, false).unwrap();
+    commit(frame);
+    assert_eq!(identity(&mut session), Some(initial));
+
+    let mut frame = session.begin_host_frame().unwrap();
+    let requested = frame.request_close_item_current(SECOND).unwrap();
+    let plan = requested_plan(&commit(frame), requested);
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .resolve_close(
+            plan.request(),
+            plan.items()[0].token(),
+            CloseDecision::Allow,
+        )
+        .unwrap();
+    commit(frame);
+    assert!(session.view().item(SECOND).is_none());
+    assert_eq!(identity(&mut session), None);
+
+    let mut abandoned = session.begin_host_frame().unwrap();
+    abandoned
+        .open_item_current(SECOND, DockPlacement::Center(DockAnchor::Item(FIRST)))
+        .unwrap();
+    let discarded = frame_identity(&mut abandoned).expect("the candidate owns a lifetime");
+    drop(abandoned);
+    assert_eq!(identity(&mut session), None);
+
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .open_item_current(SECOND, DockPlacement::Center(DockAnchor::Item(FIRST)))
+        .unwrap();
+    commit(frame);
+    let reopened = identity(&mut session).expect("the reopened pane owns a lifetime");
+    assert_ne!(reopened, initial);
+    assert_ne!(reopened, discarded);
+
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(ROOT, DockspaceNode::tabs([FIRST, SECOND])),
+    )])
+    .unwrap();
+    let reset = session.prepare_layout_reset(layout).unwrap();
+    commit(session.begin_layout_reset_frame(&reset).unwrap());
+    assert_ne!(identity(&mut session).unwrap(), reopened);
+}
+
+#[test]
 fn multiple_close_requests_correlate_new_reused_and_rejected_outcomes() {
     let mut session = session();
     let first = session.prepare_close_item(FIRST);

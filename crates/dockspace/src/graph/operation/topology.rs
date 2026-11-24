@@ -136,6 +136,9 @@ pub(super) fn apply_command(
         WorkspaceCommand::RemoveEmptyRoot { source } => remove_empty_root(workspace, source),
     };
     let applied = result?;
+    if let ItemDelta::Open(item) = applied.delta {
+        workspace.issue_open_item(item)?;
+    }
     Ok((applied, MoveEffects::default()))
 }
 

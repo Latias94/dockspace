@@ -23,6 +23,7 @@ pub(crate) mod validation;
 mod visibility;
 pub(crate) mod workspace;
 
+pub(crate) use authority::OpenItemGeneration;
 pub use authority::RootReference;
 
 use std::collections::{BTreeMap, BTreeSet};

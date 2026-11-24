@@ -1,5 +1,6 @@
 //! Single-writer input queue and atomic headless state reducer.
 
+mod authority_gate;
 mod close_workflow;
 mod contained_adjustment;
 mod contained_geometry;
@@ -943,8 +944,6 @@ pub struct DockEngine {
     workspace: crate::graph::operation::WorkspaceSnapshot,
     host_surfaces: BTreeSet<SurfaceId>,
     presentation_identity: PresentationIdentityAuthority,
-    /// Items opened after the current layout was installed, keyed by their live lifetime.
-    item_open_revisions: Arc<BTreeMap<ItemId, WorkspaceRevision>>,
     policy: DockPolicySnapshot,
     version: WorkspaceVersion,
     presentation_authority: PresentationAuthorityState,
@@ -1517,7 +1516,6 @@ impl DockEngine {
             workspace: workspace.clone(),
             host_surfaces: BTreeSet::new(),
             presentation_identity,
-            item_open_revisions: Arc::default(),
             policy,
             version,
             presentation_authority: PresentationAuthorityState::new(
@@ -2069,7 +2067,6 @@ impl DockEngine {
             workspace: self.workspace.clone(),
             host_surfaces: self.host_surfaces.clone(),
             presentation_identity: self.presentation_identity,
-            item_open_revisions: self.item_open_revisions.clone(),
             policy: self.policy.clone(),
             version: self.version,
             presentation_authority: self.presentation_authority.clone(),

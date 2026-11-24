@@ -1,15 +1,37 @@
-//! Exact root issuance and actual generational node placement owned by graph.
+//! Open item lifetimes, exact root issuance and generational node placement.
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
 use slotmap::SparseSecondaryMap;
 
 use super::root_structure::RootStructure;
 use super::{Workspace, WorkspaceData};
+use crate::graph::error::CommandError;
 use crate::graph::workspace::{ParentLink, RootPresentationOwner};
-use crate::ids::{NodeId, RootId};
+use crate::ids::{ItemId, NodeId, RootId};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct OpenItemGeneration(NonZeroU64);
+
+impl OpenItemGeneration {
+    fn issue() -> Result<Self, CommandError> {
+        // A discarded candidate can already have painted this identity.
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            current.checked_add(1)
+        })
+        .ok()
+        .and_then(NonZeroU64::new)
+        .map(Self)
+        .ok_or(CommandError::Invariant {
+            stage: "issue open item generation",
+        })
+    }
+}
 
 /// An opaque exact reference issued by one committed root owner.
 ///
@@ -87,6 +109,7 @@ enum RootStructureState {
 pub(super) struct WorkspaceAuthority {
     roots: BTreeMap<RootId, RootOwner>,
     placements: Arc<SparseSecondaryMap<NodeId, NodePlacement>>,
+    open_items: Arc<BTreeMap<ItemId, OpenItemGeneration>>,
 }
 
 impl Default for WorkspaceAuthority {
@@ -94,11 +117,33 @@ impl Default for WorkspaceAuthority {
         Self {
             roots: BTreeMap::new(),
             placements: Arc::new(SparseSecondaryMap::new()),
+            open_items: Arc::default(),
         }
     }
 }
 
 impl Workspace {
+    pub(crate) fn open_item_generation(&self, item: ItemId) -> Option<OpenItemGeneration> {
+        self.authority.open_items.get(&item).copied()
+    }
+
+    pub(super) fn issue_open_item(&mut self, item: ItemId) -> Result<(), CommandError> {
+        let entry = Arc::make_mut(&mut self.authority.open_items).entry(item);
+        match entry {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(OpenItemGeneration::issue()?);
+                Ok(())
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {
+                Err(CommandError::ItemAlreadyOpen { item })
+            }
+        }
+    }
+
+    pub(super) fn retire_open_item(&mut self, item: ItemId) {
+        Arc::make_mut(&mut self.authority.open_items).remove(&item);
+    }
+
     /// Borrows the current owned body; unfinished private edits have no read view.
     pub(crate) fn root_structure(&self, root: RootId) -> Option<&Arc<RootStructure>> {
         match &self.authority.roots.get(&root)?.structure {
@@ -221,10 +266,17 @@ impl Workspace {
                 stage: "refresh root presentation authority",
             });
         }
-        let mut workspace = Self {
-            storage,
-            authority: WorkspaceAuthority::default(),
+        let generation = OpenItemGeneration::issue()?;
+        let open_items = storage
+            .item_multiset()
+            .into_keys()
+            .map(|item| (item, generation))
+            .collect();
+        let authority = WorkspaceAuthority {
+            open_items: Arc::new(open_items),
+            ..WorkspaceAuthority::default()
         };
+        let mut workspace = Self { storage, authority };
         for (root, presentation) in presentations {
             workspace.complete_root_birth(root, presentation)?;
         }

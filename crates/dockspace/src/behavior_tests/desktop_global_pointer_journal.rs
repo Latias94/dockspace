@@ -26,8 +26,9 @@ use dockspace::input::receiver::{
 };
 use dockspace::interaction::targeting::targets::DropTargetId;
 use dockspace::interaction::{
-    InteractionCancelReason, InteractionDelivery, InteractionOutcome, InteractionRejection,
-    InteractionStatus, PreviewResolutionStatus, PreviewVisual, ScrollReductionOutcome,
+    InteractionCancelReason, InteractionDelivery, InteractionEventKind, InteractionOutcome,
+    InteractionRejection, InteractionStatus, PreviewResolutionStatus, PreviewVisual,
+    ScrollReductionOutcome,
 };
 use dockspace::platform::effect::{
     DispatchFailureReason, EffectDispatchResult, EffectId, EffectPhase, EffectResult,
@@ -3073,6 +3074,18 @@ fn pending_native_control_loss_preserves_exact_output_or_cancels_passthrough_wit
             let pending = engine
                 .pending_release_preview()
                 .expect("native release waits for its exact output");
+            assert!(matches!(
+                released
+                    .interaction_events()
+                    .iter()
+                    .map(|event| event.kind())
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+                [
+                    InteractionEventKind::PreviewPublished { preview },
+                    InteractionEventKind::ReleasePending { session }
+                ] if preview.token() == pending.1 && *session == pending.0
+            ));
             let pointer_through = PointerEdgeSequence::new(ACTIVE_DRAG_POINTER_THROUGH + 1);
             let mut reduced = capabilities();
             reduced.set_pointer_hit_test_control(control);
@@ -4868,6 +4881,68 @@ fn source_coordinate_change_retains_journal_drag_but_requires_fresh_source_prese
         InteractionStatus::Dragging { .. }
     ));
     assert!(engine.interaction().preview().is_none());
+}
+
+#[test]
+fn release_with_stale_source_presentation_only_reports_cancellation() {
+    let ActiveNativeDragFixture {
+        mut engine,
+        mut host,
+        provider,
+        source_binding,
+        target_binding,
+        target_tabs,
+        target_point,
+    } = active_native_drag();
+    let before = engine.version();
+
+    publish_resized_source_snapshot(
+        &mut engine,
+        &mut host,
+        provider,
+        source_binding,
+        target_binding,
+    );
+    assert!(matches!(
+        engine.interaction().status(),
+        InteractionStatus::Dragging { .. }
+    ));
+    assert!(engine.interaction().preview().is_none());
+
+    let release = submit_active_drag_edge(
+        &mut engine,
+        &mut host,
+        provider,
+        source_binding,
+        target_binding,
+        target_tabs,
+        target_point,
+        PointerEdgeKind::ButtonReleased(PointerButton::Primary),
+        Authority::Known(PointerCaptureOwner::None),
+    );
+    assert!(matches!(
+        release.reduced_pointer_edges()[0].interaction_outcomes(),
+        [InteractionOutcome::Cancelled {
+            reason: InteractionCancelReason::SceneUnavailable,
+            ..
+        }]
+    ));
+    assert!(matches!(
+        release
+            .interaction_events()
+            .iter()
+            .map(|event| event.kind())
+            .collect::<Vec<_>>()
+            .as_slice(),
+        [InteractionEventKind::Cancelled {
+            reason: InteractionCancelReason::SceneUnavailable,
+            ..
+        }]
+    ));
+    assert_eq!(engine.version(), before);
+    assert_eq!(engine.interaction().status(), InteractionStatus::Idle);
+    assert!(engine.interaction().preview().is_none());
+    assert_eq!(engine.pending_release_preview(), None);
 }
 
 #[test]
