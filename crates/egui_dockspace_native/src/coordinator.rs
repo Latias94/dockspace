@@ -1028,11 +1028,11 @@ impl NativeCoordinator {
         for retirement in &committed {
             let binding = retirement.binding();
             self.bridge.clear_create_ack(binding);
-            self.terminalize_focus(binding);
+            self.terminalize_focus_window(binding.window());
             self.bridge
                 .with_close_control(|control| control.retire_binding(binding));
             self.retain_retired_input_results(binding);
-            self.receivers.retire_binding(binding);
+            self.receivers.retire_window(binding.window());
         }
         for &token in &abandoned {
             self.bridge.take_pending_output(token);
@@ -1500,6 +1500,13 @@ impl NativeCoordinator {
 
     fn terminalize_focus(&mut self, binding: NativeSurfaceBinding) {
         let Some(termination) = self.focus_control.take_terminal(binding) else {
+            return;
+        };
+        self.queue_focus_termination(termination);
+    }
+
+    fn terminalize_focus_window(&mut self, window: dockspace::runtime::NativeWindowBinding) {
+        let Some(termination) = self.focus_control.take_terminal_window(window) else {
             return;
         };
         self.queue_focus_termination(termination);

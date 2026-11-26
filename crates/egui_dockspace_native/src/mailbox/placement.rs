@@ -76,7 +76,6 @@ impl NativeHostState {
         }
         for (index, continuation) in frame.native_root_continuations().enumerate() {
             let predecessor = continuation.predecessor();
-            let successor = continuation.successor();
             let Some(viewport) = self
                 .viewports
                 .workspace_root_continuation_viewport(continuation)?
@@ -90,6 +89,19 @@ impl NativeHostState {
             {
                 continue;
             }
+            // Match viewport_map::commit_workspace_root_continuations so the
+            // live Root window resource keeps the representative surface tag,
+            // never an arbitrary lowest-SurfaceId shared sibling.
+            let representative = frame
+                .native_root_continuations()
+                .filter(|candidate| candidate.predecessor().window() == predecessor.window())
+                .find(|candidate| {
+                    self.viewports
+                        .binding(viewport)
+                        .is_some_and(|route| route.surface() == candidate.predecessor().surface())
+                })
+                .unwrap_or(continuation);
+            let successor = representative.successor();
             if !self.can_admit_binding(successor) {
                 return Err(NativeHostProtocolError::NativeReportStorageUnavailable.into());
             }
@@ -106,7 +118,7 @@ impl NativeHostState {
         }
         self.viewports
             .commit_workspace_root_continuations(report.native_root_continuations());
-        for (index, &continuation) in report.native_root_continuations().iter().enumerate() {
+        for &continuation in report.native_root_continuations() {
             let predecessor = continuation.predecessor();
             let successor = continuation.successor();
             let Some(viewport) = self.viewports.viewport_for_window(successor.window()) else {
@@ -121,10 +133,7 @@ impl NativeHostState {
                 Some(successor.window()),
                 "the prepaid exact successor window retains its viewport"
             );
-            if !report.native_root_continuations()[..index]
-                .iter()
-                .any(|previous| previous.successor().window() == successor.window())
-            {
+            if self.viewports.binding(viewport) == Some(successor) {
                 self.window_resources.retain_workspace_predecessor(
                     viewport,
                     predecessor,

@@ -425,7 +425,10 @@ impl RootPlacements {
                 if !admitted {
                     return Err(error);
                 }
-                self.invalid_request = true;
+                // Transient input-storage pressure must not be misclassified as
+                // an invalid snapshot; keep the admitted roster and retry next run.
+                self.explicit = true;
+                return Ok(true);
             } else {
                 self.request = Some(Arc::from(placements));
                 self.refresh_storage(&bridge);

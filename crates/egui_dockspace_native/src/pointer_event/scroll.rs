@@ -24,8 +24,10 @@ pub(super) enum NativeScrollState {
         sequence: NativeScrollSequenceId,
         delivery: Option<NativeWindowBinding>,
     },
-    /// Core closed the provider tail; ignore late phases until an explicit start.
-    Retired,
+    /// Core closed the provider tail; ignore late phases from that binding.
+    Retired {
+        delivery: Option<NativeWindowBinding>,
+    },
 }
 
 impl NativePointerTranslator {
@@ -49,17 +51,66 @@ impl NativePointerTranslator {
         let Some(NativePointerDeviceEntry::Live(device)) = devices.get_mut(&device) else {
             unreachable!("a successfully enrolled device remains live in the adapter map");
         };
+        let modifiers = match record.event() {
+            WindowEvent::MouseWheel { facts, .. } => native_modifiers(facts),
+            WindowEvent::PanGesture { .. } => NativeScrollModifiers::Unknown,
+            _ => unreachable!("scroll translation only receives wheel or pan records"),
+        };
         let delivery = exact_delivery_binding(routes.delivery());
         if let NativeScrollState::Live {
+            sequence: active_sequence,
             delivery: Some(active),
-            ..
         } = device.scroll
             && delivery != Some(active)
         {
-            // Winit does not carry a scroll sequence token. A callback routed
-            // through another exact binding may be a delayed predecessor tail,
-            // so it cannot mutate or terminate the current sequence.
-            return NativePointerTranslation::Ignored;
+            // A brand-new Started phase on another live window recovers when an
+            // earlier phaseful sequence lost its Ended edge (e.g. macOS/Wayland
+            // shared DeviceId). Non-start phases from another binding remain
+            // ignored so delayed predecessor tails cannot mutate or end the live sequence.
+            if phase != TouchPhase::Started {
+                return NativePointerTranslation::Ignored;
+            }
+            let Some(next_sequence) = allocate_scroll_sequence(next_scroll_sequence) else {
+                return NativePointerTranslation::Ignored;
+            };
+            device.scroll = NativeScrollState::Live {
+                sequence: next_sequence,
+                delivery,
+            };
+            let cancelled = NativeScrollEvent::new(
+                device.scroll_device,
+                NativeScrollPhase::Cancel {
+                    sequence: active_sequence,
+                    reason: NativeScrollCancelReason::PlatformCancelled,
+                },
+                NativeScrollMomentum::Unknown,
+                NativeScrollModifiers::Unknown,
+            );
+            let started = NativeScrollEvent::new(
+                device.scroll_device,
+                NativeScrollPhase::Begin {
+                    sequence: next_sequence,
+                    delta: Some(delta),
+                },
+                NativeScrollMomentum::Unknown,
+                modifiers,
+            );
+            return NativePointerTranslation::Restart {
+                cancelled: native_input(
+                    device.pointer,
+                    NativePointerEvent::Scrolled(cancelled),
+                    record,
+                    routes,
+                    resolve_work_area,
+                ),
+                pressed: native_input(
+                    device.pointer,
+                    NativePointerEvent::Scrolled(started),
+                    record,
+                    routes,
+                    resolve_work_area,
+                ),
+            };
         }
         let Some((phase, next_state)) =
             translate_scroll_phase(device.scroll, phase, delta, delivery, next_scroll_sequence)
@@ -68,11 +119,6 @@ impl NativePointerTranslator {
         };
         device.scroll = next_state;
 
-        let modifiers = match record.event() {
-            WindowEvent::MouseWheel { facts, .. } => native_modifiers(facts),
-            WindowEvent::PanGesture { .. } => NativeScrollModifiers::Unknown,
-            _ => unreachable!("scroll translation only receives wheel or pan records"),
-        };
         let event = NativeScrollEvent::new(
             device.scroll_device,
             phase,
@@ -97,7 +143,7 @@ fn translate_scroll_phase(
     next_scroll_sequence: &mut u64,
 ) -> Option<(NativeScrollPhase, NativeScrollState)> {
     match (state, phase) {
-        (NativeScrollState::Idle | NativeScrollState::Retired, TouchPhase::Started) => {
+        (NativeScrollState::Idle | NativeScrollState::Retired { .. }, TouchPhase::Started) => {
             let sequence = allocate_scroll_sequence(next_scroll_sequence)?;
             Some((
                 NativeScrollPhase::Begin {
@@ -131,7 +177,16 @@ fn translate_scroll_phase(
             },
             NativeScrollState::Idle,
         )),
-        (NativeScrollState::Retired, _) => None,
+        (
+            NativeScrollState::Retired {
+                delivery: Some(retired),
+            },
+            TouchPhase::Moved,
+        ) if event_delivery.is_some() && event_delivery != Some(retired) => Some((
+            NativeScrollPhase::Discrete { delta },
+            NativeScrollState::Idle,
+        )),
+        (NativeScrollState::Retired { .. }, _) => None,
         (NativeScrollState::Idle, TouchPhase::Moved) => Some((
             NativeScrollPhase::Discrete { delta },
             NativeScrollState::Idle,

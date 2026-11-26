@@ -342,6 +342,26 @@ impl<Request> NativeFocusControl<Request> {
         })
     }
 
+    pub(crate) fn take_terminal_window(
+        &mut self,
+        window: dockspace::runtime::NativeWindowBinding,
+    ) -> Option<NativeFocusTermination<Request>> {
+        if self
+            .pending
+            .as_ref()
+            .is_none_or(|pending| pending.binding.window() != window)
+        {
+            return None;
+        }
+        let pending = self.pending.take()?;
+        Some(match pending.state {
+            PendingNativeFocusState::Queued(request) => NativeFocusTermination::Queued(request),
+            PendingNativeFocusState::AwaitingCallback(request) => {
+                NativeFocusTermination::Dispatched(request)
+            }
+        })
+    }
+
     pub(crate) fn pending_binding(&self) -> Option<NativeSurfaceBinding> {
         self.pending.as_ref().map(|pending| pending.binding)
     }

@@ -252,7 +252,7 @@ impl NativePointerDeviceState {
         self.mouse.is_idle()
             && matches!(
                 self.scroll,
-                NativeScrollState::Idle | NativeScrollState::Retired
+                NativeScrollState::Idle | NativeScrollState::Retired { .. }
             )
     }
 
@@ -266,7 +266,9 @@ impl NativePointerDeviceState {
             } if delivery == binding
         );
         if scroll_retired {
-            self.scroll = NativeScrollState::Retired;
+            self.scroll = NativeScrollState::Retired {
+                delivery: Some(binding),
+            };
         }
         mouse_retired || scroll_retired
     }

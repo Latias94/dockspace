@@ -102,7 +102,10 @@ impl WindowState {
         }
         match request_outer_bounds(&self.window, bounds) {
             Ok(_) => self.pending_placement = None,
-            Err(WindowPlacementError::GeometryChanged { .. }) => {
+            Err(
+                WindowPlacementError::GeometryChanged { .. }
+                | WindowPlacementError::GeometryUnavailable { .. },
+            ) => {
                 self.window.request_redraw();
             }
             Err(error) => return Err(error.into()),

@@ -31,6 +31,15 @@ pub enum WindowPlacementError {
         /// Client size after reading the outer size.
         after: PhysicalSize<u32>,
     },
+    /// The window cannot report valid live client/outer decoration geometry
+    /// (for example while minimized, unmapped, or reporting `outer < client`).
+    #[error("window geometry is unavailable for decoration sampling: client {client:?}, outer {outer:?}")]
+    GeometryUnavailable {
+        /// Observed physical client size.
+        client: PhysicalSize<u32>,
+        /// Observed physical outer size.
+        outer: PhysicalSize<u32>,
+    },
 }
 
 /// Applies a core physical placement to initial winit window attributes.
@@ -76,6 +85,12 @@ pub fn request_outer_bounds(
     let before = window.inner_size();
     let observed_outer = window.outer_size();
     let after = window.inner_size();
+    if window.is_minimized() == Some(true) {
+        return Err(WindowPlacementError::GeometryUnavailable {
+            client: before,
+            outer: observed_outer,
+        });
+    }
     let client = stable_client_size(outer, before, observed_outer, after)?;
     window.set_outer_position(position);
     Ok(window.request_inner_size(client))
@@ -121,12 +136,15 @@ fn client_size(
     client: PhysicalSize<u32>,
     outer: PhysicalSize<u32>,
 ) -> Result<PhysicalSize<u32>, WindowPlacementError> {
-    let width = requested
-        .width
-        .checked_sub(outer.width.saturating_sub(client.width));
-    let height = requested
-        .height
-        .checked_sub(outer.height.saturating_sub(client.height));
+    if client.width == 0
+        || client.height == 0
+        || outer.width < client.width
+        || outer.height < client.height
+    {
+        return Err(WindowPlacementError::GeometryUnavailable { client, outer });
+    }
+    let width = requested.width.checked_sub(outer.width - client.width);
+    let height = requested.height.checked_sub(outer.height - client.height);
     match (width, height) {
         (Some(width), Some(height)) if width > 0 && height > 0 => {
             Ok(PhysicalSize::new(width, height))
@@ -247,5 +265,31 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn zero_client_or_inverted_outer_size_is_rejected_as_geometry_unavailable() {
+        assert_eq!(
+            client_size(
+                PhysicalSize::new(420, 300),
+                PhysicalSize::new(0, 0),
+                PhysicalSize::new(160, 28),
+            ),
+            Err(WindowPlacementError::GeometryUnavailable {
+                client: PhysicalSize::new(0, 0),
+                outer: PhysicalSize::new(160, 28),
+            })
+        );
+        assert_eq!(
+            client_size(
+                PhysicalSize::new(420, 300),
+                PhysicalSize::new(600, 400),
+                PhysicalSize::new(500, 400),
+            ),
+            Err(WindowPlacementError::GeometryUnavailable {
+                client: PhysicalSize::new(600, 400),
+                outer: PhysicalSize::new(500, 400),
+            })
+        );
     }
 }

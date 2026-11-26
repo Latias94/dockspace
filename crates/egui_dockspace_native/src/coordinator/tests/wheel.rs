@@ -679,3 +679,93 @@ fn commit_unpainted_frame(native: &mut super::NativeCoordinator) {
         .expect("the pending callback frame settles every surface");
     frame.commit().expect("the pending callback frame commits");
 }
+
+#[test]
+fn cross_window_started_cancels_orphaned_scroll_and_begins_on_target_window() {
+    let mut native = coordinator();
+    let (first, second) = register_roots(&mut native);
+    let first_window = WindowId::from(61);
+    let second_window = WindowId::from(62);
+    let first_start = phaseful_scroll_record(1, first_window, first, TouchPhase::Started, 1.0);
+    let second_start = phaseful_scroll_record(2, second_window, second, TouchPhase::Started, 2.0);
+    let second_move = phaseful_scroll_record(3, second_window, second, TouchPhase::Moved, 3.0);
+    let stale_first_end = phaseful_scroll_record(4, first_window, first, TouchPhase::Ended, 0.0);
+
+    let mut translator = NativePointerTranslator::default();
+    assert_eq!(
+        translator.translate(&first_start, |_| None),
+        NativePointerTranslation::Input(phaseful_scroll_input(
+            Some(first),
+            NativeScrollPhase::Begin {
+                sequence: NativeScrollSequenceId::new(1),
+                delta: Some(NativeScrollDelta::Lines { x: 0.0, y: 1.0 }),
+            },
+        ))
+    );
+    assert_eq!(
+        translator.translate(&second_start, |_| None),
+        NativePointerTranslation::Restart {
+            cancelled: phaseful_scroll_input(
+                Some(second),
+                NativeScrollPhase::Cancel {
+                    sequence: NativeScrollSequenceId::new(1),
+                    reason: dockspace::runtime::NativeScrollCancelReason::PlatformCancelled,
+                },
+            ),
+            pressed: phaseful_scroll_input(
+                Some(second),
+                NativeScrollPhase::Begin {
+                    sequence: NativeScrollSequenceId::new(2),
+                    delta: Some(NativeScrollDelta::Lines { x: 0.0, y: 2.0 }),
+                },
+            ),
+        }
+    );
+    assert_eq!(
+        translator.translate(&stale_first_end, |_| None),
+        NativePointerTranslation::Ignored,
+        "a late end from the orphaned window cannot terminate the new window's sequence"
+    );
+    assert_eq!(
+        translator.translate(&second_move, |_| None),
+        NativePointerTranslation::Input(phaseful_scroll_input(
+            Some(second),
+            NativeScrollPhase::Update {
+                sequence: NativeScrollSequenceId::new(2),
+                delta: NativeScrollDelta::Lines { x: 0.0, y: 3.0 },
+            },
+        ))
+    );
+}
+
+#[test]
+fn retired_scroll_allows_discrete_wheel_on_another_live_window() {
+    let mut native = coordinator();
+    let (first, second) = register_roots(&mut native);
+    let first_window = WindowId::from(63);
+    let second_window = WindowId::from(64);
+    let first_start = phaseful_scroll_record(1, first_window, first, TouchPhase::Started, 1.0);
+    let first_tail = phaseful_scroll_record(2, first_window, first, TouchPhase::Moved, 1.0);
+    let second_wheel = phaseful_scroll_record(3, second_window, second, TouchPhase::Moved, -2.0);
+
+    let mut translator = NativePointerTranslator::default();
+    assert!(matches!(
+        translator.translate(&first_start, |_| None),
+        NativePointerTranslation::Input(_)
+    ));
+    translator.retire_binding(first.window());
+    assert_eq!(
+        translator.translate(&first_tail, |_| None),
+        NativePointerTranslation::Ignored,
+        "retired window tails remain ignored"
+    );
+    assert_eq!(
+        translator.translate(&second_wheel, |_| None),
+        NativePointerTranslation::Input(phaseful_scroll_input(
+            Some(second),
+            NativeScrollPhase::Discrete {
+                delta: NativeScrollDelta::Lines { x: 0.0, y: -2.0 },
+            },
+        ))
+    );
+}

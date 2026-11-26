@@ -71,7 +71,7 @@ impl NativeCoordinator {
         window: WindowId,
     ) {
         if let Some(duty) = self.stationary.capture.as_mut()
-            && duty.request.source_binding() == binding
+            && duty.request.source_binding().window() == binding.window()
             && duty.window == window
         {
             duty.destroyed = true;

@@ -784,15 +784,28 @@ impl<P: PaneView> NativeRuntimeState<P> {
             .owned_update
             .as_ref()
             .is_some_and(|update| update.run.token == token);
-        if self.root_placements.declare(
+        match self.root_placements.declare(
             &self.coordinator,
             self.root_surface,
             token,
             placements,
             repeated_run,
-        )? {
-            self.pending_service = true;
-            ui.ctx().request_repaint_once_of(ViewportId::ROOT);
+        ) {
+            Ok(true) => {
+                self.pending_service = true;
+                ui.ctx().request_repaint_once_of(ViewportId::ROOT);
+            }
+            Ok(false) => {}
+            Err(error) if error.is_input_capacity() => {
+                self.root_placements
+                    .refresh_storage(&self.coordinator.dispatch_bridge());
+                self.pending_service = true;
+                self.stage_retain_previous(ui.ctx(), token, self.root_surface)?;
+                require_durable_root_cycle(&self.coordinator, token, true)?;
+                ui.ctx().request_repaint_once_of(ViewportId::ROOT);
+                return Ok(NativeSurfaceUpdate::RetainPrevious);
+            }
+            Err(error) => return Err(error),
         }
         let bridge = self.coordinator.dispatch_bridge();
         let mut budget = bridge
