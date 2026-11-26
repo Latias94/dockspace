@@ -228,9 +228,8 @@ impl RatatuiDockApp {
             last_display_list: None,
             last_dock_area: Rect::default(),
             modal_open: false,
-            status_note:
-                "Click/drag tabs, drag splitters, wheel overflow strip | [m] modal [r] reset [q] quit"
-                    .into(),
+            status_note: "Click/drag tabs, drag splitters | [m] modal [r] reset [q/Ctrl+C] quit"
+                .into(),
         })
     }
 
