@@ -135,14 +135,11 @@ impl DockspaceSession {
     }
 
     fn native_state_mut(&mut self) -> Result<&mut RuntimeNativeState, DockspaceRuntimeError> {
-        if self.active_update.strong_count() != 0 {
-            return Err(DockspaceRuntimeError::update_in_progress());
-        }
         let native = self
             .native
             .as_mut()
             .ok_or(NativePlatformError::ProviderUnavailable)?;
-        if native.pending_replay.is_none() {
+        if native.pending_replay.is_none() && self.active_update.strong_count() == 0 {
             // A suspended candidate retains its original retention authority.
             let retirement = native.reclaim_committed_prefix(&mut self.engine);
             self.presentation.reclaim_compacted_streams(&self.engine);
@@ -423,6 +420,9 @@ impl DockspaceSession {
         &mut self,
         capabilities: NativeHostCapabilities,
     ) -> Result<(), DockspaceRuntimeError> {
+        if self.active_update.strong_count() != 0 {
+            return Err(DockspaceRuntimeError::update_in_progress());
+        }
         self.native_state_mut()?
             .configure_managed_capabilities(capabilities)?;
         Ok(())
@@ -710,11 +710,12 @@ impl DockspaceSession {
             .native
             .as_ref()
             .ok_or(NativePlatformError::ProviderUnavailable)?;
-        let reclaimable = if native.pending_replay.is_none() {
-            self.engine.backend_ingress_commit_watermark()
-        } else {
-            None
-        };
+        let reclaimable =
+            if native.pending_replay.is_none() && self.active_update.strong_count() == 0 {
+                self.engine.backend_ingress_commit_watermark()
+            } else {
+                None
+            };
         // Caller iteration and its destructor finish before maintenance or append.
         let journals = {
             let mut inputs = inputs.into_iter();
