@@ -98,7 +98,10 @@ pub(in crate::render) enum PaneInputState {
 pub(in crate::render::tab_shortcuts) fn prepare(
     context: &RenderContext<'_, '_, '_>,
 ) -> PaneInputState {
-    observe_surface_keyboard(context.ui.ctx(), slot_id(context), false);
+    observe_surface_keyboard(context.ui.ctx(), slot_id(context));
+    if foreign_pending_input(context) {
+        return PaneInputState::Waiting;
+    }
     if context.ui.ctx().current_pass_index() != 0 && !layout_retry(context) {
         // egui calls the UI again with the same input to resolve layout. The
         // following packet is eligible at the next input hook, never here.
@@ -128,29 +131,41 @@ pub(in crate::render::tab_shortcuts) fn prepare(
         return PaneInputState::None;
     }
     if matches!(pending.handoff, Handoff::FrameworkTraversal { .. }) {
+        if context.ui.ctx().current_pass_index() == 0
+            && !has_pointer_or_accessibility_edges(context.ui.ctx())
+            && crate::render::tab_shortcuts::can_route_keyboard(context)
+        {
+            stage_live_input(context, &mut pending.packet);
+        }
         store(context, pending);
         return PaneInputState::Waiting;
     }
-    if let Handoff::RetryRegistration = pending.handoff {
+    if let Handoff::RetryRegistration {
+        focus_cleared_by_escape,
+    } = pending.handoff
+    {
         return if context.pane_focus_request == pending.previous_request {
             PaneInputState::Ready(PaneInputDelivery {
                 packet: pending.packet,
                 phase: DeliveryPhase::AwaitingRegistration,
-                focus_cleared_by_escape: false,
+                focus_cleared_by_escape,
             })
         } else {
             retire_input(context);
             PaneInputState::None
         };
     }
-    if let Handoff::RetryDelivery = pending.handoff {
+    if let Handoff::RetryDelivery {
+        focus_cleared_by_escape,
+    } = pending.handoff
+    {
         return if context.pane_focus_request == pending.previous_request
             && crate::render::tab_shortcuts::can_route_keyboard(context)
         {
             PaneInputState::Ready(PaneInputDelivery {
                 packet: pending.packet,
                 phase: DeliveryPhase::Registered { retry: true },
-                focus_cleared_by_escape: false,
+                focus_cleared_by_escape,
             })
         } else {
             retire_input(context);

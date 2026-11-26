@@ -105,10 +105,10 @@ fn snapshot_root_placements(
     if !bridge.prepare_root_placement_storage(bytes) {
         return Ok(None);
     }
-    let mut placements = Vec::new();
-    if placements.try_reserve_exact(count).is_err() || placements.capacity() > count {
+    let Ok(placements) = crate::bounded_storage::BoundedVec::with_slots(Some(count)) else {
         return Ok(None);
-    }
+    };
+    let mut placements = placements.into_inner();
     for placement in source {
         placements.push(placement.ok_or(NativeHostProtocolError::InvalidWindowSnapshot)?);
     }

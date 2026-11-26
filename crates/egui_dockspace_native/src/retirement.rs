@@ -204,15 +204,8 @@ impl NativeRetirementState {
     pub(crate) fn with_capacity_limit(entries: usize) -> Result<Self, NativeHostProtocolError> {
         Self::reservation_bytes(entries)
             .ok_or(NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        let mut backing = Vec::new();
-        backing
-            .try_reserve_exact(entries)
-            .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        if backing.capacity() > entries {
-            return Err(NativeHostProtocolError::NativeReportStorageUnavailable);
-        }
         Ok(Self {
-            entries: backing,
+            entries: crate::bounded_storage::BoundedVec::with_slots(Some(entries))?.into_inner(),
             entry_limit: Some(entries),
         })
     }
@@ -243,14 +236,8 @@ impl NativeRetirementState {
         if self.entry_limit.is_some_and(|limit| required > limit) {
             return Err(NativeHostProtocolError::NativeReportStorageUnavailable);
         }
-        let maximum_capacity = self.entries.capacity().max(required);
         if required > self.entries.capacity() {
-            self.entries
-                .try_reserve_exact(required - self.entries.len())
-                .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        }
-        if self.entries.capacity() > maximum_capacity {
-            return Err(NativeHostProtocolError::NativeReportStorageUnavailable);
+            crate::bounded_storage::BoundedVec::reserve(&mut self.entries, required)?;
         }
         Ok(())
     }

@@ -64,11 +64,8 @@ impl HostIngressJournal {
     pub(crate) fn try_new(clock: NativeMonotonicClock) -> Result<Self, NativeHostProtocolError> {
         let error = NativeHostProtocolError::NativeReportStorageUnavailable;
         Self::reservation_bytes().ok_or(error)?;
-        let mut queue = VecDeque::new();
-        queue.try_reserve_exact(RECORD_LIMIT).map_err(|_| error)?;
-        if queue.capacity() > RECORD_LIMIT {
-            return Err(error);
-        }
+        let queue =
+            crate::bounded_storage::BoundedVecDeque::with_slots(Some(RECORD_LIMIT))?.into_inner();
         Ok(Self {
             clock,
             queue,

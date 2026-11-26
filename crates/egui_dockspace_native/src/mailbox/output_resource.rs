@@ -113,20 +113,12 @@ impl NativeOutputResources {
     pub(super) fn try_new() -> Result<Self, NativeHostProtocolError> {
         let error = NativeHostProtocolError::NativeReportStorageUnavailable;
         Self::reservation_bytes().ok_or(error)?;
-        let mut ordinary = Vec::new();
-        ordinary
-            .try_reserve_exact(ORDINARY_OUTPUT_CAPACITY)
-            .map_err(|_| error)?;
-        if ordinary.capacity() > ORDINARY_OUTPUT_CAPACITY {
-            return Err(error);
-        }
-        let mut child_controls = Vec::new();
-        child_controls
-            .try_reserve_exact(super::terminal_roster::DEFAULT_WINDOW_CAPACITY)
-            .map_err(|_| error)?;
-        if child_controls.capacity() > super::terminal_roster::DEFAULT_WINDOW_CAPACITY {
-            return Err(error);
-        }
+        use crate::bounded_storage::BoundedVec;
+
+        let ordinary = BoundedVec::with_slots(Some(ORDINARY_OUTPUT_CAPACITY))?.into_inner();
+        let child_controls =
+            BoundedVec::with_slots(Some(super::terminal_roster::DEFAULT_WINDOW_CAPACITY))?
+                .into_inner();
         Ok(Self {
             ordinary,
             root_control: None,
@@ -442,10 +434,10 @@ impl NativeOutputResource {
         if surfaces <= self.surface_backing.capacity() {
             return true;
         }
-        let mut backing = Vec::new();
-        if backing.try_reserve_exact(surfaces).is_err() || backing.capacity() > surfaces {
+        let Ok(backing) = crate::bounded_storage::BoundedVec::with_slots(Some(surfaces)) else {
             return false;
-        }
+        };
+        let backing = backing.into_inner();
         self.surface_capacity = backing.capacity();
         self.surface_backing = backing;
         true

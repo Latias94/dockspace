@@ -493,8 +493,10 @@ impl Dockspace {
                             ui.painter(),
                         );
                         if backpressured {
-                            crate::focus::retain_presented_pane_focus(
+                            crate::focus::retain_presented_surface_input_state(
                                 &context,
+                                self.id,
+                                surface,
                                 presented_focus_bindings,
                             );
                         }

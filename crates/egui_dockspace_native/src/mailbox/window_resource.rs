@@ -533,12 +533,7 @@ impl NativeWindowResources {
                 .map(|resource| resource.viewport)
         };
         let count = viewports().count();
-        let mut wake = Vec::new();
-        wake.try_reserve_exact(count)
-            .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        if wake.capacity() > count {
-            return Err(NativeHostProtocolError::NativeReportStorageUnavailable);
-        }
+        let mut wake = crate::bounded_storage::BoundedVec::with_slots(Some(count))?.into_inner();
         wake.extend(viewports());
         Ok(wake)
     }

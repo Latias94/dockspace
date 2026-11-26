@@ -22,6 +22,7 @@ struct ViewportKeyboard {
 struct KeyboardPass {
     number: u64,
     surface_seen: bool,
+    retained: bool,
 }
 
 impl ViewportKeyboard {
@@ -29,7 +30,15 @@ impl ViewportKeyboard {
         self.pass = Some(KeyboardPass {
             number,
             surface_seen: false,
+            retained: false,
         });
+    }
+
+    fn owner_packet(&self) -> Option<&PaneInputPacket> {
+        self.handoff
+            .as_ref()
+            .map(|pending| &pending.packet)
+            .or_else(|| self.later_packets.front())
     }
 
     fn observe_surface(&mut self, context: &Context) {
@@ -54,9 +63,10 @@ impl ViewportKeyboard {
                 crate::focus::widget_belongs_to_pane(&viewport.prev_pass.widgets, widget, pane)
             })
         }) else {
-            self.retire_input();
+            self.retire_to_host();
             return;
         };
+        self.last_focus = Some(widget);
         if let Some(pending) = self.handoff.as_mut() {
             let old = pending.packet.target;
             let target = PaneInputTarget {
@@ -84,18 +94,7 @@ impl ViewportKeyboard {
             self.settle_traversal(context, viewport, pane, focused);
             return;
         }
-        if let Some(pending) = self.handoff.take() {
-            let keys: Vec<_> = pending
-                .packet
-                .events
-                .into_iter()
-                .filter(is_host_key)
-                .collect();
-            if !keys.is_empty() {
-                self.host_keys_after_traversal = Some((pending.packet.target.slot, keys));
-            }
-        }
-        self.retire_input();
+        self.retire_to_host();
     }
 
     fn await_forward_wrap(&mut self, pane: Id, completed: u64) {
@@ -123,6 +122,29 @@ impl ViewportKeyboard {
     fn retire_input(&mut self) {
         self.later_packets.clear();
         self.handoff = None;
+        self.retained = false;
+    }
+
+    fn retire_to_host(&mut self) {
+        let Some(slot) = self.owner_packet().map(|packet| packet.target.slot) else {
+            return;
+        };
+        let keys = self.take_host_keys();
+        if !keys.is_empty() {
+            self.host_keys_after_traversal = Some((slot, keys));
+        }
+    }
+
+    fn take_host_keys(&mut self) -> Vec<Event> {
+        self.retained = false;
+        self.handoff
+            .take()
+            .map(|pending| pending.packet)
+            .into_iter()
+            .chain(self.later_packets.drain(..))
+            .flat_map(|packet| packet.events)
+            .filter(is_host_key)
+            .collect()
     }
 }
 
@@ -172,7 +194,7 @@ impl egui::plugin::Plugin for PaneKeyboard {
             return;
         };
         if has_pointer_or_accessibility_edges(context) {
-            input.retire_input();
+            input.retire_to_host();
             return;
         }
         let current = context.cumulative_pass_nr();
@@ -197,7 +219,7 @@ impl egui::plugin::Plugin for PaneKeyboard {
                 input.settle_traversal(context, viewport, pane, focused);
             }
             TraversalSettlement::Forward { pass, wrap }
-                if current > pass && context.current_pass_index() == 0 =>
+                if current > pass && context.current_pass_index() == 0 && !input.retained =>
             {
                 let focused = focus_from_previous_pass(ui);
                 if focused.is_none()
@@ -206,7 +228,7 @@ impl egui::plugin::Plugin for PaneKeyboard {
                     && !ui.input(|input| input.events.iter().any(is_plain_escape))
                 {
                     input.await_forward_wrap(pane, current);
-                } else {
+                } else if focused.is_some() {
                     input.finish_forward_traversal(context, viewport, pane, focused);
                 }
             }
@@ -217,16 +239,18 @@ impl egui::plugin::Plugin for PaneKeyboard {
     fn on_end_pass(&mut self, ui: &mut Ui) {
         if let Some(input) = self.viewports.get_mut(&ui.ctx().viewport_id()) {
             input.last_focus = ui.memory(egui::Memory::focused);
-            if input.handoff.as_ref().is_some_and(|pending| {
-                matches!(
-                    pending.handoff,
-                    Handoff::FrameworkTraversal {
-                        settlement: TraversalSettlement::PassEnd(_),
-                        ..
-                    }
-                ) && pending.packet.target.widget != input.last_focus
-            }) {
-                input.retire_input();
+            if input.pass.as_ref().is_none_or(|pass| !pass.retained)
+                && input.handoff.as_ref().is_some_and(|pending| {
+                    matches!(
+                        pending.handoff,
+                        Handoff::FrameworkTraversal {
+                            settlement: TraversalSettlement::PassEnd(_),
+                            ..
+                        }
+                    ) && pending.packet.target.widget != input.last_focus
+                })
+            {
+                input.retire_to_host();
             }
         }
     }
@@ -243,8 +267,11 @@ impl egui::plugin::Plugin for PaneKeyboard {
             {
                 continue;
             }
-            let seen = input.pass.take().is_some_and(|pass| pass.surface_seen);
-            if !seen {
+            let pass = input
+                .pass
+                .take()
+                .expect("the current keyboard pass was checked");
+            if !pass.surface_seen {
                 if !discarded {
                     input.retire_input();
                     input.host_keys_on_retry.clear();
@@ -252,7 +279,7 @@ impl egui::plugin::Plugin for PaneKeyboard {
                 }
                 continue;
             }
-            if input.retained {
+            if pass.retained {
                 continue;
             }
             if let Some(Handoff::FrameworkTraversal { pane, settlement }) =
@@ -316,17 +343,79 @@ fn focus_from_previous_pass(ui: &Ui) -> Option<Id> {
     })
 }
 
-/// Keeps the exact surface's queued editor input alive through a retained pass.
-#[cfg(any(test, feature = "native-render-support"))]
+/// Keeps the exact surface's queued input and focus alive through a retained pass.
+/// Returns whether the existing focus was kept alive by the queue.
 pub(crate) fn retain_skipped_pane_keyboard(
     context: &Context,
     instance: Id,
     surface: dockspace::model::SurfaceId,
-) {
-    observe_surface_keyboard(context, keyboard_slot(instance, surface), true);
+) -> bool {
+    let slot = keyboard_slot(instance, surface);
+    let Some(plugin) = context.plugin_opt::<PaneKeyboard>() else {
+        return false;
+    };
+    let mut keyboard = plugin.lock();
+    let Some(input) = keyboard.viewports.get_mut(&context.viewport_id()) else {
+        return false;
+    };
+    let Some(packet) = input
+        .owner_packet()
+        .filter(|packet| packet.target.slot == slot)
+    else {
+        if input
+            .host_keys_after_traversal
+            .as_ref()
+            .is_some_and(|(owner, _)| *owner == slot)
+        {
+            input.observe_surface(context);
+        }
+        return false;
+    };
+    let target = packet.target;
+    let expected_focus = match input.handoff.as_ref().map(|pending| pending.handoff) {
+        Some(Handoff::Activation { header, .. }) => Some(header),
+        _ => target.widget,
+    };
+    let focus = context.memory(egui::Memory::focused);
+    let no_pointer_edge = !has_pointer_or_accessibility_edges(context);
+    let escaped = focus.is_none()
+        && expected_focus.is_some()
+        && input.last_focus == expected_focus
+        && no_pointer_edge
+        && context.input(|input| input.events.iter().any(is_plain_escape));
+    let owned_focus = expected_focus.filter(|&id| focus == Some(id) || escaped);
+    if let Some(id) = owned_focus {
+        if escaped {
+            context.memory_mut(|memory| memory.request_focus(id));
+        }
+        context.check_for_id_clash(id, Rect::ZERO, "retained dockspace keyboard focus");
+    }
+    input.observe_surface(context);
+    let pass = input
+        .pass
+        .as_mut()
+        .expect("observing the surface starts a keyboard pass");
+    let first_retention = !std::mem::replace(&mut pass.retained, true);
+    input.retained = true;
+    if first_retention
+        && no_pointer_edge
+        && context.current_pass_index() == 0
+        && (owned_focus.is_some()
+            || input.handoff.as_ref().is_some_and(|pending| {
+                matches!(pending.handoff, Handoff::FrameworkTraversal { .. })
+            }))
+    {
+        let events = take_live_keyboard(context);
+        if !events.is_empty() {
+            input
+                .later_packets
+                .push_back(PaneInputPacket { target, events });
+        }
+    }
+    owned_focus.is_some()
 }
 
-pub(super) fn observe_surface_keyboard(context: &Context, slot: Id, retained: bool) {
+pub(super) fn observe_surface_keyboard(context: &Context, slot: Id) {
     let Some(plugin) = context.plugin_opt::<PaneKeyboard>() else {
         return;
     };
@@ -334,20 +423,32 @@ pub(super) fn observe_surface_keyboard(context: &Context, slot: Id, retained: bo
     let Some(input) = keyboard.viewports.get_mut(&context.viewport_id()) else {
         return;
     };
-    let pending = input
-        .handoff
-        .as_ref()
-        .map(|pending| &pending.packet)
-        .or_else(|| input.later_packets.front());
-    if pending.is_some_and(|packet| packet.target.slot == slot)
+    if input
+        .owner_packet()
+        .is_some_and(|packet| packet.target.slot == slot)
         || input
             .host_keys_after_traversal
             .as_ref()
             .is_some_and(|(owner, _)| *owner == slot)
     {
         input.observe_surface(context);
-        input.retained |= retained;
     }
+}
+
+pub(super) fn foreign_pending_input(context: &RenderContext<'_, '_, '_>) -> bool {
+    let ctx = context.ui.ctx();
+    let slot = slot_id(context);
+    ctx.plugin_opt::<PaneKeyboard>().is_some_and(|plugin| {
+        plugin
+            .lock()
+            .viewports
+            .get(&ctx.viewport_id())
+            .is_some_and(|input| {
+                input
+                    .owner_packet()
+                    .is_some_and(|packet| packet.target.slot != slot)
+            })
+    })
 }
 
 pub(super) fn focus_before_live_escape(context: &Context, widget: Id) -> bool {
@@ -444,17 +545,9 @@ fn can_append_live(context: &RenderContext<'_, '_, '_>, packet: &PaneInputPacket
 pub(super) fn stage_live_input(context: &RenderContext<'_, '_, '_>, packet: &mut PaneInputPacket) {
     let ctx = context.ui.ctx();
     let append = can_append_live(context, packet);
-    let mut events = take_keys_after(context.ui, 0);
+    let mut events = take_live_keyboard(ctx);
     if events.is_empty() {
         return;
-    }
-    // egui may already have selected a focus direction. Hold that decision
-    // until the exact editor can apply its filter and process its packet.
-    let navigation_held = events
-        .iter()
-        .any(|event| !EventFilter::default().matches(event));
-    if navigation_held {
-        ctx.memory_mut(|memory| memory.move_focus(FocusDirection::None));
     }
     if append {
         packet.events.append(&mut events);
@@ -466,6 +559,19 @@ pub(super) fn stage_live_input(context: &RenderContext<'_, '_, '_>, packet: &mut
             events,
         });
     }
+}
+
+fn take_live_keyboard(context: &Context) -> Vec<Event> {
+    let events = take_keyboard_suffix(context, 0);
+    // egui may already have selected a focus direction. Hold that decision
+    // until the exact editor can apply its filter and process its packet.
+    if events
+        .iter()
+        .any(|event| !EventFilter::default().matches(event))
+    {
+        context.memory_mut(|memory| memory.move_focus(FocusDirection::None));
+    }
+    events
 }
 
 pub(super) fn rebind_packets(
@@ -496,39 +602,45 @@ pub(super) fn retire_input(context: &RenderContext<'_, '_, '_>) {
     }
 }
 
+pub(super) fn return_queued_host_keys(context: &mut RenderContext<'_, '_, '_>) {
+    let ctx = context.ui.ctx();
+    if let Some(plugin) = ctx.plugin_opt::<PaneKeyboard>()
+        && let Some(input) = plugin.lock().viewports.get_mut(&ctx.viewport_id())
+        && input
+            .owner_packet()
+            .is_none_or(|packet| packet.target.slot == slot_id(context))
+    {
+        context.pane_shortcuts.extend(input.take_host_keys());
+    }
+}
+
 pub(super) fn settle_framework_keys(
     context: &RenderContext<'_, '_, '_>,
     target: PaneInputTarget,
-    focused: Option<Id>,
+    widget: Id,
     tail: Vec<Event>,
 ) {
-    if let Some(widget) = focused {
-        let target = rebind_packets(context, target, widget);
-        let ctx = context.ui.ctx();
-        if !tail.is_empty()
-            && let Some(plugin) = ctx.plugin_opt::<PaneKeyboard>()
-            && let Some(input) = plugin.lock().viewports.get_mut(&ctx.viewport_id())
+    let target = rebind_packets(context, target, widget);
+    let ctx = context.ui.ctx();
+    if !tail.is_empty()
+        && let Some(plugin) = ctx.plugin_opt::<PaneKeyboard>()
+        && let Some(input) = plugin.lock().viewports.get_mut(&ctx.viewport_id())
+    {
+        if !tail
+            .iter()
+            .any(|event| matches!(event, Event::Key { pressed: true, .. }))
+            && let Some(next) = input
+                .later_packets
+                .front_mut()
+                .filter(|next| next.target == target)
         {
-            if !tail
-                .iter()
-                .any(|event| matches!(event, Event::Key { pressed: true, .. }))
-                && let Some(next) = input
-                    .later_packets
-                    .front_mut()
-                    .filter(|next| next.target == target)
-            {
-                next.events.splice(..0, tail);
-            } else {
-                input.later_packets.push_front(PaneInputPacket {
-                    target,
-                    events: tail,
-                });
-            }
+            next.events.splice(..0, tail);
+        } else {
+            input.later_packets.push_front(PaneInputPacket {
+                target,
+                events: tail,
+            });
         }
-    } else {
-        // A framework traversal may leave the pane. The following fresh input
-        // resumes ordinary egui routing on the next batch.
-        retire_input(context);
     }
 }
 
@@ -608,5 +720,102 @@ pub(crate) fn release_host_keys(
             .insert(slot, keys);
     } else {
         ui.input_mut(|input| drop(input.events.splice(..0, keys)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dockspace::{
+        model::{
+            DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, RootId,
+            SurfaceId,
+        },
+        runtime::DockspaceSession,
+    };
+
+    #[test]
+    fn forward_wrap_waits_through_retained_passes_for_current_widgets() {
+        let context = Context::default();
+        let instance = Id::unique("forward wrap");
+        let surface = SurfaceId::new(1);
+        let item = ItemId::new(1);
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            surface,
+            DockspaceRootLayout::new(RootId::new(1), DockspaceNode::tabs([item])),
+        )])
+        .unwrap();
+        let session = DockspaceSession::from_layout(layout, Default::default()).unwrap();
+        let widget = Id::unique("last editor");
+        let slot = keyboard_slot(instance, surface);
+        let plugin = context.plugin_or_default::<PaneKeyboard>();
+        let save = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, Key::S);
+        let mut text = String::new();
+        context
+            .run_ui(RawInput::default(), |ui| {
+                ui.add(egui::TextEdit::singleline(&mut text).id(widget))
+                    .request_focus();
+            })
+            .drop_without_applying_deltas();
+        context
+            .run_ui(RawInput::default(), |ui| {
+                let mut keyboard = plugin.lock();
+                let input = keyboard.viewports.entry(ViewportId::ROOT).or_default();
+                input.observe_surface(&context);
+                let pass = context.cumulative_pass_nr();
+                let pane = Id::unique("editor pane");
+                input.handoff = Some(PendingInput {
+                    ready: false,
+                    previous_request: None,
+                    handoff: Handoff::FrameworkTraversal {
+                        pane,
+                        settlement: TraversalSettlement::Forward { pass, wrap: false },
+                    },
+                    packet: PaneInputPacket {
+                        target: PaneInputTarget {
+                            slot,
+                            item,
+                            content: session.open_item_identity(item).unwrap(),
+                            widget: Some(widget),
+                        },
+                        events: vec![Event::Key {
+                            key: Key::S,
+                            physical_key: Some(Key::S),
+                            pressed: true,
+                            repeat: false,
+                            modifiers: save.modifiers,
+                        }],
+                    },
+                });
+                drop(keyboard);
+                ui.memory_mut(|memory| memory.move_focus(FocusDirection::Next));
+                ui.add(egui::TextEdit::singleline(&mut text).id(widget));
+            })
+            .drop_without_applying_deltas();
+        assert_eq!(context.memory(egui::Memory::focused), None);
+        for _ in 0..2 {
+            context
+                .run_ui(RawInput::default(), |ui| {
+                    retain_skipped_pane_keyboard(ui.ctx(), instance, surface);
+                    release_host_keys(ui, instance, surface, Vec::new());
+                    assert!(!ui.input_mut(|input| input.consume_shortcut(&save)));
+                })
+                .drop_without_applying_deltas();
+        }
+        context
+            .run_ui(RawInput::default(), |ui| {
+                let toolbar = ui.button("Toolbar");
+                assert!(toolbar.has_focus());
+                observe_surface_keyboard(ui.ctx(), slot);
+            })
+            .drop_without_applying_deltas();
+        context
+            .run_ui(RawInput::default(), |ui| {
+                let _ = ui.button("Toolbar");
+                release_host_keys(ui, instance, surface, Vec::new());
+                assert!(ui.input_mut(|input| input.consume_shortcut(&save)));
+                assert!(!ui.input_mut(|input| input.consume_shortcut(&save)));
+            })
+            .drop_without_applying_deltas();
     }
 }

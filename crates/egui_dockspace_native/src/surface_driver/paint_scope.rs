@@ -22,6 +22,10 @@ impl NativePaintScope {
         Self { instance }
     }
 
+    pub(super) const fn instance(self) -> egui::Id {
+        self.instance
+    }
+
     pub(super) fn child_ui(
         self,
         mapping: NativePaintMapping,

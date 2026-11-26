@@ -24,7 +24,6 @@ mod tab_chrome;
 mod tab_close;
 mod tab_customization;
 mod tab_shortcuts;
-#[cfg(any(test, feature = "native-render-support"))]
 pub(crate) use tab_shortcuts::retain_skipped_pane_keyboard;
 mod tabs;
 mod wheel;

@@ -359,6 +359,17 @@ impl<P: PaneView> NativeRuntimeState<P> {
             return Ok(eframe::NativeOutputInputAdmission::Proceed);
         }
         if has_input {
+            if self.coordinator.has_pending_output_prefix()
+                || self.coordinator.has_pending_callback_records()
+                || bridge
+                    .output_reservation(token)
+                    .and_then(|reservation| reservation.binding())
+                    .is_some_and(|binding| {
+                        bridge.has_pending_no_frame_invalidation(binding.window())
+                    })
+            {
+                return self.defer_output_input(token);
+            }
             let replacement_queued = self.application_actions.has_queued_replacement();
             let mut input_placements = None;
             let mut placement_storage_blocked = false;
@@ -661,26 +672,39 @@ impl<P: PaneView> NativeRuntimeState<P> {
         token: NativeOutputToken,
         surface: SurfaceId,
     ) -> Result<(), NativeRuntimeError> {
-        if crate::host_frame::retained_focus_binding(
+        self.stage_retain_previous_surfaces(context, token, &[surface])
+    }
+
+    fn stage_retain_previous_surfaces(
+        &mut self,
+        context: &egui::Context,
+        token: NativeOutputToken,
+        surfaces: &[SurfaceId],
+    ) -> Result<(), NativeRuntimeError> {
+        if let Some(binding) = crate::host_frame::retained_window_binding(
             context,
             token,
-            surface,
             &self.coordinator.dispatch_bridge(),
-        )
-        .is_some_and(|binding| {
-            self.coordinator
-                .session()
-                .is_current_native_binding(binding)
-        }) && let Some(surface) = self.coordinator.session().view().surface(surface)
+        ) && self
+            .coordinator
+            .session()
+            .is_current_native_binding(binding)
         {
-            egui_dockspace::native_support::retain_skipped_pane_focus(
-                context,
-                surface,
-                &self.panes,
-            );
+            // Retention reuses the complete physical window, including sibling regions.
+            let session = self.coordinator.session();
+            for surface in session.native_surface_bindings_for_window(binding.window()) {
+                if let Some(surface) = session.view().surface(surface.surface()) {
+                    egui_dockspace::native_support::retain_skipped_surface_input_state(
+                        context,
+                        self.paint_scope.instance(),
+                        surface,
+                        &self.panes,
+                    );
+                }
+            }
         }
         self.pass_actions
-            .stage_retain_previous(token, surface)
+            .stage_retain_previous_surfaces(token, surfaces)
             .map_err(map_pass_action_error)
     }
 
@@ -837,7 +861,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
             .is_some_and(|update| update.run.token != token)
         {
             self.pending_service = true;
-            self.stage_retain_previous(&context, token, surface)?;
+            self.stage_retain_previous_surfaces(&context, token, &requested_surfaces)?;
             require_durable_root_cycle(&self.coordinator, token, true)?;
             return Ok(NativeSurfaceUpdate::RetainPrevious);
         }
@@ -889,7 +913,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
                 if surface != self.root_surface {
                     bridge.block_semantic_viewport(token.viewport_id());
                 }
-                self.stage_retain_previous(&context, token, surface)?;
+                self.stage_retain_previous_surfaces(&context, token, &requested_surfaces)?;
                 require_durable_root_cycle(&self.coordinator, token, true)?;
                 context.request_repaint_once_of(ViewportId::ROOT);
                 context.request_repaint_once_of(token.viewport_id());

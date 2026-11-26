@@ -90,6 +90,11 @@ impl<P: PaneView> NativeRuntimeState<P> {
             if let Some(error) = self.coordinator.take_callback_error() {
                 return Err(error);
             }
+            let mut invalidations = if bridge.pending_no_frame_count() == 0 {
+                crate::coordinator::PreparedNoFrameInvalidations::default()
+            } else {
+                self.coordinator.prepare_no_frame_invalidations()?
+            };
             let progress = pending_output
                 || effect
                 || quiescence
@@ -104,7 +109,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
             // Already admitted UI input and placement declarations still own
             // their original paint boundary and must precede that publication.
             let application_ready = self.application_service_ready();
-            if !progress {
+            if !progress && invalidations.ready.is_empty() {
                 if !pending_create && !application_ready {
                     break;
                 }
@@ -117,6 +122,10 @@ impl<P: PaneView> NativeRuntimeState<P> {
             else {
                 return Ok(false);
             };
+            invalidations.select_for_frame(&frame.frame, !frame.native_input_pending());
+            for &viewport in &invalidations.repaint_viewports {
+                context.request_repaint_once_of(viewport);
+            }
             let mut application_action =
                 if application_ready && !frame.native_input_pending() && !budget.is_exhausted() {
                     self.application_actions
@@ -140,7 +149,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
             };
             if advanced_create || application_action.is_some() {
                 budget.complete_unsequenced_records(1);
-            } else if !progress {
+            } else if !progress && invalidations.ready.is_empty() {
                 // Waiting for fresh facts or cleanup must not publish empty frames
                 // or keep the service loop polling an unchanged create intent.
                 drop(frame);
@@ -149,8 +158,14 @@ impl<P: PaneView> NativeRuntimeState<P> {
                 }
                 break;
             }
+            crate::coordinator::defer_no_frame_invalidations(
+                &mut frame.frame,
+                &invalidations.ready,
+            )?;
             frame.complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)?;
             let report = frame.commit_publishing_root(&mut self.root_surface)?;
+            self.coordinator
+                .finish_no_frame_invalidations(&invalidations.ready);
             self.publish_application_configuration(context, &mut application_action, &report)?;
             self.settle_published_report(
                 context,

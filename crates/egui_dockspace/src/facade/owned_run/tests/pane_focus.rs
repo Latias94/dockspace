@@ -323,6 +323,100 @@ fn escape_in_a_deferred_packet_leaves_save_and_key_up_for_the_host() {
 }
 
 #[test]
+fn deferred_escape_returns_host_keys_from_the_following_packet_in_order() {
+    for owned in [true, false] {
+        let context = Context::default();
+        let mut dock = editing_dock(false);
+        let mut docs = EditingDocuments {
+            text: ["alpha".into(), "bravo".into()],
+            ..Default::default()
+        };
+        let down = key_event(Key::Escape, Modifiers::NONE, true);
+        let up = key_event(Key::Escape, Modifiers::NONE, false);
+        let save = command(Key::S);
+        let mut delivered = Vec::new();
+        let mut saved = Vec::new();
+        let mut paint = |dock: &mut Dockspace, docs: &mut EditingDocuments, time, events| {
+            paint_editor_frame(dock, &context, input(time, events), docs, owned);
+            delivered.extend(context.input(|input| {
+                input
+                    .events
+                    .iter()
+                    .filter(|event| **event == down || **event == up || **event == save)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            }));
+            if consume_save(&context) {
+                saved.push(docs.text[1].clone());
+            }
+        };
+        paint(&mut dock, &mut docs, 0.1, vec![]);
+        select_document(&mut dock, FIRST);
+        paint(&mut dock, &mut docs, 0.2, vec![]);
+        select_document(&mut dock, SECOND);
+        paint(&mut dock, &mut docs, 0.3, vec![Event::Paste("X".into())]);
+        paint(&mut dock, &mut docs, 0.4, vec![down.clone()]);
+        paint(&mut dock, &mut docs, 0.5, vec![up.clone(), save.clone()]);
+        paint(&mut dock, &mut docs, 0.6, vec![]);
+        assert_eq!(docs.text, ["alpha", "bravoX"], "owned={owned}");
+        assert_eq!(delivered, [down, up, save], "owned={owned}");
+        assert_eq!(saved, ["bravoX"], "owned={owned}");
+    }
+}
+
+#[test]
+fn retained_editor_input_precedes_keys_arriving_during_and_after_retention() {
+    let context = Context::default();
+    let mut dock = editing_dock(false);
+    let mut docs = EditingDocuments {
+        text: ["alpha".into(), "bravo".into()],
+        ..Default::default()
+    };
+    paint_editor_frame(&mut dock, &context, input(0.1, vec![]), &mut docs, false);
+    select_document(&mut dock, FIRST);
+    paint_editor_frame(&mut dock, &context, input(0.2, vec![]), &mut docs, false);
+    select_document(&mut dock, SECOND);
+    paint_editor_frame(
+        &mut dock,
+        &context,
+        input(0.3, vec![Event::Paste("X".into()), command(Key::S)]),
+        &mut docs,
+        false,
+    );
+
+    context
+        .run_ui(input(0.4, vec![Event::Text("Y".into())]), |_| {
+            crate::focus::retain_skipped_surface_input_state(
+                &context,
+                dock.id,
+                dock.view().surface(SURFACE).unwrap(),
+                &docs,
+            );
+        })
+        .drop_without_applying_deltas();
+    assert!(!consume_save(&context));
+    let escape = key_event(Key::Escape, Modifiers::NONE, true);
+    let mut saw_escape = false;
+    let mut saved = Vec::new();
+    for (time, events) in [
+        (0.5, vec![escape]),
+        (0.6, vec![]),
+        (0.7, vec![]),
+        (0.8, vec![]),
+    ] {
+        paint_editor_frame(&mut dock, &context, input(time, events), &mut docs, false);
+        saw_escape |= context.input(|input| input.key_pressed(Key::Escape));
+        if consume_save(&context) {
+            saved.push(docs.text[1].clone());
+        }
+    }
+    assert_eq!(saved, ["bravoX"]);
+    assert_eq!(docs.text, ["alpha", "bravoXY"]);
+    assert!(saw_escape);
+    assert_eq!(context.memory(egui::Memory::focused), None);
+}
+
+#[test]
 fn a_retained_pass_preserves_the_editor_packet_until_the_pane_returns() {
     let context = Context::default();
     let mut dock = editing_dock(false);
@@ -369,6 +463,53 @@ fn a_retained_pass_preserves_the_editor_packet_until_the_pane_returns() {
     paint_editor_frame(&mut dock, &context, input(0.8, vec![]), &mut docs, false);
     assert!(!consume_save(&context));
     assert_eq!(docs.text, ["alpha", "bravoX"]);
+}
+
+#[test]
+fn retained_passes_keep_the_activating_tab_focused_until_the_editor_registers() {
+    let context = Context::default();
+    let mut dock = editing_dock(true);
+    let mut docs = EditingDocuments {
+        text: ["a".into(), "b".into()],
+        ..Default::default()
+    };
+    paint_editor_frame(&mut dock, &context, input(0.1, vec![]), &mut docs, false);
+    context.memory_mut(|memory| memory.request_focus(docs.first_tab.unwrap()));
+    paint_editor_frame(&mut dock, &context, input(0.2, vec![]), &mut docs, false);
+    paint_editor_frame(
+        &mut dock,
+        &context,
+        input(
+            0.3,
+            vec![
+                key_event(Key::ArrowRight, Modifiers::NONE, true),
+                key_event(Key::Enter, Modifiers::NONE, true),
+                Event::Paste("X".into()),
+            ],
+        ),
+        &mut docs,
+        false,
+    );
+    let header = context.memory(egui::Memory::focused).unwrap();
+    assert_ne!(header, editor_id(SECOND));
+    for time in [0.4, 0.5] {
+        context
+            .run_ui(input(time, vec![]), |_| {
+                crate::focus::retain_skipped_surface_input_state(
+                    &context,
+                    dock.id,
+                    dock.view().surface(SURFACE).unwrap(),
+                    &docs,
+                );
+            })
+            .drop_without_applying_deltas();
+        assert_eq!(context.memory(egui::Memory::focused), Some(header));
+    }
+    for time in [0.6, 0.7, 0.8, 0.9] {
+        paint_editor_frame(&mut dock, &context, input(time, vec![]), &mut docs, false);
+    }
+    assert!(dock.view().item(SECOND).unwrap().is_active());
+    assert_eq!(docs.text, ["a", "bX"]);
 }
 
 #[test]
@@ -561,15 +702,16 @@ fn framework_navigation_delivers_the_following_packet_to_its_destination() {
     }
 
     let child = ViewportId::from_hash_of("editor navigation viewport");
-    for (owned, start_in_search, viewport, nested) in [
-        (true, false, ViewportId::ROOT, false),
-        (false, false, ViewportId::ROOT, false),
-        (true, true, ViewportId::ROOT, false),
-        (false, true, ViewportId::ROOT, false),
-        (false, false, child, false),
-        (true, false, child, false),
-        (false, false, child, true),
-        (false, true, child, true),
+    for (owned, start_in_search, viewport, nested, retain) in [
+        (true, false, ViewportId::ROOT, false, false),
+        (false, false, ViewportId::ROOT, false, false),
+        (true, true, ViewportId::ROOT, false, false),
+        (false, true, ViewportId::ROOT, false, false),
+        (false, false, child, false, false),
+        (true, false, child, false, false),
+        (false, false, child, true, false),
+        (false, true, child, true, false),
+        (false, false, ViewportId::ROOT, false, true),
     ] {
         let context = Context::default();
         context.disable_accesskit();
@@ -647,6 +789,24 @@ fn framework_navigation_delivers_the_following_packet_to_its_destination() {
             &mut docs,
             vec![Event::Text("N".into()), command(Key::S)],
         );
+        if retain {
+            let search = DocumentsWithSearch::search_id();
+            assert_eq!(context.memory(egui::Memory::focused), Some(search));
+            for time in [0.51, 0.52] {
+                context
+                    .run_ui(input(time, vec![]), |_| {
+                        crate::focus::retain_skipped_surface_input_state(
+                            &context,
+                            dock.id,
+                            dock.view().surface(SURFACE).unwrap(),
+                            &docs,
+                        );
+                    })
+                    .drop_without_applying_deltas();
+                assert_eq!(context.memory(egui::Memory::focused), Some(search));
+                assert!(!consume_save(&context));
+            }
+        }
         for _ in 0..4 {
             paint(&mut dock, &mut docs, vec![]);
         }

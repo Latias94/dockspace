@@ -25,11 +25,11 @@ use handoff::{
     pointer_keeps_focus,
 };
 pub(crate) use queue::release_host_keys;
-#[cfg(any(test, feature = "native-render-support"))]
 pub(crate) use queue::retain_skipped_pane_keyboard;
 use queue::{
-    defer_framework_traversal, focus_before_live_escape, layout_retry, observe_surface_keyboard,
-    rebind_packets, retire_input, settle_framework_keys, stage_live_input, store, take,
+    defer_framework_traversal, focus_before_live_escape, foreign_pending_input, layout_retry,
+    observe_surface_keyboard, rebind_packets, retire_input, return_queued_host_keys,
+    settle_framework_keys, stage_live_input, store, take,
 };
 use replay::DeliveryPhase;
 pub(in crate::render) use replay::PaneInputDelivery;
@@ -46,8 +46,12 @@ enum Handoff {
         pane: Id,
         settlement: TraversalSettlement,
     },
-    RetryRegistration,
-    RetryDelivery,
+    RetryRegistration {
+        focus_cleared_by_escape: bool,
+    },
+    RetryDelivery {
+        focus_cleared_by_escape: bool,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -59,7 +63,10 @@ enum TraversalSettlement {
 
 impl Handoff {
     fn is_retry(self) -> bool {
-        matches!(self, Self::RetryRegistration | Self::RetryDelivery)
+        matches!(
+            self,
+            Self::RetryRegistration { .. } | Self::RetryDelivery { .. }
+        )
     }
 }
 
@@ -103,7 +110,11 @@ fn keyboard_slot(instance: Id, surface: dockspace::model::SurfaceId) -> Id {
 
 /// Takes the keyboard portion of a suffix while leaving pointer and system events in place.
 pub(super) fn take_keys_after(ui: &Ui, start: usize) -> Vec<Event> {
-    ui.input_mut(|input| {
+    take_keyboard_suffix(ui.ctx(), start)
+}
+
+fn take_keyboard_suffix(context: &Context, start: usize) -> Vec<Event> {
+    context.input_mut(|input| {
         let mut index = 0;
         input
             .events

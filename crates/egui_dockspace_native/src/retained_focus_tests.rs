@@ -14,10 +14,12 @@ use super::*;
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 const EDITOR: ItemId = ItemId::new(1);
+const NEXT_EDITOR: ItemId = ItemId::new(2);
 
 struct Editor {
     target: egui::Id,
-    text: String,
+    text: [String; 2],
+    first_header: Option<egui::Id>,
     calls: Arc<AtomicUsize>,
 }
 
@@ -26,38 +28,89 @@ impl PaneView for Editor {
         Some("Retained editor".into())
     }
 
-    fn ui(&mut self, _: ItemId, ui: &mut egui::Ui) -> PaneResponse {
-        let response = ui.add(egui::TextEdit::singleline(&mut self.text).id(self.target));
+    fn tab_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        tab: &egui_dockspace::Tab<'_>,
+    ) -> egui_dockspace::TabVisuals {
+        if tab.item() == Some(EDITOR) {
+            self.first_header = Some(tab.response.id);
+        }
+        tab.paint(ui)
+    }
+
+    fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> PaneResponse {
+        let target = self.focus_target(item).unwrap();
+        let response = egui_dockspace::pane_text_edit(
+            ui,
+            target,
+            egui::TextEdit::singleline(&mut self.text[usize::from(item == NEXT_EDITOR)]),
+        );
         if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
             response.request_focus();
         }
         PaneResponse::default().with_content(&response)
     }
 
-    fn focus_target(&self, _: ItemId) -> Option<egui::Id> {
-        Some(self.target)
+    fn focus_target(&self, item: ItemId) -> Option<egui::Id> {
+        Some(if item == EDITOR {
+            self.target
+        } else {
+            self.target.with(item)
+        })
+    }
+
+    fn accepts_deferred_keyboard_input(&self, _: ItemId) -> bool {
+        true
     }
 }
 
 struct RetainApp {
     app: NativeDockspaceApp<Editor>,
-    target: egui::Id,
+    phase: Phase,
+    header: Option<egui::Id>,
+    save_values: Vec<String>,
     calls: Arc<AtomicUsize>,
     skipped: Arc<AtomicUsize>,
     started: Instant,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Initial,
+    Activate,
+    Retain,
+    Resume,
+}
+
 impl eframe::App for RetainApp {
+    fn raw_input_hook(&mut self, _: &egui::Context, raw: &mut egui::RawInput) {
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        match self.phase {
+            Phase::Activate => raw.events.extend([
+                key(egui::Key::ArrowRight, egui::Modifiers::NONE),
+                key(egui::Key::Enter, egui::Modifiers::NONE),
+                egui::Event::Paste("X".into()),
+                key(egui::Key::S, egui::Modifiers::COMMAND),
+            ]),
+            Phase::Retain if self.skipped.load(Ordering::SeqCst) == 0 => {
+                raw.events.push(egui::Event::Text("Y".into()))
+            }
+            _ => {}
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         assert!(self.started.elapsed() < Duration::from_secs(15));
-        let skipped = self.skipped.load(Ordering::SeqCst);
-        if skipped > 0 {
-            assert!(
-                ui.memory(|memory| memory.has_focus(self.target)),
-                "a completed retained pass must keep the existing editor focus"
-            );
-        }
-        if self.app.is_surface_presented(SURFACE) && skipped < 2 {
+        if self.phase == Phase::Retain {
+            let header = self.header.unwrap();
+            assert!(ui.memory(|memory| memory.has_focus(header)));
             let calls = self.calls.load(Ordering::SeqCst);
             let token = eframe::current_native_output_token().unwrap();
             let mut state = lock_state(&self.app.state);
@@ -67,16 +120,49 @@ impl eframe::App for RetainApp {
             assert_eq!(self.calls.load(Ordering::SeqCst), calls);
             assert!(
                 ui.ctx()
-                    .viewport(|viewport| viewport.this_pass.widgets.get(self.target).is_none())
+                    .viewport(|viewport| viewport.this_pass.widgets.get(header).is_none())
             );
-            self.skipped.fetch_add(1, Ordering::SeqCst);
+            if self.skipped.fetch_add(1, Ordering::SeqCst) == 1 {
+                self.phase = Phase::Resume;
+            }
         } else {
-            let before = self.calls.load(Ordering::SeqCst);
             eframe::App::ui(&mut self.app, ui, frame);
-            if skipped == 2 && self.calls.load(Ordering::SeqCst) > before {
-                assert!(ui.memory(|memory| memory.has_focus(self.target)));
-                self.skipped.fetch_add(1, Ordering::SeqCst);
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            match self.phase {
+                Phase::Initial if self.app.is_surface_presented(SURFACE) => {
+                    let header = self.app.with_panes(|panes| panes.first_header.unwrap());
+                    ui.memory_mut(|memory| memory.request_focus(header));
+                    self.phase = Phase::Activate;
+                }
+                Phase::Activate => {
+                    self.header = ui.memory(egui::Memory::focused);
+                    assert!(self.header.is_some());
+                    self.phase = Phase::Retain;
+                }
+                Phase::Resume => {
+                    if ui.input_mut(|input| {
+                        input.consume_shortcut(&egui::KeyboardShortcut::new(
+                            egui::Modifiers::COMMAND,
+                            egui::Key::S,
+                        ))
+                    }) {
+                        self.save_values
+                            .push(self.app.with_panes(|panes| panes.text[1].clone()));
+                    }
+                    let finished = self.app.with_panes(|panes| panes.text[1] == "bXY");
+                    if finished {
+                        self.app.with_panes(|panes| {
+                            assert_eq!(panes.text, ["a", "bXY"]);
+                            assert_eq!(
+                                ui.memory(egui::Memory::focused),
+                                panes.focus_target(NEXT_EDITOR)
+                            );
+                        });
+                        assert_eq!(self.save_values, ["bX"]);
+                        self.skipped.fetch_add(1, Ordering::SeqCst);
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+                _ => {}
             }
         }
         ui.ctx().request_repaint_after(Duration::from_millis(5));
@@ -84,7 +170,7 @@ impl eframe::App for RetainApp {
 }
 
 #[test]
-fn real_eframe_retained_output_keeps_editor_focus_without_pane_callbacks() {
+fn real_eframe_retained_output_preserves_activation_and_editor_packets() {
     if std::env::var_os("DISPLAY").is_none() {
         eprintln!(
             "SKIP retained editor focus: DISPLAY is unavailable; run the X11 qualification gate"
@@ -93,7 +179,10 @@ fn real_eframe_retained_output_keeps_editor_focus_without_pane_callbacks() {
     }
     let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
         SURFACE,
-        DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([EDITOR])),
+        DockspaceRootLayout::new(
+            RootId::new(1),
+            DockspaceNode::central_tabs([EDITOR, NEXT_EDITOR]),
+        ),
     )])
     .unwrap();
     let target = egui::Id::unique("real-retained-editor");
@@ -112,7 +201,8 @@ fn real_eframe_retained_output_keeps_editor_focus_without_pane_callbacks() {
         SURFACE,
         Editor {
             target,
-            text: "retained".into(),
+            text: ["a".into(), "b".into()],
+            first_header: None,
             calls: Arc::clone(&calls),
         },
         DockStyle::default(),
@@ -135,7 +225,9 @@ fn real_eframe_retained_output_keeps_editor_focus_without_pane_callbacks() {
         Box::new(move |_| {
             Ok(Box::new(RetainApp {
                 app,
-                target,
+                phase: Phase::Initial,
+                header: None,
+                save_values: Vec::new(),
                 calls,
                 skipped,
                 started: Instant::now(),

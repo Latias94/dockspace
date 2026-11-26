@@ -370,8 +370,20 @@ pub fn retain_skipped_surface_input_state(
     surface: DockspaceSurfaceView<'_>,
     panes: &dyn PaneView,
 ) {
-    crate::render::retain_skipped_pane_keyboard(context, instance, surface.id());
-    retain_skipped_pane_focus(context, surface, panes);
+    if !crate::render::retain_skipped_pane_keyboard(context, instance, surface.id()) {
+        retain_skipped_pane_focus(context, surface, panes);
+    }
+}
+
+pub(crate) fn retain_presented_surface_input_state(
+    context: &Context,
+    instance: Id,
+    surface: dockspace::model::SurfaceId,
+    retained_focus: &[(ItemId, Id)],
+) {
+    if !crate::render::retain_skipped_pane_keyboard(context, instance, surface) {
+        retain_presented_pane_focus(context, retained_focus);
+    }
 }
 
 fn collect_pane_focus(

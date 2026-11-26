@@ -199,7 +199,12 @@ impl Dockspace {
                 .as_ref()
                 .map(|_| crate::output_proof::SurfaceOutputCapture::begin_multilayer(ui.painter()));
             if backpressured {
-                crate::focus::retain_presented_pane_focus(ui.ctx(), presented_focus_bindings);
+                crate::focus::retain_presented_surface_input_state(
+                    ui.ctx(),
+                    self.id,
+                    surface,
+                    presented_focus_bindings,
+                );
             }
             if let SurfaceWork::Ready(plan) = work {
                 let paint = render::paint_surface(

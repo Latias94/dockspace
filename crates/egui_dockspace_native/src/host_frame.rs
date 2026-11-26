@@ -16,17 +16,15 @@ use crate::mailbox::NativeHostBridge;
 use crate::pointer_event::NativePointerTranslator;
 use crate::receiver::NativeReceiverStore;
 
-pub(crate) fn retained_focus_binding(
+pub(crate) fn retained_window_binding(
     context: &egui::Context,
     token: eframe::NativeOutputToken,
-    surface: SurfaceId,
     bridge: &NativeHostBridge,
 ) -> Option<dockspace::runtime::NativeSurfaceBinding> {
     let binding = bridge
         .output_reservation(token)
         .and_then(|reservation| reservation.binding())?;
     (token.viewport_id() == context.viewport_id()
-        && binding.surface() == surface
         && bridge.with_viewports(|viewports| {
             viewports.binding_for_output(
                 token.viewport_id(),

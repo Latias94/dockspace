@@ -110,7 +110,13 @@ impl PaneInputDelivery {
         target: Option<Id>,
     ) {
         if self.awaits_registration() && context.ui.ctx().will_discard() {
-            defer(context, self.packet, Handoff::RetryRegistration);
+            defer(
+                context,
+                self.packet,
+                Handoff::RetryRegistration {
+                    focus_cleared_by_escape: self.focus_cleared_by_escape,
+                },
+            );
         } else if self.awaits_registration()
             && let Some(target) = target.filter(|target| {
                 self.packet
@@ -118,8 +124,14 @@ impl PaneInputDelivery {
                     .widget
                     .is_none_or(|expected| *target == expected)
             })
-            && context.ui.memory(|memory| memory.has_focus(target))
+            && context.ui.memory(|memory| {
+                memory.has_focus(target)
+                    || self.focus_cleared_by_escape && memory.focused().is_none()
+            })
         {
+            if self.focus_cleared_by_escape && context.ui.memory(egui::Memory::focused).is_none() {
+                context.ui.memory_mut(|memory| memory.request_focus(target));
+            }
             self.packet.target = rebind_packets(context, self.packet.target, target);
             defer(context, self.packet, Handoff::Continuation);
         } else {
@@ -128,7 +140,10 @@ impl PaneInputDelivery {
     }
 
     pub(in crate::render) fn retire(self, context: &mut RenderContext<'_, '_, '_>) {
-        retire_input(context);
+        context
+            .pane_shortcuts
+            .extend(self.packet.events.into_iter().filter(is_host_key));
+        return_queued_host_keys(context);
     }
 
     pub(in crate::render) fn replay(
@@ -160,6 +175,7 @@ impl PaneInputDelivery {
             previous,
             target: self.packet.target,
             keyboard,
+            focus_cleared_by_escape: self.focus_cleared_by_escape,
         }
     }
 }
@@ -170,6 +186,7 @@ pub(in crate::render) struct ScopedPaneInput {
     previous: Option<WidgetInput>,
     target: PaneInputTarget,
     keyboard: crate::render::tab_shortcuts::TabKeyboard,
+    focus_cleared_by_escape: bool,
 }
 
 impl ScopedPaneInput {
@@ -197,11 +214,16 @@ impl ScopedPaneInput {
                             target: self.target,
                             events,
                         },
-                        Handoff::RetryDelivery,
+                        Handoff::RetryDelivery {
+                            focus_cleared_by_escape: self.focus_cleared_by_escape,
+                        },
                     );
                 }
             } else {
-                retire_input(context);
+                context
+                    .pane_shortcuts
+                    .extend(input.events.into_iter().flatten().filter(is_host_key));
+                return_queued_host_keys(context);
             }
             return;
         };
@@ -219,15 +241,15 @@ impl ScopedPaneInput {
         match input.framework_input {
             Some(FrameworkInput::Surrender(tail)) => {
                 context.pane_shortcuts.extend(tail);
-                retire_input(context);
+                return_queued_host_keys(context);
             }
             Some(FrameworkInput::Traverse(direction, tail)) => {
                 let focused = ui.memory(egui::Memory::focused).filter(|&widget| {
                     crate::focus::pane_registered_focus_target(ui, clip, widget, false)
                 });
                 if direction == FocusDirection::Next
-                    && focused.is_some()
-                    && focused != self.target.widget
+                    && let Some(focused) =
+                        focused.filter(|focused| Some(*focused) != self.target.widget)
                 {
                     settle_framework_keys(context, self.target, focused, tail);
                 } else {

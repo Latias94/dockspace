@@ -272,15 +272,8 @@ impl NativeCloseControl {
     pub(crate) fn with_capacity_limit(entries: usize) -> Result<Self, NativeHostProtocolError> {
         Self::reservation_bytes(entries)
             .ok_or(NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        let mut pending = Vec::new();
-        pending
-            .try_reserve_exact(entries)
-            .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        if pending.capacity() > entries {
-            return Err(NativeHostProtocolError::NativeReportStorageUnavailable);
-        }
         Ok(Self {
-            pending,
+            pending: crate::bounded_storage::BoundedVec::with_slots(Some(entries))?.into_inner(),
             entry_limit: Some(entries),
             progress: crate::lifecycle_progress::NativeCloseProgress::default(),
         })

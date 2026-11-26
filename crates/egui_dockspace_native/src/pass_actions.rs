@@ -362,14 +362,6 @@ impl NativePassActions {
         self.stage(token, NativeFinalPass::Semantic(paints))
     }
 
-    pub(crate) fn stage_retain_previous(
-        &mut self,
-        token: NativeOutputToken,
-        surface: SurfaceId,
-    ) -> Result<(), NativePassActionError> {
-        self.stage_retain_previous_surfaces(token, &[surface])
-    }
-
     pub(crate) fn stage_retain_previous_surfaces(
         &mut self,
         token: NativeOutputToken,

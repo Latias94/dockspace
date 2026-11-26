@@ -63,6 +63,24 @@ fn input(viewport: ViewportId) -> RawInput {
     input
 }
 
+#[test]
+fn standalone_secondary_viewport_reports_terminal_focus_without_accesskit() {
+    let context = test_context();
+    context.disable_accesskit();
+    let viewport = ViewportId::from_hash_of("standalone editor");
+    let target = egui::Id::unique("standalone focus");
+    let output = context.run_ui(input(viewport), |ui| {
+        ui.add(egui::TextEdit::singleline(&mut String::new()).id(target))
+            .request_focus();
+    });
+    assert!(output.viewport_output[&viewport].class == egui::ViewportClass::Root);
+    assert_eq!(
+        super::terminal_viewport_focus(&context, viewport, &output),
+        Some(Some(target))
+    );
+    output.drop_without_applying_deltas();
+}
+
 fn idle_viewport(context: &Context, viewport: ViewportId) {
     for _ in 0..4 {
         context

@@ -172,6 +172,7 @@ pub(crate) enum NoFrameTerminal {
     Observed,
 }
 
+#[derive(Default)]
 pub(crate) struct PreparedNoFrameInvalidations {
     pub(crate) ready: Vec<PendingNoFrameInvalidation>,
     pub(crate) repaint_viewports: Vec<ViewportId>,
@@ -849,13 +850,7 @@ impl NativeCoordinator {
         &self,
     ) -> Result<Vec<DeferredViewportSpec>, NativeRuntimeError> {
         let count = self.deferred_viewports.specs().count();
-        let mut specs = Vec::new();
-        specs
-            .try_reserve_exact(count)
-            .map_err(|_| NativeHostProtocolError::NativeReportStorageUnavailable)?;
-        if specs.capacity() > count {
-            return Err(NativeHostProtocolError::NativeReportStorageUnavailable.into());
-        }
+        let mut specs = crate::bounded_storage::BoundedVec::with_slots(Some(count))?.into_inner();
         specs.extend(self.deferred_viewports.specs());
         Ok(specs)
     }

@@ -880,16 +880,22 @@ pub(crate) fn terminal_viewport_focus(
     viewport: ViewportId,
     output: &FullOutput,
 ) -> Option<Option<Id>> {
-    if viewport == ViewportId::ROOT
-        || output
-            .viewport_output
-            .get(&viewport)
-            .is_some_and(|entry| entry.class == egui::ViewportClass::Deferred)
-    {
+    let class = output.viewport_output.get(&viewport)?.class;
+    // The active parent marks an immediate child used before dispatching its
+    // renderer. A custom renderer can leave its class at the default Root.
+    // Once the parent ends, it clears that flag for independently run viewports.
+    let nested = viewport != ViewportId::ROOT
+        && class != egui::ViewportClass::Deferred
+        && context.viewport_for(viewport, |viewport| viewport.used);
+    if !nested {
         return Some(context.memory(egui::Memory::focused));
     }
     // An immediate child restores the parent's focus memory as its pass ends.
-    let focus = output.platform_output.accesskit_update.as_ref()?.focus;
+    let update = output.platform_output.accesskit_update.as_ref()?;
+    let focus = update.focus;
+    if update.tree.as_ref().is_some_and(|tree| tree.root == focus) {
+        return Some(None);
+    }
     context.viewport_for(viewport, |viewport| {
         viewport
             .prev_pass
