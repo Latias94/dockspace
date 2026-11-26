@@ -878,9 +878,7 @@ fn validate_move_target_semantics(
             payload,
             MovePayload::Item(source) if Some(target_node) == source.tabs()
         );
-        if !allowed_item_noop
-            && workspace.detach_empties_node(source_root, payload, target_node)
-        {
+        if !allowed_item_noop && workspace.detach_empties_node(source_root, payload, target_node) {
             let source_node = match payload {
                 MovePayload::Item(source) => source.owner_node(),
                 MovePayload::Tabs(source) | MovePayload::Subtree(source) => source.node(),

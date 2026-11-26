@@ -435,9 +435,6 @@ impl DockspaceSession {
         pointer_checkpoint: Option<crate::input::journal::PointerAuthorityCheckpoint>,
         storage_limit: Option<NativeInputStorageLimit>,
     ) -> Result<Vec<NativeSurfaceBinding>, DockspaceRuntimeError> {
-        if self.active_update.strong_count() != 0 {
-            return Err(DockspaceRuntimeError::update_in_progress());
-        }
         if self.pointer.is_some() {
             return Err(NativePlatformError::PointerProviderAlreadyEnabled.into());
         }

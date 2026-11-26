@@ -618,11 +618,7 @@ fn capture_tab_actions(
         .ui
         .input(|input| input.has_accesskit_action_request(id, Action::Focus));
     let pointer_activation = context.pointer_authority.accepts_local_pointer_actions()
-        && super::actions::unambiguous_pointer_click(
-            context.ui,
-            response,
-            PointerButton::Primary,
-        );
+        && super::actions::unambiguous_pointer_click(context.ui, response, PointerButton::Primary);
     if accesskit_activation || pointer_activation {
         response.request_focus();
         if (!tab.selected() || accesskit_activation)

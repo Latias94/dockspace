@@ -33,7 +33,9 @@ pub enum WindowPlacementError {
     },
     /// The window cannot report valid live client/outer decoration geometry
     /// (for example while minimized, unmapped, or reporting `outer < client`).
-    #[error("window geometry is unavailable for decoration sampling: client {client:?}, outer {outer:?}")]
+    #[error(
+        "window geometry is unavailable for decoration sampling: client {client:?}, outer {outer:?}"
+    )]
     GeometryUnavailable {
         /// Observed physical client size.
         client: PhysicalSize<u32>,

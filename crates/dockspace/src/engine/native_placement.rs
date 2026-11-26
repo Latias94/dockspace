@@ -61,7 +61,10 @@ impl DockEngine {
             }
             for existing in self.viewport.registry().bindings_for_window(window) {
                 let surface = existing.surface();
-                if placements.iter().any(|placement| placement.surface() == surface) {
+                if placements
+                    .iter()
+                    .any(|placement| placement.surface() == surface)
+                {
                     continue;
                 }
                 if self

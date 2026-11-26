@@ -608,9 +608,7 @@ impl DockEngine {
                             .map_or(0.0, |gap| rect_extent(gap, axis));
                         extent += track_extent;
                         gap_total += gap;
-                        maximum = maximum
-                            .zip(track_maximum)
-                            .map(|(max, value)| max + value);
+                        maximum = maximum.zip(track_maximum).map(|(max, value)| max + value);
                     }
                     extent += gap_total;
                     maximum = maximum.map(|max| max + gap_total);

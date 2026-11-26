@@ -1092,8 +1092,6 @@ mod auto_grid_shape_tests {
             serde_json::from_str::<SnapshotGridShape>(r#"{"kind":"auto"}"#).unwrap(),
             SnapshotGridShape::Auto
         );
-        assert!(
-            serde_json::from_str::<SnapshotGridShape>(r#"{"kind":"auto","extra":1}"#).is_err()
-        );
+        assert!(serde_json::from_str::<SnapshotGridShape>(r#"{"kind":"auto","extra":1}"#).is_err());
     }
 }
