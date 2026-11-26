@@ -32,7 +32,11 @@
 //!
 //! - [`model`] defines stable item identities, layouts and read-only views.
 //! - [`policy`] controls docking, closing and resizing permissions.
-//! - [`runtime::DockspaceSession`] accepts host frames and application commands.
+//! - [`host`] provides the ergonomic three-tier integration kit for third-party
+//!   UI frameworks (owned `'static` display lists, typed paint visitors,
+//!   [`host::LogicalHost`], and shared native multiview helpers).
+//! - [`runtime::DockspaceSession`] exposes the complete low-level host-frame,
+//!   bounded-storage, and native-window protocol.
 //! - [`close`] supports immediate decisions and deferred approval while saving.
 //!
 //! A host executes the returned surface program, commits the frame and reports
@@ -63,6 +67,7 @@ pub mod close;
 mod engine;
 pub mod geometry;
 mod graph;
+pub mod host;
 mod ids;
 mod input;
 mod interaction;

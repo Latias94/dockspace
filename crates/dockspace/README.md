@@ -47,8 +47,30 @@ tabs, active versus owned content, shared Grid tracks and constrained resizing.
 
 ## Connect your host
 
-Use `model` for stable pane/layout identities, `policy` for application rules,
-and `runtime::DockspaceSession` for host integration.
+Start with `dockspace::host` for the fastest path into any Rust UI framework
+(immediate-mode or retained-mode):
+
+- **Tier 1 (`SurfaceDisplayList` / `SurfaceProgramVisitor` / `SurfaceMetrics`)**:
+  compile a paint plan into an owned `'static` display list for retained UIs and
+  deferred GPU queues, or implement only the chrome methods you draw on
+  `SurfaceProgramVisitor`.
+- **Tier 2 (`LogicalHost` / `LogicalPointerEvent` / `PointerClearance`)**:
+  single-window and multi-surface logical hosting with two-step presentation
+  settlement (`LogicalPresentationToken` → `finish_presentation`) and
+  fail-closed pointer routing.
+- **Tier 3 (`NativeReportDigest` / `NativeWindowRetirementState` / `NativeWindows`)**:
+  shared native-multiview report synchronization, deduplicated window repaints,
+  and exact quiescence tracking.
+
+Run the zero-dependency [custom UI host example](examples/custom_ui_host.rs) to
+see both retained display-list and immediate visitor integration in ~180 lines:
+
+```sh
+cargo run -p dockspace --example custom_ui_host --locked
+```
+
+For direct access to the complete low-level protocol, use `model`, `policy`,
+and `runtime::DockspaceSession`:
 
 1. Begin a host frame and submit ordered input and application commands.
 2. Supply logical measurements and execute the returned surface program into

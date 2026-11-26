@@ -9,14 +9,14 @@ use std::{
 use dockspace::{
     close::CloseDecision,
     geometry::{PhysicalRect, ScaleFactor},
+    host::{NativeReportDigest, NativeWindowRetirementState},
     runtime::{
         DockspaceClosePhase, DockspaceClosePlan, DockspaceSession, HostFrameReport,
-        HostInputOutcome, NativeCloseDisposition, NativeCloseEffectAcknowledgement,
-        NativeCloseState, NativeCreateEffectAcknowledgement, NativeCreateReadiness,
-        NativeDispatchFailure, NativeEffectAcknowledgement, NativeEffectOperation,
-        NativeEffectRequest, NativeHostErrorKind, NativeSurfaceBinding, NativeSurfaceCloseAction,
-        NativeSurfaceRole, NativeUnsupportedReason, NativeWindowBinding, NativeWindowFacts,
-        NativeWorkAreaRoster,
+        NativeCloseDisposition, NativeCloseEffectAcknowledgement, NativeCloseState,
+        NativeCreateEffectAcknowledgement, NativeCreateReadiness, NativeDispatchFailure,
+        NativeEffectAcknowledgement, NativeEffectOperation, NativeEffectRequest,
+        NativeHostErrorKind, NativeSurfaceCloseAction, NativeSurfaceRole, NativeUnsupportedReason,
+        NativeWindowBinding, NativeWindowFacts, NativeWorkAreaRoster,
     },
 };
 use dockspace_winit::{
@@ -137,17 +137,10 @@ impl WindowState {
     }
 }
 
-struct Retirement {
-    window: NativeWindowBinding,
-    placements: Vec<NativeSurfaceBinding>,
-    close: Option<NativeCloseEffectAcknowledgement>,
-    destroyed: bool,
-}
-
 pub(super) struct Host {
     pub windows: NativeWindows<WindowState>,
     effects: VecDeque<NativeEffectRequest>,
-    retiring: BTreeMap<WindowId, Retirement>,
+    retiring: BTreeMap<WindowId, NativeWindowRetirementState>,
     pending_records: bool,
     last_snapshot: Vec<(NativeWindowBinding, NativeWindowFacts)>,
     close_action: NativeSurfaceCloseAction,
@@ -179,39 +172,27 @@ impl Host {
         mut report: HostFrameReport,
     ) -> AppResult<()> {
         // Retain the entire ordered suffix before doing anything fallible.
-        self.effects.extend(report.take_native_effects());
-        for continuation in report.native_root_continuations() {
-            self.windows.continue_root(*continuation)?;
-            session.report_native_binding_quiescence(continuation.predecessor())?;
+        let mut digest = NativeReportDigest::take_from(&mut report);
+        self.effects.extend(digest.take_effects());
+        for retired in digest.apply_to_windows(&mut self.windows)? {
+            session.report_native_binding_quiescence(retired)?;
             self.pending_records = true;
         }
-        for binding in report.native_placement_detachments() {
-            session.report_native_binding_quiescence(*binding)?;
-            self.pending_records = true;
-        }
-        for outcome in report.inputs() {
-            if let HostInputOutcome::NativeSurfaceCloseRequested { plan, .. } = outcome
-                && self.close_action == NativeSurfaceCloseAction::RetainLayout
+        for plan in digest.close_plans() {
+            if self.close_action == NativeSurfaceCloseAction::RetainLayout
                 && plan.phase() == DockspaceClosePhase::AwaitingDecision
             {
                 self.close_plans.push(plan.clone());
             }
-            if let HostInputOutcome::NativeCloseObservationApplied { close_requests }
-            | HostInputOutcome::NativePlatformSnapshotApplied { close_requests } = outcome
-            {
-                for close in close_requests {
-                    if close.binding().surface() != workspace::MAIN {
-                        session.request_native_surface_close(*close, self.close_action)?;
-                        self.pending_records = true;
-                    }
-                }
+        }
+        for close in digest.close_requests() {
+            if close.binding().surface() != workspace::MAIN {
+                session.request_native_surface_close(*close, self.close_action)?;
+                self.pending_records = true;
             }
         }
-        for (binding, _, state) in self.windows.iter() {
-            if session
-                .native_surface_bindings_for_window(binding)
-                .any(|surface| report.repaint_surfaces().contains(&surface.surface()))
-            {
+        for (binding, _) in digest.dirty_windows(session, &self.windows) {
+            if let Some(state) = self.windows.get(binding) {
                 state.window.request_redraw();
             }
         }
@@ -221,7 +202,11 @@ impl Host {
     /// Publishes complete observations only when all physical resources can be
     /// sampled, or their destruction has actually been delivered by winit.
     pub fn observe(&mut self, session: &mut DockspaceSession) -> AppResult<bool> {
-        if self.retiring.values().any(|entry| !entry.destroyed) {
+        if self
+            .retiring
+            .values()
+            .any(|entry| !entry.is_native_destroyed())
+        {
             return Ok(false);
         }
         let mut facts = Vec::new();
@@ -229,13 +214,9 @@ impl Host {
             facts.push((binding, state.facts()?));
         }
         for entry in self.retiring.values() {
-            facts.push((
-                entry.window,
-                entry.close.map_or_else(
-                    NativeWindowFacts::destroyed,
-                    NativeWindowFacts::destroyed_after,
-                ),
-            ));
+            if let Some(destroyed) = entry.destruction_facts() {
+                facts.push((entry.window(), destroyed));
+            }
         }
         if facts == self.last_snapshot {
             return Ok(false);
@@ -254,7 +235,11 @@ impl Host {
             self.records_committed();
             self.accept(session, report)?;
             // observe() withholds a complete snapshot until every destruction arrives.
-            if self.retiring.values().all(|entry| entry.destroyed) {
+            if self
+                .retiring
+                .values()
+                .all(NativeWindowRetirementState::is_native_destroyed)
+            {
                 self.drain_destroyed(session)?;
             }
             if !self.pending_records {
@@ -411,18 +396,10 @@ impl Host {
             .remove(binding)
             .ok_or("retiring window resources are missing")?;
         let id = state.window.id();
-        let placements = session
-            .retained_native_surface_bindings_for_window(binding)
-            .collect();
-        self.retiring.insert(
-            id,
-            Retirement {
-                window: binding,
-                placements,
-                close,
-                destroyed: false,
-            },
-        );
+        let mut retirement = NativeWindowRetirementState::from_session(session, binding, close);
+        // All outputs in this synchronous example are already settled before retiring.
+        retirement.mark_outputs_retired();
+        self.retiring.insert(id, retirement);
         // No window clones or deferred renderer work survive this point. This
         // is a close command; only the later Destroyed event proves destruction.
         drop(state);
@@ -433,7 +410,8 @@ impl Host {
         let Some(entry) = self.retiring.get_mut(&id) else {
             return false;
         };
-        entry.destroyed = true;
+        entry.mark_native_destroyed();
+        entry.mark_callbacks_sealed();
         self.destructions += 1;
         true
     }
@@ -442,7 +420,7 @@ impl Host {
         let destroyed: Vec<_> = self
             .retiring
             .iter()
-            .filter_map(|(id, entry)| entry.destroyed.then_some(*id))
+            .filter_map(|(id, entry)| entry.is_ready_for_quiescence().then_some(*id))
             .collect();
         for id in destroyed {
             let entry = self
@@ -451,8 +429,21 @@ impl Host {
                 .ok_or("destroyed route is missing")?;
             // All outputs were synchronously settled and the final OS event is
             // consumed. Retain the unrecorded suffix if ingress is full.
-            while let Some(binding) = entry.placements.last().copied() {
-                if let Err(error) = session.report_native_binding_quiescence(binding) {
+            let remaining_before = entry.placements().len();
+            match entry.report_quiescence_if_ready(session) {
+                Ok(true) => {
+                    if entry.placements().len() < remaining_before {
+                        self.pending_records = true;
+                    }
+                    let window = entry.window();
+                    self.last_snapshot.retain(|(binding, _)| *binding != window);
+                    self.retiring.remove(&id);
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    if entry.placements().len() < remaining_before {
+                        self.pending_records = true;
+                    }
                     if error.native_kind() == Some(NativeHostErrorKind::InputCapacity)
                         && self.pending_records
                     {
@@ -460,12 +451,7 @@ impl Host {
                     }
                     return Err(error.into());
                 }
-                entry.placements.pop();
-                self.pending_records = true;
             }
-            self.last_snapshot
-                .retain(|(binding, _)| *binding != entry.window);
-            self.retiring.remove(&id);
         }
         Ok(())
     }

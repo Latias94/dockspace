@@ -9,7 +9,8 @@ use dockspace::{
     policy::DockPolicy,
     runtime::{
         DockspaceRuntimeError, HostWindowToken, NativeHostCapabilities, NativeHostCapability,
-        NativeInputStorageLimit, NativePointerRoster, NativeReceiverAnswer, NativeSurfacePlacement,
+        NativeInputStorageLimit, NativePointerRoster, NativeReceiverAnswer, NativeSurfaceBinding,
+        NativeSurfacePlacement,
     },
 };
 
@@ -91,15 +92,11 @@ fn destroyed_shared_window() -> (DockspaceSession, Host, Vec<NativeSurfaceBindin
         .unwrap();
     workspace::idle(&mut session).unwrap();
     let mut host = Host::new();
-    host.retiring.insert(
-        WindowId::from(41),
-        Retirement {
-            window: binding,
-            placements: retired.clone(),
-            close: None,
-            destroyed: true,
-        },
-    );
+    let mut retirement = NativeWindowRetirementState::new(binding, retired.clone(), None);
+    retirement.mark_native_destroyed();
+    retirement.mark_outputs_retired();
+    retirement.mark_callbacks_sealed();
+    host.retiring.insert(WindowId::from(41), retirement);
     host.last_snapshot = vec![(binding, NativeWindowFacts::destroyed())];
     (session, host, retired)
 }
@@ -142,6 +139,6 @@ fn destroyed_retirement_returns_capacity_failure_without_recording_progress() {
         Some(NativeHostErrorKind::InputCapacity)
     );
     assert!(!host.pending_records);
-    assert_eq!(host.retiring[&WindowId::from(41)].placements, retired);
+    assert_eq!(host.retiring[&WindowId::from(41)].placements(), retired);
     assert_eq!(host.last_snapshot.len(), 1);
 }

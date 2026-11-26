@@ -8,7 +8,8 @@ need a desktop session and a working graphics backend.
 | Goal | Example | What it demonstrates |
 | --- | --- | --- |
 | Learn the renderer-neutral core | [Layout commands](../crates/dockspace/examples/layout_commands.rs) | Create a layout, select/open/move panes and inspect committed results; no window |
-| Integrate a custom renderer | [Engine host](../integration/dockspace-host-harness/examples/engine_host.rs) | Measure, record and settle output for two logical surfaces; recording renderer |
+| Integrate your own UI framework | [Custom UI host](../crates/dockspace/examples/custom_ui_host.rs) | `dockspace::host` three-tier kit: owned `SurfaceDisplayList`, typed `SurfaceProgramVisitor`, `LogicalHost`, fail-closed `PointerClearance`; no window |
+| Integrate a custom renderer | [Engine host](../integration/dockspace-host-harness/examples/engine_host.rs) | Measure, record and settle output for two logical surfaces; low-level `runtime` recording renderer |
 | Connect a custom renderer to winit | [Software host](../crates/dockspace_winit/examples/software.rs) | Caller-owned event loop, software drawing, pointer routing and actual presentation; no UI framework |
 | Manage native windows without egui | [Winit multiview](../crates/dockspace_winit/examples/multiview/main.rs) | Core window bindings, renderer preparation, exact presentation, Dock Back, close recovery and shutdown |
 | Try full docking with official egui | [Workbench](../crates/egui_dockspace/examples/workbench.rs) | Drag docking, splitters, contained Inspector, themes and retained document data |
@@ -34,6 +35,7 @@ full drag path.
 
 ```sh
 cargo run -p dockspace --example layout_commands --locked
+cargo run -p dockspace --example custom_ui_host --locked
 cargo run --manifest-path integration/dockspace-host-harness/Cargo.toml --example engine_host --locked
 ```
 

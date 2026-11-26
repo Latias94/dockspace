@@ -145,8 +145,25 @@ settings do not grant input to geometry that has not been presented.
 See the [adapter testing guide](../../../docs/ADAPTER_TESTING.md) for integration
 responsibilities, retained UI publication and reusable semantic scenarios.
 
-Every UI adapter uses the same public seams. Implement the rows needed by the
-host; a single-window renderer does not need native hosting.
+For the fastest path into a custom Rust UI framework (immediate-mode or
+retained-mode), start with [`dockspace::host`](../src/host.rs) and the runnable
+[`custom_ui_host`](../examples/custom_ui_host.rs) example:
+
+- **Tier 1 (`SurfaceDisplayList`, `SurfaceProgramVisitor`, `SurfaceMetrics`,
+  `SurfaceMeasurer`)**: compile any `SurfacePaintPlan` into an owned `'static`
+  display list for retained widget trees / GPU queues, or override only the
+  chrome primitives you render on `SurfaceProgramVisitor`.
+- **Tier 2 (`LogicalHost`, `LogicalPointerEvent`, `PointerClearance`,
+  `LogicalPresentationToken`)**: single-window and multi-surface logical UI
+  hosting with mandatory two-step presentation settlement and fail-closed
+  framework occlusion proofs.
+- **Tier 3 (`NativeReportDigest`, `NativeWindowRetirementState`, `NativeWindows`,
+  `compile_native_window_facts`, `resolve_region_window_hit`)**: shared
+  native-multiview report synchronization, deduplicated window repaints, and
+  exact quiescence tracking across OS windows.
+
+Every UI adapter uses the same public seams underneath. Implement the rows
+needed by the host; a single-window renderer does not need native hosting.
 
 | Host capability | Shared interface | Host-specific work |
 | --- | --- | --- |
