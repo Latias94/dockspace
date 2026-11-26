@@ -1204,10 +1204,15 @@ impl NativeProducerState {
             }
             for state in &previous.windows {
                 let mut next = *state;
-                next.current = registry.window(state.binding).is_some();
+                if let Some(window) = registry.window(state.binding) {
+                    next.current = true;
+                    next.observation_binding = window.observation_binding();
+                } else {
+                    next.current = false;
+                }
                 next.cleanup_observation = engine
                     .viewport()
-                    .retains_window_cleanup(state.observation_binding);
+                    .retains_window_cleanup(next.observation_binding);
                 if !next.current && !next.cleanup_observation {
                     next.window_generation = 0;
                 }

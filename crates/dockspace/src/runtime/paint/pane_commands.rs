@@ -160,6 +160,36 @@ impl SurfacePaintPlan<'_> {
                     .map(|row| row.owner_node()),
             )
             .next()
+            .or_else(|| {
+                let target = workspace.root(root)?;
+                let eligible = |node| node != pane.record.owner_node();
+                if let Some(central) = target
+                    .central
+                    .filter(|&node| eligible(node) && workspace.node_has_visible_content(node))
+                {
+                    return Some(central);
+                }
+                let items = workspace.collect_items_in_subtree(target.node);
+                items
+                    .iter()
+                    .copied()
+                    .filter(|item| !workspace.item_is_hidden(*item))
+                    .find_map(|item| {
+                        workspace
+                            .locate_item_by_id(item)
+                            .map(|place| place.owner_node())
+                            .filter(|&node| eligible(node))
+                    })
+                    .or_else(|| target.central.filter(|&node| eligible(node)))
+                    .or_else(|| {
+                        items.into_iter().find_map(|item| {
+                            workspace
+                                .locate_item_by_id(item)
+                                .map(|place| place.owner_node())
+                                .filter(|&node| eligible(node))
+                        })
+                    })
+            })
             .map(|node| DockPlacement::Center(DockAnchor::Node(NodeKey(node))))
     }
 }

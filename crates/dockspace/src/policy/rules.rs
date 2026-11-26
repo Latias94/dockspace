@@ -712,7 +712,7 @@ impl Default for CentralNodePolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 struct DockPolicyRules {
     arrangement_locked: bool,
     allowed_operations: BTreeSet<DockOperation>,
@@ -726,6 +726,84 @@ struct DockPolicyRules {
     source_rules: BTreeMap<RootId, DockSourceRule>,
     target_rules: BTreeMap<DockTargetRuleKey, DockTargetRule>,
     surface_rules: BTreeMap<SurfaceId, DockSurfaceRule>,
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for DockPolicyRules {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RawDockPolicyRules {
+            arrangement_locked: bool,
+            allowed_operations: BTreeSet<DockOperation>,
+            allowed_presentations: BTreeSet<DockPresentationMode>,
+            resize_axes: BTreeSet<Axis>,
+            root_disabled_resize_axes: BTreeMap<RootId, BTreeSet<Axis>>,
+            tab_bar: TabBarPolicy,
+            close: CloseCapability,
+            central_node: CentralNodePolicy,
+            item_rules: BTreeMap<ItemId, DockItemRule>,
+            source_rules: BTreeMap<RootId, DockSourceRule>,
+            target_rules: BTreeMap<DockTargetRuleKey, DockTargetRule>,
+            surface_rules: BTreeMap<SurfaceId, DockSurfaceRule>,
+        }
+
+        let raw = RawDockPolicyRules::deserialize(deserializer)?;
+        for (operation, mode) in [
+            (
+                DockOperation::TiledPresentation,
+                DockPresentationMode::Tiled,
+            ),
+            (
+                DockOperation::ContainedFloating,
+                DockPresentationMode::Contained,
+            ),
+            (DockOperation::NativeSurface, DockPresentationMode::Native),
+        ] {
+            if raw.allowed_operations.contains(&operation)
+                != raw.allowed_presentations.contains(&mode)
+            {
+                return Err(serde::de::Error::custom(format!(
+                    "inconsistent policy flags between {operation:?} and {mode:?}"
+                )));
+            }
+        }
+        if raw
+            .allowed_operations
+            .contains(&DockOperation::SplitterResize)
+            != !raw.resize_axes.is_empty()
+        {
+            return Err(serde::de::Error::custom(
+                "inconsistent splitter resize policy between allowed_operations and resize_axes",
+            ));
+        }
+        if raw
+            .root_disabled_resize_axes
+            .values()
+            .any(BTreeSet::is_empty)
+        {
+            return Err(serde::de::Error::custom(
+                "root_disabled_resize_axes cannot contain an empty axis set",
+            ));
+        }
+        Ok(Self {
+            arrangement_locked: raw.arrangement_locked,
+            allowed_operations: raw.allowed_operations,
+            allowed_presentations: raw.allowed_presentations,
+            resize_axes: raw.resize_axes,
+            root_disabled_resize_axes: raw.root_disabled_resize_axes,
+            tab_bar: raw.tab_bar,
+            close: raw.close,
+            central_node: raw.central_node,
+            item_rules: raw.item_rules,
+            source_rules: raw.source_rules,
+            target_rules: raw.target_rules,
+            surface_rules: raw.surface_rules,
+        })
+    }
 }
 
 impl Default for DockPolicyRules {
@@ -762,7 +840,11 @@ impl Default for DockPolicyRules {
 /// Platform capabilities remain observed facts. Policy permission never claims that a renderer or
 /// native provider can perform an operation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Deserialize, serde::Serialize),
+    serde(deny_unknown_fields)
+)]
 pub struct DockPolicy {
     rules: DockPolicyRules,
 }
@@ -857,6 +939,11 @@ impl DockPolicy {
     /// Enables or disables splitter resizing along one axis.
     pub fn set_allow_resize_axis(&mut self, axis: DockspaceAxis, allowed: bool) {
         set_membership(&mut self.rules.resize_axes, axis.into(), allowed);
+        set_membership(
+            &mut self.rules.allowed_operations,
+            DockOperation::SplitterResize,
+            !self.rules.resize_axes.is_empty(),
+        );
     }
 
     /// Returns whether this root's own rule allows split resizing along one axis.
@@ -2244,5 +2331,37 @@ mod tests {
             policy.check_tear_off(TearOffPresentation::Contained),
             Err(PolicyRejection::ContainedFloatingDisabled)
         );
+    }
+
+    #[test]
+    fn set_allow_resize_axis_stays_in_sync_with_splitter_resize_operation() {
+        let mut policy = DockPolicy::default();
+        policy.set_allow_splitter_resize(false);
+        assert!(!policy.allows_splitter_resize());
+        assert!(!policy.allows(DockOperation::SplitterResize));
+
+        policy.set_allow_resize_axis(DockspaceAxis::Horizontal, true);
+        assert!(policy.allows_splitter_resize());
+        assert!(policy.allows(DockOperation::SplitterResize));
+        assert!(policy.rules.resize_axes.contains(&Axis::Horizontal));
+        assert!(!policy.rules.resize_axes.contains(&Axis::Vertical));
+
+        policy.set_allow_resize_axis(DockspaceAxis::Horizontal, false);
+        assert!(!policy.allows_splitter_resize());
+        assert!(!policy.allows(DockOperation::SplitterResize));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn deserialize_rejects_contradictory_policy_rules() {
+        let json = serde_json::to_string(&DockPolicy::default()).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // Remove SplitterResize while resize_axes remains non-empty.
+        value["rules"]["allowed_operations"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|entry| entry != "SplitterResize");
+        let err = serde_json::from_value::<DockPolicy>(value).unwrap_err();
+        assert!(err.to_string().contains("splitter resize"), "{err}");
     }
 }

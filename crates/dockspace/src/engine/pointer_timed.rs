@@ -586,13 +586,13 @@ impl DockEngine {
         events: &mut Vec<WorkspaceEvent>,
         interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<Vec<InteractionOutcome>, EngineError> {
-        if !self.journal_continuation_is_current(owner.stream(), token) {
-            return Ok(Vec::new());
-        }
-        if !self.stationary_edge_has_authority(owner, edge) {
+        if !self.journal_continuation_is_current(owner.stream(), token)
+            || !self.stationary_edge_has_authority(owner, edge)
+        {
             self.clear_pointer_continuation(owner);
             // An optional stationary observation cannot infer owner loss from
-            // missing facts. Explicit delivery and capture loss still count.
+            // missing facts. Explicit delivery and capture loss still count,
+            // including when docking suspension just cleared the continuation.
             let mut outcomes = Vec::new();
             if matches!(edge.delivery_owner(), Authority::Known(_)) {
                 let (delivery, outcome) = self.gate_journal_delivery_action(

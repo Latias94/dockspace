@@ -35,6 +35,7 @@ impl DockEngine {
             });
         };
         let child = (record.role() == ViewportRole::Child).then(|| record.observation_binding());
+        let mut removed_root_surfaces = Vec::new();
         if child.is_none() {
             for placement in placements {
                 let surface = placement.surface();
@@ -58,6 +59,27 @@ impl DockEngine {
                     });
                 }
             }
+            for existing in self.viewport.registry().bindings_for_window(window) {
+                let surface = existing.surface();
+                if placements.iter().any(|placement| placement.surface() == surface) {
+                    continue;
+                }
+                if self
+                    .bound_surface_recoveries
+                    .values()
+                    .any(|bound| bound.obligation.target().host_surface() == surface)
+                {
+                    return Err(EngineError::Viewport {
+                        input,
+                        source: ViewportCoordinatorError::Registry(
+                            crate::platform::registry::ViewportRegistryError::WindowPlacementUnavailable {
+                                binding: window,
+                            },
+                        ),
+                    });
+                }
+                removed_root_surfaces.push(surface);
+            }
         }
         let dependencies = self.platform_interaction_dependencies();
         let changed = self
@@ -65,6 +87,9 @@ impl DockEngine {
             .set_surface_placements(window, placements)
             .map_err(|source| EngineError::Viewport { input, source })?;
         if child.is_none() {
+            for surface in removed_root_surfaces {
+                self.root_recovery_anchors.remove(&surface);
+            }
             for placement in placements {
                 if !self
                     .root_recovery_anchors

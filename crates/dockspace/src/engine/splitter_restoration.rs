@@ -595,6 +595,7 @@ impl DockEngine {
                             .zip(sizing.maximum())
                             .map(|(max, value)| max.max(value));
                     }
+                    let mut gap_total: f64 = 0.0;
                     for ((mut track_extent, mut track_maximum, occupied), facts) in
                         values.into_iter().zip(&tracks.tracks)
                     {
@@ -605,15 +606,22 @@ impl DockEngine {
                         let gap = facts
                             .following_gap
                             .map_or(0.0, |gap| rect_extent(gap, axis));
-                        extent += track_extent + gap;
+                        extent += track_extent;
+                        gap_total += gap;
                         maximum = maximum
                             .zip(track_maximum)
-                            .map(|(max, value)| max + value + gap);
+                            .map(|(max, value)| max + value);
+                    }
+                    extent += gap_total;
+                    maximum = maximum.map(|max| max + gap_total);
+                    if !extent.is_finite() || maximum.is_some_and(|max| !max.is_finite()) {
+                        return None;
                     }
                     let minimum = match axis {
                         Axis::Horizontal => result.constraints.min().width(),
                         Axis::Vertical => result.constraints.min().height(),
                     };
+                    let maximum = maximum.map(|max| max.max(minimum));
                     let preferred = has_hint.then(|| {
                         maximum.map_or(extent.max(minimum), |max| extent.clamp(minimum, max))
                     });
@@ -626,6 +634,7 @@ impl DockEngine {
                 } => {
                     let split = projection.splits.get(&node)?;
                     let mut extent: f64 = 0.0;
+                    let mut gap_total: f64 = 0.0;
                     let mut maximum = Some(0.0_f64);
                     let mut has_hint = false;
                     for (index, child) in children.iter().enumerate() {
@@ -644,10 +653,11 @@ impl DockEngine {
                             .following_gap
                             .map_or(0.0, |gap| rect_extent(gap, axis));
                         if *split_axis == axis {
-                            extent += child_extent + gap;
+                            extent += child_extent;
+                            gap_total += gap;
                             maximum = maximum
                                 .zip(child_sizing.maximum())
-                                .map(|(maximum, child)| maximum + child + gap);
+                                .map(|(maximum, child)| maximum + child);
                         } else {
                             extent = extent.max(child_extent);
                             maximum = maximum
@@ -655,13 +665,18 @@ impl DockEngine {
                                 .map(|(maximum, child)| maximum.max(child));
                         }
                     }
-                    if !extent.is_finite() {
+                    if *split_axis == axis {
+                        extent += gap_total;
+                        maximum = maximum.map(|max| max + gap_total);
+                    }
+                    if !extent.is_finite() || maximum.is_some_and(|max| !max.is_finite()) {
                         return None;
                     }
                     let minimum = match axis {
                         Axis::Horizontal => result.constraints.min().width(),
                         Axis::Vertical => result.constraints.min().height(),
                     };
+                    let maximum = maximum.map(|max| max.max(minimum));
                     let preferred = has_hint.then(|| {
                         maximum.map_or(extent.max(minimum), |maximum| {
                             extent.clamp(minimum, maximum)
@@ -1499,5 +1514,46 @@ mod tests {
             piecewise_target_delta(limits, Some(0.0), Some(0.0), |_| Some((0.0, 0.0))),
             Some(0.0)
         );
+    }
+
+    #[test]
+    fn non_dyadic_fixed_split_children_do_not_panic_during_preferred_restoration() {
+        let mut builder = Workspace::builder();
+        let left_a = builder.insert_node(Node::pane(A));
+        let left_b = builder.insert_node(Node::pane(B));
+        let inner_split =
+            builder.insert_node(Node::equal_split(Axis::Horizontal, [left_a, left_b]).unwrap());
+        let right = builder.insert_node(Node::pane(D));
+        let root =
+            builder.insert_node(Node::equal_split(Axis::Horizontal, [inner_split, right]).unwrap());
+        builder.set_root(ROOT, RootRecord::new(root));
+        builder.set_surface(SURFACE, SurfacePresentation::with_main(ROOT));
+        let config = DockPresentationConfig::builder()
+            .minimum_pane_size(1.0, 1.0)
+            .tab_bar_height(20.0)
+            .tab_group_grip_extent(20.0)
+            .splitter_thickness(4.0)
+            .build()
+            .unwrap();
+        let (engine, plan) = compiled_with_sizing(builder.build().unwrap(), config, |item| {
+            let x = if item == A {
+                AxisSizing::new(124.2, Some(124.2), Some(124.2)).unwrap()
+            } else if item == B {
+                AxisSizing::new(80.1, Some(80.1), Some(80.1)).unwrap()
+            } else {
+                AxisSizing::new(100.0, None, Some(200.0)).unwrap()
+            };
+            PaneSizing::new(x, AxisSizing::default())
+        });
+        let target = SplitterResizeTarget::Handle(SplitterSceneId::split(ROOT, root, 0));
+        let group = prepare_group(&engine, &plan, target, Axis::Horizontal).unwrap();
+        let delta = DockEngine::splitter_restoration_delta(
+            engine.workspace(),
+            &plan,
+            target,
+            &group,
+            SplitterReset::Preferred,
+        );
+        assert!(delta.is_some());
     }
 }

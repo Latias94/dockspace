@@ -111,7 +111,20 @@ pub enum SnapshotGridShape {
         columns: u64,
     },
     /// Dimensions will be resolved from the offered rectangle.
+    #[serde(deserialize_with = "deserialize_auto_grid_shape")]
     Auto,
+}
+
+fn deserialize_auto_grid_shape<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Serde's internally tagged unit variant decoder ignores unknown fields.
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct AutoGridShape {}
+
+    AutoGridShape::deserialize(deserializer).map(|_| ())
 }
 
 /// Exact independently normalized row and column shares from the graph.
@@ -1067,4 +1080,20 @@ fn runtime_node(
             kind: SnapshotEntityKind::Node,
             id,
         })
+}
+
+#[cfg(test)]
+mod auto_grid_shape_tests {
+    use super::SnapshotGridShape;
+
+    #[test]
+    fn auto_grid_shape_rejects_unknown_json_fields() {
+        assert_eq!(
+            serde_json::from_str::<SnapshotGridShape>(r#"{"kind":"auto"}"#).unwrap(),
+            SnapshotGridShape::Auto
+        );
+        assert!(
+            serde_json::from_str::<SnapshotGridShape>(r#"{"kind":"auto","extra":1}"#).is_err()
+        );
+    }
 }

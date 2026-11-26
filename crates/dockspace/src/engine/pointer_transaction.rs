@@ -277,31 +277,49 @@ impl DockEngine {
             && !self.journal_continuation_is_current(stream, token)
         {
             // A revoked timer cannot reinterpret an old lane or ask receivers
-            // about a newer gesture. Its real native capture loss still counts.
-            if matching_owner
-                && matches!(owner.lease().scope(), PointerProviderScope::NativeJoined(_))
-            {
-                return self.reduce_journal_capture_change(
-                    cause,
-                    owner,
-                    capture_authority_after,
-                    interaction_events,
-                );
+            // about a newer gesture. Its real capture loss still counts.
+            if matching_owner {
+                return if matches!(owner.lease().scope(), PointerProviderScope::NativeJoined(_)) {
+                    self.reduce_journal_capture_change(
+                        cause,
+                        owner,
+                        capture_authority_after,
+                        interaction_events,
+                    )
+                } else {
+                    let (_, outcome) = self.gate_journal_capture_action(
+                        cause,
+                        owner,
+                        capture_authority_after,
+                        false,
+                        interaction_events,
+                    )?;
+                    Ok(outcome.into_iter().collect())
+                };
             }
             return Ok(Vec::new());
         }
         if let PointerEdgeKind::CaptureAcquired(token) = edge.kind()
             && !self.journal_capture_acquisition_is_current(stream, token)
         {
-            if matching_owner
-                && matches!(owner.lease().scope(), PointerProviderScope::NativeJoined(_))
-            {
-                return self.reduce_journal_capture_change(
-                    cause,
-                    owner,
-                    capture_authority_after,
-                    interaction_events,
-                );
+            if matching_owner {
+                return if matches!(owner.lease().scope(), PointerProviderScope::NativeJoined(_)) {
+                    self.reduce_journal_capture_change(
+                        cause,
+                        owner,
+                        capture_authority_after,
+                        interaction_events,
+                    )
+                } else {
+                    let (_, outcome) = self.gate_journal_capture_action(
+                        cause,
+                        owner,
+                        capture_authority_after,
+                        false,
+                        interaction_events,
+                    )?;
+                    Ok(outcome.into_iter().collect())
+                };
             }
             return Ok(Vec::new());
         }
@@ -446,15 +464,24 @@ impl DockEngine {
                 interaction_events,
             ),
             PointerEdgeKind::Scrolled(scroll) => {
-                let mut outcomes = if matching_owner
-                    && matches!(owner.lease().scope(), PointerProviderScope::NativeJoined(_))
-                {
-                    self.reduce_journal_capture_change(
-                        cause,
-                        owner,
-                        capture_authority_after,
-                        interaction_events,
-                    )?
+                let mut outcomes = if matching_owner {
+                    if matches!(owner.lease().scope(), PointerProviderScope::NativeJoined(_)) {
+                        self.reduce_journal_capture_change(
+                            cause,
+                            owner,
+                            capture_authority_after,
+                            interaction_events,
+                        )?
+                    } else {
+                        let (_, outcome) = self.gate_journal_capture_action(
+                            cause,
+                            owner,
+                            capture_authority_after,
+                            false,
+                            interaction_events,
+                        )?;
+                        outcome.into_iter().collect()
+                    }
                 } else {
                     Vec::new()
                 };
@@ -464,15 +491,25 @@ impl DockEngine {
                 Ok(outcomes)
             }
             PointerEdgeKind::ButtonPressed(_) | PointerEdgeKind::ButtonReleased(_)
-                if matching_owner
-                    && matches!(owner.lease().scope(), PointerProviderScope::NativeJoined(_)) =>
+                if matching_owner =>
             {
-                self.reduce_journal_capture_change(
-                    cause,
-                    owner,
-                    capture_authority_after,
-                    interaction_events,
-                )
+                if matches!(owner.lease().scope(), PointerProviderScope::NativeJoined(_)) {
+                    self.reduce_journal_capture_change(
+                        cause,
+                        owner,
+                        capture_authority_after,
+                        interaction_events,
+                    )
+                } else {
+                    let (_, outcome) = self.gate_journal_capture_action(
+                        cause,
+                        owner,
+                        capture_authority_after,
+                        false,
+                        interaction_events,
+                    )?;
+                    Ok(outcome.into_iter().collect())
+                }
             }
             PointerEdgeKind::ButtonPressed(_)
             | PointerEdgeKind::ButtonReleased(_)

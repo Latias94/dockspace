@@ -1818,7 +1818,10 @@ impl DockEngine {
             authority,
         ) {
             Ok(publication) => publication,
-            Err(source) if source.is_expected_rejection() => return Ok(false),
+            Err(source) if source.is_expected_rejection() => {
+                self.mark_active_surface_close_plans_externally_destroyed_unproved(binding, None);
+                return Ok(false);
+            }
             Err(source) => {
                 return Err(EngineError::Command {
                     input,
@@ -1943,6 +1946,7 @@ impl DockEngine {
                             roster,
                             transaction,
                             recovery_focus,
+                            ..
                         } => {
                             recovery.push(transaction);
                             focus.get_or_insert((transaction.target_surface(), *recovery_focus));
@@ -2058,6 +2062,7 @@ impl DockEngine {
                 roster,
                 transaction,
                 recovery_focus,
+                ..
             } => {
                 if !roster.matches_workspace(&self.workspace) {
                     return Ok(None);

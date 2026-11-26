@@ -1060,6 +1060,7 @@ enum PreparedCloseOperation {
         roster: SurfaceRosterDisposition,
         transaction: SurfaceRecoveryTransaction,
         recovery_focus: PaneFocusDisposition,
+        recovery: bool,
     },
     SurfaceContent {
         roster: SurfaceRosterDisposition,

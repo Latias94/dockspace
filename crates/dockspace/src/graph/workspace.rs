@@ -540,6 +540,72 @@ impl Workspace {
         item_count == 1 && !self.retains_empty_central_root(root)
     }
 
+    /// Returns the highest non-central ancestor node that becomes empty when `payload` detaches.
+    pub(crate) fn highest_emptied_ancestor_on_detach(
+        &self,
+        root: RootId,
+        payload: &MovePayload,
+    ) -> Option<NodeId> {
+        let central = self.root(root)?.central;
+        let mut current = match payload {
+            MovePayload::Item(source) => {
+                let owner = source.owner_node();
+                if central == Some(owner) {
+                    return None;
+                }
+                let empties_owner = match self.node(owner)? {
+                    Node::Pane { .. } => true,
+                    Node::Tabs { items, .. } => {
+                        items.as_slice() == [TabKey::for_item(source.item())]
+                    }
+                    Node::Split { .. } | Node::Grid { .. } => false,
+                };
+                empties_owner.then_some(owner)?
+            }
+            MovePayload::Tabs(source) | MovePayload::Subtree(source) => {
+                let node = source.node();
+                if central == Some(node) {
+                    return None;
+                }
+                node
+            }
+        };
+        while let Some(link) = self.parent_link(root, current) {
+            if central == Some(link.parent) {
+                break;
+            }
+            let empties_parent = match self.node(link.parent) {
+                Some(Node::Tabs { items, .. }) => items.len() == 1,
+                Some(Node::Split { children, .. } | Node::Grid { children, .. }) => {
+                    children.len() == 1
+                }
+                Some(Node::Pane { .. }) | None => false,
+            };
+            if !empties_parent {
+                break;
+            }
+            current = link.parent;
+        }
+        Some(current)
+    }
+
+    /// Returns whether detaching `payload` prunes `candidate` from `root`.
+    pub(crate) fn detach_empties_node(
+        &self,
+        root: RootId,
+        payload: &MovePayload,
+        candidate: NodeId,
+    ) -> bool {
+        let Some(top) = self.highest_emptied_ancestor_on_detach(root, payload) else {
+            return false;
+        };
+        let start = match payload {
+            MovePayload::Item(source) => source.owner_node(),
+            MovePayload::Tabs(source) | MovePayload::Subtree(source) => source.node(),
+        };
+        self.subtree_contains(top, candidate) && self.subtree_contains(candidate, start)
+    }
+
     pub(crate) fn matches_surface_roster_source(&self, source: &SurfaceRosterSource) -> bool {
         let Some(presentation) = self.surface(source.surface()) else {
             return false;

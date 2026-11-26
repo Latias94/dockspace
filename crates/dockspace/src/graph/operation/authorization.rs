@@ -869,6 +869,29 @@ fn validate_move_target_semantics(
         }
     }
 
+    if matches!(target, DockTarget::InnerEdge(_) | DockTarget::OuterEdge(_))
+        && payload_root(payload) == target_root(target)
+    {
+        let source_root = payload_root(payload);
+        let target_node = target_node(target);
+        let allowed_item_noop = matches!(
+            payload,
+            MovePayload::Item(source) if Some(target_node) == source.tabs()
+        );
+        if !allowed_item_noop
+            && workspace.detach_empties_node(source_root, payload, target_node)
+        {
+            let source_node = match payload {
+                MovePayload::Item(source) => source.owner_node(),
+                MovePayload::Tabs(source) | MovePayload::Subtree(source) => source.node(),
+            };
+            return Err(CommandError::TargetInsidePayload {
+                source_node,
+                target: target_node,
+            });
+        }
+    }
+
     validate_edge_insertion_weight(workspace, target)
 }
 

@@ -1785,6 +1785,20 @@ impl ViewportRegistry {
             changed.push(placement.surface());
         }
         candidate.declare_preserved_placements(declarations);
+        let current_observation = candidate.windows[&binding].observation_binding;
+        let replacement = (!candidate
+            .records
+            .get(&current_observation.surface())
+            .is_some_and(|record| record.binding.window() == binding))
+        .then(|| candidate.bindings_for_window(binding).next())
+        .flatten();
+        if let Some(replacement) = replacement {
+            candidate
+                .windows
+                .get_mut(&binding)
+                .expect("checked window binding exists")
+                .observation_binding = replacement;
+        }
         changed.sort_unstable();
         *self = candidate;
         Ok(changed)

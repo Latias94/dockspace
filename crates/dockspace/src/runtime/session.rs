@@ -38,7 +38,7 @@ pub struct DockspaceSession {
     pub(super) abandoned_native_effects: native_effect::NativeEffectDropQueue,
     pub(super) native_report_storage_limit: Option<native::NativeReportStorageLimit>,
     pub(super) committed_source_sequence: u64,
-    active_update: Weak<()>,
+    pub(super) active_update: Weak<()>,
 }
 
 impl DockspaceSession {
@@ -194,6 +194,9 @@ impl DockspaceSession {
         &mut self,
         slots: std::num::NonZeroUsize,
     ) -> Result<(), DockspaceRuntimeError> {
+        if self.active_update.strong_count() != 0 {
+            return Err(DockspaceRuntimeError::update_in_progress());
+        }
         if self.native_report_storage_limit.is_some() {
             return Err(NativePlatformError::ProtocolInvariant.into());
         }

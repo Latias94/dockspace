@@ -133,8 +133,26 @@ impl DockEngine {
         else {
             return local_fallback;
         };
-        if point.x() - content.x() != local.client_position().x()
-            || point.y() - content.y() != local.client_position().y()
+        let local_x = local.client_position().x();
+        let local_y = local.client_position().y();
+        let tol_x = point
+            .x()
+            .abs()
+            .max(content.x().abs())
+            .max(local_x.abs())
+            .max(1.0)
+            * f64::EPSILON
+            * 64.0;
+        let tol_y = point
+            .y()
+            .abs()
+            .max(content.y().abs())
+            .max(local_y.abs())
+            .max(1.0)
+            * f64::EPSILON
+            * 64.0;
+        if ((point.x() - content.x()) - local_x).abs() > tol_x
+            || ((point.y() - content.y()) - local_y).abs() > tol_y
         {
             return local_fallback;
         }

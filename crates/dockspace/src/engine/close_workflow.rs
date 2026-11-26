@@ -566,6 +566,7 @@ impl DockEngine {
                 let mut requirements = Vec::new();
                 let mut content = Vec::new();
                 let mut commands = Vec::new();
+                let mut recoveries = Vec::new();
                 for operation in operations {
                     match operation {
                         PreparedCloseOperation::SurfaceRetain { roster, .. } => {
@@ -591,12 +592,17 @@ impl DockEngine {
                         PreparedCloseOperation::SurfaceRehome {
                             roster,
                             transaction,
+                            recovery,
                             ..
                         } => {
                             if !roster.matches_workspace(&self.workspace) {
                                 return Ok(false);
                             }
-                            commands.extend_from_slice(transaction.commands());
+                            if *recovery {
+                                recoveries.push(transaction);
+                            } else {
+                                commands.extend_from_slice(transaction.commands());
+                            }
                         }
                         PreparedCloseOperation::Content(_)
                         | PreparedCloseOperation::Window { .. } => return Ok(false),
@@ -617,7 +623,10 @@ impl DockEngine {
                     return Ok(false);
                 }
                 let candidate = if !content.is_empty() {
-                    if content.len() != operations.len() || !commands.is_empty() {
+                    if content.len() != operations.len()
+                        || !commands.is_empty()
+                        || !recoveries.is_empty()
+                    {
                         return Ok(false);
                     }
                     let Ok((candidate, _)) =
@@ -630,6 +639,19 @@ impl DockEngine {
                         return Ok(false);
                     };
                     candidate
+                } else if !recoveries.is_empty() {
+                    if recoveries.len() != operations.len() || !commands.is_empty() {
+                        return Ok(false);
+                    }
+                    let Ok(prepared) =
+                        crate::graph::operation::prepare_surface_recovery_transactions(
+                            &self.workspace,
+                            &recoveries,
+                        )
+                    else {
+                        return Ok(false);
+                    };
+                    prepared.into_parts().0
                 } else if !commands.is_empty() {
                     let Ok(prepared) = crate::graph::operation::prepare_transaction(
                         &self.workspace,
@@ -650,16 +672,25 @@ impl DockEngine {
             PreparedCloseOperation::SurfaceRehome {
                 roster,
                 transaction,
+                recovery,
                 ..
             } => {
                 if !roster.matches_workspace(&self.workspace) {
                     return Ok(false);
                 }
-                let Ok(transaction) = crate::graph::operation::prepare_transaction(
-                    &self.workspace,
-                    &self.policy,
-                    transaction.commands(),
-                ) else {
+                let prepared = if *recovery {
+                    crate::graph::operation::prepare_surface_recovery_transaction(
+                        &self.workspace,
+                        transaction,
+                    )
+                } else {
+                    crate::graph::operation::prepare_transaction(
+                        &self.workspace,
+                        &self.policy,
+                        transaction.commands(),
+                    )
+                };
+                let Ok(transaction) = prepared else {
                     return Ok(false);
                 };
                 Ok(self
@@ -1373,6 +1404,16 @@ impl DockEngine {
                 version: self.version,
             });
         }
+        if let Some(request_id) = self.close.surface_request_for_edge(edge) {
+            return Ok(InputOutcome::SurfaceCloseRejected {
+                edge,
+                request,
+                reason: SurfaceCloseRequestRejection::ActivePlan {
+                    request: request_id,
+                },
+                version: self.version,
+            });
+        }
         if let PolicyDecision::Reject(reason) =
             policy.evaluate(&DockPolicyRequest::CloseSurface { surface })
         {
@@ -1385,16 +1426,6 @@ impl DockEngine {
                 request,
                 SurfaceCloseRequestRejection::PolicyRejected(reason),
             );
-        }
-        if let Some(request_id) = self.close.surface_request_for_edge(edge) {
-            return Ok(InputOutcome::SurfaceCloseRejected {
-                edge,
-                request,
-                reason: SurfaceCloseRequestRejection::ActivePlan {
-                    request: request_id,
-                },
-                version: self.version,
-            });
         }
 
         let capture = match self.capture_surface_close(edge, &request, policy) {
@@ -1723,6 +1754,7 @@ impl DockEngine {
                         roster,
                         transaction,
                         recovery_focus,
+                        recovery: false,
                     },
                 })
             }
@@ -1745,6 +1777,7 @@ impl DockEngine {
                         roster,
                         transaction,
                         recovery_focus,
+                        recovery: true,
                     },
                 })
             }

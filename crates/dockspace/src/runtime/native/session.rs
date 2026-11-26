@@ -135,6 +135,9 @@ impl DockspaceSession {
     }
 
     fn native_state_mut(&mut self) -> Result<&mut RuntimeNativeState, DockspaceRuntimeError> {
+        if self.active_update.strong_count() != 0 {
+            return Err(DockspaceRuntimeError::update_in_progress());
+        }
         let native = self
             .native
             .as_mut()
@@ -432,6 +435,9 @@ impl DockspaceSession {
         pointer_checkpoint: Option<crate::input::journal::PointerAuthorityCheckpoint>,
         storage_limit: Option<NativeInputStorageLimit>,
     ) -> Result<Vec<NativeSurfaceBinding>, DockspaceRuntimeError> {
+        if self.active_update.strong_count() != 0 {
+            return Err(DockspaceRuntimeError::update_in_progress());
+        }
         if self.pointer.is_some() {
             return Err(NativePlatformError::PointerProviderAlreadyEnabled.into());
         }
