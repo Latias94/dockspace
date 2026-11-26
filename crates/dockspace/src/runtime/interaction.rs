@@ -155,6 +155,7 @@ pub struct HostPointerHit {
     surface: PresentedDockspaceSurface,
     delivery: Option<PresentedDockReceiver>,
     drag_delivery: Option<PresentedDockReceiver>,
+    scroll_delivery: Option<PresentedDockReceiver>,
     hover: Option<PresentedDockReceiver>,
 }
 
@@ -177,6 +178,12 @@ impl HostPointerHit {
         self.drag_delivery
     }
 
+    /// Returns the independent scroll-lane winner, which may differ from click and drag.
+    #[must_use]
+    pub const fn scroll_delivery(self) -> Option<PresentedDockReceiver> {
+        self.scroll_delivery
+    }
+
     /// Returns the core-owned hover/drop receiver at the queried point.
     #[must_use]
     pub const fn hover(self) -> Option<PresentedDockReceiver> {
@@ -190,7 +197,7 @@ impl HostPointerHit {
     /// A core hit alone does not establish that clearance. Use explicit blocked
     /// or unknown facts when the framework cannot prove it.
     ///
-    /// Missing click and drag winners become independent known-empty lanes.
+    /// Missing click, drag, and scroll winners become independent known-empty lanes.
     /// Hover remains framework clearance so core can resolve its semantic winner
     /// after preceding edges, including moving-source suppression. This does not
     /// infer capture, coordinates or event timing; the host supplies those facts.
@@ -203,6 +210,10 @@ impl HostPointerHit {
         let facts = match self.drag_delivery.as_ref() {
             Some(receiver) => facts.with_drag_delivery(receiver),
             None => facts.with_empty_drag_delivery_lane(&self.surface),
+        };
+        let facts = match self.scroll_delivery.as_ref() {
+            Some(receiver) => facts.with_scroll_delivery(receiver),
+            None => facts.with_empty_scroll_delivery_lane(&self.surface),
         };
         facts.with_clear_hover_lane(&self.surface)
     }
@@ -514,6 +525,7 @@ enum ReceiverFact<'receiver> {
 pub struct SurfacePointerReceiverFacts<'receiver> {
     delivery: ReceiverFact<'receiver>,
     drag_delivery: Option<ReceiverFact<'receiver>>,
+    scroll_delivery: Option<ReceiverFact<'receiver>>,
     hover: ReceiverFact<'receiver>,
 }
 
@@ -659,12 +671,43 @@ impl<'receiver> SurfacePointerReceiverFacts<'receiver> {
         self
     }
 
+    /// Overrides only the scroll-delivery lane with an exact receiver.
+    #[must_use]
+    pub const fn with_scroll_delivery(
+        mut self,
+        receiver: &'receiver PresentedDockReceiver,
+    ) -> Self {
+        self.scroll_delivery = Some(ReceiverFact::Dock(receiver));
+        self
+    }
+
+    /// Reports known-empty scroll delivery independently from click and drag.
+    #[must_use]
+    pub const fn with_empty_scroll_delivery_lane(
+        mut self,
+        surface: &'receiver PresentedDockspaceSurface,
+    ) -> Self {
+        self.scroll_delivery = Some(ReceiverFact::EmptyLane(surface));
+        self
+    }
+
+    /// Reports an authoritative higher-layer scroll blocker independently from click and drag.
+    #[must_use]
+    pub const fn with_blocked_scroll_delivery(
+        mut self,
+        surface: &'receiver PresentedDockspaceSurface,
+    ) -> Self {
+        self.scroll_delivery = Some(ReceiverFact::Blocked(surface));
+        self
+    }
+
     /// Reports no authoritative receiver fact for either lane.
     #[must_use]
     pub const fn unknown() -> Self {
         Self {
             delivery: ReceiverFact::Unknown,
             drag_delivery: None,
+            scroll_delivery: None,
             hover: ReceiverFact::Unknown,
         }
     }
@@ -675,6 +718,7 @@ impl<'receiver> SurfacePointerReceiverFacts<'receiver> {
         Self {
             delivery: ReceiverFact::Dock(receiver),
             drag_delivery: None,
+            scroll_delivery: None,
             hover: ReceiverFact::Unknown,
         }
     }
@@ -685,6 +729,7 @@ impl<'receiver> SurfacePointerReceiverFacts<'receiver> {
         Self {
             delivery: ReceiverFact::Unknown,
             drag_delivery: None,
+            scroll_delivery: None,
             hover: ReceiverFact::Dock(receiver),
         }
     }
@@ -695,6 +740,7 @@ impl<'receiver> SurfacePointerReceiverFacts<'receiver> {
         Self {
             delivery: ReceiverFact::Unknown,
             drag_delivery: None,
+            scroll_delivery: None,
             hover: ReceiverFact::EmptyLane(surface),
         }
     }
@@ -705,6 +751,7 @@ impl<'receiver> SurfacePointerReceiverFacts<'receiver> {
         Self {
             delivery: ReceiverFact::Unknown,
             drag_delivery: None,
+            scroll_delivery: None,
             hover: ReceiverFact::Blocked(surface),
         }
     }
@@ -1225,6 +1272,7 @@ fn host_pointer_hit(
         surface: PresentedDockspaceSurface::from_projection(projection),
         delivery: resolve(PresentationPointerLane::Click)?,
         drag_delivery: resolve(PresentationPointerLane::Drag)?,
+        scroll_delivery: resolve(PresentationPointerLane::Scroll)?,
         hover: resolve(PresentationPointerLane::HoverDrop)?,
     })
 }
@@ -1796,15 +1844,22 @@ impl DockspaceHostFrame<'_> {
             .requires(crate::input::receiver::PointerReceiverProbe::Delivery)
         {
             let delivery = delivery_fact(delivery_projection.as_ref(), facts.delivery)?;
-            let delivery = if let (Some(projection), Some(drag_fact)) =
-                (delivery_projection, facts.drag_delivery)
+            let delivery = if let Some(projection) = delivery_projection
+                && (facts.drag_delivery.is_some() || facts.scroll_delivery.is_some())
             {
-                let drag = delivery_fact(Some(&projection), drag_fact)?;
+                let drag = match facts.drag_delivery {
+                    Some(drag_fact) => delivery_fact(Some(&projection), drag_fact)?.drag(),
+                    None => delivery.drag(),
+                };
+                let scroll = match facts.scroll_delivery {
+                    Some(scroll_fact) => delivery_fact(Some(&projection), scroll_fact)?.scroll(),
+                    None => delivery.scroll(),
+                };
                 PointerReceiverDelivery::from_lanes_with_scroll(
                     projection,
                     delivery.click(),
-                    drag.drag(),
-                    delivery.scroll(),
+                    drag,
+                    scroll,
                 )
                 .map_err(|_| DockspaceInteractionError::PointerProtocolInvariant)?
             } else {
@@ -2117,10 +2172,15 @@ mod tests {
         .unwrap();
         assert!(hit.delivery().is_none());
         assert!(hit.drag_delivery().is_none());
+        assert!(hit.scroll_delivery().is_none());
         assert!(hit.hover().is_none());
 
         let facts = hit.unobstructed_receiver_facts();
-        for lane in [facts.delivery, facts.drag_delivery.unwrap()] {
+        for lane in [
+            facts.delivery,
+            facts.drag_delivery.unwrap(),
+            facts.scroll_delivery.unwrap(),
+        ] {
             assert!(matches!(lane, ReceiverFact::EmptyLane(surface)
                 if std::ptr::eq(surface, &hit.surface)));
             assert_eq!(
@@ -2132,6 +2192,68 @@ mod tests {
             matches!(facts.hover, ReceiverFact::ClearHoverLane(surface)
             if std::ptr::eq(surface, &hit.surface)),
             "framework clearance must not freeze the current empty semantic hover result",
+        );
+    }
+
+    #[test]
+    fn unobstructed_receiver_facts_preserve_independent_scroll_lane() {
+        let surface = SurfaceId::new(1);
+        let root = RootId::new(1);
+        let mut builder = Workspace::builder();
+        let tabs = builder.insert_node(Node::tabs([
+            ItemId::new(1),
+            ItemId::new(2),
+            ItemId::new(3),
+            ItemId::new(4),
+            ItemId::new(5),
+            ItemId::new(6),
+        ]));
+        builder.set_root(root, RootRecord::new(tabs).with_central(tabs));
+        builder.set_surface(surface, SurfacePresentation::with_main(root));
+        let mut engine = DockEngine::new(builder.build().unwrap(), DockPolicy::default()).unwrap();
+        let mut host = TestPresentationHost::new(&mut engine);
+        publish_surface(
+            &mut engine,
+            &mut host,
+            surface,
+            LogicalRect::new(0.0, 0.0, 260.0, 240.0).unwrap(),
+        );
+        let projection = engine.interaction_projection(surface).unwrap();
+        let tab_region = projection
+            .hit_manifest()
+            .regions()
+            .iter()
+            .find(|region| matches!(region.id().kind(), PresentationHitRegionKind::TabBody(_)))
+            .expect("overflowing strip exposes visible tabs");
+        let bounds = tab_region.hit().rect();
+        let point = LogicalPoint::new(
+            bounds.x() + bounds.width() * 0.5,
+            bounds.y() + bounds.height() * 0.5,
+        )
+        .unwrap();
+        let hit = host_pointer_hit(
+            &engine,
+            &super::super::presentation::RuntimePresentationState::default(),
+            surface,
+            point,
+            PointerDeviceKind::Mouse,
+        )
+        .unwrap();
+        assert!(hit.delivery().is_some());
+        let scroll_receiver = hit
+            .scroll_delivery()
+            .expect("overflowing tab strip resolves scroll receiver independently of tab click");
+        assert_ne!(
+            scroll_receiver.region(),
+            hit.delivery().unwrap().region(),
+            "tab header click target and strip scroll viewport live on independent lanes",
+        );
+        let facts = hit.unobstructed_receiver_facts();
+        assert_eq!(
+            delivery_fact(Some(&projection), facts.scroll_delivery.unwrap())
+                .unwrap()
+                .scroll(),
+            PointerReceiverDeliveryDisposition::Dock(scroll_receiver.region()),
         );
     }
 

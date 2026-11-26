@@ -179,6 +179,10 @@ pub trait SurfaceProgramVisitor {
     }
 
     /// Called for one docking-guide cluster and its optional live drag affordance.
+    ///
+    /// Note that `structural` is always emitted for hit-manifest completeness;
+    /// render visible drop-guide controls only when `affordance` is `Some(...)`
+    /// (during an active drag).
     fn drop_guide(
         &mut self,
         _structural: DropGuidePaintRecord<'_>,
@@ -901,6 +905,19 @@ pub struct OwnedDragPreview {
     pub tabs: Vec<OwnedPreviewTab>,
 }
 
+impl OwnedDragPreview {
+    /// Returns the surface-local logical preview rectangle for [`DockspacePreviewVisual::Dock`]
+    /// and [`DockspacePreviewVisual::Contained`] previews, or `None` for desktop-native previews.
+    #[must_use]
+    pub const fn logical_rect(&self) -> Option<(SurfaceId, LogicalRect)> {
+        match self.visual {
+            DockspacePreviewVisual::Dock { surface, rect }
+            | DockspacePreviewVisual::Contained { surface, rect, .. } => Some((surface, rect)),
+            DockspacePreviewVisual::Native { .. } => None,
+        }
+    }
+}
+
 impl From<DockspaceDragPreview<'_>> for OwnedDragPreview {
     fn from(preview: DockspaceDragPreview<'_>) -> Self {
         Self {
@@ -1001,6 +1018,11 @@ impl From<DropAffordanceClusterPaintRecord<'_>> for OwnedDropAffordanceCluster {
 }
 
 /// Owned docking-guide cluster and optional live drag affordance.
+///
+/// Core emits structural `targets` for every guide-capable region, even when no
+/// drag is active. For visible drop-guide chrome during an active drag, iterate
+/// [`Self::active_targets`] (or check [`Self::is_live`]) rather than drawing
+/// [`Self::targets`] unconditionally.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OwnedDropGuide {
     /// Opaque cluster visual identity.
@@ -1013,10 +1035,27 @@ pub struct OwnedDropGuide {
     pub activation_bounds: LogicalRect,
     /// Semantic paint layer.
     pub layer: DockspacePaintLayer,
-    /// Structural target buttons in paint order.
+    /// Structural target buttons in paint order (present even when idle).
     pub targets: Vec<OwnedDropGuideTarget>,
     /// Live drag affordance when a drag currently activates this cluster.
     pub affordance: Option<OwnedDropAffordanceCluster>,
+}
+
+impl OwnedDropGuide {
+    /// Returns whether an active drag is currently activating this guide cluster.
+    #[must_use]
+    pub const fn is_live(&self) -> bool {
+        self.affordance.is_some()
+    }
+
+    /// Returns the live drag affordance targets to paint, or an empty slice when
+    /// no drag is activating this guide cluster.
+    #[must_use]
+    pub fn active_targets(&self) -> &[OwnedDropAffordanceTarget] {
+        self.affordance
+            .as_ref()
+            .map_or(&[], |cluster| cluster.targets.as_slice())
+    }
 }
 
 /// Owned contained-floating transform preview.
@@ -1202,6 +1241,65 @@ impl SurfaceDisplayList {
     pub fn drop_targets(&self) -> impl Iterator<Item = DockspaceReceiverDescriptor> + '_ {
         self.steps.iter().filter_map(|step| match step {
             SurfaceDisplayStep::DropTarget(receiver) => Some(*receiver),
+            _ => None,
+        })
+    }
+
+    /// Iterates every core-owned tab-strip overflow/menu control in paint order.
+    pub fn tab_strip_controls(&self) -> impl Iterator<Item = &OwnedTabStripControl> {
+        self.steps.iter().filter_map(|step| match step {
+            SurfaceDisplayStep::TabStripControl(control) => Some(control),
+            _ => None,
+        })
+    }
+
+    /// Iterates every contained-floating frame chrome record in paint order.
+    pub fn contained_frames(&self) -> impl Iterator<Item = &OwnedContainedFrame> {
+        self.steps.iter().filter_map(|step| match step {
+            SurfaceDisplayStep::ContainedControls { frame, .. } => Some(frame),
+            _ => None,
+        })
+    }
+
+    /// Iterates every open tab-list popup menu in paint order.
+    pub fn popup_menus(&self) -> impl Iterator<Item = &OwnedPopupMenu> {
+        self.steps.iter().filter_map(|step| match step {
+            SurfaceDisplayStep::PopupMenu(menu) => Some(menu),
+            _ => None,
+        })
+    }
+
+    /// Returns the active docking or rehome drag preview, if any.
+    #[must_use]
+    pub fn drag_preview(&self) -> Option<&OwnedDragPreview> {
+        self.steps.iter().find_map(|step| match step {
+            SurfaceDisplayStep::DragPreview(preview) => Some(preview),
+            _ => None,
+        })
+    }
+
+    /// Iterates every docking-guide cluster in paint order.
+    pub fn drop_guides(&self) -> impl Iterator<Item = &OwnedDropGuide> {
+        self.steps.iter().filter_map(|step| match step {
+            SurfaceDisplayStep::DropGuide(guide) => Some(guide),
+            _ => None,
+        })
+    }
+
+    /// Returns the active contained-floating transform preview, if any.
+    #[must_use]
+    pub fn contained_transform_preview(&self) -> Option<&OwnedContainedTransformPreview> {
+        self.steps.iter().find_map(|step| match step {
+            SurfaceDisplayStep::ContainedTransformPreview(preview) => Some(preview),
+            _ => None,
+        })
+    }
+
+    /// Returns the active drag source ghost decoration, if any.
+    #[must_use]
+    pub fn drag_decoration(&self) -> Option<&OwnedDragDecoration> {
+        self.steps.iter().find_map(|step| match step {
+            SurfaceDisplayStep::DragDecoration(decoration) => Some(decoration),
             _ => None,
         })
     }

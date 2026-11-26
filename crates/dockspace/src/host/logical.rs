@@ -20,9 +20,11 @@ use crate::runtime::{
     DockspaceSubmittedAction, HostFrameReport, HostPointerInput, HostPointerRoute,
     PaintedSurfaceOutput, PointerDeviceKind, PointerEventMetadata, PreparedPaneFocusObservation,
     SurfaceMeasurementAnswer, SurfaceMeasurementRequest, SurfacePaintProgramVisitError,
-    SurfacePointerCancelReason, SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId,
-    SurfacePointerReceiverFacts, SurfacePresentationBatchReportError, SurfacePresentationResult,
-    SurfaceWork, SurfaceWorkDeferred,
+    SurfacePointerButton, SurfacePointerCancelReason, SurfacePointerCapture, SurfacePointerEvent,
+    SurfacePointerId, SurfacePointerReceiverFacts, SurfacePresentationBatchReportError,
+    SurfacePresentationResult, SurfaceScrollDelta, SurfaceScrollDeviceId, SurfaceScrollEvent,
+    SurfaceScrollModifiers, SurfaceScrollMomentum, SurfaceScrollPhase, SurfaceWork,
+    SurfaceWorkDeferred,
 };
 
 use super::measure::SurfaceMeasurer;
@@ -30,6 +32,9 @@ use super::scene::{SurfaceDisplayList, SurfaceProgramVisitor};
 
 /// Default primary mouse pointer identity used by [`LogicalPointerEvent::mouse`].
 pub const DEFAULT_MOUSE_POINTER: SurfacePointerId = SurfacePointerId::new(1);
+
+/// Default scroll device identity used by [`LogicalPointerEvent::wheel`].
+pub const DEFAULT_SCROLL_DEVICE: SurfaceScrollDeviceId = SurfaceScrollDeviceId::new(1);
 
 /// Framework occlusion proof for a logical pointer event.
 ///
@@ -84,6 +89,91 @@ impl LogicalPointerEvent {
             capture: SurfacePointerCapture::None,
             metadata: PointerEventMetadata::untimed(PointerDeviceKind::Mouse),
         }
+    }
+
+    /// Creates an untimed mouse move event on [`DEFAULT_MOUSE_POINTER`].
+    #[must_use]
+    pub const fn moved(
+        surface: SurfaceId,
+        position: LogicalPoint,
+        clearance: PointerClearance,
+    ) -> Self {
+        Self::mouse(
+            surface,
+            Some(position),
+            SurfacePointerEvent::Moved,
+            clearance,
+        )
+    }
+
+    /// Creates an untimed mouse button-press event on [`DEFAULT_MOUSE_POINTER`].
+    #[must_use]
+    pub const fn pressed(
+        surface: SurfaceId,
+        position: LogicalPoint,
+        button: SurfacePointerButton,
+        clearance: PointerClearance,
+    ) -> Self {
+        Self::mouse(
+            surface,
+            Some(position),
+            SurfacePointerEvent::ButtonPressed(button),
+            clearance,
+        )
+    }
+
+    /// Creates an untimed mouse button-release event on [`DEFAULT_MOUSE_POINTER`].
+    #[must_use]
+    pub const fn released(
+        surface: SurfaceId,
+        position: LogicalPoint,
+        button: SurfacePointerButton,
+        clearance: PointerClearance,
+    ) -> Self {
+        Self::mouse(
+            surface,
+            Some(position),
+            SurfacePointerEvent::ButtonReleased(button),
+            clearance,
+        )
+    }
+
+    /// Creates a discrete mouse wheel scroll event on [`DEFAULT_MOUSE_POINTER`]
+    /// and [`DEFAULT_SCROLL_DEVICE`].
+    #[must_use]
+    pub const fn wheel(
+        surface: SurfaceId,
+        position: LogicalPoint,
+        delta: SurfaceScrollDelta,
+        clearance: PointerClearance,
+    ) -> Self {
+        Self::scroll(
+            surface,
+            Some(position),
+            SurfaceScrollEvent::new(
+                DEFAULT_SCROLL_DEVICE,
+                SurfaceScrollPhase::Discrete { delta },
+                SurfaceScrollMomentum::Direct,
+                SurfaceScrollModifiers::new(false, false, false, false),
+            ),
+            clearance,
+        )
+    }
+
+    /// Creates a scroll event carrying an explicit lossless [`SurfaceScrollEvent`].
+    #[must_use]
+    pub const fn scroll(
+        surface: SurfaceId,
+        position: Option<LogicalPoint>,
+        scroll: SurfaceScrollEvent,
+        clearance: PointerClearance,
+    ) -> Self {
+        Self::mouse(
+            surface,
+            position,
+            SurfacePointerEvent::Scrolled(scroll),
+            clearance,
+        )
     }
 
     /// Overrides the pointer stream identity.
@@ -376,6 +466,45 @@ impl LogicalHost {
             )?;
         }
         frame.commit()
+    }
+
+    /// Returns the surface currently owning an active manipulation (such as a
+    /// tab drag, splitter drag, or contained-window drag/resize) for `pointer`.
+    ///
+    /// UI frameworks can use this to maintain pointer capture and avoid letting
+    /// unrelated widgets steal drag input while docking owns the gesture.
+    #[must_use]
+    pub fn active_manipulation_surface(&self, pointer: SurfacePointerId) -> Option<SurfaceId> {
+        self.session
+            .host_pointer_manipulation_surface(pointer)
+            .map(|surface| surface.surface())
+    }
+
+    /// Returns whether `pointer` currently owns an active docking manipulation.
+    #[must_use]
+    pub fn has_active_manipulation(&self, pointer: SurfacePointerId) -> bool {
+        self.active_manipulation_surface(pointer).is_some()
+    }
+
+    /// Submits one discrete mouse wheel scroll event with explicit clearance.
+    ///
+    /// Uses [`DEFAULT_MOUSE_POINTER`] and [`DEFAULT_SCROLL_DEVICE`]. For
+    /// trackpad phaseful sequences or modifier-aware scroll events, pass
+    /// [`LogicalPointerEvent::scroll`] to [`Self::submit_pointer`].
+    ///
+    /// # Errors
+    ///
+    /// Returns any host-frame or scroll validation error.
+    pub fn submit_wheel(
+        &mut self,
+        surface: SurfaceId,
+        position: LogicalPoint,
+        delta: SurfaceScrollDelta,
+        clearance: PointerClearance,
+    ) -> Result<HostFrameReport, DockspaceRuntimeError> {
+        self.submit_pointer(LogicalPointerEvent::wheel(
+            surface, position, delta, clearance,
+        ))
     }
 
     /// Cancels an active logical pointer stream (for example on `Escape` or window blur).

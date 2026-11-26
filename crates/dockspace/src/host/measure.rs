@@ -8,7 +8,8 @@ use crate::model::{ItemId, SurfaceId, TabKey, TabLabel};
 use crate::policy::TabBarVisibility;
 use crate::runtime::{
     DockspaceInteractionError, DockspaceRuntimeError, DockspaceVisualId, SurfaceMeasurementAnswer,
-    SurfaceMeasurementRequest, TabStripMetrics,
+    SurfaceMeasurementRequest, TabListMenuMetrics, TabStripControlMetric, TabStripControlMetrics,
+    TabStripControlPlacement, TabStripMetrics,
 };
 
 /// Default minimum pane extent used by [`SurfaceMetrics::new`].
@@ -80,6 +81,27 @@ impl SurfaceMetrics {
     #[must_use]
     pub const fn with_tab_strip(mut self, metrics: TabStripMetrics) -> Self {
         self.tab_strip = metrics;
+        self
+    }
+
+    /// Enables sensible default tab-strip overflow controls (`ScrollBackward`,
+    /// `ScrollForward`, `TabListMenu`) and default tab-list popup menu metrics
+    /// while preserving any configured leading/trailing reservations.
+    #[must_use]
+    pub fn with_default_overflow_controls(mut self) -> Self {
+        let button = TabStripControlMetric::new(24.0, TabStripControlPlacement::ReservedTrailing)
+            .expect("positive default overflow button extent");
+        let controls = TabStripControlMetrics::new(2.0)
+            .expect("non-negative default overflow control spacing")
+            .with_scroll_backward(button)
+            .with_scroll_forward(button)
+            .with_tab_list_menu(button);
+        let menu = TabListMenuMetrics::new(24.0, 8.0, 4.0, 2.0, 240.0, 8.0)
+            .expect("valid default tab-list menu metrics");
+        self.tab_strip = self
+            .tab_strip
+            .with_controls(controls)
+            .with_tab_list_menu(menu);
         self
     }
 

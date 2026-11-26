@@ -109,8 +109,9 @@ mod scene;
 mod tests;
 
 pub use logical::{
-    DEFAULT_MOUSE_POINTER, LogicalHost, LogicalPaintOutcome, LogicalPointerEvent,
-    LogicalPresentationError, LogicalPresentationToken, LogicalVisitorPaintError, PointerClearance,
+    DEFAULT_MOUSE_POINTER, DEFAULT_SCROLL_DEVICE, LogicalHost, LogicalPaintOutcome,
+    LogicalPointerEvent, LogicalPresentationError, LogicalPresentationToken,
+    LogicalVisitorPaintError, PointerClearance,
 };
 pub use measure::{SurfaceMeasurer, SurfaceMetrics};
 pub use native::{NativeReportDigest, NativeWindowRetirementState};

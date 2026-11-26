@@ -9,11 +9,13 @@ use crate::model::{
 };
 use crate::policy::DockPolicy;
 use crate::runtime::{
-    DockspaceFocusTarget, DockspacePaneFocusObservation, DockspaceSession, HostWindowToken,
-    NativeHostCapabilities, NativeHostCapability, NativePointerRoster, NativeSurfacePlacement,
-    NativeWindowFacts, NativeWindowInputState, NativeWindowPresentationState, NativeWorkAreaRoster,
+    ContainedResizeDirection, DockspaceDropDirection, DockspaceFocusTarget,
+    DockspacePaneFocusObservation, DockspaceSession, HostWindowToken, NativeHostCapabilities,
+    NativeHostCapability, NativePointerRoster, NativeSurfacePlacement, NativeWindowFacts,
+    NativeWindowInputState, NativeWindowPresentationState, NativeWorkAreaRoster,
     SurfacePaintDisposition, SurfacePaintProgramRoot, SurfacePaintProgramVisitError,
-    SurfacePointerButton, SurfacePointerEvent, SurfacePresentationResult, SurfaceUnavailableReason,
+    SurfacePointerButton, SurfacePointerCapture, SurfacePointerEvent, SurfacePresentationResult,
+    SurfaceScrollDelta, SurfaceUnavailableReason, TabStripControlKind,
 };
 
 const SURFACE_A: SurfaceId = SurfaceId::new(1);
@@ -460,4 +462,584 @@ fn native_report_digest_deduplicates_dirty_windows_and_enforces_quiescence_gates
     assert!(retirement.is_ready_for_quiescence());
     assert!(retirement.report_quiescence_if_ready(&mut session).unwrap());
     assert!(retirement.is_quiescent());
+}
+
+fn paint_and_settle(
+    host: &mut LogicalHost,
+    surface: SurfaceId,
+    metrics: &mut SurfaceMetrics,
+) -> SurfaceDisplayList {
+    let (display_list, token) = match host.paint_display_list(surface, metrics).unwrap() {
+        LogicalPaintOutcome::Ready {
+            payload,
+            presentation,
+            ..
+        } => (payload, presentation),
+        LogicalPaintOutcome::Deferred { reason, .. } => {
+            panic!("unexpected deferred paint: {reason:?}")
+        }
+    };
+    host.finish_presentation(token, SurfacePresentationResult::Presented)
+        .unwrap();
+    display_list
+}
+
+#[test]
+fn logical_host_tab_drag_splits_pane_and_emits_drag_display_steps() {
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE_A,
+        DockspaceRootLayout::new(ROOT_A, DockspaceNode::tabs([ITEM_1, ITEM_2])),
+    )])
+    .unwrap();
+    let mut host = LogicalHost::from_layout(layout, DockPolicy::default()).unwrap();
+    let bounds = LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap();
+    let mut metrics = SurfaceMetrics::new(bounds);
+
+    let initial = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    assert_eq!(initial.splitters().count(), 0);
+    let tab_2 = initial
+        .tabs()
+        .find(|tab| tab.item == Some(ITEM_2))
+        .expect("second tab visible");
+    let start = rect_center(tab_2.drag_bounds);
+    let pane_bounds = initial
+        .panes()
+        .next()
+        .unwrap()
+        .content_geometry
+        .layout_bounds();
+    let mid = rect_center(pane_bounds);
+
+    // Begin drag on tab 2 and move into the pane center to activate drag preview and drop guides.
+    host.submit_pointer_batch([
+        LogicalPointerEvent::pressed(
+            SURFACE_A,
+            start,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        )
+        .with_capture(SurfacePointerCapture::ProviderEndpoint),
+        LogicalPointerEvent::moved(SURFACE_A, mid, PointerClearance::Unobstructed)
+            .with_capture(SurfacePointerCapture::ProviderEndpoint),
+    ])
+    .unwrap();
+    assert_eq!(
+        host.active_manipulation_surface(DEFAULT_MOUSE_POINTER),
+        Some(SURFACE_A)
+    );
+    assert!(host.has_active_manipulation(DEFAULT_MOUSE_POINTER));
+
+    let during_drag = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    assert!(
+        during_drag.drag_preview().is_some(),
+        "active tab drag must emit OwnedDragPreview"
+    );
+    assert!(
+        during_drag.drag_decoration().is_some(),
+        "active tab drag must emit OwnedDragDecoration"
+    );
+    let right_target = during_drag
+        .drop_guides()
+        .flat_map(|guide| guide.targets.iter())
+        .find(|target| target.direction == DockspaceDropDirection::Right)
+        .expect("active drag over pane exposes Right split guide target");
+    let right_point = rect_center(right_target.hit_bounds);
+
+    // Hover the Right drop guide target, repaint to verify live affordance, then release to split.
+    host.submit_pointer(
+        LogicalPointerEvent::moved(SURFACE_A, right_point, PointerClearance::Unobstructed)
+            .with_capture(SurfacePointerCapture::ProviderEndpoint),
+    )
+    .unwrap();
+    let hovering_guide = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    assert!(
+        hovering_guide
+            .drop_guides()
+            .filter_map(|guide| guide.affordance.as_ref())
+            .flat_map(|cluster| cluster.targets.iter())
+            .any(|target| target.direction == DockspaceDropDirection::Right && target.is_active),
+        "hovering the Right guide target must mark it active in OwnedDropAffordanceTarget"
+    );
+
+    host.submit_pointer(LogicalPointerEvent::released(
+        SURFACE_A,
+        right_point,
+        SurfacePointerButton::Primary,
+        PointerClearance::Unobstructed,
+    ))
+    .unwrap();
+    assert!(!host.has_active_manipulation(DEFAULT_MOUSE_POINTER));
+
+    let after_drop = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    assert_eq!(after_drop.panes().count(), 2);
+    assert_eq!(after_drop.splitters().count(), 1);
+    let pane_1_x = after_drop
+        .panes()
+        .find(|pane| pane.item == ITEM_1)
+        .unwrap()
+        .content_geometry
+        .layout_bounds()
+        .x();
+    let pane_2_x = after_drop
+        .panes()
+        .find(|pane| pane.item == ITEM_2)
+        .unwrap()
+        .content_geometry
+        .layout_bounds()
+        .x();
+    assert!(
+        pane_2_x > pane_1_x,
+        "dropping ITEM_2 on Right must place it to the right of ITEM_1"
+    );
+}
+
+#[test]
+fn logical_host_splitter_drag_resizes_adjacent_panes() {
+    let mut host = LogicalHost::from_layout(two_tab_layout(), DockPolicy::default()).unwrap();
+    let mut metrics = SurfaceMetrics::new(LogicalRect::new(0.0, 0.0, 900.0, 600.0).unwrap());
+
+    let before = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    let splitter = before.splitters().next().expect("horizontal splitter");
+    let left_width_before = before
+        .panes()
+        .find(|pane| pane.item == ITEM_1)
+        .unwrap()
+        .content_geometry
+        .layout_bounds()
+        .width();
+    let start = rect_center(splitter.hit_bounds);
+    let dragged = LogicalPoint::new(start.x() - 120.0, start.y()).unwrap();
+
+    host.submit_pointer_batch([
+        LogicalPointerEvent::pressed(
+            SURFACE_A,
+            start,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        )
+        .with_capture(SurfacePointerCapture::ProviderEndpoint),
+        LogicalPointerEvent::moved(SURFACE_A, dragged, PointerClearance::Unobstructed)
+            .with_capture(SurfacePointerCapture::ProviderEndpoint),
+        LogicalPointerEvent::released(
+            SURFACE_A,
+            dragged,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        ),
+    ])
+    .unwrap();
+
+    let after = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    let left_width_after = after
+        .panes()
+        .find(|pane| pane.item == ITEM_1)
+        .unwrap()
+        .content_geometry
+        .layout_bounds()
+        .width();
+    assert!(
+        left_width_after < left_width_before - 50.0,
+        "dragging splitter left must shrink left pane ({left_width_after} vs {left_width_before})"
+    );
+}
+
+#[test]
+fn logical_host_tab_strip_wheel_scroll_and_popup_menu_selection() {
+    let items: Vec<ItemId> = (1..=8).map(ItemId::new).collect();
+    let last_item = *items.last().unwrap();
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE_A,
+        DockspaceRootLayout::new(ROOT_A, DockspaceNode::tabs(items)),
+    )])
+    .unwrap();
+    let mut host = LogicalHost::from_layout(layout, DockPolicy::default()).unwrap();
+    let mut metrics = SurfaceMetrics::new(LogicalRect::new(0.0, 0.0, 320.0, 260.0).unwrap())
+        .with_default_tab_width(110.0)
+        .unwrap()
+        .with_default_overflow_controls();
+
+    let initial = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    let bar = initial.tab_bars().next().expect("overflowing tab bar");
+    assert!(
+        bar.maximum_scroll_offset > 0.0,
+        "8 tabs of 110px in 320px strip must overflow"
+    );
+    assert_eq!(bar.scroll_offset, 0.0);
+    let first_tab_center = rect_center(initial.tabs().next().unwrap().visible_bounds);
+
+    // Blocked wheel over the tab strip must fail closed and leave scroll_offset at 0.
+    host.submit_wheel(
+        SURFACE_A,
+        first_tab_center,
+        SurfaceScrollDelta::LogicalPoints { x: -80.0, y: 0.0 },
+        PointerClearance::Blocked,
+    )
+    .unwrap();
+    let after_blocked = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    assert_eq!(after_blocked.tab_bars().next().unwrap().scroll_offset, 0.0);
+
+    // Unobstructed wheel directly over a tab resolves the independent Scroll lane and scrolls.
+    host.submit_wheel(
+        SURFACE_A,
+        first_tab_center,
+        SurfaceScrollDelta::LogicalPoints { x: -80.0, y: 0.0 },
+        PointerClearance::Unobstructed,
+    )
+    .unwrap();
+    let after_scroll = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    assert!(
+        after_scroll.tab_bars().next().unwrap().scroll_offset > 0.0,
+        "unobstructed wheel over overflowing tab strip must advance scroll_offset"
+    );
+
+    // Click the TabListMenu control to open the owned popup backdrop & menu rows.
+    let menu_button = after_scroll
+        .tab_strip_controls()
+        .find(|control| control.kind == TabStripControlKind::TabListMenu)
+        .expect("overflowing strip exposes TabListMenu control");
+    let menu_btn_center = rect_center(menu_button.hit_bounds);
+    host.submit_pointer_batch([
+        LogicalPointerEvent::pressed(
+            SURFACE_A,
+            menu_btn_center,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        ),
+        LogicalPointerEvent::released(
+            SURFACE_A,
+            menu_btn_center,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        ),
+    ])
+    .unwrap();
+
+    let with_popup = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    assert!(
+        with_popup
+            .steps()
+            .iter()
+            .any(|step| matches!(step, SurfaceDisplayStep::PopupBackdrop(_))),
+        "open tab list menu must emit PopupBackdrop"
+    );
+    let menu = with_popup
+        .popup_menus()
+        .next()
+        .expect("open tab list menu must emit OwnedPopupMenu");
+    let target_row = menu
+        .rows
+        .iter()
+        .find(|row| row.item == Some(last_item) && row.interaction_bounds.is_some())
+        .or_else(|| {
+            menu.rows
+                .iter()
+                .rev()
+                .find(|row| row.item != Some(ITEM_1) && row.interaction_bounds.is_some())
+        })
+        .expect("popup menu exposes clickable tab rows");
+    let chosen_item = target_row.item.unwrap();
+    let row_center = rect_center(target_row.interaction_bounds.unwrap());
+
+    host.submit_pointer_batch([
+        LogicalPointerEvent::pressed(
+            SURFACE_A,
+            row_center,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        ),
+        LogicalPointerEvent::released(
+            SURFACE_A,
+            row_center,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        ),
+    ])
+    .unwrap();
+    assert!(
+        host.view().item(chosen_item).unwrap().is_active(),
+        "clicking popup menu row must activate its tab"
+    );
+    let after_select = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    assert!(
+        after_select.popup_menus().next().is_none(),
+        "selecting a tab closes the popup menu"
+    );
+}
+
+#[test]
+fn logical_host_contained_floating_drag_move_and_resize_emit_preview_and_commit() {
+    let initial_rect = LogicalRect::new(80.0, 60.0, 260.0, 180.0).unwrap();
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE_A,
+        DockspaceRootLayout::new(ROOT_A, DockspaceNode::pane(ITEM_1)),
+    )
+    .with_contained(DockspaceContainedLayout::new(
+        FloatingPresentationId::new(1),
+        DockspaceRootLayout::new(ROOT_B, DockspaceNode::tabs([ITEM_2])),
+        initial_rect,
+    ))])
+    .unwrap();
+
+    let mut host = LogicalHost::from_layout(layout, DockPolicy::default()).unwrap();
+    let mut metrics = SurfaceMetrics::new(LogicalRect::new(0.0, 0.0, 900.0, 650.0).unwrap());
+
+    let before = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    let frame = before
+        .contained_frames()
+        .next()
+        .expect("contained floating frame emitted");
+    let title_start = rect_center(frame.title_drag_bounds);
+    let title_moved = LogicalPoint::new(title_start.x() + 120.0, title_start.y() + 80.0).unwrap();
+
+    // Drag the contained title bar with docking disabled so it stays floating and moves.
+    host.submit_pointer_batch([
+        LogicalPointerEvent::pressed(
+            SURFACE_A,
+            title_start,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        )
+        .with_docking_enabled(false)
+        .with_capture(SurfacePointerCapture::ProviderEndpoint),
+        LogicalPointerEvent::moved(SURFACE_A, title_moved, PointerClearance::Unobstructed)
+            .with_docking_enabled(false)
+            .with_capture(SurfacePointerCapture::ProviderEndpoint),
+    ])
+    .unwrap();
+    let moving = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    assert!(
+        moving.contained_transform_preview().is_some() || moving.drag_preview().is_some(),
+        "dragging contained title bar must emit transform or drag preview"
+    );
+
+    host.submit_pointer(
+        LogicalPointerEvent::released(
+            SURFACE_A,
+            title_moved,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        )
+        .with_docking_enabled(false),
+    )
+    .unwrap();
+    let moved = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    let moved_frame = moved.contained_frames().next().unwrap();
+    assert!(
+        moved_frame.outer_bounds.x() > initial_rect.x() + 50.0,
+        "contained window x must move right ({} vs {})",
+        moved_frame.outer_bounds.x(),
+        initial_rect.x()
+    );
+
+    // Resize the contained floating window from its East edge.
+    let east = moved_frame
+        .resize_edges
+        .iter()
+        .find(|edge| edge.direction == ContainedResizeDirection::East && edge.operable)
+        .expect("contained frame exposes operable East resize edge");
+    let resize_start = rect_center(east.hit_bounds);
+    let resize_end = LogicalPoint::new(resize_start.x() + 90.0, resize_start.y()).unwrap();
+    host.submit_pointer_batch([
+        LogicalPointerEvent::pressed(
+            SURFACE_A,
+            resize_start,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        )
+        .with_capture(SurfacePointerCapture::ProviderEndpoint),
+        LogicalPointerEvent::moved(SURFACE_A, resize_end, PointerClearance::Unobstructed)
+            .with_capture(SurfacePointerCapture::ProviderEndpoint),
+    ])
+    .unwrap();
+    let resizing = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    assert!(
+        resizing.contained_transform_preview().is_some(),
+        "resizing contained floating window must emit OwnedContainedTransformPreview"
+    );
+    host.submit_pointer(LogicalPointerEvent::released(
+        SURFACE_A,
+        resize_end,
+        SurfacePointerButton::Primary,
+        PointerClearance::Unobstructed,
+    ))
+    .unwrap();
+    let resized = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    let resized_frame = resized.contained_frames().next().unwrap();
+    assert!(
+        resized_frame.outer_bounds.width() > moved_frame.outer_bounds.width() + 50.0,
+        "resizing East edge must widen contained window ({} vs {})",
+        resized_frame.outer_bounds.width(),
+        moved_frame.outer_bounds.width()
+    );
+}
+
+#[test]
+fn visitor_receives_drag_and_popup_steps_matching_display_list() {
+    #[derive(Default)]
+    struct OverlayVisitor {
+        drag_previews: usize,
+        drop_guides: usize,
+        drag_decorations: usize,
+        popup_backdrops: usize,
+        popup_menus: usize,
+        controls: usize,
+    }
+
+    impl SurfaceProgramVisitor for OverlayVisitor {
+        type Error = std::convert::Infallible;
+
+        fn tab_strip_control(
+            &mut self,
+            _root: SurfacePaintProgramRoot<'_>,
+            _control: crate::runtime::TabStripControlPaintRecord,
+            _paint: SurfacePaintDisposition,
+        ) -> Result<(), Self::Error> {
+            self.controls += 1;
+            Ok(())
+        }
+
+        fn popup_backdrop(
+            &mut self,
+            _backdrop: crate::runtime::TabListMenuBackdropPaintRecord,
+        ) -> Result<(), Self::Error> {
+            self.popup_backdrops += 1;
+            Ok(())
+        }
+
+        fn popup_menu(
+            &mut self,
+            _menu: crate::runtime::TabListMenuPaintRecord<'_>,
+            _paint: SurfacePaintDisposition,
+        ) -> Result<(), Self::Error> {
+            self.popup_menus += 1;
+            Ok(())
+        }
+
+        fn drag_preview(
+            &mut self,
+            _preview: crate::runtime::DockspaceDragPreview<'_>,
+        ) -> Result<(), Self::Error> {
+            self.drag_previews += 1;
+            Ok(())
+        }
+
+        fn drop_guide(
+            &mut self,
+            _structural: crate::runtime::DropGuidePaintRecord<'_>,
+            _affordance: Option<crate::runtime::DropAffordanceClusterPaintRecord<'_>>,
+        ) -> Result<(), Self::Error> {
+            self.drop_guides += 1;
+            Ok(())
+        }
+
+        fn drag_decoration(
+            &mut self,
+            _decoration: crate::runtime::DockspaceDragDecoration<'_>,
+        ) -> Result<(), Self::Error> {
+            self.drag_decorations += 1;
+            Ok(())
+        }
+    }
+
+    let items: Vec<ItemId> = (1..=6).map(ItemId::new).collect();
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE_A,
+        DockspaceRootLayout::new(ROOT_A, DockspaceNode::tabs(items)),
+    )])
+    .unwrap();
+    let mut host = LogicalHost::from_layout(layout, DockPolicy::default()).unwrap();
+    let mut metrics = SurfaceMetrics::new(LogicalRect::new(0.0, 0.0, 320.0, 260.0).unwrap())
+        .with_default_tab_width(110.0)
+        .unwrap()
+        .with_default_overflow_controls();
+
+    let initial = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    let menu_btn = initial
+        .tab_strip_controls()
+        .find(|control| control.kind == TabStripControlKind::TabListMenu)
+        .expect("tab list menu button");
+    let menu_btn_center = rect_center(menu_btn.hit_bounds);
+    host.submit_pointer_batch([
+        LogicalPointerEvent::pressed(
+            SURFACE_A,
+            menu_btn_center,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        ),
+        LogicalPointerEvent::released(
+            SURFACE_A,
+            menu_btn_center,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        ),
+    ])
+    .unwrap();
+
+    let mut popup_visitor = OverlayVisitor::default();
+    let token = match host
+        .paint_with_visitor(SURFACE_A, &mut metrics, &mut popup_visitor)
+        .unwrap()
+    {
+        LogicalPaintOutcome::Ready { presentation, .. } => presentation,
+        LogicalPaintOutcome::Deferred { .. } => panic!("expected ready paint"),
+    };
+    assert!(popup_visitor.controls >= 1);
+    assert_eq!(popup_visitor.popup_backdrops, 1);
+    assert_eq!(popup_visitor.popup_menus, 1);
+    host.finish_presentation(token, SurfacePresentationResult::Presented)
+        .unwrap();
+
+    // Dismiss popup by clicking backdrop outside the menu, then drag a tab and verify visitor.
+    let dismiss = LogicalPoint::new(10.0, 250.0).unwrap();
+    host.submit_pointer_batch([
+        LogicalPointerEvent::pressed(
+            SURFACE_A,
+            dismiss,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        ),
+        LogicalPointerEvent::released(
+            SURFACE_A,
+            dismiss,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        ),
+    ])
+    .unwrap();
+    let dismissed = paint_and_settle(&mut host, SURFACE_A, &mut metrics);
+    let tab_start = rect_center(dismissed.tabs().next().unwrap().drag_bounds);
+    let pane_mid = rect_center(
+        dismissed
+            .panes()
+            .next()
+            .unwrap()
+            .content_geometry
+            .layout_bounds(),
+    );
+    host.submit_pointer_batch([
+        LogicalPointerEvent::pressed(
+            SURFACE_A,
+            tab_start,
+            SurfacePointerButton::Primary,
+            PointerClearance::Unobstructed,
+        )
+        .with_capture(SurfacePointerCapture::ProviderEndpoint),
+        LogicalPointerEvent::moved(SURFACE_A, pane_mid, PointerClearance::Unobstructed)
+            .with_capture(SurfacePointerCapture::ProviderEndpoint),
+    ])
+    .unwrap();
+
+    let mut drag_visitor = OverlayVisitor::default();
+    let token = match host
+        .paint_with_visitor(SURFACE_A, &mut metrics, &mut drag_visitor)
+        .unwrap()
+    {
+        LogicalPaintOutcome::Ready { presentation, .. } => presentation,
+        LogicalPaintOutcome::Deferred { .. } => panic!("expected ready paint"),
+    };
+    assert_eq!(drag_visitor.drag_previews, 1);
+    assert!(drag_visitor.drop_guides >= 1);
+    assert_eq!(drag_visitor.drag_decorations, 1);
+    host.finish_presentation(token, SurfacePresentationResult::Presented)
+        .unwrap();
 }
