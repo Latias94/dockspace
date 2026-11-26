@@ -945,6 +945,50 @@ fn retired_binding_accepts_same_provider_effect_results() {
 }
 
 #[test]
+fn effect_outbox_requires_the_exact_provider_to_claim_a_dispatch() {
+    use crate::platform::provider::PlatformObservationAuthority;
+    use crate::runtime::NativeEffectOutbox;
+
+    let domain = crate::ids::EngineAuthorityDomainId::new_for_test(1);
+    let binding = ViewportBinding::new(
+        domain,
+        WorkspaceEpoch::new(2),
+        SurfaceId::new(3),
+        WindowToken::new(4),
+        WindowIncarnation::new(5),
+    );
+    let mut authority = PlatformObservationAuthority::new(domain);
+    let predecessor = authority.create().unwrap();
+    let replacement = authority.begin_replacement(predecessor).unwrap();
+    let successor = authority.finish_replacement(replacement).unwrap();
+    let old = NativeSurfaceBinding::from_binding(predecessor, binding).window();
+    let current = NativeSurfaceBinding::from_binding(successor, binding).window();
+    assert!(old.same_window_lifetime(current));
+    assert_ne!(old, current);
+
+    let mut ledger = EffectLedger::default();
+    ledger
+        .request(PlatformEffect::ReleaseChild { binding })
+        .unwrap();
+    let emission = ledger
+        .take_new_requests(successor, InventoryGeneration::new(1), |_| false)
+        .unwrap()
+        .pop()
+        .unwrap();
+    let dispatch = NativeEffectRequest::from_emission(&emission, NativeEffectDropQueue::default())
+        .begin_dispatch();
+    let mut outbox = NativeEffectOutbox::default();
+    outbox.await_observation(dispatch, 1).unwrap();
+
+    assert!(outbox.take_pending(old).is_none());
+    assert!(outbox.retire_pending(old).is_none());
+    assert_eq!(outbox.pending().collect::<Vec<_>>(), [(current, &1)]);
+    let result = outbox.retire_pending(current).unwrap();
+    assert_eq!(result.binding().window(), current);
+    assert!(outbox.is_empty());
+}
+
+#[test]
 fn retired_binding_requires_cleanup_correlation_after_workspace_replacement() {
     let (mut session, binding) = native_root_session();
     let before = session.version();

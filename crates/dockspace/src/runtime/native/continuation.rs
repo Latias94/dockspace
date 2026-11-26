@@ -195,6 +195,7 @@ impl DockspaceSession {
     /// The gesture need not have a finite stationary action. Hover target or
     /// deadline changes preserve this request's identity; another drag session
     /// differs even when it reuses the same native pointer and source binding.
+    /// Suspending docking preserves the drag's capture requirement.
     /// Reading this projection does not record input or advance the gesture.
     ///
     /// Hosts must drain accepted raw callbacks and commit pending core input

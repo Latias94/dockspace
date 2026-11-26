@@ -1815,6 +1815,69 @@ fn native_pointer_capture_request_precedes_timed_work_and_keeps_exact_drag_ident
 }
 
 #[test]
+fn native_docking_suspension_preserves_desktop_capture() {
+    for enabled_at_start in [true, false] {
+        let (mut session, binding, scene) = fixture(true);
+        let target = scene.point(SECOND, 0.625);
+        session
+            .record_native_pointer_batch([
+                input(
+                    &session,
+                    Lane::Desktop,
+                    binding,
+                    PRESS,
+                    scene.point(FIRST, 0.25),
+                    at(Device::Mouse, 0).with_docking_enabled(enabled_at_start),
+                ),
+                input(
+                    &session,
+                    Lane::Desktop,
+                    binding,
+                    Event::Moved,
+                    target,
+                    at(Device::Mouse, 10),
+                ),
+            ])
+            .unwrap();
+        reduce(&mut session, &scene);
+        assert_eq!(
+            session.native_pointer_continuation().is_some(),
+            enabled_at_start
+        );
+        let capture = session
+            .native_pointer_capture_request()
+            .expect("a desktop drag requires capture even if docking starts disabled");
+
+        session
+            .report_native_docking_enabled(binding, false)
+            .unwrap();
+        idle(&mut session);
+        assert!(session.has_active_gesture());
+        assert!(session.native_pointer_continuation().is_none());
+        assert_eq!(session.native_pointer_capture_request(), Some(capture));
+
+        session
+            .report_native_docking_enabled(binding, true)
+            .unwrap();
+        idle(&mut session);
+        assert!(session.native_pointer_continuation().is_none());
+        session
+            .record_native_pointer(input(
+                &session,
+                Lane::Desktop,
+                binding,
+                Event::Moved,
+                scene.point(THIRD, 0.625),
+                at(Device::Mouse, 20),
+            ))
+            .unwrap();
+        reduce(&mut session, &scene);
+        assert!(session.native_pointer_continuation().is_some());
+        assert_eq!(session.native_pointer_capture_request(), Some(capture));
+    }
+}
+
+#[test]
 fn native_pointer_capture_request_excludes_local_mouse_and_native_touch_drags() {
     for (lane, device) in [
         (Lane::Local, Device::Mouse),

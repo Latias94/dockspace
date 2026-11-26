@@ -41,7 +41,7 @@ impl<Ticket> NativeEffectOutbox<Ticket> {
             let operation = request.operation();
             is_destruction(operation)
                 || matches!(operation, NativeEffectOperation::AwaitCleanup { .. })
-                || self.pending_index(operation.binding().window()).is_none()
+                || !self.window_has_pending_dispatch(operation.binding().window())
         })?;
         self.queued.remove(index)
     }
@@ -74,28 +74,25 @@ impl<Ticket> NativeEffectOutbox<Ticket> {
         dispatch: NativeEffectDispatch,
         ticket: Ticket,
     ) -> Result<(), (NativeEffectDispatch, Ticket)> {
-        if self
-            .pending_index(dispatch.operation().binding().window())
-            .is_some()
-        {
+        if self.window_has_pending_dispatch(dispatch.operation().binding().window()) {
             return Err((dispatch, ticket));
         }
         self.pending.push((dispatch, ticket));
         Ok(())
     }
 
-    /// Claims a window's dispatch once its original ticket has settled.
+    /// Claims an exact provider-bound dispatch once its original ticket has settled.
     pub fn take_pending(
         &mut self,
         window: NativeWindowBinding,
     ) -> Option<(NativeEffectDispatch, Ticket)> {
-        let index = self.pending_index(window)?;
+        let index = self.pending().position(|(owner, _)| owner == window)?;
         Some(self.pending.remove(index))
     }
 
-    fn pending_index(&self, window: NativeWindowBinding) -> Option<usize> {
+    fn window_has_pending_dispatch(&self, window: NativeWindowBinding) -> bool {
         self.pending()
-            .position(|(owner, _)| owner.same_window_lifetime(window))
+            .any(|(owner, _)| owner.same_window_lifetime(window))
     }
 
     /// Settles an in-flight dispatch whose exact native window has retired.

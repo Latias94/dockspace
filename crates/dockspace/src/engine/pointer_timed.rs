@@ -180,9 +180,6 @@ impl DockEngine {
         let InteractionStatus::Dragging { session } = self.interaction.status() else {
             return None;
         };
-        if !self.interaction.docking_enabled() {
-            return None;
-        }
         let drag = self.interaction.active_drag(session).ok()?;
         let owner = drag.owner;
         if !owner.is_desktop()
