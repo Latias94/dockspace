@@ -35,6 +35,26 @@ pub(crate) fn retained_window_binding(
     .then_some(binding)
 }
 
+pub(crate) fn retain_window_input_state(
+    session: &dockspace::runtime::DockspaceSession,
+    context: &egui::Context,
+    instance: egui::Id,
+    binding: dockspace::runtime::NativeSurfaceBinding,
+    panes: &dyn PaneView,
+) {
+    if !session.is_current_native_binding(binding) {
+        return;
+    }
+    // The retained output owns every committed region of the window.
+    for placement in session.native_surface_bindings_for_window(binding.window()) {
+        if let Some(surface) = session.view().surface(placement.surface()) {
+            egui_dockspace::native_support::retain_skipped_surface_input_state(
+                context, instance, surface, panes,
+            );
+        }
+    }
+}
+
 /// Final-pass paint metadata plus fork-owned scroll identities from that same pass.
 pub(crate) struct NativeSurfacePaint {
     inner: egui_dockspace::native_support::NativeSurfacePaint,
@@ -125,36 +145,6 @@ impl std::fmt::Debug for NativeHostFrame<'_> {
 }
 
 impl<'session> NativeHostFrame<'session> {
-    pub(crate) fn retain_surface_input_state(
-        &self,
-        context: &egui::Context,
-        instance: egui::Id,
-        surface: SurfaceId,
-        panes: &dyn PaneView,
-    ) {
-        // A replacement may reuse item/widget IDs in a new workspace epoch.
-        if self.frame.proposed_native_bindings().next().is_some() {
-            return;
-        }
-        let window = self.bridge.with_viewports(|routes| {
-            routes
-                .binding(context.viewport_id())
-                .map(|binding| binding.window())
-        });
-        if !window.is_some_and(|window| {
-            self.frame
-                .native_surface_bindings_for_window(window)
-                .any(|binding| binding.surface() == surface)
-        }) {
-            return;
-        }
-        if let Some(surface) = self.frame.view().surface(surface) {
-            egui_dockspace::native_support::retain_skipped_surface_input_state(
-                context, instance, surface, panes,
-            );
-        }
-    }
-
     pub(crate) fn presented_focus_bindings(
         &self,
         surface: SurfaceId,

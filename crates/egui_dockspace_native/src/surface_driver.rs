@@ -672,7 +672,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
         token: NativeOutputToken,
         surface: SurfaceId,
     ) -> Result<(), NativeRuntimeError> {
-        self.stage_retain_previous_surfaces(context, token, &[surface])
+        self.stage_retain_previous_surfaces(context, token, &[surface], true)
     }
 
     fn stage_retain_previous_surfaces(
@@ -680,28 +680,22 @@ impl<P: PaneView> NativeRuntimeState<P> {
         context: &egui::Context,
         token: NativeOutputToken,
         surfaces: &[SurfaceId],
+        retain_input: bool,
     ) -> Result<(), NativeRuntimeError> {
-        if let Some(binding) = crate::host_frame::retained_window_binding(
-            context,
-            token,
-            &self.coordinator.dispatch_bridge(),
-        ) && self
-            .coordinator
-            .session()
-            .is_current_native_binding(binding)
+        if retain_input
+            && let Some(binding) = crate::host_frame::retained_window_binding(
+                context,
+                token,
+                &self.coordinator.dispatch_bridge(),
+            )
         {
-            // Retention reuses the complete physical window, including sibling regions.
-            let session = self.coordinator.session();
-            for surface in session.native_surface_bindings_for_window(binding.window()) {
-                if let Some(surface) = session.view().surface(surface.surface()) {
-                    egui_dockspace::native_support::retain_skipped_surface_input_state(
-                        context,
-                        self.paint_scope.instance(),
-                        surface,
-                        &self.panes,
-                    );
-                }
-            }
+            crate::host_frame::retain_window_input_state(
+                self.coordinator.session(),
+                context,
+                self.paint_scope.instance(),
+                binding,
+                &self.panes,
+            );
         }
         self.pass_actions
             .stage_retain_previous_surfaces(token, surfaces)
@@ -861,7 +855,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
             .is_some_and(|update| update.run.token != token)
         {
             self.pending_service = true;
-            self.stage_retain_previous_surfaces(&context, token, &requested_surfaces)?;
+            self.stage_retain_previous_surfaces(&context, token, &requested_surfaces, true)?;
             require_durable_root_cycle(&self.coordinator, token, true)?;
             return Ok(NativeSurfaceUpdate::RetainPrevious);
         }
@@ -913,7 +907,7 @@ impl<P: PaneView> NativeRuntimeState<P> {
                 if surface != self.root_surface {
                     bridge.block_semantic_viewport(token.viewport_id());
                 }
-                self.stage_retain_previous_surfaces(&context, token, &requested_surfaces)?;
+                self.stage_retain_previous_surfaces(&context, token, &requested_surfaces, true)?;
                 require_durable_root_cycle(&self.coordinator, token, true)?;
                 context.request_repaint_once_of(ViewportId::ROOT);
                 context.request_repaint_once_of(token.viewport_id());
@@ -1144,20 +1138,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
             retain_previous = true;
         }
         if retain_previous {
-            for surface in &publication.surfaces {
-                self.paint_scope.retain_surface_input_state(
-                    &host_frame,
-                    &context,
-                    *surface,
-                    &self.panes,
-                );
-            }
             if surface != self.root_surface {
                 bridge.block_semantic_viewport(token.viewport_id());
             }
-            self.pass_actions
-                .stage_retain_previous_surfaces(token, &publication.surfaces)
-                .map_err(map_pass_action_error)?;
         } else {
             self.pass_actions
                 .begin_surface_pass(token, &publication.surfaces)
@@ -1206,8 +1189,20 @@ impl<P: PaneView> NativeRuntimeState<P> {
                     .map_err(map_pass_action_error)?;
             }
         }
+        // A replacement may reuse item and widget IDs in a new workspace epoch.
+        let retain_input =
+            retain_previous && host_frame.frame.proposed_native_bindings().next().is_none();
+        let host = host_frame.suspend();
+        if retain_previous {
+            self.stage_retain_previous_surfaces(
+                &context,
+                token,
+                &publication.surfaces,
+                retain_input,
+            )?;
+        }
         self.owned_update = Some(NativeOwnedUpdate {
-            host: host_frame.suspend(),
+            host,
             run,
             publication,
         });

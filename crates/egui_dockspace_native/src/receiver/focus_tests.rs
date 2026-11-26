@@ -1,22 +1,23 @@
 use std::sync::Arc;
 
-use dockspace::geometry::{LogicalRect, LogicalSize, PhysicalRect, ScaleFactor};
+use dockspace::geometry::{LogicalRect, LogicalSize, PhysicalPoint, PhysicalRect, ScaleFactor};
 use dockspace::model::{
     DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, RootId,
 };
 use dockspace::runtime::{
     DockspaceSession, HostInputOutcome, HostWindowToken, NativeCloseState, NativePointerRoster,
-    NativeWindowFacts, NativeWindowPresentationState, NativeWorkAreaRoster,
+    NativeSurfacePlacement, NativeWindowFacts, NativeWindowPresentationState, NativeWorkAreaRoster,
     SurfacePresentationResult, SurfaceUnavailableReason, UniformSurfaceMetrics,
 };
 use egui_dockspace::{PaneResponse, PaneView};
 
 use super::*;
-use crate::host_frame::NativeHostFrame;
+use crate::host_frame::{NativeHostFrame, retain_window_input_state};
 use crate::mailbox::NativeHostBridge;
 use crate::viewport_map::NativeViewportMap;
 
-const SURFACE: SurfaceId = SurfaceId::new(1);
+const ROOT_SURFACE: SurfaceId = SurfaceId::new(1);
+const SURFACE: SurfaceId = SurfaceId::new(2);
 const EDITOR: ItemId = ItemId::new(1);
 
 struct Editor {
@@ -45,10 +46,19 @@ impl PaneView for Editor {
     reason = "the regression crosses native snapshot, presentation retirement and real egui focus passes"
 )]
 fn minimized_surface_keeps_editor_focus_without_presented_receiver_authority() {
-    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
-        SURFACE,
-        DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([EDITOR])),
-    )])
+    let layout = DockspaceLayout::new([
+        DockspaceSurfaceLayout::new(
+            ROOT_SURFACE,
+            DockspaceRootLayout::new(
+                RootId::new(1),
+                DockspaceNode::central_tabs([ItemId::new(2)]),
+            ),
+        ),
+        DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(RootId::new(2), DockspaceNode::central_tabs([EDITOR])),
+        ),
+    ])
     .unwrap();
     let mut session = DockspaceSession::from_layout_with_presentation_config(
         layout,
@@ -67,21 +77,22 @@ fn minimized_surface_keeps_editor_focus_without_presented_receiver_authority() {
         ))
         .unwrap();
     session
-        .register_native_root(SURFACE, HostWindowToken::new(1))
+        .register_native_root(ROOT_SURFACE, HostWindowToken::new(1))
         .unwrap();
     let mut registration = session.begin_host_frame().unwrap();
     registration
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
     let registration = registration.commit().unwrap();
-    let binding = registration
+    let window = registration
         .inputs()
         .iter()
         .find_map(|outcome| match outcome {
             HostInputOutcome::NativeSurfaceRegistered { binding } => Some(*binding),
             _ => None,
         })
-        .unwrap();
+        .unwrap()
+        .window();
     let bounds = PhysicalRect::new(0.0, 0.0, 640.0, 480.0).unwrap();
     let scale = ScaleFactor::new(1.0).unwrap();
     let facts = NativeWindowFacts::live()
@@ -92,7 +103,34 @@ fn minimized_surface_keeps_editor_focus_without_presented_receiver_authority() {
         .with_presentation(NativeWindowPresentationState::Visible)
         .with_close(NativeCloseState::Clear, None);
     session
-        .report_managed_native_snapshot([(binding, facts)], NativeWorkAreaRoster::Unknown)
+        .report_managed_native_snapshot([(window, facts)], NativeWorkAreaRoster::Unknown)
+        .unwrap();
+    let placements = [(ROOT_SURFACE, 0.0), (SURFACE, 320.0)].map(|(surface, x)| {
+        NativeSurfacePlacement::new(
+            surface,
+            LogicalSize::new(320.0, 480.0).unwrap(),
+            PhysicalPoint::new(x, 0.0).unwrap(),
+            scale,
+            PhysicalRect::new(x, 0.0, 320.0, 480.0).unwrap(),
+        )
+    });
+    let mut shared = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    shared
+        .set_native_surface_placements(window, &placements)
+        .unwrap();
+    shared
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    shared.commit().unwrap();
+    let binding = session
+        .native_surface_bindings_for_window(window)
+        .find(|binding| binding.surface() == SURFACE)
+        .unwrap();
+    let root_binding = session
+        .native_surface_bindings_for_window(window)
+        .find(|binding| binding.surface() == ROOT_SURFACE)
         .unwrap();
     let mut measured = session
         .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
@@ -101,7 +139,7 @@ fn minimized_surface_keeps_editor_focus_without_presented_receiver_authority() {
         .measure_surface(
             SURFACE,
             UniformSurfaceMetrics::new(
-                LogicalRect::new(0.0, 0.0, 640.0, 480.0).unwrap(),
+                LogicalRect::new(0.0, 0.0, 320.0, 480.0).unwrap(),
                 LogicalSize::new(32.0, 24.0).unwrap(),
                 80.0,
             )
@@ -164,7 +202,7 @@ fn minimized_surface_keeps_editor_focus_without_presented_receiver_authority() {
         .bind_viewport_route(
             egui::ViewportId::ROOT,
             winit::window::WindowId::from(1),
-            binding,
+            root_binding,
         )
         .unwrap();
     let mut settled = NativeHostFrame::new(
@@ -213,7 +251,7 @@ fn minimized_surface_keeps_editor_focus_without_presented_receiver_authority() {
     session
         .report_managed_native_snapshot(
             [(
-                binding,
+                window,
                 facts.with_presentation(NativeWindowPresentationState::Minimized),
             )],
             NativeWorkAreaRoster::Unknown,
@@ -243,24 +281,37 @@ fn minimized_surface_keeps_editor_focus_without_presented_receiver_authority() {
     );
 
     session
-        .report_managed_native_snapshot([(binding, facts)], NativeWorkAreaRoster::Unknown)
+        .report_managed_native_snapshot([(window, facts)], NativeWorkAreaRoster::Unknown)
         .unwrap();
-    let mut skipped = NativeHostFrame::new(
-        session
-            .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
-            .unwrap(),
-        bridge,
-        &mut receivers,
-        None,
+    let mut skipped = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    assert!(skipped.presented_surface(SURFACE).is_none());
+    skipped
+        .set_native_surface_placements(window, &placements[..1])
+        .unwrap();
+    assert!(
+        skipped
+            .native_surface_bindings_for_window(window)
+            .all(|binding| binding.surface() != SURFACE)
     );
-    assert!(skipped.frame.presented_surface(SURFACE).is_none());
+    let retained_focus = receivers.presented_focus_bindings(
+        SURFACE,
+        egui::ViewportId::ROOT,
+        skipped.presented_surface(SURFACE),
+    );
+    skipped
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let skipped = skipped.suspend();
     for pass in 0..2 {
         context
             .run_ui(egui::RawInput::default(), |_| {
-                skipped.retain_surface_input_state(
+                retain_window_input_state(
+                    &session,
                     &context,
                     egui::Id::unique("minimized-workspace"),
-                    SURFACE,
+                    root_binding,
                     &editor,
                 );
                 assert!(
@@ -274,11 +325,11 @@ fn minimized_surface_keeps_editor_focus_without_presented_receiver_authority() {
                     assert_eq!(
                         egui_dockspace::native_support::sample_host_focus(
                             &context,
-                            skipped.frame.view().surface(SURFACE).unwrap(),
+                            session.view().surface(SURFACE).unwrap(),
                             &editor,
                             egui::Id::unique("minimized-workspace"),
                             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 480.0)),
-                            skipped.presented_focus_bindings(SURFACE, egui::ViewportId::ROOT),
+                            retained_focus,
                         ),
                         dockspace::runtime::DockspaceHostFocus::Unknown,
                         "identity liveness alone must not become presentation-qualified focus evidence",
@@ -291,10 +342,7 @@ fn minimized_surface_keeps_editor_focus_without_presented_receiver_authority() {
             "skipped pass {pass} must keep the existing editor identity alive"
         );
     }
-    skipped
-        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
-        .unwrap();
-    skipped.commit().unwrap();
+    session.resume_update(skipped).unwrap().commit().unwrap();
     assert!(session.presented_surface(SURFACE).is_none());
     context
         .run_ui(

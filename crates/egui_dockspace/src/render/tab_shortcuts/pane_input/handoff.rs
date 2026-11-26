@@ -96,7 +96,7 @@ pub(in crate::render) enum PaneInputState {
 }
 
 pub(in crate::render::tab_shortcuts) fn prepare(
-    context: &RenderContext<'_, '_, '_>,
+    context: &mut RenderContext<'_, '_, '_>,
 ) -> PaneInputState {
     observe_surface_keyboard(context.ui.ctx(), slot_id(context));
     if foreign_pending_input(context) {
@@ -120,14 +120,17 @@ pub(in crate::render::tab_shortcuts) fn prepare(
     let focus_moves = context
         .pane_focus_request
         .is_some_and(|request| request.item() != Some(item));
-    if !current_content
-        || !context.panes.accepts_deferred_keyboard_input(item)
+    if !current_content {
+        retire_input(context);
+        return PaneInputState::None;
+    }
+    if !context.panes.accepts_deferred_keyboard_input(item)
         || (matches!(
             pending.handoff,
             Handoff::Continuation | Handoff::FrameworkTraversal { .. }
         ) && focus_moves)
     {
-        retire_input(context);
+        return_host_keys(context, pending.packet.events);
         return PaneInputState::None;
     }
     if matches!(pending.handoff, Handoff::FrameworkTraversal { .. }) {
@@ -151,7 +154,7 @@ pub(in crate::render::tab_shortcuts) fn prepare(
                 focus_cleared_by_escape,
             })
         } else {
-            retire_input(context);
+            return_host_keys(context, pending.packet.events);
             PaneInputState::None
         };
     }
@@ -168,7 +171,7 @@ pub(in crate::render::tab_shortcuts) fn prepare(
                 focus_cleared_by_escape,
             })
         } else {
-            retire_input(context);
+            return_host_keys(context, pending.packet.events);
             PaneInputState::None
         };
     }
@@ -178,6 +181,37 @@ pub(in crate::render::tab_shortcuts) fn prepare(
         return PaneInputState::Waiting;
     }
     let focused = context.ui.memory(egui::Memory::focused);
+    let activation_escaped = matches!(pending.handoff, Handoff::Activation { header, .. }
+        if focused.is_none() && focus_before_live_escape(context.ui.ctx(), header));
+    if activation_escaped || matches!(pending.handoff, Handoff::CancelledActivation) {
+        // Escape still belongs to the tab. The editor has yet to receive focus.
+        let request = context
+            .pane_focus_request
+            .filter(|request| Some(*request) != pending.previous_request);
+        return_host_keys(context, std::mem::take(&mut pending.packet.events));
+        if let Some(request) = request {
+            if request.item() == Some(item) {
+                crate::focus::cancel_pane_focus_request(
+                    context.ui.ctx(),
+                    context.instance_id,
+                    request,
+                );
+            }
+        } else if matches!(
+            pending.handoff,
+            Handoff::Activation {
+                awaiting_publication: false,
+                ..
+            }
+        ) {
+            // The activation's selection may commit in this pass. Remember
+            // the cancellation until its focus request can be observed.
+            pending.ready = false;
+            pending.handoff = Handoff::CancelledActivation;
+            store(context, pending);
+        }
+        return PaneInputState::Waiting;
+    }
     let focus_cleared_by_escape = focused.is_none()
         && widget.is_some_and(|widget| focus_before_live_escape(context.ui.ctx(), widget));
     let phase = match pending.handoff {
@@ -222,11 +256,11 @@ pub(in crate::render::tab_shortcuts) fn prepare(
                     store(context, pending);
                     return PaneInputState::Waiting;
                 }
-                retire_input(context);
+                return_host_keys(context, pending.packet.events);
                 return PaneInputState::None;
             }
             if request.and_then(|request| request.item()) != Some(item) {
-                retire_input(context);
+                return_host_keys(context, pending.packet.events);
                 return PaneInputState::None;
             }
             if !has_pointer_or_accessibility_edges(context.ui.ctx()) {
@@ -235,7 +269,7 @@ pub(in crate::render::tab_shortcuts) fn prepare(
             DeliveryPhase::AwaitingRegistration
         }
         _ => {
-            retire_input(context);
+            return_host_keys(context, pending.packet.events);
             return PaneInputState::None;
         }
     };

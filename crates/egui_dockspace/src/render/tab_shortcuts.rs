@@ -170,9 +170,13 @@ fn can_route_keyboard(context: &RenderContext<'_, '_, '_>) -> bool {
         && super::actions::focus_uninterrupted(context.ui)
         && !context.plan.has_manipulation_preview()
         && context.plan.prepare_gesture_cancel().is_none()
-        && context.ui.ctx().dragged_id().is_none()
-        && !egui::Popup::is_any_open(context.ui.ctx())
-        && !context.ui.ctx().any_popup_open()
+        && keyboard_interaction_available(context.ui.ctx())
+}
+
+fn keyboard_interaction_available(context: &egui::Context) -> bool {
+    context.dragged_id().is_none()
+        && !egui::Popup::is_any_open(context)
+        && !context.any_popup_open()
 }
 
 /// Routes through known tab controls. At a destination owned by egui, give it

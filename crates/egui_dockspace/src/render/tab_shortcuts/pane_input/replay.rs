@@ -140,10 +140,7 @@ impl PaneInputDelivery {
     }
 
     pub(in crate::render) fn retire(self, context: &mut RenderContext<'_, '_, '_>) {
-        context
-            .pane_shortcuts
-            .extend(self.packet.events.into_iter().filter(is_host_key));
-        return_queued_host_keys(context);
+        return_host_keys(context, self.packet.events);
     }
 
     pub(in crate::render) fn replay(
@@ -220,10 +217,7 @@ impl ScopedPaneInput {
                     );
                 }
             } else {
-                context
-                    .pane_shortcuts
-                    .extend(input.events.into_iter().flatten().filter(is_host_key));
-                return_queued_host_keys(context);
+                return_host_keys(context, input.events.into_iter().flatten());
             }
             return;
         };
@@ -241,7 +235,7 @@ impl ScopedPaneInput {
         match input.framework_input {
             Some(FrameworkInput::Surrender(tail)) => {
                 context.pane_shortcuts.extend(tail);
-                return_queued_host_keys(context);
+                return_host_keys(context, std::iter::empty());
             }
             Some(FrameworkInput::Traverse(direction, tail)) => {
                 let focused = ui.memory(egui::Memory::focused).filter(|&widget| {

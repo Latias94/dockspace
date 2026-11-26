@@ -106,6 +106,17 @@ pub(crate) fn pane_focus_handoff_pending(
         })
 }
 
+/// Settles the framework side effect after the user has surrendered the source focus.
+pub(crate) fn cancel_pane_focus_request(
+    context: &Context,
+    instance: Id,
+    request: DockspacePaneFocusRequest,
+) {
+    with_framework_focus(context, instance, context.viewport_id(), request, |state| {
+        state.applied = true;
+    });
+}
+
 fn explicitly_focused_elsewhere(
     context: &Context,
     focused: Option<Id>,

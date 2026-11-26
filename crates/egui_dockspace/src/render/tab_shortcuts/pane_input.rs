@@ -28,7 +28,7 @@ pub(crate) use queue::release_host_keys;
 pub(crate) use queue::retain_skipped_pane_keyboard;
 use queue::{
     defer_framework_traversal, focus_before_live_escape, foreign_pending_input, layout_retry,
-    observe_surface_keyboard, rebind_packets, retire_input, return_queued_host_keys,
+    observe_surface_keyboard, rebind_packets, retire_input, return_host_keys,
     settle_framework_keys, stage_live_input, store, take,
 };
 use replay::DeliveryPhase;
@@ -41,6 +41,7 @@ enum Handoff {
         header: Id,
         awaiting_publication: bool,
     },
+    CancelledActivation,
     Continuation,
     FrameworkTraversal {
         pane: Id,

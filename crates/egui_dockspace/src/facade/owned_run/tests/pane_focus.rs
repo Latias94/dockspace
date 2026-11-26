@@ -513,6 +513,126 @@ fn retained_passes_keep_the_activating_tab_focused_until_the_editor_registers() 
 }
 
 #[test]
+fn escape_before_editor_registration_ends_header_activation_and_returns_host_keys() {
+    for owned in [true, false] {
+        for retain in [false, true] {
+            let context = Context::default();
+            let mut dock = editing_dock(true);
+            let mut docs = EditingDocuments {
+                text: ["alpha".into(), "bravo".into()],
+                ..Default::default()
+            };
+            paint_editor_frame(&mut dock, &context, input(0.1, vec![]), &mut docs, owned);
+            context.memory_mut(|memory| memory.request_focus(docs.first_tab.unwrap()));
+            paint_editor_frame(&mut dock, &context, input(0.2, vec![]), &mut docs, owned);
+            let save = command(Key::S);
+            let escape = key_event(Key::Escape, Modifiers::NONE, true);
+            let close = command(Key::W);
+            paint_editor_frame(
+                &mut dock,
+                &context,
+                input(
+                    0.3,
+                    vec![
+                        key_event(Key::ArrowRight, Modifiers::NONE, true),
+                        key_event(Key::Enter, Modifiers::NONE, true),
+                        Event::Paste("X".into()),
+                        save.clone(),
+                    ],
+                ),
+                &mut docs,
+                owned,
+            );
+            assert!(!consume_save(&context));
+            if retain {
+                context
+                    .run_ui(input(0.4, vec![]), |_| {
+                        crate::focus::retain_skipped_surface_input_state(
+                            &context,
+                            dock.id,
+                            dock.view().surface(SURFACE).unwrap(),
+                            &docs,
+                        );
+                    })
+                    .drop_without_applying_deltas();
+            }
+            let mut delivered = Vec::new();
+            for (time, events) in [
+                (0.5, vec![escape.clone(), close.clone()]),
+                (0.6, vec![]),
+                (0.7, vec![]),
+            ] {
+                paint_editor_frame(&mut dock, &context, input(time, events), &mut docs, owned);
+                delivered.extend(context.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .filter(|event| **event == save || **event == escape || **event == close)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                }));
+            }
+            assert!(dock.view().item(SECOND).unwrap().is_active());
+            assert_eq!(
+                docs.text,
+                ["alpha", "bravo"],
+                "owned={owned}, retain={retain}"
+            );
+            assert_eq!(
+                context.memory(egui::Memory::focused),
+                None,
+                "owned={owned}, retain={retain}"
+            );
+            assert_eq!(
+                delivered,
+                [save, escape, close],
+                "owned={owned}, retain={retain}"
+            );
+        }
+    }
+}
+
+#[test]
+fn retained_editor_input_leaves_live_shortcuts_to_a_popup_or_drag() {
+    for popup in [true, false] {
+        let context = Context::default();
+        let mut dock = editing_dock(false);
+        let mut docs = EditingDocuments {
+            text: ["alpha".into(), "bravo".into()],
+            ..Default::default()
+        };
+        paint_editor_frame(&mut dock, &context, input(0.1, vec![]), &mut docs, false);
+        select_document(&mut dock, FIRST);
+        paint_editor_frame(&mut dock, &context, input(0.2, vec![]), &mut docs, false);
+        select_document(&mut dock, SECOND);
+        paint_editor_frame(
+            &mut dock,
+            &context,
+            input(0.3, vec![Event::Paste("X".into())]),
+            &mut docs,
+            false,
+        );
+        context
+            .run_ui(input(0.4, vec![command(Key::S)]), |ui| {
+                let id = Id::unique("another interaction");
+                if popup {
+                    egui::Popup::open_id(ui.ctx(), id);
+                } else {
+                    ui.ctx().set_dragged_id(id);
+                }
+                crate::focus::retain_skipped_surface_input_state(
+                    ui.ctx(),
+                    dock.id,
+                    dock.view().surface(SURFACE).unwrap(),
+                    &docs,
+                );
+                assert!(consume_save(ui.ctx()), "popup={popup}");
+            })
+            .drop_without_applying_deltas();
+    }
+}
+
+#[test]
 fn forward_tab_out_of_a_pane_preserves_the_packets_host_commands() {
     let context = Context::default();
     let mut dock = editing_dock(false);
