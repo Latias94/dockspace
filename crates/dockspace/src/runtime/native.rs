@@ -637,6 +637,10 @@ struct NativeCloseFact {
 }
 
 impl NativeWindowFacts {
+    pub(super) const fn is_destroyed(self) -> bool {
+        matches!(self.lifecycle, NativeWindowLifecycleFact::Destroyed { .. })
+    }
+
     /// Returns the window's exact observed presentation state, if known.
     #[must_use]
     pub const fn observed_presentation(self) -> Option<NativeWindowPresentationState> {
@@ -1658,10 +1662,10 @@ impl RuntimeNativeState {
                         .producer
                         .window(entry.binding.window())
                         .is_some_and(|state| state.current)
-                    && entry
-                        .facts
-                        .presentation
-                        .is_some_and(|fact| fact.state == NativeWindowPresentationState::Visible))
+                    && crate::platform::WindowPresentationObservation::allows_local_work_for(
+                        entry.facts.observed_presentation().map(Into::into),
+                        entry.facts.local_readiness,
+                    ))
                 .then_some(entry.binding)
             }))?;
         let snapshot = compile_platform_snapshot(

@@ -133,11 +133,12 @@ impl DockEngine {
                 })
             }
             PointerContinuationSession::Drag(session) => {
-                self.interaction.active_drag(session).is_ok_and(|drag| {
-                    drag.timed
-                        .as_ref()
-                        .is_some_and(|timed| timed.request().token == token)
-                })
+                self.interaction.docking_enabled()
+                    && self.interaction.active_drag(session).is_ok_and(|drag| {
+                        drag.timed
+                            .as_ref()
+                            .is_some_and(|timed| timed.request().token == token)
+                    })
             }
         }
     }
@@ -179,6 +180,9 @@ impl DockEngine {
         let InteractionStatus::Dragging { session } = self.interaction.status() else {
             return None;
         };
+        if !self.interaction.docking_enabled() {
+            return None;
+        }
         let drag = self.interaction.active_drag(session).ok()?;
         let owner = drag.owner;
         if !owner.is_desktop()
@@ -706,6 +710,7 @@ impl DockEngine {
             pending.target,
             policy,
             events,
+            interaction_events,
         )?);
         Ok(outcomes)
     }
@@ -718,6 +723,7 @@ impl DockEngine {
         tab: crate::presentation::scene::TabSceneId,
         policy: &DockPolicySnapshot,
         events: &mut Vec<WorkspaceEvent>,
+        interaction_events: &mut Vec<InteractionEvent>,
     ) -> Result<InteractionOutcome, EngineError> {
         let invariant = |detail: String| EngineError::PointerInteractionInvariant { cause, detail };
         let drag = self
@@ -838,6 +844,13 @@ impl DockEngine {
         self.interaction
             .clear_drag_feedback(session)
             .map_err(|error| invariant(format!("{error:?}")))?;
+        if drag.preview().is_some() {
+            interaction_events.push(InteractionEvent::new_caused(
+                cause,
+                self.version,
+                InteractionEventKind::PreviewCleared { session },
+            ));
+        }
         Ok(InteractionOutcome::ProductActionApplied(
             crate::model::DockspaceActionOutcome::Selected {
                 tab: tab.tab,

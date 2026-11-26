@@ -39,8 +39,9 @@ impl From<ViewportRole> for NativeSurfaceRole {
 
 /// Exact adapter operation requested by the core.
 ///
-/// The order in [`super::HostFrameReport::take_native_effects`] is normative.
-/// Hosts must not deduplicate, merge, or reorder requests.
+/// Enqueue effects in the order returned by [`super::HostFrameReport::take_native_effects`].
+/// Hosts may dispatch independent windows while a backend ticket is pending.
+/// Destructive cleanup can progress while the operation it cancels is pending.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum NativeEffectOperation {
@@ -1078,6 +1079,53 @@ mod tests {
             .expect("the active provider owns every abandoned result");
         assert_eq!(recorded, 1);
         assert!(!abandoned.has_pending());
+        assert!(abandoned.is_quiescent());
+    }
+
+    #[test]
+    fn dropping_unconfirmed_window_destruction_reports_acknowledgement_lost() {
+        let domain = EngineAuthorityDomainId::new_for_test(98);
+        let mut providers = PlatformObservationAuthority::new(domain);
+        let provider = providers.create().unwrap();
+        let binding = ViewportBinding::new(
+            domain,
+            WorkspaceEpoch::new(0),
+            SurfaceId::new(1),
+            WindowToken::new(1),
+            WindowIncarnation::new(1),
+        );
+        let mut ledger = EffectLedger::default();
+        let effect = ledger
+            .request(PlatformEffect::ReleaseChild { binding })
+            .unwrap();
+        let emission = ledger
+            .take_new_requests(provider, InventoryGeneration::new(1), |_| false)
+            .unwrap()
+            .pop()
+            .unwrap();
+        let abandoned = NativeEffectDropQueue::with_capacity_limit(1).unwrap();
+        let close =
+            NativeEffectRequest::from_emission(&emission, abandoned.clone()).begin_dispatch();
+        let mut outbox = NativeWindowObservationOutbox::new(close.operation().binding().window());
+        outbox.await_destruction(close).unwrap();
+        let _unsubmitted = outbox.destroyed();
+        drop(outbox);
+
+        let mut recorded = Vec::new();
+        abandoned
+            .record_for(provider, |result| {
+                recorded.push(result.result);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            recorded,
+            [EffectResult::new(
+                effect,
+                WorkspaceEpoch::new(0),
+                EffectDispatchResult::Indeterminate(EffectIndeterminateReason::AcknowledgementLost),
+            )]
+        );
         assert!(abandoned.is_quiescent());
     }
 

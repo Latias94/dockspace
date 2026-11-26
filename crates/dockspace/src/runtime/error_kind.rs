@@ -424,6 +424,7 @@ pub(super) const fn engine_error_kind(error: &EngineError) -> DockspaceRuntimeEr
         | EngineError::RuntimeRetentionRevisionExhausted
         | EngineError::ReductionCauseInvariant { .. }
         | EngineError::WorkspaceEpochExhausted { .. }
+        | EngineError::WorkspaceOpenItemGenerationExhausted { .. }
         | EngineError::WorkspaceRevisionExhausted { .. }
         | EngineError::PresentationRequirementRevisionExhausted { .. }
         | EngineError::PresentationConfigRevisionExhausted { .. }

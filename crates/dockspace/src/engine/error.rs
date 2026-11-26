@@ -8,6 +8,12 @@ pub enum EngineError {
     /// Initial or replacement workspace violated a durable invariant.
     #[error("workspace is invalid: {0}")]
     InvalidWorkspace(#[source] WorkspaceValidationErrors),
+    /// A replacement attempt could not issue a distinct pane lifetime.
+    #[error("workspace replacement input {input} exhausted open item generations")]
+    WorkspaceOpenItemGenerationExhausted {
+        /// Input which attempted the replacement.
+        input: InputSequence,
+    },
     /// A host-owned logical surface is absent from its declaration or replacement.
     #[error("host-owned surface {surface} is unavailable")]
     HostSurfaceUnavailable {

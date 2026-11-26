@@ -144,6 +144,14 @@ impl Workspace {
         Arc::make_mut(&mut self.authority.open_items).remove(&item);
     }
 
+    pub(crate) fn renew_open_items(&mut self) -> Result<(), CommandError> {
+        let generation = OpenItemGeneration::issue()?;
+        for opened in Arc::make_mut(&mut self.authority.open_items).values_mut() {
+            *opened = generation;
+        }
+        Ok(())
+    }
+
     /// Borrows the current owned body; unfinished private edits have no read view.
     pub(crate) fn root_structure(&self, root: RootId) -> Option<&Arc<RootStructure>> {
         match &self.authority.roots.get(&root)?.structure {

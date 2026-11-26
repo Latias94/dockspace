@@ -155,6 +155,42 @@ fn open_item_identity_exists_only_for_the_current_open_lifetime() {
 }
 
 #[test]
+fn retried_layout_reset_has_fresh_pane_lifetimes() {
+    let mut session = session();
+    let reset = session
+        .prepare_layout_reset(session.view().to_layout())
+        .unwrap();
+    let discarded = paint_open_item(
+        &mut session.begin_layout_reset_frame(&reset).unwrap(),
+        SECOND,
+    );
+    let mut retry = session.begin_layout_reset_frame(&reset).unwrap();
+    let current = paint_open_item(&mut retry, SECOND);
+    commit(retry);
+    assert_eq!(session.open_item_identity(SECOND), Some(current));
+    assert_ne!(discarded, current);
+}
+
+fn paint_open_item(frame: &mut DockspaceHostFrame<'_>, item: ItemId) -> DockspaceOpenItemId {
+    frame
+        .measure_surface(
+            SURFACE,
+            UniformSurfaceMetrics::new(
+                LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
+                LogicalSize::new(64.0, 48.0).unwrap(),
+                96.0,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+    let identity = plan.open_item_identity(item).unwrap();
+    let receipt = plan.execute_surface_program(|_| Ok::<_, ()>(())).unwrap();
+    frame.confirm_surface_painted(receipt).unwrap();
+    identity
+}
+
+#[test]
 fn multiple_close_requests_correlate_new_reused_and_rejected_outcomes() {
     let mut session = session();
     let first = session.prepare_close_item(FIRST);

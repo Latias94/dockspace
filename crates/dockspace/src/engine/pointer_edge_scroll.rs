@@ -14,7 +14,8 @@ impl DockEngine {
         let Some(DragTimedContinuation::TabStripEdgeScroll(pending)) = drag.timed.as_ref() else {
             return false;
         };
-        pending.key.surface() == surface
+        self.interaction.docking_enabled()
+            && pending.key.surface() == surface
             && pending.workspace == self.version
             && self.pointer_provider() == Some(drag.owner.lease())
             && self.pointer_continuation_source_is_current(drag.owner)
@@ -152,7 +153,8 @@ impl DockEngine {
             || drag.continuation.as_ref().is_some_and(|continuation| {
                 self.scene_gesture_continuation_is_current(continuation)
             });
-        let output = (source_current
+        let output = (self.interaction.docking_enabled()
+            && source_current
             && self.pointer_continuation_source_is_current(owner)
             && self.stationary_surface_is_reachable(owner, pending.key.surface())
             && pending.request.token.owner == owner.stream()
@@ -265,6 +267,9 @@ impl DockEngine {
         &self,
         pending: &TabStripEdgeScrollState,
     ) -> bool {
+        if !self.interaction.docking_enabled() {
+            return false;
+        }
         let Some(current) = self.interaction_projection(pending.key.surface()) else {
             return false;
         };
@@ -298,6 +303,9 @@ impl DockEngine {
         receipt: &ValidatedPointerReceiverReceipt,
         snapshot: &JournalPresentationSnapshot,
     ) -> Result<bool, EngineError> {
+        if !self.interaction.docking_enabled() {
+            return Ok(false);
+        }
         let Some(now) = edge
             .metadata()
             .observed_at()

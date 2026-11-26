@@ -36,15 +36,17 @@ pub struct NativeWindowFactsSample {
 /// Hosts can add exact local readiness and input facts to the result.
 pub fn compile_native_window_facts(sample: NativeWindowFactsSample) -> NativeWindowFacts {
     let mut facts = NativeWindowFacts::live();
-    if let Some(client) = sample.client {
-        facts = match client {
-            NativeWindowClientGeometry::Size(size) => facts.with_content_size(size),
-            NativeWindowClientGeometry::Bounds(bounds) => facts
-                .with_content_size(bounds.size())
-                .with_content_bounds(bounds),
-        };
-    }
-    if let Some(bounds) = sample.outer_bounds {
+    let positive = |size: PhysicalSize| size.width() > 0.0 && size.height() > 0.0;
+    facts = match sample.client {
+        Some(NativeWindowClientGeometry::Size(size)) if positive(size) => {
+            facts.with_content_size(size)
+        }
+        Some(NativeWindowClientGeometry::Bounds(bounds)) if positive(bounds.size()) => facts
+            .with_content_size(bounds.size())
+            .with_content_bounds(bounds),
+        _ => facts,
+    };
+    if let Some(bounds) = sample.outer_bounds.filter(|bounds| positive(bounds.size())) {
         facts = facts.with_outer_bounds(bounds);
     }
     if let Some(scale) = sample.native_scale {

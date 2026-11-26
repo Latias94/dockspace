@@ -39,6 +39,39 @@ fn persistent_session(include_incoming: bool) -> DockspaceSession {
 }
 
 #[test]
+fn retried_document_restore_has_fresh_pane_lifetimes() {
+    let mut session = persistent_session(false);
+    let bytes = persistent_session(true).save_document_json().unwrap();
+    let restore = session
+        .prepare_document_restore_json(&bytes, |_, _| true)
+        .unwrap();
+    let paint = |frame: &mut DockspaceHostFrame<'_>| {
+        frame
+            .measure_surface(
+                SURFACE,
+                UniformSurfaceMetrics::new(
+                    LogicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap(),
+                    LogicalSize::new(64.0, 48.0).unwrap(),
+                    96.0,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let plan = frame.paint_plan(SURFACE).unwrap().unwrap();
+        let identity = plan.open_item_identity(INCOMING).unwrap();
+        let receipt = plan.execute_surface_program(|_| Ok::<_, ()>(())).unwrap();
+        frame.confirm_surface_painted(receipt).unwrap();
+        identity
+    };
+    let discarded = paint(&mut session.begin_document_restore_frame(&restore).unwrap());
+    let mut retry = session.begin_document_restore_frame(&restore).unwrap();
+    let current = paint(&mut retry);
+    retry.commit().unwrap();
+    assert_eq!(session.open_item_identity(INCOMING), Some(current));
+    assert_ne!(discarded, current);
+}
+
+#[test]
 fn duplicate_sequence_after_scope_expansion_poison_rolls_back_and_restore_retries() {
     let mut incoming = persistent_session(true);
     let bytes = incoming.save_document_json().unwrap();

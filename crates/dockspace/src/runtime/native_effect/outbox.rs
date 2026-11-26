@@ -3,26 +3,28 @@
 use std::collections::VecDeque;
 
 use super::{
-    NativeEffectAcknowledgement, NativeEffectDispatch, NativeEffectOperation, NativeEffectRequest,
-    NativeEffectResult, NativeIndeterminateReason,
+    NativeCloseEffectAcknowledgement, NativeEffectDispatch, NativeEffectOperation,
+    NativeEffectRequest, NativeEffectResult, NativeIndeterminateReason,
 };
-use crate::runtime::{NativeCloseDisposition, NativeWindowBinding, NativeWindowFacts};
+use crate::runtime::{
+    NativeCloseDisposition, NativeRootContinuation, NativeWindowBinding, NativeWindowFacts,
+};
 
-/// Holds the core effect FIFO and the single dispatch temporarily owned by a backend ticket.
+/// Holds queued core effects and backend tickets for independently progressing windows.
 ///
-/// The ticket carries framework-specific callback custody. While it is pending,
-/// later requests stay queued in their original order.
+/// An in-flight dispatch blocks subsequent work for its own window. A terminal
+/// close or observation of earlier cleanup may proceed even while a ticket is pending.
 #[derive(Debug)]
 pub struct NativeEffectOutbox<Ticket> {
     queued: VecDeque<NativeEffectRequest>,
-    pending: Option<(NativeEffectDispatch, Ticket)>,
+    pending: Vec<(NativeEffectDispatch, Ticket)>,
 }
 
 impl<Ticket> Default for NativeEffectOutbox<Ticket> {
     fn default() -> Self {
         Self {
             queued: VecDeque::new(),
-            pending: None,
+            pending: Vec::new(),
         }
     }
 }
@@ -33,12 +35,15 @@ impl<Ticket> NativeEffectOutbox<Ticket> {
         self.queued.extend(effects);
     }
 
-    /// Takes the next request once the previous deferred dispatch has settled.
+    /// Takes the earliest request whose window is ready, or a terminal cleanup.
     pub fn take_next(&mut self) -> Option<NativeEffectRequest> {
-        if self.pending.is_some() {
-            return None;
-        }
-        self.queued.pop_front()
+        let index = self.queued.iter().position(|request| {
+            let operation = request.operation();
+            is_destruction(operation)
+                || matches!(operation, NativeEffectOperation::AwaitCleanup { .. })
+                || self.pending_index(operation.binding().window()).is_none()
+        })?;
+        self.queued.remove(index)
     }
 
     /// Returns the queued requests in dispatch order.
@@ -49,35 +54,48 @@ impl<Ticket> NativeEffectOutbox<Ticket> {
     /// Returns whether there is any queued request or in-flight dispatch.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.queued.is_empty() && self.pending.is_none()
+        self.queued.is_empty() && self.pending.is_empty()
     }
 
-    /// Returns the exact window and callback custody of the in-flight dispatch.
-    pub fn pending(&self) -> Option<(NativeWindowBinding, &Ticket)> {
-        let (dispatch, ticket) = self.pending.as_ref()?;
-        Some((dispatch.operation().binding().window(), ticket))
+    /// Iterates over each window and its outstanding backend ticket, in dispatch order.
+    pub fn pending(&self) -> impl ExactSizeIterator<Item = (NativeWindowBinding, &Ticket)> {
+        self.pending
+            .iter()
+            .map(|(dispatch, ticket)| (dispatch.operation().binding().window(), ticket))
     }
 
     /// Retains a started request until its corresponding backend observation.
     ///
     /// # Errors
     ///
-    /// Returns both values if a previous dispatch is still in flight.
+    /// Returns both values if the same window already has a dispatch in flight.
     pub fn await_observation(
         &mut self,
         dispatch: NativeEffectDispatch,
         ticket: Ticket,
     ) -> Result<(), (NativeEffectDispatch, Ticket)> {
-        if self.pending.is_some() {
+        if self
+            .pending_index(dispatch.operation().binding().window())
+            .is_some()
+        {
             return Err((dispatch, ticket));
         }
-        self.pending = Some((dispatch, ticket));
+        self.pending.push((dispatch, ticket));
         Ok(())
     }
 
-    /// Claims the in-flight dispatch once its original ticket has settled.
-    pub fn take_pending(&mut self) -> Option<(NativeEffectDispatch, Ticket)> {
-        self.pending.take()
+    /// Claims a window's dispatch once its original ticket has settled.
+    pub fn take_pending(
+        &mut self,
+        window: NativeWindowBinding,
+    ) -> Option<(NativeEffectDispatch, Ticket)> {
+        let index = self.pending_index(window)?;
+        Some(self.pending.remove(index))
+    }
+
+    fn pending_index(&self, window: NativeWindowBinding) -> Option<usize> {
+        self.pending()
+            .position(|(owner, _)| owner.same_window_lifetime(window))
     }
 
     /// Settles an in-flight dispatch whose exact native window has retired.
@@ -85,52 +103,94 @@ impl<Ticket> NativeEffectOutbox<Ticket> {
     /// The backend may have applied the operation before retiring. Report
     /// the indeterminate result into the same FIFO as other observations.
     pub fn retire_pending(&mut self, window: NativeWindowBinding) -> Option<NativeEffectResult> {
-        if self.pending()?.0 != window {
-            return None;
-        }
-        let (dispatch, _) = self.pending.take()?;
+        let (dispatch, _) = self.take_pending(window)?;
         Some(dispatch.indeterminate(NativeIndeterminateReason::AcknowledgementLost))
+    }
+
+    /// Settles the original dispatch when a committed root continuation replaces its binding.
+    pub fn retire_continued_window(
+        &mut self,
+        continuation: NativeRootContinuation,
+    ) -> Option<NativeEffectResult> {
+        self.retire_pending(continuation.predecessor().window())
     }
 }
 
 /// Deduplicates property snapshots while preserving one-shot effect receipts.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct NativeWindowObservationOutbox {
+    binding: NativeWindowBinding,
     live: Option<NativeWindowFacts>,
     close: Option<NativeEffectDispatch>,
 }
 
 impl NativeWindowObservationOutbox {
-    /// Publishes changed properties or an exact new acknowledgement.
-    pub fn observe(&mut self, facts: NativeWindowFacts) -> Option<NativeWindowFacts> {
-        let properties = facts.without_effect_acknowledgements();
-        if facts == properties && self.live == Some(properties) {
+    /// Creates an outbox for one exact window observation binding.
+    #[must_use]
+    pub const fn new(binding: NativeWindowBinding) -> Self {
+        Self {
+            binding,
+            live: None,
+            close: None,
+        }
+    }
+
+    /// Starts a new observation lifetime and abandons any unconfirmed close of the old one.
+    pub fn reset_for_binding(&mut self, binding: NativeWindowBinding) {
+        if self.binding != binding {
+            *self = Self::new(binding);
+        }
+    }
+
+    /// Returns the last accepted live properties, with any receipts removed.
+    #[must_use]
+    pub const fn live(&self) -> Option<NativeWindowFacts> {
+        self.live
+    }
+
+    /// Prepares changed live properties or an exact receipt for submission.
+    ///
+    /// Feed destruction through [`Self::destroyed`]. Confirm the exact returned
+    /// facts with [`Self::confirm_observation`] after core accepts the snapshot.
+    #[must_use]
+    pub fn observe(&self, facts: NativeWindowFacts) -> Option<NativeWindowFacts> {
+        if facts.is_destroyed() {
             return None;
         }
-        self.live = Some(properties);
-        Some(facts)
+        let properties = facts.without_effect_acknowledgements();
+        (facts != properties || self.live != Some(properties)).then_some(facts)
+    }
+
+    /// Confirms the exact observation after the snapshot was accepted into core ingress.
+    pub fn confirm_observation(&mut self, binding: NativeWindowBinding, facts: NativeWindowFacts) {
+        if binding != self.binding {
+            return;
+        }
+        if facts.is_destroyed() {
+            self.live = None;
+            if facts == self.destroyed()
+                && let Some(dispatch) = self.take_pending_close()
+            {
+                let _ = dispatch.accepted();
+            }
+        } else {
+            self.live = Some(facts.without_effect_acknowledgements());
+        }
     }
 
     /// Holds the original close dispatch until physical destruction proves it.
     ///
     /// # Errors
     ///
-    /// Returns the dispatch if it does not request destruction, or if an earlier
-    /// close already owns destruction.
+    /// Returns the dispatch if it belongs to another binding, does not request
+    /// destruction, or an earlier close already owns destruction.
     pub fn await_destruction(
         &mut self,
         dispatch: NativeEffectDispatch,
     ) -> Result<(), NativeEffectDispatch> {
         if self.close.is_some()
-            || !matches!(
-                dispatch.operation(),
-                NativeEffectOperation::ReleaseChild { .. }
-                    | NativeEffectOperation::CompensatingClose { .. }
-                    | NativeEffectOperation::ResolveNativeClose {
-                        resolution: NativeCloseDisposition::Accept,
-                        ..
-                    }
-            )
+            || dispatch.operation().binding().window() != self.binding
+            || !is_destruction(dispatch.operation())
         {
             return Err(dispatch);
         }
@@ -144,14 +204,34 @@ impl NativeWindowObservationOutbox {
         self.close.is_some()
     }
 
-    /// Observes actual destruction and correlates a retained close receipt exactly once.
-    pub fn destroyed(&mut self) -> NativeWindowFacts {
-        self.live = None;
-        match self.close.take().and_then(NativeEffectDispatch::accepted) {
-            Some(NativeEffectAcknowledgement::Close(ack)) => {
-                NativeWindowFacts::destroyed_after(ack)
-            }
-            _ => NativeWindowFacts::destroyed(),
-        }
+    /// Releases custody of a failed or cancelled close for explicit settlement.
+    pub fn take_pending_close(&mut self) -> Option<NativeEffectDispatch> {
+        self.close.take()
     }
+
+    /// Prepares exact destruction facts without releasing the retained dispatch.
+    #[must_use]
+    pub fn destroyed(&self) -> NativeWindowFacts {
+        self.close
+            .as_ref()
+            .map_or_else(NativeWindowFacts::destroyed, |dispatch| {
+                NativeWindowFacts::destroyed_after(NativeCloseEffectAcknowledgement {
+                    provider: dispatch.request.provider,
+                    binding: dispatch.request.binding,
+                    effect: dispatch.request.effect,
+                })
+            })
+    }
+}
+
+fn is_destruction(operation: &NativeEffectOperation) -> bool {
+    matches!(
+        operation,
+        NativeEffectOperation::ReleaseChild { .. }
+            | NativeEffectOperation::CompensatingClose { .. }
+            | NativeEffectOperation::ResolveNativeClose {
+                resolution: NativeCloseDisposition::Accept,
+                ..
+            }
+    )
 }

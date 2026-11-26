@@ -9,7 +9,7 @@ use super::{receivers::receiver_role, *};
 /// produced. It is not cloneable and must be consumed by
 /// [`DockspaceHostFrame::confirm_surface_painted`]. It proves complete emission
 /// to the sink, not GPU submission or physical presentation. The host reports
-/// the later output disposition through [`super::DockspaceSession::report_surface_presentation`].
+/// the later output disposition through [`crate::runtime::DockspaceSession::report_surface_presentation`].
 #[must_use = "a completed surface program must be confirmed or explicitly discarded"]
 pub struct SurfaceProgramExecutionReceipt {
     pub(super) encoding_pass: u64,

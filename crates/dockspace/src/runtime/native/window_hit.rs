@@ -112,32 +112,31 @@ impl NativeRegionWindowHit {
     }
 }
 
-/// Resolves a hit from the window's complete committed region roster.
+/// Resolves a hit from the window's complete committed region roster, front to back.
 ///
-/// A point outside every clipped region confirms window background. An empty
-/// roster leaves the window geometry unknown, as does ambiguous exposure.
+/// The first containing region owns the point, even when it is blocked. A
+/// framework-proven foreign blocker takes precedence over all docking regions.
+/// Background requires a known roster and a point outside each clipped region.
 pub fn resolve_region_window_hit(
     point: PhysicalPoint,
     regions: impl IntoIterator<Item = NativeRegionWindowHit>,
+    foreign_blocker: bool,
 ) -> NativeWindowHit {
+    if foreign_blocker {
+        return NativeWindowHit::Blocked;
+    }
     let mut known = false;
-    let mut within_region = false;
-    let mut exposed = None;
     for region in regions {
         known = true;
-        if !region.bounds.contains(point) || !region.clip.contains(point) {
-            continue;
-        }
-        within_region = true;
-        if region.exposed && exposed.replace(region.artifact).is_some() {
-            return NativeWindowHit::Unknown;
+        if region.bounds.contains(point) && region.clip.contains(point) {
+            return if region.exposed {
+                NativeWindowHit::Surface(region.artifact)
+            } else {
+                NativeWindowHit::Blocked
+            };
         }
     }
-    if let Some(artifact) = exposed {
-        NativeWindowHit::Surface(artifact)
-    } else if within_region {
-        NativeWindowHit::Blocked
-    } else if known {
+    if known {
         NativeWindowHit::WindowBackground
     } else {
         NativeWindowHit::Unknown

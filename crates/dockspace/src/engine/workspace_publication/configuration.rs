@@ -21,7 +21,12 @@ impl DockEngine {
                 reason: crate::policy::PolicyRejection::ArrangementLocked,
             });
         }
-        let replacement = crate::graph::operation::WorkspaceSnapshot::validated(workspace.clone())
+        let mut replacement = workspace.clone();
+        // A previous attempt can have painted pane identities before it rolled back.
+        replacement
+            .renew_open_items()
+            .map_err(|_| EngineError::WorkspaceOpenItemGenerationExhausted { input })?;
+        let replacement = crate::graph::operation::WorkspaceSnapshot::validated(replacement)
             .map_err(EngineError::InvalidWorkspace)?;
         let host_surfaces =
             self.retained_host_surfaces_for_replacement(&replacement, root_continuations)?;

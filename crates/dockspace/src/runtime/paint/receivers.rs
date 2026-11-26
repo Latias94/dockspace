@@ -86,7 +86,7 @@ impl DockspaceReceiverDescriptor {
     /// Returns the base receiver rectangle supplied to the renderer.
     ///
     /// An expanded touch target can survive clipping that leaves this empty.
-    /// Resolve device-specific input with [`super::DockspaceSession::host_pointer_hit_for_device`]
+    /// Resolve device-specific input with [`crate::runtime::DockspaceSession::host_pointer_hit_for_device`]
     /// rather than treating these bounds as the complete touch footprint.
     #[must_use]
     pub const fn bounds(self) -> LogicalRect {

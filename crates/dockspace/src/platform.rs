@@ -1050,22 +1050,28 @@ impl WindowPresentationObservation {
     }
 
     pub(crate) const fn allows_local_work(self) -> bool {
+        Self::allows_local_work_for(
+            self.known_state(),
+            match self.local_readiness {
+                Authority::Known(readiness) => Some(readiness),
+                Authority::Unknown(_) => None,
+            },
+        )
+    }
+
+    pub(crate) const fn allows_local_work_for(
+        presentation: Option<WindowPresentationState>,
+        local_readiness: Option<NativeLocalReadiness>,
+    ) -> bool {
         if matches!(
-            self.state,
-            Authority::Known(WindowPresentationState::Hidden | WindowPresentationState::Minimized)
-        ) || matches!(
-            self.local_readiness,
-            Authority::Known(NativeLocalReadiness::Unavailable)
-        ) {
+            presentation,
+            Some(WindowPresentationState::Hidden | WindowPresentationState::Minimized)
+        ) || matches!(local_readiness, Some(NativeLocalReadiness::Unavailable))
+        {
             return false;
         }
-        matches!(
-            self.state,
-            Authority::Known(WindowPresentationState::Visible)
-        ) || matches!(
-            self.local_readiness,
-            Authority::Known(NativeLocalReadiness::Ready)
-        )
+        matches!(presentation, Some(WindowPresentationState::Visible))
+            || matches!(local_readiness, Some(NativeLocalReadiness::Ready))
     }
 
     fn same_provider_envelope(self, other: Self) -> bool {

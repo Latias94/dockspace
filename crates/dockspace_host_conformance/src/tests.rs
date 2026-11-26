@@ -1437,7 +1437,7 @@ fn native_effect_outbox_releases_only_the_retired_window_dispatch() {
     outbox.await_observation(dispatch, 1_u32).unwrap();
     assert!(outbox.take_next().is_none());
     assert!(outbox.retire_pending(fixture.root.window()).is_none());
-    assert_eq!(outbox.pending(), Some((child.window(), &1)));
+    assert_eq!(outbox.pending().collect::<Vec<_>>(), [(child.window(), &1)]);
 
     let result = outbox
         .retire_pending(child.window())
@@ -1455,9 +1455,38 @@ fn native_effect_outbox_releases_only_the_retired_window_dispatch() {
 }
 
 #[test]
+fn native_effect_outbox_dispatches_compensation_while_create_is_pending() {
+    let mut fixture = ManagedLifecycleScenarioFixture::new();
+    let (child, create) = fixture.request_child_effect();
+    let mut outbox = NativeEffectOutbox::default();
+    outbox
+        .await_observation(create.begin_dispatch(), ())
+        .unwrap();
+    fixture.publish_hidden_child(child, None);
+    let close = cancel_pending_child(&mut fixture, child);
+    let mut other = ManagedLifecycleScenarioFixture::new();
+    let (other_child, other_create) = other.request_child_effect();
+    outbox.enqueue([other_create]);
+    let other = outbox.take_next().unwrap().begin_dispatch();
+    outbox.await_observation(other, ()).unwrap();
+    outbox.enqueue([close]);
+    assert!(
+        matches!(outbox.take_next().unwrap().operation(), NativeEffectOperation::CompensatingClose { binding } if *binding == child)
+    );
+    assert!(outbox.retire_pending(child.window()).is_some());
+    assert_eq!(
+        outbox
+            .pending()
+            .map(|(window, _)| window)
+            .collect::<Vec<_>>(),
+        [other_child.window()]
+    );
+}
+
+#[test]
 fn native_window_observations_preserve_both_scales_and_emit_create_receipts_once() {
     let mut fixture = ManagedLifecycleScenarioFixture::new();
-    let (_, receipt) = fixture.request_child();
+    let (child, receipt) = fixture.request_child();
     let size = fixture.child_placement.size();
     let native = ScaleFactor::new(2.0).unwrap();
     let renderer = ScaleFactor::new(2.5).unwrap();
@@ -1478,15 +1507,111 @@ fn native_window_observations_preserve_both_scales_and_emit_create_receipts_once
             .with_presentation_scale_factor(renderer)
             .with_create_readiness(dockspace::runtime::NativeCreateReadiness::Created, None)
     );
-    let mut observations = NativeWindowObservationOutbox::default();
+    let mut observations = NativeWindowObservationOutbox::new(child.window());
     assert_eq!(observations.observe(facts), Some(facts));
     let acknowledged = facts.with_create_readiness(
         dockspace::runtime::NativeCreateReadiness::Created,
         Some(receipt),
     );
     assert_eq!(observations.observe(acknowledged), Some(acknowledged));
+    assert!(
+        fixture
+            .host
+            .session
+            .report_managed_native_snapshot([(child, acknowledged)], fixture.work_areas.clone())
+            .is_err()
+    );
+    assert_eq!(observations.live(), None);
+    assert_eq!(observations.observe(acknowledged), Some(acknowledged));
+    fixture.host.report_managed_native_snapshot(
+        [
+            (
+                fixture.root,
+                scenario_window_facts(100.0, 80.0, 640.0, 480.0),
+            ),
+            (child, acknowledged),
+        ],
+        fixture.work_areas.clone(),
+    );
+    observations.confirm_observation(child.window(), acknowledged);
+    assert_eq!(observations.live(), Some(facts));
     assert_eq!(observations.observe(facts), None);
+    assert_eq!(observations.observe(NativeWindowFacts::destroyed()), None);
     assert_eq!(observations.destroyed(), NativeWindowFacts::destroyed());
+}
+
+#[test]
+fn native_window_focus_survives_a_locally_ready_snapshot_without_minimized_state() {
+    use dockspace::runtime::NativeLocalReadiness;
+
+    let mut fixture = ManagedLifecycleScenarioFixture::new();
+    let window = fixture.root.window();
+    let focus = NativeGlobalFocus::Dock(window);
+    let ready = compile_native_window_facts(NativeWindowFactsSample {
+        visible: Some(true),
+        ..NativeWindowFactsSample::default()
+    })
+    .with_local_readiness(NativeLocalReadiness::Ready);
+    for presentation in [
+        NativeWindowPresentationState::Hidden,
+        NativeWindowPresentationState::Minimized,
+    ] {
+        fixture
+            .host
+            .report_managed_native_snapshot([(fixture.root, ready)], fixture.work_areas.clone());
+        fixture
+            .host
+            .session
+            .report_native_global_focus(focus)
+            .unwrap();
+        fixture.commit();
+        assert_eq!(fixture.host.session.native_global_focus(), focus);
+        fixture.host.report_managed_native_snapshot(
+            [(
+                fixture.root,
+                ready.with_input(NativeWindowInputState::ReceivesInput, None),
+            )],
+            fixture.work_areas.clone(),
+        );
+        assert_eq!(fixture.host.session.native_global_focus(), focus);
+        fixture.host.report_managed_native_snapshot(
+            [(fixture.root, ready.with_presentation(presentation))],
+            fixture.work_areas.clone(),
+        );
+        assert_eq!(
+            fixture.host.session.native_global_focus(),
+            NativeGlobalFocus::Unknown
+        );
+    }
+}
+
+#[test]
+fn native_window_fact_compiler_drops_empty_client_and_outer_rectangles() {
+    let empty = PhysicalRect::new(120.0, 80.0, 0.0, 480.0).unwrap();
+    let valid = PhysicalRect::new(120.0, 80.0, 640.0, 480.0).unwrap();
+    for client in [
+        NativeWindowClientGeometry::Bounds(empty),
+        NativeWindowClientGeometry::Size(empty.size()),
+    ] {
+        assert_eq!(
+            compile_native_window_facts(NativeWindowFactsSample {
+                client: Some(client),
+                outer_bounds: Some(valid),
+                ..NativeWindowFactsSample::default()
+            }),
+            NativeWindowFacts::live().with_outer_bounds(valid)
+        );
+    }
+    assert_eq!(
+        compile_native_window_facts(NativeWindowFactsSample {
+            client: Some(NativeWindowClientGeometry::Bounds(valid)),
+            outer_bounds: Some(empty),
+            ..NativeWindowFactsSample::default()
+        }),
+        NativeWindowFacts::live()
+            .with_content_size(valid.size())
+            .with_content_bounds(valid)
+    );
 }
 
 #[test]
@@ -1494,6 +1619,119 @@ fn native_close_dispatch_is_acknowledged_only_at_physical_destruction() {
     let mut fixture = ManagedLifecycleScenarioFixture::new();
     let (child, acknowledgement) = fixture.request_child();
     fixture.present_hidden_child(child, acknowledgement);
+    let close = cancel_pending_child(&mut fixture, child);
+
+    let mut observations = NativeWindowObservationOutbox::new(fixture.root.window());
+    let dispatch = observations
+        .await_destruction(close.begin_dispatch())
+        .unwrap_err();
+    assert!(!observations.has_pending_close());
+    observations.reset_for_binding(child.window());
+    observations.await_destruction(dispatch).unwrap();
+    let live = NativeWindowFacts::live();
+    assert_eq!(observations.observe(live), Some(live));
+    assert!(observations.has_pending_close());
+    let terminal = observations.destroyed();
+    assert_ne!(terminal, NativeWindowFacts::destroyed());
+    assert!(
+        fixture
+            .host
+            .session
+            .report_managed_native_snapshot(
+                [(fixture.root, terminal), (child, terminal)],
+                fixture.work_areas.clone(),
+            )
+            .is_err(),
+        "the root cannot acknowledge a child's close dispatch"
+    );
+    assert!(
+        observations.has_pending_close(),
+        "the rejected snapshot must keep the original close dispatch"
+    );
+    assert_eq!(observations.destroyed(), terminal);
+    fixture.host.report_managed_native_snapshot(
+        [
+            (
+                fixture.root,
+                scenario_window_facts(100.0, 80.0, 640.0, 480.0),
+            ),
+            (child, terminal),
+        ],
+        fixture.work_areas.clone(),
+    );
+    observations.confirm_observation(child.window(), terminal);
+    assert!(!observations.has_pending_close());
+    assert_eq!(observations.destroyed(), NativeWindowFacts::destroyed());
+    fixture.publish_quiescence(child);
+}
+
+#[test]
+fn abandoning_a_native_close_observation_returns_the_terminal_slot() {
+    let mut fixture = ManagedLifecycleScenarioFixture::new();
+    let (child, acknowledgement) = fixture.request_child();
+    fixture.present_hidden_child(child, acknowledgement);
+    let close = cancel_pending_child(&mut fixture, child);
+    assert!(!fixture.host.session.has_pending_native_input());
+    let mut observations = NativeWindowObservationOutbox::new(child.window());
+    observations
+        .await_destruction(close.begin_dispatch())
+        .unwrap();
+    assert!(!fixture.host.session.has_pending_native_input());
+    let recorded = fixture.host.session.native_input_recorded_count();
+    drop(observations);
+    let mut report = fixture.commit();
+    assert_eq!(
+        fixture.host.session.native_input_recorded_count(),
+        recorded + 1
+    );
+    assert!(report.take_native_effects().is_empty());
+    assert!(!fixture.host.session.has_pending_native_input());
+}
+
+#[test]
+fn root_continuation_reissues_unchanged_window_observations() {
+    let mut fixture = ManagedLifecycleScenarioFixture::new();
+    let before = fixture.root.window();
+    let same = scenario_window_facts(100.0, 80.0, 640.0, 480.0);
+    let mut observations = NativeWindowObservationOutbox::new(before);
+    observations.confirm_observation(before, same);
+    assert!(observations.observe(same).is_none());
+    let reset = fixture
+        .host
+        .session
+        .prepare_layout_reset(fixture.host.view().to_layout())
+        .unwrap();
+    let root = fixture.root;
+    let report = fixture.host.run_native(
+        |_| NativeReceiverAnswer::Unknown,
+        |frame| {
+            frame
+                .submit_native_layout_reset(&reset, root, SURFACE)
+                .unwrap();
+        },
+    );
+    let [continuation] = report.native_root_continuations() else {
+        panic!("the physical root must continue");
+    };
+    let successor = continuation.successor();
+    let after = successor.window();
+    assert_ne!(after, before);
+    observations.reset_for_binding(after);
+    observations.confirm_observation(before, same);
+    let first = observations
+        .observe(same)
+        .expect("new binding requires a fresh observation");
+    fixture
+        .host
+        .report_managed_native_snapshot([(successor, first)], fixture.work_areas.clone());
+    observations.confirm_observation(after, first);
+    assert!(observations.observe(same).is_none());
+}
+
+fn cancel_pending_child(
+    fixture: &mut ManagedLifecycleScenarioFixture,
+    child: NativeSurfaceBinding,
+) -> NativeEffectRequest {
     let mut frame = fixture
         .host
         .session
@@ -1509,18 +1747,7 @@ fn native_close_dispatch_is_acknowledged_only_at_physical_destruction() {
         close.operation(),
         NativeEffectOperation::CompensatingClose { binding } if *binding == child
     ));
-
-    let mut observations = NativeWindowObservationOutbox::default();
-    observations
-        .await_destruction(close.begin_dispatch())
-        .unwrap();
-    let live = NativeWindowFacts::live();
-    assert_eq!(observations.observe(live), Some(live));
-    assert!(observations.has_pending_close());
-    let terminal = observations.destroyed();
-    assert_ne!(terminal, NativeWindowFacts::destroyed());
-    assert!(!observations.has_pending_close());
-    assert_eq!(observations.destroyed(), NativeWindowFacts::destroyed());
+    close
 }
 
 #[test]
@@ -1903,6 +2130,14 @@ impl ManagedLifecycleScenarioFixture {
         child: NativeSurfaceBinding,
         acknowledgement: dockspace::runtime::NativeCreateEffectAcknowledgement,
     ) {
+        self.publish_hidden_child(child, Some(acknowledgement));
+    }
+
+    fn publish_hidden_child(
+        &mut self,
+        child: NativeSurfaceBinding,
+        acknowledgement: Option<dockspace::runtime::NativeCreateEffectAcknowledgement>,
+    ) {
         self.host.report_managed_native_snapshot(
             [
                 (self.root, scenario_window_facts(100.0, 80.0, 640.0, 480.0)),
@@ -1914,7 +2149,7 @@ impl ManagedLifecycleScenarioFixture {
                     )
                     .with_create_readiness(
                         dockspace::runtime::NativeCreateReadiness::Created,
-                        Some(acknowledgement),
+                        acknowledgement,
                     ),
                 ),
             ],
@@ -4256,6 +4491,7 @@ fn managed_native_pointer_uses_synchronous_product_receiver_resolution() {
                 displaced_clip,
                 true
             )],
+            false,
         ),
         NativeWindowHit::WindowBackground,
         "the old hitbox cannot keep a region alive beyond its clip"
@@ -4266,6 +4502,36 @@ fn managed_native_pointer_uses_synchronous_product_receiver_resolution() {
             [NativeRegionWindowHit::new(
                 artifact, physical, physical, false
             )],
+            false,
+        ),
+        NativeWindowHit::Blocked
+    );
+    assert_eq!(
+        resolve_region_window_hit(
+            desktop,
+            [
+                NativeRegionWindowHit::new(artifact, physical, physical, false),
+                NativeRegionWindowHit::new(artifact, physical, physical, true),
+            ],
+            false,
+        ),
+        NativeWindowHit::Blocked,
+        "a blocked front region must not expose an overlapping region behind it",
+    );
+    assert_eq!(
+        resolve_region_window_hit(desktop, [], false),
+        NativeWindowHit::Unknown
+    );
+    assert_eq!(
+        resolve_region_window_hit(
+            desktop,
+            [NativeRegionWindowHit::new(
+                artifact,
+                physical,
+                displaced_clip,
+                false
+            )],
+            true
         ),
         NativeWindowHit::Blocked
     );
@@ -4302,6 +4568,7 @@ fn managed_native_pointer_uses_synchronous_product_receiver_resolution() {
                 [NativeRegionWindowHit::new(
                     artifact, physical, physical, true,
                 )],
+                false,
             ))
         }
         NativeReceiverQuery::Surface(query) => {

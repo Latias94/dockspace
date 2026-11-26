@@ -590,6 +590,27 @@ impl DockspaceSession {
         Ok(())
     }
 
+    /// Returns the latest committed managed native focus observation.
+    #[must_use]
+    pub fn native_global_focus(&self) -> NativeGlobalFocus {
+        use crate::platform::focus::GlobalFocusedWindow;
+
+        let Some(native) = self.native.as_ref() else {
+            return NativeGlobalFocus::Unknown;
+        };
+        let Some(observation) = self.engine.viewport_focus().focus_observation() else {
+            return NativeGlobalFocus::Unknown;
+        };
+        match *observation.focused() {
+            Authority::Known(GlobalFocusedWindow::Dock(window)) => NativeGlobalFocus::Dock(
+                NativeWindowBinding::from_binding(native.provider(), window),
+            ),
+            Authority::Known(GlobalFocusedWindow::Foreign) => NativeGlobalFocus::Foreign,
+            Authority::Known(GlobalFocusedWindow::None) => NativeGlobalFocus::None,
+            Authority::Unknown(_) => NativeGlobalFocus::Unknown,
+        }
+    }
+
     /// Returns the latest committed exact binding for one platform work area.
     ///
     /// A snapshot recorded but not yet committed cannot mint route authority.

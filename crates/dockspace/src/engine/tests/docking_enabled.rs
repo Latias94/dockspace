@@ -1,5 +1,7 @@
 //! Modifier-only docking controls through real host input and paint programs.
 
+use std::time::Duration;
+
 use crate::geometry::{
     LogicalPoint, LogicalRect, LogicalSize, PhysicalPoint, PhysicalSize, ScaleFactor,
 };
@@ -15,11 +17,11 @@ use crate::runtime::{
     NativeLocalPointerLocation, NativePointerButton, NativePointerEvent, NativePointerId,
     NativePointerInput, NativePointerOwner, NativePointerRoster, NativeReceiverAnswer,
     NativeReceiverPurpose, NativeSurfaceBinding, NativeWindowFacts, NativeWindowInputState,
-    NativeWindowPresentationState, NativeWorkAreaRoster, SurfacePaintDisposition,
-    SurfacePaintProgramOperation as Operation, SurfacePaintProgramStep as Step,
-    SurfacePointerButton, SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId,
-    SurfacePointerReceiverFacts, SurfacePresentationResult, SurfaceUnavailableReason,
-    UniformSurfaceMetrics,
+    NativeWindowPresentationState, NativeWorkAreaRoster, PointerDeviceKind, PointerEventMetadata,
+    SurfacePaintDisposition, SurfacePaintProgramOperation as Operation,
+    SurfacePaintProgramStep as Step, SurfacePointerButton, SurfacePointerCapture,
+    SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts, SurfacePresentationResult,
+    SurfaceUnavailableReason, UniformSurfaceMetrics,
 };
 
 const HOST: SurfaceId = SurfaceId::new(1);
@@ -650,4 +652,151 @@ fn focused_root_controls_child_magnetism_but_unfocused_binding_is_inert() {
     assert!(!commit(reacquired).workspace_changed());
     assert!(session.has_active_gesture());
     assert_eq!(session.version(), version);
+}
+
+#[test]
+fn suspending_docking_restarts_hover_dwell_and_edge_scroll() {
+    use crate::runtime::DockPresentationConfig;
+
+    for edge_scroll in [false, true] {
+        let items: Vec<_> = if edge_scroll {
+            (10..50).map(ItemId::new).collect()
+        } else {
+            vec![BACKGROUND, TARGET]
+        };
+        let layout = DockspaceLayout::new([
+            DockspaceSurfaceLayout::new(
+                HOST,
+                DockspaceRootLayout::new(HOST_ROOT, DockspaceNode::central_tabs([FIRST, SECOND])),
+            ),
+            DockspaceSurfaceLayout::new(
+                CHILD,
+                DockspaceRootLayout::new(SOURCE_ROOT, DockspaceNode::central_tabs(items)),
+            ),
+        ])
+        .unwrap();
+        let delay = Duration::from_millis(50);
+        let config = DockPresentationConfig::builder()
+            .hover_selection_delay((!edge_scroll).then_some(delay))
+            .tab_strip_edge_scroll_interval(edge_scroll.then_some(delay))
+            .build()
+            .unwrap();
+        let mut session = DockspaceSession::from_layout_with_presentation_config(
+            layout,
+            DockPolicy::default(),
+            config,
+        )
+        .unwrap();
+        session.enable_host_pointer().unwrap();
+        measure_and_present(&mut session);
+        let source = session.presented_surface(HOST).unwrap();
+        let target = session.presented_surface(CHILD).unwrap();
+        let mut inspect = session.begin_host_frame().unwrap();
+        let press = inspect
+            .paint_plan(HOST)
+            .unwrap()
+            .unwrap()
+            .tab_receiver(FIRST)
+            .unwrap();
+        let plan = inspect.paint_plan(CHILD).unwrap().unwrap();
+        let point = if edge_scroll {
+            let viewport = plan.tab_bars().next().unwrap().viewport();
+            LogicalPoint::new(viewport.max().x() - 1.0, center(viewport).y()).unwrap()
+        } else {
+            plan.tab_receiver(TARGET).unwrap().center()
+        };
+        drop(inspect);
+        let receiver = session.bind_presented_receiver(&press).unwrap();
+        let pointer = SurfacePointerId::new(1);
+        let route = HostPointerRoute::new(source, receiver.center());
+        let send = |session: &mut DockspaceSession, event, time| {
+            let mut frame = session.begin_host_frame().unwrap();
+            frame
+                .submit_host_pointer(
+                    HostPointerInput::new(
+                        pointer,
+                        event,
+                        HostPointerRoute::new(source, LogicalPoint::new(700.0, 500.0).unwrap()),
+                        HostPointerRoute::new(target, point),
+                        SurfacePointerCapture::ProviderEndpoint,
+                        SurfacePointerReceiverFacts::unknown().with_clear_hover_lane(&target),
+                    )
+                    .with_metadata(PointerEventMetadata::new(
+                        PointerDeviceKind::Mouse,
+                        Duration::from_millis(time),
+                    )),
+                )
+                .unwrap();
+            if frame
+                .view()
+                .item(TARGET)
+                .is_some_and(|item| item.is_active())
+            {
+                frame
+                    .measure_surface(
+                        CHILD,
+                        UniformSurfaceMetrics::new(
+                            rect(0.0, 0.0, 960.0, 720.0),
+                            LogicalSize::new(64.0, 48.0).unwrap(),
+                            96.0,
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
+            commit(frame)
+        };
+        let mut frame = session.begin_host_frame().unwrap();
+        frame
+            .submit_host_pointer(HostPointerInput::new(
+                pointer,
+                SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary),
+                route,
+                route,
+                SurfacePointerCapture::ProviderEndpoint,
+                SurfacePointerReceiverFacts::delivery(&receiver),
+            ))
+            .unwrap();
+        commit(frame);
+        send(&mut session, SurfacePointerEvent::Moved, 10);
+        let before = session.pointer_continuation().unwrap();
+        assert_eq!(before.deadline(), Duration::from_millis(60));
+        send(
+            &mut session,
+            SurfacePointerEvent::DockingEnabledChanged { enabled: false },
+            20,
+        );
+        send(&mut session, SurfacePointerEvent::Moved, 30);
+        assert!(session.pointer_continuation().is_none());
+        assert!(!send(&mut session, before.event(), 60).workspace_changed());
+        send(
+            &mut session,
+            SurfacePointerEvent::DockingEnabledChanged { enabled: true },
+            70,
+        );
+        assert!(session.pointer_continuation().is_none());
+        send(&mut session, SurfacePointerEvent::Moved, 80);
+        let restarted = session.pointer_continuation().unwrap();
+        assert_eq!(restarted.deadline(), Duration::from_millis(130));
+        assert_ne!(restarted.token(), before.token());
+        let settled = send(&mut session, restarted.event(), 130);
+        if edge_scroll {
+            let mut frame = session.begin_host_frame().unwrap();
+            assert!(
+                frame
+                    .paint_plan(CHILD)
+                    .unwrap()
+                    .unwrap()
+                    .tab_bars()
+                    .next()
+                    .unwrap()
+                    .scroll_offset()
+                    > 0.0
+            );
+        } else {
+            assert!(settled.workspace_changed());
+            assert!(session.view().item(TARGET).unwrap().is_active());
+        }
+        assert!(session.has_active_gesture());
+    }
 }
