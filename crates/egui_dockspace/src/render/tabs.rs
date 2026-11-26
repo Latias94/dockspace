@@ -158,32 +158,19 @@ pub(crate) fn paint_pane(
                             .as_ref()
                             .is_some_and(|input| input.awaits_registration())) =>
                 {
-                    if delivery
-                        .as_ref()
-                        .is_some_and(|input| input.awaits_registration())
-                    {
-                        // Let the widget initialize its selection while holding
-                        // editing input and the focus claim until registration.
-                        let pending = crate::focus::pane_focus_handoff_pending(
-                            child_ui.ctx(),
-                            context.instance_id,
-                            request,
-                            Some(target),
-                            focus_before_contents,
-                        );
-                        if pending {
-                            child_ui.memory_mut(|memory| memory.request_focus(target));
-                        }
-                        pending
-                    } else {
-                        crate::focus::apply_pane_focus_request(
-                            child_ui.ctx(),
-                            context.instance_id,
-                            request,
-                            target,
-                            focus_before_contents,
-                        )
+                    // Let the widget initialize its selection while holding
+                    // the focus claim until actual post-UI registration.
+                    let pending = crate::focus::pane_focus_handoff_pending(
+                        child_ui.ctx(),
+                        context.instance_id,
+                        request,
+                        Some(target),
+                        focus_before_contents,
+                    );
+                    if pending {
+                        child_ui.memory_mut(|memory| memory.request_focus(target));
                     }
+                    pending
                 }
                 _ => false,
             };
@@ -631,7 +618,11 @@ fn capture_tab_actions(
         .ui
         .input(|input| input.has_accesskit_action_request(id, Action::Focus));
     let pointer_activation = context.pointer_authority.accepts_local_pointer_actions()
-        && response.clicked_by(PointerButton::Primary);
+        && super::actions::unambiguous_pointer_click(
+            context.ui,
+            response,
+            PointerButton::Primary,
+        );
     if accesskit_activation || pointer_activation {
         response.request_focus();
         if (!tab.selected() || accesskit_activation)

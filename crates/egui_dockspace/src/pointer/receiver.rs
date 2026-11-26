@@ -211,7 +211,9 @@ impl PacketPointerOwnership {
         {
             return false;
         }
-        let mut nearby_unknown = false;
+        let mut top_owned_click = None;
+        let mut top_owned_drag = None;
+        let mut nearby_unowned = Vec::new();
         for (widget, owned) in self.widgets.iter().rev() {
             if widget.interact_rect.distance_sq_to_pos(position) > self.interaction_radius_sq {
                 continue;
@@ -220,20 +222,32 @@ impl PacketPointerOwnership {
                 if widget.interact_rect.contains(position) {
                     return false;
                 }
-                nearby_unknown = true;
+                nearby_unowned.push(*widget);
                 continue;
             }
             // A direct owner of both lanes shields the widgets behind it.
-            // Keep single-lane overlaps conservative: egui's nearby-widget
-            // assistance can prefer another drag-only widget underneath one.
-            if widget.interact_rect.contains(position)
-                && widget.sense.senses_click()
-                && widget.sense.senses_drag()
-            {
-                return true;
+            if widget.interact_rect.contains(position) {
+                if widget.sense.senses_click() && widget.sense.senses_drag() {
+                    return true;
+                }
+                if widget.sense.senses_click() && top_owned_click.is_none() {
+                    top_owned_click = Some(*widget);
+                }
+                if widget.sense.senses_drag() && top_owned_drag.is_none() {
+                    top_owned_drag = Some(*widget);
+                }
             }
         }
-        !nearby_unknown
+        if nearby_unowned.is_empty() {
+            return true;
+        }
+        match (top_owned_click, top_owned_drag) {
+            (Some(_), _) => true,
+            (None, Some(hit_drag)) => !nearby_unowned
+                .iter()
+                .any(|unowned| hit_drag.interact_rect.contains_rect(unowned.interact_rect)),
+            (None, None) => false,
+        }
     }
 }
 

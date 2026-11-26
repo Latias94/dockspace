@@ -501,6 +501,7 @@ pub(super) fn capture(context: &mut RenderContext<'_, '_, '_>) {
                 .iter()
                 .filter(|binding| binding.interactive)
                 .map(|binding| (binding.widget_id, binding.interact_rect))
+                .chain(context.wheel_owned_widgets.iter().copied())
                 .collect(),
         });
     }

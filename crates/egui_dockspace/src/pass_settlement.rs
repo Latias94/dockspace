@@ -231,7 +231,9 @@ impl PendingPaneFocusObservation {
                         .any(|(node, _)| *node == target.accesskit_id())
                 })
                 .map(|update| {
-                    if update.focus == target.accesskit_id() {
+                    if context.input_for(viewport, |input| input.focused)
+                        && update.focus == target.accesskit_id()
+                    {
                         PaneFocusState::Focused
                     } else {
                         PaneFocusState::Unfocused
@@ -521,7 +523,7 @@ impl ProductPassSettlementRun {
     }
 
     pub(super) fn layer_order_witness(&self) -> Vec<egui::LayerId> {
-        final_paint_layer_order(&self.context)
+        final_paint_layer_order(&self.context, self.viewport)
     }
 
     pub(super) fn observed_pointer_pass(&self) -> Option<(Arc<RunIdentity>, InputPassId)> {

@@ -122,23 +122,34 @@ fn explicitly_focused_elsewhere(
     focused: Option<Id>,
     target: Option<Id>,
 ) -> bool {
+    let key = Id::unique(("dockspace-explicit-accesskit-focus", context.viewport_id()));
+    let frame = context.cumulative_frame_nr();
+    let requested_in_raw = context.input(|input| {
+        input.raw.events.iter().rev().find_map(|event| {
+            if let egui::Event::AccessKitActionRequest(request) = event
+                && request.action == egui::accesskit::Action::Focus
+                && request.target_tree == egui::accesskit::TreeId::ROOT
+                && request.data.is_none()
+            {
+                Some(request.target_node)
+            } else {
+                None
+            }
+        })
+    });
+    let active_request = if let Some(node) = requested_in_raw {
+        context.data_mut(|data| data.insert_temp(key, (frame, node)));
+        Some(node)
+    } else {
+        context.data(|data| {
+            data.get_temp::<(u64, egui::accesskit::NodeId)>(key)
+                .filter(|(recorded, _)| *recorded == frame)
+                .map(|(_, node)| node)
+        })
+    };
     focused
         .filter(|focused| Some(*focused) != target)
-        .is_some_and(|focused| {
-            context.input(|input| {
-                input.raw.events.iter().rev().find_map(|event| {
-                    if let egui::Event::AccessKitActionRequest(request) = event
-                        && request.action == egui::accesskit::Action::Focus
-                        && request.target_tree == egui::accesskit::TreeId::ROOT
-                        && request.data.is_none()
-                    {
-                        Some(request.target_node)
-                    } else {
-                        None
-                    }
-                }) == Some(focused.accesskit_id())
-            })
-        })
+        .is_some_and(|focused| active_request == Some(focused.accesskit_id()))
 }
 
 /// Pointer chrome may clear a target during its own widget registration.

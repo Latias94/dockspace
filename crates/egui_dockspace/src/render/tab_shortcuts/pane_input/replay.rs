@@ -62,7 +62,7 @@ impl PaneInputDelivery {
         .then(|| Self {
             packet: PaneInputPacket {
                 target,
-                events: take_keys_after(context.ui, 0),
+                events: take_live_keyboard(context.ui.ctx()),
             },
             phase: DeliveryPhase::AwaitingRegistration,
             focus_cleared_by_escape: false,
@@ -161,6 +161,7 @@ impl PaneInputDelivery {
                     widget: self.packet.target.widget,
                     events: Some(events),
                     restore_focus: self.focus_cleared_by_escape,
+                    retry: matches!(self.phase, DeliveryPhase::Registered { retry: true }),
                     ..WidgetInput::default()
                 },
             );
@@ -196,6 +197,13 @@ impl ScopedPaneInput {
         let input = self.restore_scope();
         let Some(events) = input.unconsumed else {
             if self.context.will_discard() {
+                if let Some(widget) = self.target.widget {
+                    self.context.check_for_id_clash(
+                        widget,
+                        Rect::ZERO,
+                        "retained dockspace keyboard focus",
+                    );
+                }
                 if let Some(mut events) = input.events {
                     if let crate::render::tab_shortcuts::TabKeyboard::PaneShortcut(cycle) =
                         std::mem::replace(

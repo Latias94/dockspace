@@ -20,13 +20,17 @@ pub(crate) fn stage_touch_context_menu(
     instance: Id,
     request: DockspaceContextMenuRequest,
 ) {
+    let viewport = ui.ctx().viewport_id();
     let staged = StagedTouchContextMenu {
-        viewport: ui.ctx().viewport_id(),
+        viewport,
         pass: ui.ctx().cumulative_pass_nr(),
         request,
     };
     ui.ctx().data_mut(|data| {
-        data.insert_temp(instance.with("touch-context-menu"), staged);
+        data.insert_temp(
+            Id::unique((instance, "touch-context-menu", request.surface(), viewport)),
+            staged,
+        );
     });
 }
 
@@ -40,7 +44,7 @@ pub(crate) fn take_touch_context_menu(
     let viewport = ui.ctx().viewport_id();
     let pass = ui.ctx().cumulative_pass_nr();
     ui.ctx().data_mut(|data| {
-        let id = instance.with("touch-context-menu");
+        let id = Id::unique((instance, "touch-context-menu", surface, viewport));
         let staged = data.get_temp::<StagedTouchContextMenu>(id)?;
         if staged.viewport != viewport {
             return None;

@@ -14,6 +14,7 @@ struct ViewportKeyboard {
     pass: Option<KeyboardPass>,
     retained: bool,
     host_keys_on_retry: egui::IdMap<Vec<Event>>,
+    host_keys_released: egui::IdMap<Vec<Event>>,
     host_keys_after_traversal: Option<(Id, Vec<Event>)>,
 }
 
@@ -167,6 +168,7 @@ impl egui::plugin::Plugin for PaneKeyboard {
             return;
         }
         input.host_keys_on_retry.clear();
+        input.host_keys_released.clear();
         if let Some(pending) = &mut input.handoff {
             pending.ready = true;
         }
@@ -251,6 +253,7 @@ impl egui::plugin::Plugin for PaneKeyboard {
         let discarded = output.platform_output.requested_discard()
             && output.platform_output.num_completed_passes
                 < context.options(|options| options.max_passes.get());
+        let mut retained_viewports = Vec::new();
         for (&viewport, input) in &mut self.viewports {
             if !input
                 .pass
@@ -263,6 +266,17 @@ impl egui::plugin::Plugin for PaneKeyboard {
                 .pass
                 .take()
                 .expect("the current keyboard pass was checked");
+            if discarded {
+                for (slot, released) in input.host_keys_released.drain() {
+                    input
+                        .host_keys_on_retry
+                        .entry(slot)
+                        .or_default()
+                        .extend(released);
+                }
+            } else {
+                input.host_keys_released.clear();
+            }
             if !pass.surface_seen {
                 if !discarded {
                     input.retire_input();
@@ -272,6 +286,7 @@ impl egui::plugin::Plugin for PaneKeyboard {
                 continue;
             }
             if pass.retained {
+                retained_viewports.push(viewport);
                 continue;
             }
             if let Some(Handoff::FrameworkTraversal { pane, settlement }) =
@@ -308,15 +323,18 @@ impl egui::plugin::Plugin for PaneKeyboard {
             (input.handoff.is_some()
                 || !input.later_packets.is_empty()
                 || !input.host_keys_on_retry.is_empty()
+                || !input.host_keys_released.is_empty()
                 || input.host_keys_after_traversal.is_some())
                 && (*viewport == ViewportId::ROOT || context.cumulative_pass_nr_for(*viewport) != 0)
         });
         // egui has already popped the viewport which just ended. Wake the
-        // viewports that actually hold input, including native children.
+        // viewports that actually hold input, including native children,
+        // without busy-spinning viewports retained under output backpressure.
         for (&viewport, input) in &self.viewports {
-            if input.handoff.is_some()
-                || !input.later_packets.is_empty()
-                || input.host_keys_after_traversal.is_some()
+            if !retained_viewports.contains(&viewport)
+                && (input.handoff.is_some()
+                    || !input.later_packets.is_empty()
+                    || input.host_keys_after_traversal.is_some())
             {
                 context.request_repaint_of(viewport);
                 if let Some(output) = output.viewport_output.get_mut(&viewport) {
@@ -547,7 +565,7 @@ pub(super) fn stage_live_input(context: &RenderContext<'_, '_, '_>, packet: &mut
     }
 }
 
-fn take_live_keyboard(context: &Context) -> Vec<Event> {
+pub(super) fn take_live_keyboard(context: &Context) -> Vec<Event> {
     let events = take_keyboard_suffix(context, 0);
     // egui may already have selected a focus direction. Hold that decision
     // until the exact editor can apply its filter and process its packet.
@@ -588,7 +606,7 @@ pub(super) fn retire_input(context: &RenderContext<'_, '_, '_>) {
     }
 }
 
-pub(super) fn return_host_keys(
+pub(in crate::render::tab_shortcuts) fn return_host_keys(
     context: &mut RenderContext<'_, '_, '_>,
     events: impl IntoIterator<Item = Event>,
 ) {
@@ -711,6 +729,16 @@ pub(crate) fn release_host_keys(
             .host_keys_on_retry
             .insert(slot, keys);
     } else {
+        let plugin = ctx.plugin_or_default::<PaneKeyboard>();
+        let mut keyboard = plugin.lock();
+        let input = keyboard.viewports.entry(ctx.viewport_id()).or_default();
+        input.observe_surface(ctx);
+        input
+            .host_keys_released
+            .entry(slot)
+            .or_default()
+            .extend(keys.iter().cloned());
+        drop(keyboard);
         ui.input_mut(|input| drop(input.events.splice(..0, keys)));
     }
 }

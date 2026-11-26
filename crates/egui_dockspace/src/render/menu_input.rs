@@ -6,11 +6,13 @@ use egui::{Context, Event, Id, Key, Memory, RawInput, Ui, ViewportId, ViewportId
 #[derive(Default)]
 struct MenuInput {
     viewports: ViewportIdMap<ViewportInput>,
+    last_memory_viewport: Option<ViewportId>,
 }
 
 #[derive(Default)]
 struct ViewportInput {
     pass: u64,
+    finished: bool,
     menus: Vec<Menu>,
     opening: Option<(Id, u64)>,
     routed: Vec<(Id, OrderedIntent)>,
@@ -228,11 +230,12 @@ impl egui::plugin::Plugin for MenuInput {
         {
             return;
         }
-        let initial_focus = if context.viewport_id() == viewport {
-            context.memory(Memory::focused)
-        } else {
-            previous.focus_at_end
-        };
+        let initial_focus =
+            if self.last_memory_viewport == Some(viewport) && context.viewport_id() == viewport {
+                context.memory(Memory::focused)
+            } else {
+                previous.focus_at_end
+            };
         input.initial_focus = initial_focus;
         input.focus_before_ui = initial_focus;
         let initial = initial_focus.and_then(|initial| {
@@ -493,17 +496,24 @@ impl egui::plugin::Plugin for MenuInput {
 
     fn on_end_pass(&mut self, ui: &mut Ui) {
         let context = ui.ctx();
-        if let Some(input) = self.viewports.get_mut(&context.viewport_id()) {
-            input.finish(context, context.viewport_id());
+        let viewport = context.viewport_id();
+        self.last_memory_viewport = Some(viewport);
+        if let Some(input) = self.viewports.get_mut(&viewport) {
+            input.focus_at_end = context.memory(Memory::focused);
         }
     }
 
-    fn output_hook(&mut self, context: &Context, _: &mut egui::FullOutput) {
-        let viewport = context.viewport_id();
-        if let Some(input) = self.viewports.get_mut(&viewport)
-            && input.pass.checked_add(1) == Some(context.cumulative_pass_nr_for(viewport))
-        {
-            input.finish(context, viewport);
+    fn output_hook(&mut self, context: &Context, output: &mut egui::FullOutput) {
+        for (&viewport, input) in &mut self.viewports {
+            if !input.finished
+                && input.pass.checked_add(1) == Some(context.cumulative_pass_nr_for(viewport))
+            {
+                let focused =
+                    crate::pass_settlement::terminal_viewport_focus(context, viewport, output)
+                        .unwrap_or(input.focus_at_end);
+                input.finish(context, viewport, focused, output);
+                input.finished = true;
+            }
         }
         self.viewports.retain(|&viewport, _| {
             viewport == ViewportId::ROOT || context.cumulative_pass_nr_for(viewport) != 0
@@ -512,8 +522,14 @@ impl egui::plugin::Plugin for MenuInput {
 }
 
 impl ViewportInput {
-    fn finish(&mut self, context: &Context, viewport: ViewportId) {
-        self.focus_at_end = context.memory(Memory::focused);
+    fn finish(
+        &mut self,
+        context: &Context,
+        viewport: ViewportId,
+        focused: Option<Id>,
+        output: &mut egui::FullOutput,
+    ) {
+        self.focus_at_end = focused;
         if let Some(pending) = self.after_application.take()
             && !pending.keys.is_empty()
         {
@@ -522,6 +538,9 @@ impl ViewportInput {
                 keys: pending.keys,
             });
             context.request_repaint_of(viewport);
+            if let Some(viewport_output) = output.viewport_output.get_mut(&viewport) {
+                viewport_output.repaint_delay = std::time::Duration::ZERO;
+            }
         }
     }
 }

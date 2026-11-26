@@ -196,6 +196,7 @@ struct RenderContext<'ui, 'plan, 'scroll> {
     local_actions: &'ui mut Vec<EguiSurfaceAction>,
     menu_action: &'ui mut Option<DockMenuAction>,
     receivers: &'ui mut Vec<ProductReceiverBinding>,
+    wheel_owned_widgets: &'ui mut Vec<(Id, egui::Rect)>,
     #[cfg(test)]
     drop_target_observations: &'ui mut Vec<RegisteredDropTargetObservation>,
     #[cfg(feature = "native-render-support")]
@@ -440,7 +441,7 @@ pub(crate) struct ProductPaintOutput {
     pub(crate) pane_focus_observation: Option<PreparedPaneFocusObservation>,
     pub(crate) pane_focus_pending: Option<PendingPaneFocusObservation>,
     pub(crate) pane_focus_needs_repaint: bool,
-    #[cfg(all(feature = "motion", feature = "native-render-support"))]
+    #[cfg(feature = "motion")]
     pub(crate) motion_needs_repaint: bool,
     pub(crate) pane_focus_capability: DockspaceCapability,
     pub(crate) pane_focus_bindings: Vec<(ItemId, Id)>,
@@ -481,6 +482,7 @@ pub(crate) fn paint_surface(
     let mut local_actions = Vec::new();
     let mut menu_action = None;
     let mut receivers = Vec::new();
+    let mut wheel_owned_widgets = Vec::new();
     #[cfg(test)]
     let mut drop_target_observations = Vec::new();
     #[cfg(feature = "native-render-support")]
@@ -491,38 +493,11 @@ pub(crate) fn paint_surface(
     let mut motion_needs_repaint = false;
     let mut terminal_semantic_output = None;
     let execution_receipt;
-    if let Some(bounds) = geometry::egui_rect(plan.bounds()) {
+    let workspace_bounds = geometry::egui_rect(plan.bounds());
+    if let Some(bounds) = workspace_bounds {
         ui.allocate_rect(bounds, Sense::hover());
         ui.painter()
             .rect_filled(bounds, 0.0, visuals.workspace_fill);
-        let target = ui.make_persistent_id((instance_id, "workspace-focus", plan.surface()));
-        let _ = ui.interact(bounds, target, Sense::focusable_noninteractive());
-        let enabled = actions::effective_enabled(ui, true);
-        ui.ctx().accesskit_node_builder(target, |node| {
-            node.set_role(egui::accesskit::Role::Pane);
-            node.set_label("Dockspace workspace");
-            node.set_bounds(geometry::accesskit_bounds(bounds));
-            if enabled {
-                node.add_action(egui::accesskit::Action::Focus);
-            } else {
-                node.set_disabled();
-                node.clear_actions();
-            }
-        });
-        if let Some(request) = pane_focus_request.filter(|request| request.item().is_none())
-            && pointer_authority.supports_preview_gestures()
-            && enabled
-        {
-            crate::focus::apply_pane_focus_request(
-                ui.ctx(),
-                instance_id,
-                request,
-                target,
-                ui.memory(egui::Memory::focused),
-            );
-            pane_focus_target_requested = true;
-            pane_focus_target = Some(target);
-        }
     }
 
     {
@@ -549,6 +524,7 @@ pub(crate) fn paint_surface(
             local_actions: &mut local_actions,
             menu_action: &mut menu_action,
             receivers: &mut receivers,
+            wheel_owned_widgets: &mut wheel_owned_widgets,
             #[cfg(test)]
             drop_target_observations: &mut drop_target_observations,
             #[cfg(feature = "native-render-support")]
@@ -568,6 +544,41 @@ pub(crate) fn paint_surface(
         #[cfg(feature = "motion")]
         motion::begin(&context);
         let mut keyboard = Some(tab_shortcuts::TabKeyboard::prepare(&mut context));
+        if let Some(bounds) = workspace_bounds {
+            let target =
+                context
+                    .ui
+                    .make_persistent_id((instance_id, "workspace-focus", plan.surface()));
+            let _ = context
+                .ui
+                .interact(bounds, target, Sense::focusable_noninteractive());
+            let enabled = actions::effective_enabled(context.ui, true);
+            context.ui.ctx().accesskit_node_builder(target, |node| {
+                node.set_role(egui::accesskit::Role::Pane);
+                node.set_label("Dockspace workspace");
+                node.set_bounds(geometry::accesskit_bounds(bounds));
+                if enabled {
+                    node.add_action(egui::accesskit::Action::Focus);
+                } else {
+                    node.set_disabled();
+                    node.clear_actions();
+                }
+            });
+            if let Some(request) = pane_focus_request.filter(|request| request.item().is_none())
+                && pointer_authority.supports_preview_gestures()
+                && enabled
+            {
+                crate::focus::apply_pane_focus_request(
+                    context.ui.ctx(),
+                    instance_id,
+                    request,
+                    target,
+                    context.ui.memory(egui::Memory::focused),
+                );
+                *context.pane_focus_target_requested = true;
+                *context.pane_focus_target = Some(target);
+            }
+        }
         let completed_program = context
             .plan
             .execute_surface_program(|step| -> Result<(), DockspaceRuntimeError> {
@@ -834,7 +845,7 @@ pub(crate) fn paint_surface(
         defer_measurement,
         #[cfg(feature = "native-render-support")]
         transient_visuals_complete,
-        #[cfg(all(feature = "motion", feature = "native-render-support"))]
+        #[cfg(feature = "motion")]
         motion_needs_repaint,
     })
 }

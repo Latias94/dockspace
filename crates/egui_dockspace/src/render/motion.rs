@@ -72,10 +72,9 @@ pub(super) fn sample(
     });
     if sample.is_active() {
         *context.motion_needs_repaint = true;
-        #[cfg(feature = "native-render-support")]
-        if context.pointer_authority == super::PointerActionAuthority::ExternalJournal {
-            // The native host arms continuation on this exact output's terminal,
-            // rather than repainting through an in-flight capacity barrier.
+        if context.pointer_authority != super::PointerActionAuthority::LocalResponses {
+            // Host-journal and native drivers schedule continuation/repaint via
+            // motion_needs_repaint after settlement so backpressure is respected.
             return geometry::egui_rect(sample.rect()).unwrap_or(target);
         }
         context.ui.ctx().request_repaint();

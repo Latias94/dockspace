@@ -53,6 +53,18 @@ fn paint_control_records(
                 .then(|| context.plan.receiver_for_tab_strip_control(control))
                 .flatten(),
         );
+        if !enabled
+            && matches!(
+                control.kind(),
+                TabStripControlKind::ScrollBackward | TabStripControlKind::ScrollForward
+            )
+        {
+            // Keep disabled overflow chevrons from blocking wheel scrolling
+            // over the underlying tab strip while still shielding clicks/drags.
+            context
+                .wheel_owned_widgets
+                .push((response.id, response.interact_rect));
+        }
         let response = response.on_hover_text(match control.kind() {
             TabStripControlKind::ScrollBackward => "Show earlier tabs",
             TabStripControlKind::ScrollForward => "Show later tabs",
@@ -385,7 +397,12 @@ pub(crate) fn paint_menu(
     if enabled {
         // One instance slot observes semantic focus edges, without retaining popup history.
         // Hand off focus after widgets have handled this pass's click-outside rules.
-        let marker = context.instance_id.with("tab-list-menu-focus-edge");
+        let marker = context.ui.make_persistent_id((
+            context.instance_id,
+            "tab-list-menu-focus-edge",
+            context.plan.surface(),
+            context.ui.ctx().viewport_id(),
+        ));
         let edge = (
             frame_id,
             rows.iter()

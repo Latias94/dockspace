@@ -36,6 +36,7 @@ pub fn validate_final_outputs<'a>(
     output: &mut egui::FullOutput,
 ) -> bool {
     let mut context = None;
+    let mut viewport = None;
     let mut spans = Vec::new();
     for (paint_order, paint) in paints.into_iter().enumerate() {
         if !paint.had_ready_plan {
@@ -49,6 +50,11 @@ pub fn validate_final_outputs<'a>(
             None => context = Some(proof.context()),
             _ => {}
         }
+        match viewport {
+            Some(previous) if previous != proof.viewport() => return false,
+            None => viewport = Some(proof.viewport()),
+            _ => {}
+        }
         let Some(evidence) = proof.present_spans(output) else {
             return false;
         };
@@ -60,12 +66,12 @@ pub fn validate_final_outputs<'a>(
                 .map(|(span_order, span)| (paint_order, span_order, span)),
         );
     }
-    if context.is_some_and(|context| {
-        !crate::output_proof::spans_follow_paint_order(
+    if let (Some(context), Some(viewport)) = (context, viewport)
+        && !crate::output_proof::spans_follow_paint_order(
             &mut spans,
-            &crate::output_proof::final_paint_layer_order(context),
+            &crate::output_proof::final_paint_layer_order(context, viewport),
         )
-    }) {
+    {
         return false;
     }
     crate::output_proof::scrub_private_markers(output);
@@ -516,6 +522,7 @@ pub fn paint_surface(
         .paint_plan(surface)
         .map_err(DockspaceError::from_detail)?
     else {
+        render::release_host_keys(ui, instance_id, surface, Vec::new());
         ui.allocate_rect(dock_rect, egui::Sense::hover());
         let visuals = style.resolved_visuals(ui.visuals());
         ui.painter()

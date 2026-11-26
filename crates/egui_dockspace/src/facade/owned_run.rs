@@ -248,6 +248,8 @@ struct EncodedPass {
     pane_focus: Option<PreparedPaneFocusObservation>,
     pending_focus: Option<PendingPaneFocusObservation>,
     focus_needs_repaint: bool,
+    #[cfg(feature = "motion")]
+    motion_needs_repaint: bool,
     focus_capability: DockspaceCapability,
     defer_measurement: bool,
     had_plan: bool,
@@ -489,6 +491,7 @@ impl Dockspace {
                                 candidate_version,
                             );
                         }
+                        render::prepare_menu_layer(ui, self.id, surface);
                         let capture = crate::output_proof::SurfaceOutputCapture::begin_multilayer(
                             ui.painter(),
                         );
@@ -534,6 +537,8 @@ impl Dockspace {
                             pane_focus: None,
                             pending_focus: None,
                             focus_needs_repaint: false,
+                            #[cfg(feature = "motion")]
+                            motion_needs_repaint: false,
                             focus_capability: DockspaceCapability::Unavailable(
                                 DockspaceUnavailableReason::SurfaceBoundsUnavailable,
                             ),
@@ -549,6 +554,10 @@ impl Dockspace {
                             pass.pane_focus = paint.pane_focus_observation;
                             pass.pending_focus = paint.pane_focus_pending;
                             pass.focus_needs_repaint = paint.pane_focus_needs_repaint;
+                            #[cfg(feature = "motion")]
+                            {
+                                pass.motion_needs_repaint = paint.motion_needs_repaint;
+                            }
                             pass.focus_capability = paint.pane_focus_capability;
                             pass.defer_measurement = paint.defer_measurement;
                             self.ui_actions.capture(
@@ -625,7 +634,9 @@ impl Dockspace {
             || {
                 #[cfg(feature = "motion")]
                 {
-                    pass.had_plan && self.session.surface_motion_is_active(surface)
+                    pass.had_plan
+                        && (self.session.surface_motion_is_active(surface)
+                            || pass.motion_needs_repaint)
                 }
                 #[cfg(not(feature = "motion"))]
                 {

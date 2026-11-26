@@ -119,6 +119,8 @@ impl Dockspace {
         let mut pane_focus_observation = None;
         let mut pane_focus_pending = None;
         let mut pane_focus_needs_repaint = false;
+        #[cfg(feature = "motion")]
+        let mut motion_needs_repaint = false;
         let mut pane_focus_capability =
             DockspaceCapability::Unavailable(DockspaceUnavailableReason::SurfaceBoundsUnavailable);
         let mut pointer_receivers = Vec::new();
@@ -195,6 +197,7 @@ impl Dockspace {
             output_backpressured = backpressured;
             self.ui_actions
                 .stage_touch_menu(run_sequence, ui, self.id, surface, candidate_version);
+            render::prepare_menu_layer(ui, self.id, surface);
             let capture = settlement_claim
                 .as_ref()
                 .map(|_| crate::output_proof::SurfaceOutputCapture::begin_multilayer(ui.painter()));
@@ -229,6 +232,10 @@ impl Dockspace {
                 pane_focus_observation = paint.pane_focus_observation;
                 pane_focus_pending = paint.pane_focus_pending;
                 pane_focus_needs_repaint = paint.pane_focus_needs_repaint;
+                #[cfg(feature = "motion")]
+                {
+                    motion_needs_repaint = paint.motion_needs_repaint;
+                }
                 pane_focus_capability = paint.pane_focus_capability;
                 pointer_receivers = paint.receivers;
                 focus_bindings = paint.pane_focus_bindings;
@@ -295,7 +302,7 @@ impl Dockspace {
         let motion_active = {
             #[cfg(feature = "motion")]
             {
-                had_plan && self.session.surface_motion_is_active(surface)
+                had_plan && (self.session.surface_motion_is_active(surface) || motion_needs_repaint)
             }
             #[cfg(not(feature = "motion"))]
             {
@@ -334,8 +341,7 @@ impl Dockspace {
             );
         }
         if !output_backpressured
-            && (!had_plan
-                || report.repaint_surfaces().contains(&surface)
+            && (report.repaint_surfaces().contains(&surface)
                 || !self.ui_actions.is_empty()
                 || (needs_presentation_settlement && settlement_staged)
                 || retirement_repaint

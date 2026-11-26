@@ -21,7 +21,34 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use egui::epaint::{ClippedShape, Galley, PaintCallback, TextShape};
-use egui::{Context, FullOutput, LayerId, Painter, Shape, ViewportId};
+use egui::{Context, FullOutput, LayerId, Painter, Shape, ViewportId, ViewportIdMap};
+
+#[derive(Default)]
+struct ViewportLayerOrder {
+    viewports: ViewportIdMap<Vec<LayerId>>,
+}
+
+impl egui::plugin::Plugin for ViewportLayerOrder {
+    fn debug_name(&self) -> &'static str {
+        "egui_dockspace::viewport_layer_order"
+    }
+
+    fn on_end_pass(&mut self, ui: &mut egui::Ui) {
+        let viewport = ui.ctx().viewport_id();
+        let layers = ui.memory(|memory| {
+            let mut layers = memory.layer_ids().collect::<Vec<_>>();
+            layers.sort_by_key(|layer| layer.order);
+            layers
+        });
+        self.viewports.insert(viewport, layers);
+    }
+
+    fn output_hook(&mut self, context: &Context, _: &mut FullOutput) {
+        self.viewports.retain(|&viewport, _| {
+            viewport == ViewportId::ROOT || context.cumulative_pass_nr_for(viewport) != 0
+        });
+    }
+}
 
 /// An open capture bound to one context, viewport, and paint layer.
 pub(super) struct SurfaceOutputCapture {
@@ -363,6 +390,7 @@ impl LayerSnapshot {
 impl SurfaceOutputCapture {
     /// Snapshots existing graphics before appending the private begin marker.
     pub(super) fn begin(painter: &Painter) -> Self {
+        let _ = painter.ctx().plugin_or_default::<ViewportLayerOrder>();
         let append_check = PaintAppendCheck::begin(painter);
         let begin = Arc::new(SurfaceMarker);
         paint_marker(painter, &begin);
@@ -459,6 +487,8 @@ impl SurfaceOutputCapture {
         Some(SurfaceOutputProof {
             #[cfg(any(test, feature = "native-render-support"))]
             context: painter.ctx().clone(),
+            #[cfg(any(test, feature = "native-render-support"))]
+            viewport: self.append_check.viewport,
             expected,
             primary_layer: painter.layer_id(),
             spans,
@@ -473,6 +503,8 @@ impl SurfaceOutputCapture {
 pub(super) struct SurfaceOutputProof {
     #[cfg(any(test, feature = "native-render-support"))]
     context: Context,
+    #[cfg(any(test, feature = "native-render-support"))]
+    viewport: ViewportId,
     expected: Vec<ClippedShape>,
     primary_layer: LayerId,
     /// Popup suffixes frozen by their layer identity, without an order claim.
@@ -505,10 +537,15 @@ impl SurfaceOutputProof {
         &self.context
     }
 
+    #[cfg(feature = "native-render-support")]
+    pub(super) fn viewport(&self) -> ViewportId {
+        self.viewport
+    }
+
     /// Returns the enclosing half-open range for callers that own one surface.
     #[cfg(test)]
     pub(super) fn is_present_once(&self, output: &FullOutput) -> Option<(usize, usize)> {
-        let order = final_paint_layer_order(&self.context);
+        let order = final_paint_layer_order(&self.context, self.viewport);
         self.present_spans(output)?.enclosing_range(&order)
     }
 
@@ -606,7 +643,16 @@ pub(super) struct SurfaceOutputSpanEvidence {
     pub(super) range: (usize, usize),
 }
 
-pub(super) fn final_paint_layer_order(context: &Context) -> Vec<LayerId> {
+pub(super) fn final_paint_layer_order(context: &Context, viewport: ViewportId) -> Vec<LayerId> {
+    if let Some(layers) = context
+        .plugin_or_default::<ViewportLayerOrder>()
+        .lock()
+        .viewports
+        .get(&viewport)
+        .cloned()
+    {
+        return layers;
+    }
     context.memory(|memory| {
         let mut layers = memory.layer_ids().collect::<Vec<_>>();
         layers.sort_by_key(|layer| layer.order);

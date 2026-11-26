@@ -97,6 +97,7 @@ impl TabKeyboard {
         }
         if let Self::PaneShortcut(cycle) = self {
             if context.ui.memory(egui::Memory::focused) != Some(cycle.focused) {
+                pane_input::return_host_keys(context, cycle.tail);
                 return;
             }
             if !context
@@ -104,8 +105,15 @@ impl TabKeyboard {
                 .input(|input| input.events.contains(&cycle.shortcut))
             {
                 // A pane that consumes its configured shortcut keeps the following
-                // input. The callback has run, so deliver it on its next pass.
-                pane_input::continue_at(context, cycle.item, cycle.focused, cycle.tail);
+                // input. Deferred editors receive it on their next pass; ordinary
+                // panes restore it directly so host shortcuts and text are not lost.
+                if context.panes.accepts_deferred_keyboard_input(cycle.item) {
+                    pane_input::continue_at(context, cycle.item, cycle.focused, cycle.tail);
+                } else {
+                    context
+                        .ui
+                        .input_mut(|input| input.events.extend(cycle.tail));
+                }
                 return;
             }
             context
@@ -117,7 +125,11 @@ impl TabKeyboard {
         }
         let keys = matching_events(context);
         let keys = if routed_from_pane {
-            keys.as_slice()
+            let start = keys
+                .iter()
+                .position(|key| key.selected_start)
+                .unwrap_or(keys.len());
+            &keys[start..]
         } else {
             // egui has already applied traversal while registering widgets.
             // Only interpret commands that follow that handoff.

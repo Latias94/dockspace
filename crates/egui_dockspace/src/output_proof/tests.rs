@@ -2093,6 +2093,7 @@ fn fixture() -> (SurfaceOutputProof, FullOutput) {
     (
         SurfaceOutputProof {
             context: Context::default(),
+            viewport: ViewportId::ROOT,
             expected,
             primary_layer: LayerId::background(),
             spans: Vec::new(),

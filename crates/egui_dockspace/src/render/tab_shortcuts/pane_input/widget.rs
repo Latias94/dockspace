@@ -15,6 +15,7 @@ pub(super) struct WidgetInput {
     pub(super) widget: Option<Id>,
     pub(super) events: Option<Vec<Event>>,
     pub(super) restore_focus: bool,
+    pub(super) retry: bool,
     pub(super) unconsumed: Option<Vec<Event>>,
     pub(super) framework_input: Option<FrameworkInput>,
 }
@@ -68,16 +69,31 @@ fn with_widget_input<R>(
         return draw(ui);
     }
     let focused = ui.memory(egui::Memory::focused);
+    let retry = context.data(|data| {
+        data.get_temp::<WidgetInput>(key)
+            .is_some_and(|input| input.widget == Some(id) && input.retry)
+    });
     let visible = ui.is_enabled()
         && ui.is_visible()
         && ui.memory(|memory| memory.allows_interaction(ui.layer_id()))
         && context.viewport(|viewport| {
-            viewport.prev_pass.widgets.get(id).is_some_and(|widget| {
-                let bounds = bounds.unwrap_or_else(|| next_widget_bounds(ui, widget.rect.size()));
-                widget.layer_id == ui.layer_id()
-                    && bounds.is_finite()
-                    && ui.clip_rect().intersect(bounds).is_positive()
-            })
+            viewport
+                .prev_pass
+                .widgets
+                .get(id)
+                .filter(|widget| widget.layer_id == ui.layer_id())
+                .map(|widget| {
+                    let bounds =
+                        bounds.unwrap_or_else(|| next_widget_bounds(ui, widget.rect.size()));
+                    bounds.is_finite() && ui.clip_rect().intersect(bounds).is_positive()
+                })
+                .unwrap_or_else(|| {
+                    if !retry {
+                        return false;
+                    }
+                    let bounds = bounds.unwrap_or_else(|| ui.available_rect_before_wrap());
+                    bounds.is_finite() && ui.clip_rect().intersect(bounds).is_positive()
+                })
         });
     let delivery = visible
         .then(|| {
@@ -145,10 +161,20 @@ pub fn pane_text_edit(ui: &mut Ui, id: Id, edit: egui::TextEdit<'_>) -> egui::Re
     if !owns_packet(ctx, key, id) {
         return ui.add(edit.id(id));
     }
-    let Some(size) = ctx.viewport(|viewport| {
+    let size = ctx.viewport(|viewport| {
         let widget = viewport.prev_pass.widgets.get(id)?;
         (widget.rect.is_finite() && widget.rect.is_positive()).then(|| widget.rect.size())
-    }) else {
+    });
+    let Some(size) = size else {
+        let retry = ctx.data(|data| {
+            data.get_temp::<WidgetInput>(widget_input_key(ctx))
+                .is_some_and(|input| input.widget == Some(id) && input.retry)
+        });
+        if retry {
+            let filter = edit.get_event_filter();
+            let bounds = ui.available_rect_before_wrap();
+            return with_pane_keyboard_input_at(ui, id, filter, bounds, |ui| ui.add(edit.id(id)));
+        }
         return ui.add(edit.id(id));
     };
     let filter = edit.get_event_filter();

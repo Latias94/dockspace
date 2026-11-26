@@ -4,7 +4,7 @@ use dockspace::runtime::{
     PreparedSurfaceAction, RetainedTabListOpener, TabListMenuPaintRecord,
     TabStripControlPaintRecord,
 };
-use egui::{Event, EventFilter, Id, Key, PointerButton, Ui};
+use egui::{Event, EventFilter, Id, IdMap, Key, PointerButton, Ui};
 
 use super::super::menu_input::{
     self, Intent, MenuKey, MenuKind, accesskit_click_target, accesskit_focus_target,
@@ -72,6 +72,14 @@ fn opening_slot(context: &RenderContext<'_, '_, '_>) -> Id {
     ))
 }
 
+fn pointer_openers_slot(context: &RenderContext<'_, '_, '_>) -> Id {
+    context.instance_id.with((
+        "tab-list-pointer-openers",
+        context.plan.surface(),
+        context.ui.ctx().viewport_id(),
+    ))
+}
+
 pub(super) fn remember_pointer_opener(
     context: &RenderContext<'_, '_, '_>,
     control: TabStripControlPaintRecord,
@@ -81,8 +89,11 @@ pub(super) fn remember_pointer_opener(
         && let Some(opener) = context.plan.retain_tab_list_opener(control)
     {
         let pass = context.ui.ctx().cumulative_pass_nr();
+        let slot = pointer_openers_slot(context);
         context.ui.ctx().data_mut(|data| {
-            data.insert_temp(id.with("pointer-opener"), PaintedOpener { pass, opener });
+            let openers = data.get_temp_mut_or_default::<IdMap<PaintedOpener>>(slot);
+            openers.retain(|_, entry| entry.pass.saturating_add(1) >= pass);
+            openers.insert(id, PaintedOpener { pass, opener });
         });
     }
 }
@@ -260,9 +271,10 @@ pub(super) fn take_menu_input(
             .ctx()
             .data(|data| data.get_temp::<PendingOpening>(slot).is_some())
         && let Some(start) = after_opening_click(ui, opener).filter(|start| *start > 0)
-        && let Some(previous) = ui
-            .ctx()
-            .data(|data| data.get_temp::<PaintedOpener>(opener.with("pointer-opener")))
+        && let Some(previous) = ui.ctx().data(|data| {
+            data.get_temp::<IdMap<PaintedOpener>>(pointer_openers_slot(context))
+                .and_then(|openers| openers.get(&opener).cloned())
+        })
         && previous.pass.checked_add(1) == Some(ui.ctx().cumulative_pass_nr())
         && context
             .plan

@@ -303,7 +303,9 @@ pub(super) fn show(
                 })
                 .inner
         });
-    if output.response.should_close() || (run.press_started_while_open && clicked) {
+    if output.response.should_close()
+        || (run.press_started_while_open && clicked && !output.response.contains_pointer())
+    {
         Popup::close_id(context, popup);
         output.response.set_close();
         run.press_started_while_open = false;
