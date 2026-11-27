@@ -1453,7 +1453,9 @@ fn stationary_while_pressed(
                     .ok_or("the first real query has no observation time")?,
             )
         };
-        let delay = dockspace::runtime::DockPresentationConfig::default()
+        let delay = egui_dockspace::DockStyle::default()
+            .presentation_config()
+            .expect("default dock style yields a valid presentation config")
             .hover_selection_delay()
             .ok_or("stationary-positive requires the configured finite hover delay")?;
         let (final_result, sample_interval) = {
@@ -1774,7 +1776,9 @@ fn stationary_overflow_while_pressed(
     )?;
     let initial = stationary_overflow_geometry(&scene.tree)
         .map_err(|error| format!("stationary overflow initial geometry: {error:?}"))?;
-    let config = dockspace::runtime::DockPresentationConfig::default();
+    let config = egui_dockspace::DockStyle::default()
+        .presentation_config()
+        .expect("default dock style yields a valid presentation config");
     let step = config.tab_strip_scroll_line_extent();
     if initial.maximum - initial.offset < step * 2.0 {
         return Err(format!(
@@ -2711,7 +2715,9 @@ fn checked_center_motion_points(
     pixels_per_point: f32,
     scene: &PaneCenterScene,
 ) -> Result<[PhysicalPoint; 5], String> {
-    let config = dockspace::runtime::DockPresentationConfig::default();
+    let config = egui_dockspace::DockStyle::default()
+        .presentation_config()
+        .expect("default dock style yields a valid presentation config");
     let content = scene.geometry.content;
     let inset = (1.0 - config.magnetic_center_fraction()) * 0.5;
     let center = LogicalBounds {

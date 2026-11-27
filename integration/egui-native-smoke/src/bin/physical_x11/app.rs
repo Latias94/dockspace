@@ -326,7 +326,9 @@ impl StationaryProbe {
                 return;
             }
         };
-        let config = dockspace::runtime::DockPresentationConfig::default();
+        let config = DockStyle::default()
+            .presentation_config()
+            .expect("default dock style yields a valid presentation config");
         let step = config.tab_strip_scroll_line_extent();
         let delta = geometry.offset - overflow.initial.offset;
         let close = |left: f64, right: f64| (left - right).abs() < 0.01;
@@ -425,7 +427,9 @@ impl StationaryProbe {
             };
             let (previous_result, previous_at) = previous.presented.unwrap();
             let stopping = self.mode == StationaryMode::OverflowCancel && index == 2;
-            let interval = dockspace::runtime::DockPresentationConfig::default()
+            let interval = DockStyle::default()
+                .presentation_config()
+                .expect("default dock style yields a valid presentation config")
                 .tab_strip_edge_scroll_interval()
                 .expect("the overflow smoke enables its finite interval");
             if previous.token == row.token
@@ -691,14 +695,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         style.tab_min_width = 400.0;
         style.tab_max_width = 400.0;
     }
-    let presentation = if overflow_target || stationary_mode.is_overflow() {
-        dockspace::runtime::DockPresentationConfig::builder()
-            .tab_min_width(400.0)
-            .tab_max_width(400.0)
-            .build()?
-    } else {
-        dockspace::runtime::DockPresentationConfig::default()
-    };
+    let presentation = style.presentation_config()?;
     let session =
         DockspaceSession::from_layout_with_presentation_config(layout, policy, presentation)?;
     let id = egui::Id::unique("egui-native-physical-smoke");
@@ -1645,7 +1642,9 @@ impl PhysicalSmokeApp {
                     && source_selection == Some(SourceSelection::ACTIVE_MAIN);
                 if positive_selection {
                     let now = Instant::now();
-                    let delay = dockspace::runtime::DockPresentationConfig::default()
+                    let delay = DockStyle::default()
+                        .presentation_config()
+                        .expect("default dock style yields a valid presentation config")
                         .hover_selection_delay()
                         .expect("the smoke uses the default finite hover delay");
                     if probe.first_model_after_result.is_none()

@@ -772,6 +772,12 @@ pub(super) fn tab_half_point(
     Ok((physical, point))
 }
 
+fn default_presentation_config() -> dockspace::runtime::DockPresentationConfig {
+    egui_dockspace::DockStyle::default()
+        .presentation_config()
+        .expect("default dock style yields a valid presentation config")
+}
+
 pub(super) fn verify_tab_half_preview(
     case: TabHalfCase,
     geometry: TabHalfGeometry,
@@ -779,7 +785,7 @@ pub(super) fn verify_tab_half_preview(
     pixels_per_point: f32,
 ) -> Result<(), PaneCenterError> {
     // The finite target has one fully visible Main tab and no overflow chrome.
-    let width = dockspace::runtime::DockPresentationConfig::default().splitter_thickness();
+    let width = default_presentation_config().splitter_thickness();
     let mut expected = geometry.tab;
     expected.min_x = match case {
         TabHalfCase::Before => expected.min_x,
@@ -946,7 +952,7 @@ pub(super) fn verify_overflow_tab_preview(
         return Err(PaneCenterError::Coordinates(CoordinateError::InvalidScale));
     }
     // The fixed [Anchor, Child, Main] layout reveals the newly selected 400-point Child.
-    let thickness = dockspace::runtime::DockPresentationConfig::default().splitter_thickness();
+    let thickness = default_presentation_config().splitter_thickness();
     let mut expected = geometry.viewport;
     expected.min_x = (expected.max_x - OVERFLOW_TAB_WIDTH - thickness * 0.5)
         .clamp(expected.min_x, expected.max_x - thickness);
@@ -1037,7 +1043,7 @@ pub(super) fn pane_center_point(
     guides: &[ActualGuideHit],
 ) -> Result<(PhysicalPoint, LogicalPoint), PaneCenterError> {
     let content = geometry.content;
-    let config = dockspace::runtime::DockPresentationConfig::default();
+    let config = default_presentation_config();
     let width = content.max_x - content.min_x;
     let height = content.max_y - content.min_y;
     if width < config.minimum_pane_size().width() || height < config.minimum_pane_size().height() {
@@ -1097,7 +1103,7 @@ pub(super) fn pane_edge_point(
     guides: &[ActualGuideHit],
 ) -> Result<(PhysicalPoint, LogicalPoint), PaneCenterError> {
     let content = geometry.content;
-    let config = dockspace::runtime::DockPresentationConfig::default();
+    let config = default_presentation_config();
     let width = content.max_x - content.min_x;
     let height = content.max_y - content.min_y;
     if width < config.minimum_pane_size().width() || height < config.minimum_pane_size().height() {
@@ -1181,7 +1187,7 @@ pub(super) fn verify_edge_preview(
 }
 
 fn edge_preview_bounds(case: PaneEdgeCase, mut expected: LogicalBounds) -> LogicalBounds {
-    let config = dockspace::runtime::DockPresentationConfig::default();
+    let config = default_presentation_config();
     let width =
         (expected.max_x - expected.min_x - config.splitter_thickness()) * config.dock_fraction();
     let height =
