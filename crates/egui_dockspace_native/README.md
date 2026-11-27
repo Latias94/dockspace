@@ -18,13 +18,15 @@ For one OS window using official egui, start with
 
 ## Run the editor
 
+![Dockspace multi-OS-window docking](../../screenshots/multiview.gif)
+
 From the repository root:
 
 ```sh
 cargo run --manifest-path integration/egui-fork-workspace/Cargo.toml -p egui_dockspace_native --example basic --locked
 ```
 
-Click **Open Inspector Window ↗** in the toolbar to move the floating Inspector
+Click **Open Inspector Window** in the toolbar to move the floating Inspector
 group into a child OS window, then **Dock Inspector Back** to return it. A tab
 bar's window-outline menu also offers **Move Layout to New Window** and **Dock Back**
 for the entire root. Its separate three-dot menu acts on one tab group. Closing

@@ -10,9 +10,9 @@
 
 `Rust 1.95+ (MSRV)` · `#![forbid(unsafe_code)]` · `WebAssembly ready` · `egui 0.37` · `Pre-release`
 
-![Dockspace native multiview: tabs dock between two OS windows with motion enabled](screenshots/docking.gif)
+![Dockspace workbench: edge splits, splitter resizing, docking floating groups, live pane state, custom tabs, and Shift+drag floating in official egui](screenshots/workbench.gif)
 
-*Shown above: the experimental [native multiview editor](docs/EXAMPLES.md#experimental-native-windows) docking tabs across two OS windows with motion enabled. For single-window desktop and WebAssembly apps, [`egui_dockspace`](crates/egui_dockspace) runs directly on official `egui` with no forks.*
+*Shown above: the official zero-fork [`egui_dockspace`](crates/egui_dockspace) workbench (winit + WGPU) — 5-way drop guides, edge splitting with motion reflow, splitter resizing, docking a floating Inspector, live pane state retention, custom tab chrome, and Shift+drag floating.*
 
 ---
 
@@ -155,6 +155,10 @@ See [crates/dockspace/README.md](crates/dockspace/README.md), [examples/custom_u
 ---
 
 ## Host Capabilities & Platform Limits
+
+![Dockspace multi-OS-window docking: opening a child OS window, dragging a pane across the desktop gap, resizing child splits, and docking back](screenshots/multiview.gif)
+
+*Multi-OS-window docking via `dockspace`'s multi-surface protocol and [`egui_dockspace_native`](crates/egui_dockspace_native): promoting a floating group into a child OS window, dragging a pane across the desktop gap into live drop guides, resizing splits inside the child window, and docking back to retire the window.*
 
 | Host path | Drag docking & guides | Focus confirmation | Multi-OS windows | Requires forks? |
 | --- | --- | --- | --- | --- |

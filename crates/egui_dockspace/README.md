@@ -1,108 +1,64 @@
 # egui_dockspace
 
-Docking layouts for egui, backed by the renderer-neutral `dockspace` core.
+**Deterministic docking layouts for official `egui 0.37`** — backed by the renderer-neutral [`dockspace`](https://github.com/Latias94/dockspace/tree/main/crates/dockspace) core, with zero forks and first-class desktop + WebAssembly support.
 
-Add tabs, splitters, docking guides and floating groups. Keep pane state in your
-application and render it through `PaneView`. The adapter supplies egui styling,
-keyboard/AccessKit actions and application-controlled close requests.
+[Live Web Demo](https://frankorz.com/dockspace/demo/egui/) ·
+[Homepage](https://frankorz.com/dockspace/) ·
+[Integration Guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md) ·
+[Examples](https://github.com/Latias94/dockspace/blob/main/docs/EXAMPLES.md) ·
+[Changelog](https://github.com/Latias94/dockspace/blob/main/CHANGELOG.md)
 
-**Pre-release:** use a path dependency from this checkout. Requires Rust 1.95
-and egui 0.37. Native OS windows use a separate experimental adapter.
+`Rust 1.95+ (MSRV)` · `#![forbid(unsafe_code)]` · `egui 0.37` · `WebAssembly ready` · `Pre-release`
 
-## Run the workbench
+![Dockspace workbench: edge splits, splitter resizing, docking floating groups, live pane state, custom tabs, and Shift+drag floating in official egui](https://raw.githubusercontent.com/Latias94/dockspace/main/screenshots/workbench.gif)
 
-From the repository root:
+*Shown above: the zero-fork `egui_dockspace` desktop workbench (`winit` + `wgpu`) — 5-way drop guides, edge splitting with motion reflow, splitter resizing, docking a floating Inspector, live pane state retention, custom tab chrome, Shift+drag floating, and theme switching.*
+
+---
+
+## Why `egui_dockspace`?
+
+- **Official `egui 0.37`, zero forks** — Works directly with crates.io `egui` / `winit` / `wgpu` / `eframe`. Need multiple native OS windows? See the separate experimental [`egui_dockspace_native`](https://github.com/Latias94/dockspace/tree/main/crates/egui_dockspace_native) adapter.
+- **Composable `Pane` / `Tabs` / `Split` / `Grid` + contained floats** — Nest complete layouts inside a named tab, keep bare panes without forced tab bars, drag tabs with **Shift** to float inside the window, and resize shared `Grid` tracks or splitters atomically with per-pane `PaneSizing` constraints.
+- **Application-owned pane state & deferred close** — The layout stores stable `ItemId` values; your app owns documents, canvases, and widget state via `PaneView`, and can approve, veto, or hold a deferred close token while saving asynchronously.
+- **Customizable chrome, motion & AccessKit** — Compact rounded tabs follow the active `egui` theme out of the box, with `TabStylePreset` presets, `PaneView` chrome callbacks, interruptible `motion` (honoring `prefers-reduced-motion`), keyboard navigation, and optional `accesskit` delivery.
+- **One `NativeApp` for desktop and browser** — Run the same `NativeApp` on native desktop (`wgpu`) and `wasm32-unknown-unknown` (`web`), or plug `Dockspace` into your own renderer or `eframe::App::ui` callback.
+
+---
+
+## Try It Locally
+
+Try the **[browser workbench](https://frankorz.com/dockspace/demo/egui/)** with zero setup, or run the desktop examples from the repository root:
 
 ```sh
+# Full-featured workbench (tabs, splits, floating groups, sizing, custom chrome, motion)
 cargo run -p egui_dockspace --example workbench --features wgpu --locked
-```
 
-Drag tabs onto a pane to merge or split it, resize dividers, and close or restore
-documents. Hold **Shift** while dragging a tab to float it inside the window.
-A tab bar's six-dot grip moves its tab group; the same grip in a floating title
-bar moves or docks the whole floating window, including its splits.
-
-The default style uses compact Rounded tabs. Each group's three-dot menu acts
-on that group; the window-outline menu acts on the complete layout, including
-its splits. Use **Tab style** and **Custom tabs** to
-compare chrome, and the motion toolbar to try timing, curves and reduced motion.
-Enable **Sizing → Pane sizing demo** to try a capped Inspector, a fixed-height
-Console, and double-clicking the Outline divider to restore its preferred width. The
-[workbench pane code](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/workbench/editor.rs) demonstrates these features;
-start with the [small editor](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/winit.rs) when integrating your own app.
-
-## Host choices
-
-| Integration | Capabilities | Start here |
-| --- | --- | --- |
-| Optional winit/WGPU runner | Full docking in one OS window; owns rendering and output settlement | [Use winit](#use-winit) |
-| Your host owns `RawInput`, the complete egui run and final `FullOutput` | Full docking with your renderer | `Dockspace::run_single_surface_with_ui`; [host guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#complete-output-hosts) |
-| Ordinary `eframe::App::ui` callback | Rendering, selection, close, menus and keyboard resize; drag docking/focus confirmation unavailable | `Dockspace::show_single_surface`; [basic example](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/basic.rs) |
-| Browser canvas | Full docking and contained floating groups in one canvas | [Run in a browser](#run-in-a-browser) |
-| Fork-backed eframe with native windows | Experimental multiview and native lifecycle | [Native adapter](https://github.com/Latias94/dockspace/tree/main/crates/egui_dockspace_native) and [platform support](https://github.com/Latias94/dockspace/blob/main/docs/PLATFORM_SUPPORT.md) |
-
-A complete-output host reports presentation after the renderer presents that
-exact output. A callback alone cannot supply that observation.
-
-## Render your panes
-
-Implement `PaneView` on your application registry. The layout stores `ItemId`
-values; your registry keeps documents, editors and other pane state.
-
-```rust
-use egui_dockspace::{ItemId, PaneResponse, PaneView};
-
-struct Documents {
-    text: String,
-}
-
-impl PaneView for Documents {
-    fn title(&self, _item: ItemId) -> Option<egui::WidgetText> {
-        Some("Document".into())
-    }
-
-    fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> PaneResponse {
-        let editor = ui.add(egui::TextEdit::multiline(&mut self.text).id(editor_id(item)));
-        PaneResponse::from(&editor)
-    }
-
-    fn focus_target(&self, item: ItemId) -> Option<egui::Id> {
-        Some(editor_id(item))
-    }
-}
-
-fn editor_id(item: ItemId) -> egui::Id {
-    egui::Id::unique(("documents-editor", item))
-}
-```
-
-Return the content responses created in that call so ordinary widgets retain
-their input ownership while docking. Composite panes can use `with_content` or
-`with_content_ids`. A stable `focus_target` lets tab activation enter the editor;
-override `focus_state` when several child widgets share the pane's focus scope.
-Returning `None` from `title` keeps an
-unavailable pane's layout slot. `Box<dyn PaneView>` is supported.
-
-Use `ScrollArea`, wrapping or canvas navigation for content larger than its pane.
-`with_scroll_area` registers a scroll area's own controls; add its inner content
-responses separately.
-`minimum_size` describes a useful viewport. When the whole layout cannot fit,
-choose clipping or proportional compression through `DockStyle::pane_overflow_policy`.
-
-Callbacks are synchronous and may repeat across egui passes. Run I/O in
-application-owned background tasks, transfer finished data to the UI thread and
-request a repaint. The [background-save example](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/background_save.rs)
-keeps a pane open if saving fails.
-
-## Use winit
-
-For a small runnable editor with full drag docking:
-
-```sh
+# Minimal 96-line runnable editor with full drag docking
 cargo run -p egui_dockspace --example winit --features wgpu --locked
 ```
 
-Add the adapter from your checkout:
+In the workbench: drag tabs onto panes to merge or split, resize dividers, hold **Shift** while dragging a tab to float it, use the six-dot grip to move/dock an entire tab group or floating window, toggle **Custom tabs** / **Tab style** / **Light & Dark**, enable **Sizing → Pane sizing demo** (and double-click the Outline divider to restore its preferred width), or adjust curves and reduced motion in the motion bar.
+
+---
+
+## Choosing a Host Path
+
+| Integration | Capabilities | Entry point |
+| --- | --- | --- |
+| Built-in `wgpu` runner (desktop) | Full drag docking, guides, contained floats & focus confirmation in one OS window | `egui_dockspace::winit::run_native` ([`examples/winit.rs`](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/winit.rs)) |
+| Browser canvas (`web`) | Full drag docking and contained floats inside an HTML canvas | `egui_dockspace::winit::run_web` ([`integration/egui-web-demo`](https://github.com/Latias94/dockspace/tree/main/integration/egui-web-demo)) |
+| Custom complete-output host | Full drag docking with your own `winit` event loop or GPU renderer | `Dockspace::run_single_surface_with_ui` ([host guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#complete-output-hosts)) |
+| Ordinary `eframe::App::ui` callback | Rendering, tab selection, close approval, menus & keyboard resize *(no drag docking or focus confirmation)* | `Dockspace::show_single_surface` ([`examples/basic.rs`](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/basic.rs)) |
+| Multi-OS-window native host (experimental) | Child OS windows, cross-window drag & OS recovery *(requires pinned `egui`/`winit` forks)* | [`egui_dockspace_native`](https://github.com/Latias94/dockspace/tree/main/crates/egui_dockspace_native) · [platform matrix](https://github.com/Latias94/dockspace/blob/main/docs/PLATFORM_SUPPORT.md) |
+
+Complete-output hosts settle hit authority only after the renderer presents that exact `FullOutput`; a plain `eframe::App::ui` callback cannot observe renderer presentation.
+
+---
+
+## Quickstart (`wgpu` Runner)
+
+Until `0.1.0` is published on crates.io, depend on a local checkout:
 
 ```toml
 [dependencies]
@@ -111,34 +67,132 @@ egui_dockspace = { path = "../dockspace/crates/egui_dockspace", features = ["wgp
 egui = "0.37"
 ```
 
-The `wgpu` feature provides `winit::run_native`. Implement `NativeApp::update`
-by returning the output from `Dockspace::run_single_surface`; the runner handles
-the window loop, renderer and presentation receipt. Use `frame_finished` for
-application commands after rendering. [The small editor](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/winit.rs)
-shows the complete setup.
+Keep pane data in your own struct, implement `PaneView`, and drive a single window with `winit::run_native`:
 
-Enable `winit` instead for `WinitIntegration` with your existing event loop and
-renderer. Enable `accesskit` for system accessibility. Winit, WGPU and eframe
-remain optional; [host setup](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#winit-and-browser-hosts) covers backend
-selection, accessibility initialization and window configuration.
+```rust
+use dockspace::policy::{CloseCapability, DockPolicy};
+use egui_dockspace::{
+    Dockspace, DockspaceLayout, DockspaceNode, DockspaceOutput, DockspaceRootLayout,
+    DockspaceSurfaceLayout, ItemId, PaneResponse, PaneView, RootId, SurfaceId,
+    winit::{AppResult, NativeApp, NativeOptions, run_native},
+};
 
-For another UI framework, [`dockspace_winit`](https://github.com/Latias94/dockspace/tree/main/crates/dockspace_winit) supplies shared
-mouse, coordinate and repaint helpers without an egui or renderer dependency.
+const SURFACE: SurfaceId = SurfaceId::new(1);
 
-## Run in a browser
+struct Editor {
+    dockspace: Dockspace,
+    documents: Documents,
+}
 
-Enable `web` for `winit::run_web` with an existing HTML canvas, using the same
-`NativeApp` callbacks as the desktop runner.
-[Try the browser workbench](https://frankorz.com/dockspace/demo/egui/), which
-reuses the desktop panes and motion controls. Docking and floating groups stay
-inside one canvas. Follow the [source and build instructions](https://github.com/Latias94/dockspace/tree/main/integration/egui-web-demo)
-to run it locally, or [browser setup](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#browser-startup-and-preferences)
-to integrate startup and the system's reduced-motion preference.
+impl NativeApp for Editor {
+    fn update(
+        &mut self,
+        context: &egui::Context,
+        input: egui::RawInput,
+    ) -> AppResult<DockspaceOutput> {
+        let (output, _) =
+            self.dockspace
+                .run_single_surface(context, input, SURFACE, &mut self.documents)?;
+        Ok(output)
+    }
+}
 
-## Configure motion
+struct Documents([String; 2]);
 
-Motion is enabled by default for layout changes and drop previews. Dividers and
-drag proxies follow the pointer directly. To disable geometry motion at runtime:
+impl PaneView for Documents {
+    fn title(&self, item: ItemId) -> Option<egui::WidgetText> {
+        match item.get() {
+            1 => Some("Document".into()),
+            2 => Some("Notes".into()),
+            _ => None,
+        }
+    }
+
+    fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> PaneResponse {
+        let index = usize::from(item.get() == 2);
+        let id = document_focus(item);
+        let editor = egui::TextEdit::multiline(&mut self.0[index])
+            .id(id)
+            .frame(egui::Frame::NONE);
+        let bounds = ui.available_rect_before_wrap();
+        let response = egui_dockspace::with_pane_keyboard_input_at(
+            ui,
+            id,
+            editor.get_event_filter(),
+            bounds,
+            |ui| ui.put(bounds, editor),
+        );
+        PaneResponse::from(&response)
+    }
+
+    fn focus_target(&self, item: ItemId) -> Option<egui::Id> {
+        Some(document_focus(item))
+    }
+
+    fn accepts_deferred_keyboard_input(&self, _: ItemId) -> bool {
+        true
+    }
+}
+
+fn document_focus(item: ItemId) -> egui::Id {
+    egui::Id::unique(("editor-document", item))
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(
+            RootId::new(1),
+            DockspaceNode::central_tabs([ItemId::new(1), ItemId::new(2)]),
+        ),
+    )])?;
+    let mut policy = DockPolicy::default();
+    policy.set_close_capability(CloseCapability::Disabled);
+    let mut editor = Editor {
+        dockspace: Dockspace::builder("editor", layout).policy(policy).build()?,
+        documents: Documents([
+            "Edit this document. Drag its tab to split or move it.".into(),
+            "Hold Shift while dragging to float this tab inside the window.".into(),
+        ]),
+    };
+    run_native(NativeOptions::default(), egui::Context::default(), &mut editor)?;
+    Ok(())
+}
+```
+
+Use `NativeApp::frame_finished` for application commands after rendering, or enable the `winit` feature (without `wgpu`) to connect `WinitIntegration` to your own event loop and renderer. For non-`egui` frameworks on `winit`, see [`dockspace_winit`](https://github.com/Latias94/dockspace/tree/main/crates/dockspace_winit).
+
+---
+
+## Pane Contract, Sizing & Async I/O
+
+- **Input ownership (`PaneResponse`)** — Return widget responses created inside `PaneView::ui` via `PaneResponse::from`, `with_content`, `with_content_ids`, or `with_scroll_area` (registering inner scrollable controls separately) so ordinary widgets retain pointer ownership during docking.
+- **Focus & missing panes** — Provide a stable `focus_target` (or override `focus_state` for multi-widget panes) so tab activation focuses your editor. Returning `None` from `title` preserves an unavailable pane's layout slot. `Box<dyn PaneView>` is supported.
+- **Per-pane sizing (`PaneSizing`)** — Override `PaneView::sizing(&self, item: ItemId) -> PaneSizing` to declare minimum, preferred, maximum, or fixed dimensions. When the layout cannot fit inside the viewport, configure clipping vs. proportional compression via `DockStyle::pane_overflow_policy`.
+- **Synchronous callbacks & background tasks** — `PaneView::ui` is synchronous and may run across multiple `egui` passes. Perform I/O on application-owned background threads, merge results back on the UI thread, and request a repaint (see [`examples/background_save.rs`](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/background_save.rs)).
+
+---
+
+## Styling, Motion & Persistence
+
+### Styling & input
+
+`DockStyle` derives from the active `egui` theme with compact `Rounded` tabs by default. Use `DockStyle::from_egui(ui)` or `DockStyle::from_egui_with_density(ui, DockDensity::Comfortable)` to scale metrics from your fonts, pick a preset from `TabStylePreset::{Dockspace, Rounded, EguiTiles}`, or tweak fields directly:
+
+```rust
+use egui_dockspace::DockStyle;
+
+let mut style = DockStyle::default();
+style.tab_bar_height = 26.0;
+style.tab_horizontal_padding = 12.0;
+style.tab_background_inset = egui::vec2(3.0, 2.0);
+```
+
+Override `PaneView` chrome callbacks to customize tabs, tab-bar controls, splitters, menus, drop guides, and drop previews while preserving docking hit-testing and accessibility ([styling guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#styling)). Configure gestures and shortcuts with `DockInputConfig` and move/close/resize permissions with `DockPolicy` ([input guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#pointer-input)).
+
+### Motion
+
+Interruptible geometry motion (`EaseOut` 200 ms reflow by default; direct pointer tracking for dividers and drag proxies) is enabled by default and respects reduced motion. Disable it at runtime or omit it at compile time with `default-features = false`:
 
 ```rust
 use egui_dockspace::{
@@ -154,83 +208,50 @@ fn disable_motion(dockspace: &mut Dockspace) {
 }
 ```
 
-Use `default-features = false` to omit motion, then enable only the integrations
-and Linux backends you need. Each effect supports immediate geometry, a tween
-with configurable duration and curve, or a critical spring. The
-[motion guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#motion) covers custom Bezier curves, interrupted
-transitions, system preferences and custom preview painters.
+Each effect supports `Transition::Instant`, `Tween` (with built-in or custom `CubicBezier` curves), or `CriticalSpring` ([motion guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#motion)).
 
-## Styling
+### Layout persistence (`serde`)
 
-`DockStyle` follows the current egui theme, with compact Rounded tabs by default.
-Use `DockStyle::from_egui(ui)` to derive compact metrics from your fonts, or
-`from_egui_with_density(ui, DockDensity::Comfortable)` for larger targets and
-padding. Adjust the default recipe through ordinary style fields:
+Enable the `serde` feature to save and restore layouts via `save_document_json` and `from_document_json`, reconnecting application pane state through `item_id_for_external_key` while keeping storage and pane data in your application ([persistence guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#persistence)).
 
-```rust
-use egui_dockspace::DockStyle;
+---
 
-let mut style = DockStyle::default();
-style.tab_bar_height = 26.0;
-style.tab_horizontal_padding = 12.0;
-style.tab_background_inset = egui::vec2(3.0, 2.0);
-```
+## Examples
 
-`TabStylePreset::{Dockspace, Rounded, EguiTiles}` provide theme-relative starting
-points. Rounded uses inset backgrounds, rounded corners and a thin selected
-border. Background insets change appearance while retaining title, close-button
-and hit geometry. `PaneView` callbacks customize tabs, tab-bar controls, splitters,
-menu buttons and rows, guides and previews while retaining the adapter's input
-and accessibility.
-See the [styling guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#styling) for the callback contracts. Enable
-**Custom tabs** in the workbench and right-click a tab to try an application menu
-action.
+Run any example from the repository root (`workbench`, `winit`, and `shared_grid` use the complete-output `wgpu` runner for full drag docking; the remaining examples focus on application workflows via `eframe`):
 
-Configure gestures and shortcuts with `DockInputConfig`. `DockPolicy` controls
-move/close permissions and resize rules. See [input configuration](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#pointer-input)
-for modifier matching, tab cycling, middle-click close and splitter shortcuts.
+| Example | What it demonstrates | Run command |
+| --- | --- | --- |
+| [Workbench](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/workbench.rs) | Complete editor with custom tabs, sizing demo, motion & themes | `cargo run -p egui_dockspace --example workbench --features wgpu --locked` |
+| [Minimal winit editor](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/winit.rs) | 96-line complete-output single-window editor | `cargo run -p egui_dockspace --example winit --features wgpu --locked` |
+| [Shared grid](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/shared_grid.rs) | Shared `Grid` row/column tracks & nested layout tabs | `cargo run -p egui_dockspace --example shared_grid --features wgpu --locked` |
+| [Basic panes](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/basic.rs) | Ordinary `eframe::App::ui` callback integration | `cargo run -p egui_dockspace --example basic --features example-app --locked` |
+| [Composable layouts](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/composable.rs) | Named nested layouts and bare panes | `cargo run -p egui_dockspace --example composable --features example-app --locked` |
+| [Background save](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/background_save.rs) | Deferred close tokens & async save veto/approval | `cargo run -p egui_dockspace --example background_save --features example-app --locked` |
+| [Workspace persistence](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/workspace_persistence.rs) | JSON layout presets, autosave & missing-pane recovery | `cargo run -p egui_dockspace --example workspace_persistence --features example-app,serde --locked` |
 
-## More examples
+For browser deployment, follow [integration/egui-web-demo](https://github.com/Latias94/dockspace/tree/main/integration/egui-web-demo) and the [browser startup guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#browser-startup-and-preferences).
 
-The shared-grid example and workbench use the complete-output winit/WGPU host
-for drag docking and resizing. The remaining examples use an ordinary eframe
-callback to teach application workflows. Run commands from the repository root.
+---
 
-| Example | Run command |
-| --- | --- |
-| [Basic pane rendering](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/basic.rs) | `cargo run -p egui_dockspace --example basic --features example-app --locked` |
-| [Named nested layouts and bare panes](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/composable.rs) | `cargo run -p egui_dockspace --example composable --features example-app --locked` |
-| [Shared grid tracks and layout tabs](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/shared_grid.rs) | `cargo run -p egui_dockspace --example shared_grid --features wgpu --locked` |
-| [Background saving](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/background_save.rs) | `cargo run -p egui_dockspace --example background_save --features example-app --locked` |
-| [Layout presets and autosave](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/workspace_persistence.rs) | `cargo run -p egui_dockspace --example workspace_persistence --features example-app,serde --locked` |
-
-With `serde`, `save_document_json` and `from_document_json` save and reopen layouts.
-Reconnect pane data with `item_id_for_external_key`; the application owns file
-storage and pane contents. The [persistence guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#persistence)
-explains missing panes, layout reset and the example's save behavior.
-
-[All examples](https://github.com/Latias94/dockspace/blob/main/docs/EXAMPLES.md) · [Integration guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md)
-· [Native OS windows](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace_native/README.md)
-
-## Features
+## Cargo Features
 
 | Feature | Purpose |
 | --- | --- |
-| `motion` (default) | Interruptible geometry with per-effect timing, curves and runtime disable/reduced-motion controls |
-| `serde` | Layout document save/restore; pane data and file storage remain application-owned |
-| `example-app` | Build the packaged eframe examples |
-| `winit` | Input and platform-output bridge for an existing winit event loop and renderer |
-| `wgpu` | Complete-output single-window runner and renderer using official WGPU; includes `winit` |
-| `web` | Complete-output browser runner on `wasm32-unknown-unknown`; includes `wgpu` |
-| `accesskit` | System accessibility delivery and action input for the winit integration |
-| `x11` (default) | X11 backend for enabled winit, WGPU or eframe integrations |
-| `wayland` (default) | Wayland backend for enabled winit, WGPU or eframe integrations |
-| `wayland-csd-adwaita` (default) | Adwaita client decorations for the winit runner; includes `wayland` |
-| `native-render-support` | Internal seam for the unpublished native adapter |
+| `motion` *(default)* | Interruptible geometry with per-effect timing, curves, and runtime disable / reduced-motion controls |
+| `serde` | JSON layout document save/restore; pane data and file storage remain application-owned |
+| `winit` | Input and platform-output bridge (`WinitIntegration`) for an existing `winit` event loop and renderer |
+| `wgpu` | Complete-output single-window desktop runner (`winit::run_native`) using official `wgpu`; implies `winit` |
+| `web` | Complete-output browser runner (`winit::run_web`) on `wasm32-unknown-unknown`; implies `wgpu` |
+| `accesskit` | System accessibility tree delivery and action input for the `winit` integration |
+| `example-app` | Enables `eframe` for the packaged callback examples |
+| `x11` *(default)* | X11 backend when a window integration (`winit` / `wgpu` / `example-app`) is enabled |
+| `wayland` *(default)* | Wayland backend when a window integration is enabled |
+| `wayland-csd-adwaita` *(default)* | Adwaita client-side decorations for the `winit` runner; implies `wayland` |
+| `native-render-support` | Internal sessionless seam for the unpublished `egui_dockspace_native` adapter |
 
-Default Linux backend features take effect only when a window integration is
-enabled. They add no window loop or renderer on their own.
+Default Linux backend features activate only when a window integration is enabled and add no event loop or renderer on their own.
 
 ## License
 
-MIT OR Apache-2.0. See [third-party sources](https://github.com/Latias94/dockspace/blob/main/THIRD_PARTY.md) for attribution.
+Dual-licensed under **MIT OR Apache-2.0**. See [THIRD_PARTY.md](https://github.com/Latias94/dockspace/blob/main/THIRD_PARTY.md) for attribution.
