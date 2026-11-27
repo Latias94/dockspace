@@ -21,6 +21,7 @@ to reproduce behavior in the appropriate host. Public crates retain Rust 1.95 as
 | `integration/egui-web-demo` | Wasm workbench and real-browser interaction tests |
 | `site` | Static GitHub Pages homepage and demo route |
 | `integration/gpui-harness` | Local Open GPUI retained adapter and interaction tests |
+| `integration/ratatui-demo` | Standalone third-party TUI adapter built on `dockspace::host` with `TestBackend` visual tests |
 | `docs` | Integration guides, platform limits and architecture decisions |
 | `scripts` | Core dependency boundary and opt-in performance comparisons |
 

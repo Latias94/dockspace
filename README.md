@@ -34,10 +34,13 @@ The recording uses the experimental [native multiview editor](docs/EXAMPLES.md#e
 with motion enabled. Tabs dock in both directions, and the empty child window
 retires after its final tab returns.
 
-For a small terminal-only introduction to the core:
+For a small terminal-only introduction to the core, or to try the third-party UI
+framework integration kit (`dockspace::host`):
 
 ```sh
 cargo run -p dockspace --example layout_commands --locked
+cargo run -p dockspace --example custom_ui_host --locked
+cargo run --manifest-path integration/ratatui-demo/Cargo.toml --locked
 ```
 
 [All examples and run commands](docs/EXAMPLES.md)
@@ -46,9 +49,9 @@ cargo run -p dockspace --example layout_commands --locked
 
 | You want to… | Start here | Host requirements |
 | --- | --- | --- |
-| Add docking to a custom engine or UI framework | [`dockspace`](crates/dockspace) | Supply measurements, drawing, input and presentation results |
+| Add docking to a custom engine or third-party UI framework | [`dockspace::host`](crates/dockspace) | Three-tier kit (`SurfaceDisplayList`, `SurfaceProgramVisitor`, `LogicalHost`, `NativeReportDigest`); see [Ratatui demo](integration/ratatui-demo/README.md) |
 | Connect a winit-based UI framework | [`dockspace_winit`](crates/dockspace_winit) | Shared input/repaint helpers and optional native window integration; keep your UI and renderer |
-| Reuse your own native platform backend | [`dockspace::runtime`](crates/dockspace/docs/guide.md) | Native protocol and resource registry using your framework's IDs; no winit or UI dependency |
+| Reuse your own native platform backend | [`dockspace::runtime`](crates/dockspace/docs/guide.md) | Low-level native protocol and resource registry using your framework's IDs; no winit or UI dependency |
 | Use egui in one OS window or browser canvas | [`egui_dockspace`](crates/egui_dockspace) | Own the complete egui run and final output for drag docking |
 | Experiment with multiple native windows | [`egui_dockspace_native`](crates/egui_dockspace_native) | Use the pinned eframe/winit forks; platform support varies |
 
@@ -59,13 +62,13 @@ explain the difference before you integrate.
 
 ## What you can build
 
-- Editor layouts with tabs, nested splits, splitter junctions and central panes.
-- Drag docking with center/edge guides, tab reordering and overflow menus.
+- Composable `Pane` / `Tabs` / `Split` / `Grid` layouts with named layout tabs, shared Grid tracks, splitter junctions and central panes.
+- Drag docking with center/edge guides, tab reordering, horizontal wheel scrolling and overflow menus.
 - Floating groups within a surface, with move, resize and Dock Back actions.
 - Application-controlled close decisions, including background saving.
 - Hide and restore panes without losing their tab positions or split proportions.
 - Saved layouts with stable pane keys, restored independently of pane data.
-- Custom pane drawing, minimum sizes, styling, focus and docking policies.
+- Custom pane drawing, minimum/maximum sizes, styling, focus and docking policies.
 
 The experimental native adapter adds OS-window creation, recovery and shared
 Root-window layouts. Physical cross-window docking has finite Linux X11 and macOS
@@ -97,7 +100,9 @@ persistence. Pane data and file storage stay in your application.
 - [Core overview](crates/dockspace/README.md) and [engine host guide](crates/dockspace/docs/guide.md).
 - [egui overview](crates/egui_dockspace/README.md) and [integration guide](crates/egui_dockspace/docs/guide.md).
 - [GPUI adapter and workbench](integration/gpui-harness/README.md): embed retained application views and run the native demo.
+- [Ratatui terminal workbench](integration/ratatui-demo/README.md): interactive third-party TUI adapter built exclusively on `dockspace::host`.
 - [Documentation index](docs/README.md): platform limits, adapter testing and architecture decisions.
+- [Changelog](CHANGELOG.md): release notes, license breakdown and fork compatibility notes.
 - [AI integration skill](skills/dockspace-integration/SKILL.md): guidance for docking, custom hosts and native multiview. Copy its folder into your agent's skills directory (`~/.codex/skills/` for Codex) and invoke `$dockspace-integration`.
 - [Contributing](CONTRIBUTING.md): repository layout and development checks.
 

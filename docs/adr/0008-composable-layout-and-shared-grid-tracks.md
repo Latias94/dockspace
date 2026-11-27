@@ -149,6 +149,5 @@ Pane nodes and ordinary roots sharing a surface with any composed root.
 | Independent mutable presentation ownership registry | Rejected: duplicates the existing immutable compiled facts and graph authority. |
 
 Related: [renderer-neutral core](0001-renderer-neutral-core.md),
-[atomic frames and presentation](0002-atomic-frames-and-presentation.md),
-[pane sizing and restoration](0007-pane-sizing-and-explicit-preferences.md), and
-the [implementation plan](../plans/2026-11-17-1023-refactor-composable-layout-tree-plan.md).
+[atomic frames and presentation](0002-atomic-frames-and-presentation.md), and
+[pane sizing and restoration](0007-pane-sizing-and-explicit-preferences.md).

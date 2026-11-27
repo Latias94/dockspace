@@ -9,6 +9,7 @@
 - [Browser workbench](../integration/egui-web-demo/README.md): local docking,
   configurable motion, static site builds and browser tests.
 - [winit helpers](../crates/dockspace_winit/README.md): shared mouse input, coordinates and repaint scheduling.
+- [Ratatui terminal workbench](../integration/ratatui-demo/README.md): standalone third-party TUI adapter built exclusively on `dockspace::host`.
 - [Native overview](../crates/egui_dockspace_native/README.md): experimental window integration.
 - [GPUI workbench](../integration/gpui-harness/README.md): retained views and single-window docking with a local Open GPUI checkout.
 
@@ -33,12 +34,8 @@
 - [Host-update sampling](../integration/dockspace-host-harness/BENCHMARKING.md)
   and [product comparisons](../integration/product-comparison/README.md):
   reproducible workloads and interpretation limits.
+- [Changelog](../CHANGELOG.md): release notes, license scope and fork compatibility.
 - [Third-party sources](../THIRD_PARTY.md): prior art and fixture attribution.
-- [Docking reliability and ImGui design research](research/docking-testing-and-imgui.md):
-  preserved source material, verified references, architecture comparison and
-  test design proposals.
-- [Godot editor dock design](research/godot-docking-design.md): tool identity,
-  recovery, floating placement and the boundary between an editor shell and core.
 
 ## Architecture decisions
 

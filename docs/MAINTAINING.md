@@ -148,18 +148,47 @@ passes CI and package verification before entering the `crates-io` environment.
 Only the three public crates are selected for publication. Tag creation alone
 does not publish anything.
 
-### Experimental native adapter
+### Experimental native adapter and fork distribution policy
 
-`egui_dockspace_native` remains unpublished because it depends on pinned
-egui/eframe and winit host contracts absent from the official registry packages.
-These include raw event facts, completed-pass hit authority and renderer output
-settlement. Workspace patches are application-level configuration and are not
-inherited by downstream consumers.
+`egui_dockspace_native` remains unpublished (`publish = false`) because it depends
+on pinned `Latias94/egui` and `Latias94/winit` host contracts absent from the
+official registry packages. These include raw event facts, completed-pass hit
+authority, pointer capture commands and renderer output settlement. Workspace
+`[patch.crates-io]` tables are application-level configuration and are not
+inherited by downstream library crates.
 
-Removing `publish = false` requires a separate distribution decision, a fully
-registry-resolvable dependency graph, an explicit egui/winit type-compatibility
-policy, and verification from a clean external consumer without patches. Either
-maintaining a renamed fork distribution or replacing the host backend is a
-separate project; changing package metadata alone cannot provide that support.
-Keep the locked native workspace and platform qualification while evaluating
-those routes. The first Dockspace registry release does not include this adapter.
+Follow this distribution strategy for the `egui` and `winit` forks:
+
+1. **Do not publish renamed forks to crates.io.** Publishing renamed `egui` /
+   `eframe` / `epaint` / `winit` crates splits Rust types from the official
+   crates.io `egui` ecosystem (`egui_extras`, `egui_plot`, and third-party
+   widgets), defeating egui ecosystem compatibility while creating a permanent
+   9-crate fork maintenance burden.
+2. **Distribute forks via immutable Git tags + `[patch.crates-io]`.** Keep the
+   original crate names so downstream applications retain full compatibility
+   with crates.io egui widgets:
+   - Maintain one release branch per supported upstream minor release on each
+     fork (for example `dockspace-0.37` on `Latias94/egui` and
+     `dockspace-0.30.13` on `Latias94/winit`).
+   - Publish immutable release tags (`v0.37.0-dockspace.<N>` and
+     `v0.30.13-dockspace.<N>`) rather than pointing users at moving branches.
+   - Keep required native-seam patches clearly separated from optional
+     performance experiments before cutting a release tag.
+   - Publish a matching compatibility triplet (`dockspace` tag, `Latias94/egui`
+     tag, `Latias94/winit` tag) and a copy-paste `[patch.crates-io]` snippet in
+     each release note and in `crates/egui_dockspace_native/README.md`.
+3. **Sync only on stable upstream minor releases.** Do not continuously track
+   upstream `master`. Rebase/align when upstream cuts a stable minor release and
+   re-verify `native-qualification.yml` before tagging the new triplet.
+4. **Shrink the fork surface over time.** Upstream small, self-contained fixes
+   first (starting with platform pointer/capture correctness fixes in `winit`
+   and low-invasion observation/performance improvements in `egui`), and prefer
+   moving window-loop integration out of the `eframe` fork where `dockspace_winit`
+   plus `egui-wgpu` can own it directly.
+
+Removing `publish = false` from `egui_dockspace_native` requires a fully
+registry-resolvable dependency graph without workspace patches and verification
+from a clean external consumer. Keep the locked native workspace and platform
+qualification in place until the required host contracts exist upstream. The
+first Dockspace registry release includes only `dockspace`, `dockspace_winit`
+and `egui_dockspace`.

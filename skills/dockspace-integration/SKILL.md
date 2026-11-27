@@ -29,9 +29,9 @@ for navigation only when a dependency revision has not been selected.
 | Application need | Integration | Read next |
 | --- | --- | --- |
 | egui panes, nested layout tabs, splits, grids and contained floating groups | `egui_dockspace`; use a complete-output host for drag docking | [egui](references/egui.md) |
-| A different immediate or retained UI framework | `dockspace::runtime::DockspaceSession` | [Custom host](references/custom-host.md) |
-| Shared winit input/repaint helpers or optional native window integration | `dockspace_winit` alongside the application's UI and renderer | [Custom host](references/custom-host.md), [Multiview](references/multiview.md) |
-| Native resources using a framework's own platform implementation | `dockspace::runtime::NativeWindows<K, T>` plus core native hosting | [Multiview](references/multiview.md) |
+| A different immediate or retained UI framework | Start with `dockspace::host` (`LogicalHost`, `SurfaceDisplayList`, `SurfaceProgramVisitor`, `SurfaceMetrics`); drop down to `dockspace::runtime::DockspaceSession` only for custom frame batching | [Custom host](references/custom-host.md) |
+| Shared winit input/repaint helpers or optional native window integration | `dockspace_winit` alongside `dockspace::host::{NativeReportDigest, NativeWindowRetirementState}` and the application's UI/renderer | [Custom host](references/custom-host.md), [Multiview](references/multiview.md) |
+| Native resources using a framework's own platform implementation | `dockspace::host::{NativeWindows, NativeReportDigest, NativeWindowRetirementState}` plus core native hosting | [Multiview](references/multiview.md) |
 | Managed OS windows and cross-window interactions | Core native hosting, or the experimental `egui_dockspace_native` adapter | [Multiview](references/multiview.md), plus the chosen renderer's reference |
 
 A contained floating group stays inside a logical surface. Moving content to a

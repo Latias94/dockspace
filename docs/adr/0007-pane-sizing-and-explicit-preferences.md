@@ -219,6 +219,5 @@ alone is insufficient.
 | A broad solver change regresses unconstrained performance | Retain the common minimum-only arithmetic path internally and compare existing geometry fixtures and relevant workload costs. |
 
 Related: [renderer-neutral core](0001-renderer-neutral-core.md),
-[atomic frames and presentation](0002-atomic-frames-and-presentation.md),
-[motion geometry](0005-motion-and-presentation-geometry.md), and
-[the ImGui architecture comparison](../research/docking-architecture-review.md).
+[atomic frames and presentation](0002-atomic-frames-and-presentation.md), and
+[motion geometry](0005-motion-and-presentation-geometry.md).

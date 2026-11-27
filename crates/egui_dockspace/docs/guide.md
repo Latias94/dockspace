@@ -276,7 +276,7 @@ integrations is enabled:
 [dependencies]
 dockspace = { path = "../dockspace/crates/dockspace" }
 egui_dockspace = { path = "../dockspace/crates/egui_dockspace", features = ["wgpu"] }
-egui = "=0.37.0"
+egui = "0.37"
 ```
 
 - `winit` exposes `egui_dockspace::winit::WinitIntegration` for an existing

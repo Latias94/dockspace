@@ -35,14 +35,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Run the [layout commands example](examples/layout_commands.rs) from the
+Run the [layout commands example](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/examples/layout_commands.rs) from the
 repository root to select, open and move panes and inspect committed results:
 
 ```sh
 cargo run -p dockspace --example layout_commands --locked
 ```
 
-The [composition guide](docs/guide.md#composable-layouts) covers named layout
+The [composition guide](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/docs/guide.md#composable-layouts) covers named layout
 tabs, active versus owned content, shared Grid tracks and constrained resizing.
 
 ## Connect your host
@@ -56,17 +56,19 @@ Start with `dockspace::host` for the fastest path into any Rust UI framework
   `SurfaceProgramVisitor`.
 - **Tier 2 (`LogicalHost` / `LogicalPointerEvent` / `PointerClearance`)**:
   single-window and multi-surface logical hosting with two-step presentation
-  settlement (`LogicalPresentationToken` → `finish_presentation`) and
-  fail-closed pointer routing.
+  settlement (`LogicalPresentationToken` → `finish_presentation`), independent
+  click/drag/scroll lane resolution, and fail-closed pointer routing.
 - **Tier 3 (`NativeReportDigest` / `NativeWindowRetirementState` / `NativeWindows`)**:
   shared native-multiview report synchronization, deduplicated window repaints,
   and exact quiescence tracking.
 
-Run the zero-dependency [custom UI host example](examples/custom_ui_host.rs) to
-see both retained display-list and immediate visitor integration in ~180 lines:
+Run the zero-dependency [custom UI host example](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/examples/custom_ui_host.rs) to
+see both retained display-list and immediate visitor integration in ~230 lines,
+or explore the interactive [Ratatui terminal workbench](https://github.com/Latias94/dockspace/tree/main/integration/ratatui-demo) built exclusively on `dockspace::host`:
 
 ```sh
 cargo run -p dockspace --example custom_ui_host --locked
+cargo run --manifest-path integration/ratatui-demo/Cargo.toml --locked
 ```
 
 For direct access to the complete low-level protocol, use `model`, `policy`,
@@ -83,16 +85,16 @@ A logical surface is a layout/input area; it need not be an OS window. Multiple
 surfaces can share a host. Native window effects are explicit requests for the
 host to execute and report, rather than hidden calls to an event loop.
 
-The [independent engine-host example](../../integration/dockspace-host-harness/examples/engine_host.rs)
+The [independent engine-host example](https://github.com/Latias94/dockspace/blob/main/integration/dockspace-host-harness/examples/engine_host.rs)
 implements the complete recording-renderer path without egui:
 
 ```sh
 cargo run --manifest-path integration/dockspace-host-harness/Cargo.toml --example engine_host --locked
 ```
 
-Read the [host guide](docs/guide.md) for input, output ownership, native lifecycle,
+Read the [host guide](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/docs/guide.md) for input, output ownership, native lifecycle,
 close decisions and persistence contracts, and the
-[adapter testing guide](../../docs/ADAPTER_TESTING.md) for reusable host scenarios.
+[adapter testing guide](https://github.com/Latias94/dockspace/blob/main/docs/ADAPTER_TESTING.md) for reusable host scenarios.
 
 ## Customize
 
@@ -116,7 +118,7 @@ close decisions and persistence contracts, and the
   Custom hosts supply a monotonic clock and request frames while motion is
   active. Use `MotionMode::Off` for immediate geometry, omit `set_motion` for a
   static host, or disable default features to omit motion support. The
-  [motion guide](docs/guide.md#motion) explains timing, reduced motion and retained
+  [motion guide](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/docs/guide.md#motion) explains timing, reduced motion and retained
   UI integration.
 
 ## Features
@@ -129,9 +131,9 @@ close decisions and persistence contracts, and the
 With `default-features = false`, the core retains static docking, layouts and
 native lifecycle without motion or persistence dependencies.
 
-[Examples](../../docs/EXAMPLES.md) · [Platform support](../../docs/PLATFORM_SUPPORT.md)
-· [Repository](../../README.md)
+[Examples](https://github.com/Latias94/dockspace/blob/main/docs/EXAMPLES.md) · [Platform support](https://github.com/Latias94/dockspace/blob/main/docs/PLATFORM_SUPPORT.md)
+· [Repository](https://github.com/Latias94/dockspace)
 
 ## License
 
-Apache-2.0. See [third-party sources](../../THIRD_PARTY.md) for attribution.
+Apache-2.0. See [third-party sources](https://github.com/Latias94/dockspace/blob/main/THIRD_PARTY.md) for attribution.

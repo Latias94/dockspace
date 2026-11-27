@@ -5,10 +5,8 @@ describes the public styling APIs; the implementation table below identifies
 the core and adapter seams that preserve this design.
 
 This is the maintained design baseline for tabs, group controls, contained
-floating frames, splitters and docking feedback. It adapts the user-supplied
-`dockspace-egui-adapter-design-kit-v1.zip`. Its illustrations are inspiration;
-this document resolves their scope, sizing and state ambiguities. Application
-buttons, editors, trees, menus and toolbars continue to use egui's own styling.
+floating frames, splitters and docking feedback. Application buttons, editors,
+trees, menus and toolbars continue to use egui's own styling.
 
 ## Ownership and component structure
 

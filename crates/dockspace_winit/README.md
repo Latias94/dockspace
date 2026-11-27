@@ -63,11 +63,11 @@ The registry is a specialization of `dockspace::runtime::NativeWindows<K, T>`.
 A framework with its own platform implementation can use the core type with its
 own window ID type and no winit dependency.
 
-The [multiview example](examples/multiview/main.rs) demonstrates that lifecycle with
+The [multiview example](https://github.com/Latias94/dockspace/blob/main/crates/dockspace_winit/examples/multiview/main.rs) demonstrates that lifecycle with
 real OS windows and software presentation. Follow the
-[engine host guide](../dockspace/docs/guide.md) and check the
-[platform matrix](../../docs/PLATFORM_SUPPORT.md). The
-[integration skill](../../skills/dockspace-integration/SKILL.md) also covers
+[engine host guide](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/docs/guide.md) and check the
+[platform matrix](https://github.com/Latias94/dockspace/blob/main/docs/PLATFORM_SUPPORT.md). The
+[integration skill](https://github.com/Latias94/dockspace/blob/main/skills/dockspace-integration/SKILL.md) also covers
 host selection and multiview ownership.
 
 ## Add from source
@@ -82,7 +82,7 @@ dockspace_winit = { path = "../dockspace/crates/dockspace_winit" }
 
 Adding this crate opts into winit. The `dockspace` core has no platform
 dependency. For egui, use the optional `winit` or `wgpu` feature on
-[`egui_dockspace`](../egui_dockspace/README.md) instead of routing input twice.
+[`egui_dockspace`](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/README.md) instead of routing input twice.
 
 ## Features
 
@@ -122,8 +122,8 @@ merge or split panes, move the floating Inspector and resize dividers. Hold
 or **Escape** to cancel a gesture. The window repaints on input and core requests;
 it has no animation loop.
 
-The [event loop](examples/software/app.rs), [core wiring](examples/software/editor.rs)
-and [software drawing](examples/support/paint.rs) show separate host responsibilities.
+The [event loop](https://github.com/Latias94/dockspace/blob/main/crates/dockspace_winit/examples/software/app.rs), [core wiring](https://github.com/Latias94/dockspace/blob/main/crates/dockspace_winit/examples/software/editor.rs)
+and [software drawing](https://github.com/Latias94/dockspace/blob/main/crates/dockspace_winit/examples/support/paint.rs) show separate host responsibilities.
 `example-app` enables only the example's optional software/font dependencies and
 is disabled by default. This is a renderer integration example; touch, scrolling,
 accessibility and multiple OS windows need their own host integration.
@@ -146,8 +146,8 @@ than implementing a second pointer integration.
 Application shutdown retains the layout while retiring windows, so exit also
 works when the main window is minimized and cannot present recovered content.
 
-The [event loop](examples/multiview/app.rs), [window resources](examples/multiview/host.rs)
-and [workspace commands](examples/multiview/workspace.rs) demonstrate creation,
+The [event loop](https://github.com/Latias94/dockspace/blob/main/crates/dockspace_winit/examples/multiview/app.rs), [window resources](https://github.com/Latias94/dockspace/blob/main/crates/dockspace_winit/examples/multiview/host.rs)
+and [workspace commands](https://github.com/Latias94/dockspace/blob/main/crates/dockspace_winit/examples/multiview/workspace.rs) demonstrate creation,
 renderer Prepared facts, exact first-live presentation and ordered retirement.
 Dropping resources requests a close; a later `Destroyed` event proves that the
 window is gone. The example releases callback routes and settles outputs before
