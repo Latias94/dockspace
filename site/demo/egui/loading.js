@@ -139,8 +139,10 @@ async function compileWasm() {
 try {
   setPhase('bootstrap', 'Preparing the workbench…', 'Loading the app launcher…');
   if (typeof WebAssembly === 'undefined') throw new Error('This browser does not support WebAssembly. Please use a current browser.');
-  const { default: init } = await import(new URL('egui_web_demo.js', pkg));
-  const module = await compileWasm();
+  const [{ default: init }, module] = await Promise.all([
+    import(new URL('egui_web_demo.js', pkg)),
+    compileWasm(),
+  ]);
   setPhase('graphics', 'Initializing graphics…', 'Wasm is ready. Starting the renderer and drawing the first frame.');
   await init({ module_or_path: module });
   observeStatus();

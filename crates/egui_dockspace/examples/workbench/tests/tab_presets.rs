@@ -50,9 +50,10 @@ fn selecting_tab_presets_updates_painted_corners_and_retains_application_overrid
             .nodes
             .iter()
             .find_map(|(_, node)| {
-                (node.role() == Role::ComboBox)
-                    .then(|| node.bounds())
-                    .flatten()
+                (node.role() == Role::ComboBox
+                    && matches!(node.value(), Some("Dockspace" | "Rounded" | "egui_tiles")))
+                .then(|| node.bounds())
+                .flatten()
             })
             .expect("the real toolbar exposes its preset selector");
         let selector = egui::pos2(

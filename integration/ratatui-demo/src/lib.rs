@@ -183,7 +183,7 @@ impl RatatuiDockApp {
             manifest,
             DemoPane {
                 title: "Cargo.toml".into(),
-                body: "[dependencies]\ndockspace = \"0.1\"\nratatui = \"0.29\"\n\nZero unsafe, zero egui/gpui assumptions.".into(),
+                body: "[dependencies]\ndockspace = \"0.1\"\nratatui = \"0.30\"\n\nZero unsafe, zero egui/gpui assumptions.".into(),
                 accent: Color::Yellow,
             },
         );

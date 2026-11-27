@@ -18,7 +18,7 @@ motion = ["egui_dockspace/motion"]
 [dependencies]
 egui = { version = "=0.37.0", default-features = false, features = ["default_fonts"] }
 egui_dockspace = { path = "../../crates/egui_dockspace", default-features = false, features = ["web"] }
-serde_json = "1.0.149"
+serde_json = "1.0.154"
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = ["Window", "Document", "Element", "EventTarget", "HtmlCanvasElement", "Location", "MediaQueryList", "MediaQueryListEvent"] }
 
@@ -26,7 +26,9 @@ web-sys = { version = "0.3", features = ["Window", "Document", "Element", "Event
 unsafe_code = "forbid"
 
 [profile.release]
-opt-level = "s"
-lto = "thin"
+opt-level = "z"
+lto = true
 codegen-units = 1
+panic = "abort"
+# Keep the `target_features` section intact for `wasm-bindgen`; `wasm-opt` strips symbol names afterward.
 strip = "debuginfo"

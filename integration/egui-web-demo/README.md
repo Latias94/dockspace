@@ -24,22 +24,25 @@ so browser and CDN caches cannot mix runtime versions after a deployment.
 
 ## Build and preview
 
-From the repository root, with Rust 1.95+, Python 3.11+, and the CLI version
-matching this workspace's lockfile:
+From the repository root, with Rust 1.95+, Python 3.11+, Binaryen (`wasm-opt`),
+and the `wasm-bindgen` CLI version matching this workspace's lockfile:
 
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.130 --locked
+# Also install Binaryen's wasm-opt (for example: brew install binaryen)
 python3 scripts/build_site.py
 python3 -m http.server 8080 --directory target/site
 ```
 
 Open <http://localhost:8080/> for the homepage and
 <http://localhost:8080/demo/egui/> for the workbench. HTTPS or localhost is needed
-for WebGPU. Add `--dev` to the build command for an unoptimized local build.
+for WebGPU. Add `--dev` for an unoptimized local build, or `--no-wasm-opt` to
+skip Binaryen post-processing locally.
 Build output is contained in `target`; no frontend bundler or external CDN is
-required. The script verifies the installed `wasm-bindgen` version before
-building. Update the CLI, lockfile and Pages workflow together when upgrading.
+required. The script verifies the installed `wasm-bindgen` version and runs
+`wasm-opt -Oz` on release builds. Update the CLI, lockfile and Pages workflow
+together when upgrading.
 
 ## Browser tests
 

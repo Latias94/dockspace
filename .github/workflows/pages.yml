@@ -61,6 +61,19 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-bindgen@0.2.130
+      - name: Install wasm-opt (Binaryen)
+        run: |
+          version=133
+          archive="binaryen-version_${version}-x86_64-linux.tar.gz"
+          base="https://github.com/WebAssembly/binaryen/releases/download/version_${version}"
+          curl -fsSL -o "/tmp/${archive}" "${base}/${archive}"
+          curl -fsSL -o "/tmp/${archive}.sha256" "${base}/${archive}.sha256"
+          (cd /tmp && sha256sum -c "${archive}.sha256")
+          sudo mkdir -p /usr/local/binaryen
+          sudo tar -xzf "/tmp/${archive}" -C /usr/local/binaryen --strip-components=1
+          rm -f "/tmp/${archive}" "/tmp/${archive}.sha256"
+          echo "/usr/local/binaryen/bin" >> "$GITHUB_PATH"
+          /usr/local/binaryen/bin/wasm-opt --version
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
