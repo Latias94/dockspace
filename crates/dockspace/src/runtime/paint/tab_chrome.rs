@@ -305,21 +305,25 @@ impl TabStripControlPaintRecord {
         self.output.control_id(self.visual_id())
     }
 
+    /// Returns the stable root owning this tab-strip control.
     #[must_use]
     pub const fn root(self) -> RootId {
         self.record.id().bar().root
     }
 
+    /// Returns this control's stable visual identity.
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::TabStripControl(self.record.id()))
     }
 
+    /// Returns the visual identity of the tab strip that owns this control.
     #[must_use]
     pub const fn tab_bar_visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::TabBar(self.record.id().bar()))
     }
 
+    /// Returns the functional role of this tab-strip control.
     #[must_use]
     pub const fn kind(self) -> TabStripControlKind {
         match self.record.id() {
@@ -330,16 +334,19 @@ impl TabStripControlPaintRecord {
         }
     }
 
+    /// Returns the visual rectangle allocated for drawing this control.
     #[must_use]
     pub const fn bounds(self) -> LogicalRect {
         self.record.bounds()
     }
 
+    /// Returns the logical hit-testing rectangle for pointer input.
     #[must_use]
     pub const fn hit_bounds(self) -> LogicalRect {
         self.record.hit().rect()
     }
 
+    /// Returns whether this control is currently enabled and interactive.
     #[must_use]
     pub const fn enabled(self) -> bool {
         self.record.enabled()
@@ -351,6 +358,7 @@ impl TabStripControlPaintRecord {
         self.menu_open
     }
 
+    /// Returns the semantic paint layer for this control.
     #[must_use]
     pub const fn layer(self) -> DockspacePaintLayer {
         DockspacePaintLayer::from_core(self.record.layer())
@@ -377,6 +385,7 @@ impl<'plan> TabListMenuRowPaintRecord<'plan> {
         self.scope.row(self.record)
     }
 
+    /// Returns this row's stable visual identity.
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         self.input_id().visual_id()
@@ -386,16 +395,19 @@ impl<'plan> TabListMenuRowPaintRecord<'plan> {
         self.scope.session
     }
 
+    /// Returns the visual identity of the tab represented by this menu row.
     #[must_use]
     pub const fn tab_visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::Tab(self.record.tab()))
     }
 
+    /// Returns the direct tab key represented by this row.
     #[must_use]
     pub const fn key(self) -> TabKey {
         self.record.tab().tab
     }
 
+    /// Returns the pane item when this row represents a pane tab, or `None` for a layout tab.
     #[must_use]
     pub const fn item(self) -> Option<ItemId> {
         self.key().item()
@@ -409,16 +421,19 @@ impl<'plan> TabListMenuRowPaintRecord<'plan> {
             .expect("compiled menu rows retain exact labels")
     }
 
+    /// Returns the zero-based visual index of this row in the menu.
     #[must_use]
     pub const fn ordinal(self) -> usize {
         self.record.ordinal()
     }
 
+    /// Returns the full logical rectangle of this menu row.
     #[must_use]
     pub const fn bounds(self) -> LogicalRect {
         self.record.bounds()
     }
 
+    /// Returns the clipped interactive rectangle when this row is clickable.
     #[must_use]
     pub const fn interaction_bounds(self) -> Option<LogicalRect> {
         match self.record.hit() {
@@ -427,11 +442,13 @@ impl<'plan> TabListMenuRowPaintRecord<'plan> {
         }
     }
 
+    /// Returns whether this row corresponds to the tab group's selected tab.
     #[must_use]
     pub const fn selected(self) -> bool {
         self.record.selected()
     }
 
+    /// Returns whether this row currently holds keyboard menu focus.
     #[must_use]
     pub const fn focused(self) -> bool {
         self.record.focused()
@@ -476,36 +493,43 @@ impl<'plan> TabListMenuPaintRecord<'plan> {
             .control_id(DockspaceVisualId(VisualIdentity::TabStripControl(opener)))
     }
 
+    /// Returns this open tab-list menu's stable visual identity.
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::TabListMenu(self.record.session()))
     }
 
+    /// Returns the visual identity of the tab strip that opened this menu.
     #[must_use]
     pub const fn tab_bar_visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::TabBar(self.record.bar()))
     }
 
+    /// Returns the outer logical frame rectangle of the popup menu.
     #[must_use]
     pub const fn bounds(self) -> LogicalRect {
         self.record.bounds()
     }
 
+    /// Returns the inner scrollable viewport rectangle containing menu rows.
     #[must_use]
     pub const fn viewport(self) -> LogicalRect {
         self.record.viewport()
     }
 
+    /// Returns the current vertical scroll offset in logical points.
     #[must_use]
     pub const fn scroll_offset(self) -> f64 {
         self.record.scroll_offset()
     }
 
+    /// Returns the maximum vertical scroll offset in logical points.
     #[must_use]
     pub const fn maximum_scroll_offset(self) -> f64 {
         self.record.maximum_scroll_offset()
     }
 
+    /// Iterates every compiled row in visual order.
     pub fn rows(self) -> impl ExactSizeIterator<Item = TabListMenuRowPaintRecord<'plan>> + 'plan {
         self.record
             .rows()
@@ -519,6 +543,7 @@ impl<'plan> TabListMenuPaintRecord<'plan> {
             })
     }
 
+    /// Returns the semantic paint layer for this popup menu.
     #[must_use]
     pub const fn layer(self) -> DockspacePaintLayer {
         DockspacePaintLayer::from_core(self.record.layer())
@@ -553,6 +578,7 @@ impl TabListMenuBackdropPaintRecord {
         self.output == plan.semantic_output()
     }
 
+    /// Returns this popup backdrop's stable visual identity.
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::TabListMenuBackdrop {
@@ -562,11 +588,13 @@ impl TabListMenuBackdropPaintRecord {
         })
     }
 
+    /// Returns the visual identity of the tab-list menu paired with this backdrop.
     #[must_use]
     pub const fn menu_visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::TabListMenu(self.record.session()))
     }
 
+    /// Returns the full-surface logical bounds covered by this backdrop.
     #[must_use]
     pub const fn bounds(self) -> LogicalRect {
         self.record.bounds()

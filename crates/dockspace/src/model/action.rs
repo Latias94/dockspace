@@ -11,13 +11,19 @@ pub enum LogicalSurfaceRejection {
     /// The requested surface already belongs to the current workspace.
     SurfaceAlreadyAttached,
     /// Another presentation currently owns this root identity.
-    RootAlreadyOwned { root: RootId },
+    RootAlreadyOwned {
+        /// Conflicting root identity already attached in the workspace.
+        root: RootId,
+    },
     /// The requested surface is absent.
     SurfaceUnavailable,
     /// The application host has declared that this surface must remain present.
     SurfaceRequired,
     /// Main or contained content must be closed or migrated first.
-    SurfaceNotEmpty { items: usize },
+    SurfaceNotEmpty {
+        /// Number of real items still hosted on the surface.
+        items: usize,
+    },
     /// An exact native binding still owns this logical surface.
     NativeBindingPresent,
     /// A pending mutation, native creation or recovery references the request.

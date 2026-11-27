@@ -270,18 +270,25 @@ pub enum DockspaceCloseRejection {
 pub enum HostInputOutcome {
     /// An empty central dockspace was attached without creating native hosting.
     LogicalSurfaceAttached {
+        /// Attached logical surface identity.
         surface: SurfaceId,
+        /// Main root created for the new surface.
         root: crate::ids::RootId,
+        /// Committed workspace version after attaching the surface.
         version: WorkspaceVersion,
     },
     /// An item-free logical surface and its empty forest were retired.
     LogicalSurfaceRetired {
+        /// Retired logical surface identity.
         surface: SurfaceId,
+        /// Committed workspace version after retiring the surface.
         version: WorkspaceVersion,
     },
     /// Logical surface membership was left unchanged.
     LogicalSurfaceRejected {
+        /// Surface targeted by the rejected membership change.
         surface: SurfaceId,
+        /// Reason the surface membership operation was refused.
         reason: LogicalSurfaceRejection,
     },
 

@@ -59,6 +59,7 @@
 //! [`dockspace_winit`]: https://docs.rs/dockspace_winit
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 #[cfg(test)]
 extern crate self as dockspace;

@@ -54,9 +54,13 @@ impl Default for NativeOptions {
 /// reach the root egui viewport and may be rejected with `ViewportCommand::CancelClose`.
 /// The renderer reports Presented only after submitting and presenting the exact
 /// complete output. Failed acquisitions report Dropped and retain texture updates.
-/// Surface recovery is paced, and hidden-window updates run only when requested.
-/// Those updates still process close and visibility commands on platforms which
-/// withhold redraw events for hidden windows.
+/// Adapter selection respects `WGPU_BACKEND`, `WGPU_ADAPTER_NAME`, and
+/// `WGPU_POWER_PREF`, retries with a software fallback adapter when needed, clamps
+/// oversized surfaces to `max_texture_dimension_2d`, and reports runtime GPU loss
+/// through [`NativeError::DeviceLost`]. Surface recovery is paced, and
+/// hidden-window updates run only when requested. Those updates still process
+/// close and visibility commands on platforms which withhold redraw events for
+/// hidden windows.
 ///
 /// Applications selected at runtime can be passed as borrowed trait objects:
 ///

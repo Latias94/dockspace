@@ -230,38 +230,69 @@ impl NativeScrollSequenceId {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NativeScrollDelta {
     /// Physical pixels tied to the exact native delivery binding and coordinate generation.
-    PhysicalPixels { x: f64, y: f64 },
+    PhysicalPixels {
+        /// Horizontal delta in physical pixels.
+        x: f64,
+        /// Vertical delta in physical pixels.
+        y: f64,
+    },
     /// Logical points in the delivery surface coordinate system.
-    LogicalPoints { x: f64, y: f64 },
+    LogicalPoints {
+        /// Horizontal delta in surface logical points.
+        x: f64,
+        /// Vertical delta in surface logical points.
+        y: f64,
+    },
     /// Platform-defined line increments.
-    Lines { x: f64, y: f64 },
+    Lines {
+        /// Horizontal delta in line units.
+        x: f64,
+        /// Vertical delta in line units.
+        y: f64,
+    },
     /// Platform-defined page increments.
-    Pages { x: f64, y: f64 },
+    Pages {
+        /// Horizontal delta in page units.
+        x: f64,
+        /// Vertical delta in page units.
+        y: f64,
+    },
 }
 
 /// Native phase and payload shape of one scroll sample.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NativeScrollPhase {
     /// One standalone wheel sample.
-    Discrete { delta: NativeScrollDelta },
+    Discrete {
+        /// Scroll delta reported for the wheel tick.
+        delta: NativeScrollDelta,
+    },
     /// Starts a smooth sequence and may carry its first delta.
     Begin {
+        /// Sequence identity shared across this smooth scroll gesture.
         sequence: NativeScrollSequenceId,
+        /// Optional initial scroll delta delivered with sequence start.
         delta: Option<NativeScrollDelta>,
     },
     /// Continues a smooth sequence.
     Update {
+        /// Sequence identity of the active smooth scroll gesture.
         sequence: NativeScrollSequenceId,
+        /// Scroll delta delivered for this update sample.
         delta: NativeScrollDelta,
     },
     /// Ends a smooth sequence and may carry its final delta.
     End {
+        /// Sequence identity of the completed smooth scroll gesture.
         sequence: NativeScrollSequenceId,
+        /// Optional terminal scroll delta delivered with sequence end.
         delta: Option<NativeScrollDelta>,
     },
     /// Cancels a smooth sequence for an explicit platform reason.
     Cancel {
+        /// Sequence identity of the cancelled smooth scroll gesture.
         sequence: NativeScrollSequenceId,
+        /// Explicit platform cause of cancellation.
         reason: NativeScrollCancelReason,
     },
 }

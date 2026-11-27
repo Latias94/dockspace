@@ -245,28 +245,54 @@ pub enum DockspaceNativeDocumentHostingError {
     RootMappingRequired,
     /// An incoming logical Root can name only one external window.
     #[error("native document repeats root mapping for {surface}")]
-    DuplicateRootMapping { surface: SurfaceId },
+    DuplicateRootMapping {
+        /// Surface repeated in the external root mapping.
+        surface: SurfaceId,
+    },
     /// The incoming layout must preserve its configured logical root.
     #[error("native document omits configured root surface {surface}")]
-    RootSurfaceMissing { surface: SurfaceId },
+    RootSurfaceMissing {
+        /// Configured root surface missing from the restored document.
+        surface: SurfaceId,
+    },
     /// The retained external root cannot be declared as a managed Child.
     #[error("native document declares configured root {surface} as a child")]
-    RootDeclaredChild { surface: SurfaceId },
+    RootDeclaredChild {
+        /// External root surface improperly declared as a child.
+        surface: SurfaceId,
+    },
     /// Every additional surface requires one explicit Child declaration.
     #[error("document surface {surface} has no supported child hosting declaration")]
-    ChildDeclarationRequired { surface: SurfaceId },
+    ChildDeclarationRequired {
+        /// Non-root document surface lacking a valid child declaration.
+        surface: SurfaceId,
+    },
     /// The Child recovery host is outside the supplied external Root set.
     #[error("document child {surface} recovers to unmapped root {root}")]
-    RecoveryHostMismatch { surface: SurfaceId, root: SurfaceId },
+    RecoveryHostMismatch {
+        /// Child surface whose recovery host could not be resolved.
+        surface: SurfaceId,
+        /// Unmapped recovery root surface declared for the child.
+        root: SurfaceId,
+    },
     /// A saved physical rectangle is required for explicit initial placement.
     #[error("document child {surface} has no positive saved outer placement")]
-    ChildPlacementRequired { surface: SurfaceId },
+    ChildPlacementRequired {
+        /// Child surface missing a positive saved physical outer placement.
+        surface: SurfaceId,
+    },
     /// The actual external root cannot continue through this replacement.
     #[error("native document cannot retain the current external root {surface}")]
-    RootWindowUnavailable { surface: SurfaceId },
+    RootWindowUnavailable {
+        /// External root surface whose current native window cannot continue.
+        surface: SurfaceId,
+    },
     /// A Root outside the continuation batch still occupies the incoming Child surface.
     #[error("native document child {surface} still owns an external root window")]
-    ChildAlreadyHosted { surface: SurfaceId },
+    ChildAlreadyHosted {
+        /// Incoming child surface still occupied by an external root window.
+        surface: SurfaceId,
+    },
 }
 
 fn native_surface_restore_plan(

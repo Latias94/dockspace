@@ -290,7 +290,10 @@ pub enum TabLabel<'a> {
     /// Application title supplied for real content.
     Item(ItemId),
     /// Declared title or deterministic container-kind fallback.
-    Layout { title: &'a str },
+    Layout {
+        /// Display title for this layout tab or root.
+        title: &'a str,
+    },
 }
 
 impl Node {

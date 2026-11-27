@@ -25,20 +25,26 @@ pub enum NativeError {
     #[cfg(all(feature = "web", target_arch = "wasm32"))]
     #[error("{backend} renderer initialization timed out after {timeout_seconds} seconds")]
     RendererTimeout {
+        /// Human-readable backend name (for example `"WebGPU"` or `"WebGL2"`).
         backend: &'static str,
+        /// Timeout duration in seconds before initialization was aborted.
         timeout_seconds: u32,
     },
     /// A browser graphics backend initialized but could not present its first frame.
     #[cfg(all(feature = "web", target_arch = "wasm32"))]
     #[error("{backend} renderer could not present its first frame ({reason})")]
     InitialPresentationFailed {
+        /// Human-readable backend name that failed to present.
         backend: &'static str,
+        /// Short diagnostic describing why surface acquisition or presentation dropped.
         reason: &'static str,
     },
     /// The underlying WGPU device or WebGL context was lost and cannot continue rendering.
     #[error("{backend} graphics device was lost: {reason}")]
     DeviceLost {
+        /// Human-readable backend name whose device or context was lost.
         backend: &'static str,
+        /// Driver or browser reason reported for the device or context loss.
         reason: String,
     },
     /// The application's frame callback failed.

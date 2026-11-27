@@ -5,27 +5,43 @@ use super::*;
 /// Semantic receiver class independent of renderer widget identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DockspaceReceiverRole {
+    /// Application pane content body.
     PaneBody,
     /// Empty Tabs container chrome; never application Pane content.
     TabsBackground,
+    /// Selectable and draggable tab header body.
     TabBody,
+    /// Close control embedded inside a tab header.
     TabClose,
+    /// Core-owned tab-strip control button (scroll, tab list, or reveal).
     TabStripControl,
+    /// Scrollable tab-strip wheel receiver.
     TabStripScroll,
+    /// Selectable row inside an open tab-list popup menu.
     TabListMenuRow,
+    /// Scrollable viewport of an open tab-list popup menu.
     TabListMenuScroll,
+    /// Non-row interior chrome of an open tab-list popup menu that blocks underlying hits.
     TabListMenuBlocker,
+    /// Full-surface backdrop behind an open tab-list popup menu.
     TabListMenuBackdrop,
     /// Dedicated whole-group grip before the first tab.
     TabGroupGrip,
     /// Unoccupied strip space after the final tab.
     TabGroupTrailingEmpty,
+    /// Draggable divider between split or grid siblings.
     Splitter,
+    /// Atomic multi-arm splitter intersection handle.
     SplitterJunction,
+    /// Contained floating window frame blocker.
     ContainedFrame,
+    /// Draggable title bar of a contained floating window.
     ContainedTitle,
+    /// Close button of a contained floating window.
     ContainedClose,
+    /// Resize border or corner handle of a contained floating window.
     ContainedResize,
+    /// Core-projected docking drop target or directional guide.
     DropTarget,
 }
 
@@ -123,6 +139,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
             })
     }
 
+    /// Returns the exact operable tab-body receiver for `item` from this output.
     #[must_use]
     pub fn tab_receiver(&self, item: impl Into<TabKey>) -> Option<DockspaceReceiverDescriptor> {
         let tab = self.tab_record(item.into())?;
@@ -402,6 +419,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         self.receiver(PresentationHitRegionKind::DropTarget(target_id))
     }
 
+    /// Returns the center drop-target receiver for the tab group containing `item`.
     #[must_use]
     pub fn center_drop_receiver_for_item(
         &self,

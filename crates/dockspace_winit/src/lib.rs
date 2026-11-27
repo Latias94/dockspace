@@ -50,6 +50,9 @@
 //!
 //! [crate guide]: https://github.com/Latias94/dockspace/blob/main/crates/dockspace_winit/README.md
 
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
 mod coordinates;
 mod mouse;
 mod repaint;

@@ -70,7 +70,7 @@ renderer preparation, real window creation and presentation, recovery,
 recreation and complete shutdown. This desktop example uses programmatic
 commands and selects X11 on Linux. Physical cross-window pointer dragging
 requires additional platform observations; see the
-[winit README](../crates/dockspace_winit/README.md#run-native-multiview).
+[winit README](../crates/dockspace_winit/README.md#try-the-runnable-hosts).
 
 ## Official egui
 
@@ -94,7 +94,7 @@ backgrounds, fixed group counts and **Tint** buttons over the selected preset.
 The [tab callbacks](../crates/egui_dockspace/examples/workbench/tabs.rs)
 show how to customize chrome while retaining docking input and accessibility.
 Motion is on by default; a second toolbar controls layout transitions, timing and easing,
-and reduced motion. The [motion settings guide](../crates/egui_dockspace/README.md#configure-motion)
+and reduced motion. The [motion settings guide](../crates/egui_dockspace/README.md#motion)
 covers application preferences and custom drop-preview decoration.
 
 Hold **Shift** while dragging a tab to disable docking and release inside the

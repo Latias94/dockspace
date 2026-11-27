@@ -45,19 +45,27 @@ pub enum DockspacePreviewVisual {
     /// resizing, so it may differ from the destination's current bounds.
     /// Tab-gap moves use an insertion line at the future tab position.
     Dock {
+        /// Logical surface displaying the docking preview.
         surface: SurfaceId,
+        /// Projected target rectangle or tab-gap insertion line.
         rect: LogicalRect,
     },
     /// Paint one contained-floating placement.
     Contained {
+        /// Logical surface hosting the contained floating preview.
         surface: SurfaceId,
+        /// Projected floating bounds inside `surface`.
         rect: LogicalRect,
+        /// Whether this preview fell back to contained floating because native promotion was unavailable.
         fallback: bool,
     },
     /// Paint a source-hosted cue for a future native surface.
     Native {
+        /// Logical surface currently displaying the source-hosted cue.
         host_surface: SurfaceId,
+        /// Logical surface identity allocated for the prospective native window.
         target_surface: SurfaceId,
+        /// Requested physical desktop placement for the future native window.
         placement: PhysicalRect,
     },
 }
@@ -175,6 +183,7 @@ pub struct SplitterPaintRecord<'plan> {
 }
 
 impl SplitterPaintRecord<'_> {
+    /// Returns this splitter's stable visual identity.
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::Splitter(*self.record.id()))
@@ -189,21 +198,25 @@ impl SplitterPaintRecord<'_> {
         )
     }
 
+    /// Returns the stable root owning this splitter.
     #[must_use]
     pub const fn root(self) -> RootId {
         self.record.id().root
     }
 
+    /// Returns the visual rectangle used to draw the divider chrome.
     #[must_use]
     pub const fn draw_bounds(self) -> LogicalRect {
         self.record.draw_bounds()
     }
 
+    /// Returns the logical hit-testing rectangle for pointer input.
     #[must_use]
     pub const fn hit_bounds(self) -> LogicalRect {
         self.record.hit().rect()
     }
 
+    /// Returns the split axis along which this divider moves.
     #[must_use]
     pub const fn axis(self) -> DockspaceAxis {
         match self.record.axis() {
@@ -212,16 +225,19 @@ impl SplitterPaintRecord<'_> {
         }
     }
 
+    /// Returns the current bounds of the sibling before this divider.
     #[must_use]
     pub const fn before_bounds(self) -> LogicalRect {
         self.record.before_bounds()
     }
 
+    /// Returns the current bounds of the sibling after this divider.
     #[must_use]
     pub const fn after_bounds(self) -> LogicalRect {
         self.record.after_bounds()
     }
 
+    /// Returns `(before_min, after_min)` extent limits along the split axis.
     #[must_use]
     pub const fn minimum_extents(self) -> (f64, f64) {
         (
@@ -230,6 +246,7 @@ impl SplitterPaintRecord<'_> {
         )
     }
 
+    /// Returns `(before_max, after_max)` extent limits along the split axis.
     #[must_use]
     pub const fn maximum_extents(self) -> (f64, f64) {
         (
@@ -238,11 +255,13 @@ impl SplitterPaintRecord<'_> {
         )
     }
 
+    /// Returns whether this divider currently accepts resize input.
     #[must_use]
     pub const fn operable(self) -> bool {
         self.record.operable()
     }
 
+    /// Returns the semantic paint layer for this divider.
     #[must_use]
     pub const fn layer(self) -> DockspacePaintLayer {
         DockspacePaintLayer::from_core(self.record.layer())
@@ -276,6 +295,7 @@ impl SplitterJunctionPaintRecord<'_> {
         self.record.id().root()
     }
 
+    /// Returns this junction's stable visual identity.
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::SplitterJunction(self.record.id()))
@@ -302,11 +322,13 @@ impl SplitterJunctionPaintRecord<'_> {
         )
     }
 
+    /// Returns the logical hit-testing rectangle for this junction handle.
     #[must_use]
     pub const fn hit_bounds(self) -> LogicalRect {
         self.record.hit().rect()
     }
 
+    /// Returns the number of incident divider arms meeting at this junction.
     #[must_use]
     pub fn arm_count(self) -> usize {
         self.record.id().arm_count()
@@ -329,6 +351,7 @@ impl SplitterJunctionPaintRecord<'_> {
         }
     }
 
+    /// Returns the semantic paint layer for this junction.
     #[must_use]
     pub const fn layer(self) -> DockspacePaintLayer {
         DockspacePaintLayer::from_core(self.record.layer())
@@ -460,11 +483,13 @@ impl ContainedResizePaintRecord {
         )
     }
 
+    /// Returns which border edge or corner this resize handle controls.
     #[must_use]
     pub const fn direction(self) -> ContainedResizeDirection {
         ContainedResizeDirection::from_core(self.record.direction())
     }
 
+    /// Returns the logical hit-testing rectangle for this resize edge or corner.
     #[must_use]
     pub const fn hit_bounds(self) -> LogicalRect {
         self.record.hit().rect()
@@ -509,6 +534,7 @@ impl<'plan> ContainedPaintRecord<'plan> {
         }
     }
 
+    /// Returns this contained floating frame's stable visual identity.
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::Contained(self.record.floating()))
@@ -544,16 +570,19 @@ impl<'plan> ContainedPaintRecord<'plan> {
             .unwrap_or(crate::graph::TabLabel::Layout { title: "Layout" })
     }
 
+    /// Returns the stable contained floating presentation identity.
     #[must_use]
     pub const fn floating(self) -> FloatingPresentationId {
         self.record.floating()
     }
 
+    /// Returns the stable root hosted inside this contained floating window.
     #[must_use]
     pub const fn root(self) -> RootId {
         self.record.root()
     }
 
+    /// Returns the zero-based back-to-front stacking ordinal among contained presentations.
     #[must_use]
     pub const fn ordinal(self) -> usize {
         self.record.ordinal()
@@ -566,31 +595,37 @@ impl<'plan> ContainedPaintRecord<'plan> {
         self.record.is_frontmost()
     }
 
+    /// Returns the outer logical frame rectangle including title bar and borders.
     #[must_use]
     pub const fn outer_bounds(self) -> LogicalRect {
         self.record.outer_bounds()
     }
 
+    /// Returns the inner logical rectangle inside the window border.
     #[must_use]
     pub const fn inner_bounds(self) -> LogicalRect {
         self.record.inner_bounds()
     }
 
+    /// Returns the full title-bar rectangle.
     #[must_use]
     pub const fn title_bounds(self) -> LogicalRect {
         self.record.title_bounds()
     }
 
+    /// Returns the draggable hit region of the title bar.
     #[must_use]
     pub const fn title_drag_bounds(self) -> LogicalRect {
         self.record.title_drag_hit().rect()
     }
 
+    /// Returns the logical content viewport below the title bar.
     #[must_use]
     pub const fn content_bounds(self) -> LogicalRect {
         self.record.content_bounds()
     }
 
+    /// Returns the close-button rectangle when this floating frame exposes a close control.
     #[must_use]
     pub const fn close_bounds(self) -> Option<LogicalRect> {
         self.record.close_bounds()
@@ -611,6 +646,7 @@ impl<'plan> ContainedPaintRecord<'plan> {
             .is_some_and(|bounds| self.plan.region_is_operable(bounds, self.record.layer()))
     }
 
+    /// Iterates every border and corner resize handle for this contained window.
     pub fn resize(self) -> impl ExactSizeIterator<Item = ContainedResizePaintRecord> + 'plan {
         let plan = self.plan;
         let layer = self.record.layer();
@@ -628,11 +664,13 @@ impl<'plan> ContainedPaintRecord<'plan> {
             })
     }
 
+    /// Returns the minimum allowed outer logical size for this contained window.
     #[must_use]
     pub const fn minimum_size(self) -> LogicalSize {
         self.record.minimum_size()
     }
 
+    /// Returns the semantic paint layer for this contained window.
     #[must_use]
     pub const fn layer(self) -> DockspacePaintLayer {
         DockspacePaintLayer::from_core(self.record.layer())

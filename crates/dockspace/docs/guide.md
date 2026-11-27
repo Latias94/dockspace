@@ -14,7 +14,7 @@
 - [Close decisions](#application-close-decisions) and [arrangement locking](#arrangement-locking)
 - [Layout defaults and persistence](#application-defaults-and-layout-reset)
 - [Feedback and focus](#manipulation-feedback-and-focus)
-- [Motion](#motion) and [Cargo features](../README.md#features)
+- [Motion](#motion) and [Cargo features](../README.md#cargo-features)
 
 `dockspace` is a renderer-neutral docking library for custom editor UIs,
 including self-drawn game-engine interfaces. `egui_dockspace` is its interactive
@@ -1746,7 +1746,7 @@ rendering; use the egui workbench exercise to measure those host costs separatel
 
 ## Features
 
-The [crate feature table](../README.md#features) lists the default `motion` feature
+The [crate feature table](../README.md#cargo-features) lists the default `motion` feature
 and optional `serde` persistence. Custom hosts supply an animation clock when
 using motion; the core owns no OS event loop, renderer, widget tree or platform
 window.

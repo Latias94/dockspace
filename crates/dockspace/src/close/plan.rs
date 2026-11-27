@@ -357,22 +357,34 @@ impl NativeCloseEdge {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClosePlanTarget {
     /// Close one stable pane item.
-    Item { item: ItemId },
+    Item {
+        /// Stable item targeted for closure.
+        item: ItemId,
+    },
     /// Close all content in one stable root.
-    Root { root: RootId },
+    Root {
+        /// Stable root targeted for closure.
+        root: RootId,
+    },
     /// Close one exact tabs container and all real descendant content.
     Tabs {
+        /// Root owning the targeted tabs container.
         root: RootId,
+        /// Session-local container key of the targeted tabs group.
         group: crate::ids::NodeKey,
     },
     /// Close an exact direct layout tab and its real descendants.
     Tab {
+        /// Root owning the targeted direct layout tab.
         root: RootId,
+        /// Direct tab key identifying the closed layout tab.
         tab: crate::ids::TabKey,
     },
     /// Resolve one complete logical-surface close operation.
     Surface {
+        /// Logical surface targeted for closure.
         surface: SurfaceId,
+        /// Disposition governing whether surface content is closed or recovered.
         disposition: SurfaceCloseDisposition,
     },
 }
@@ -393,9 +405,13 @@ impl ClosePlanTarget {
 /// Broad close target class, without target-specific identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClosePlanTargetKind {
+    /// Single pane item closure.
     Item,
+    /// Whole root closure.
     Root,
+    /// Tabs group or direct layout-tab closure.
     Tabs,
+    /// Logical surface / native window closure.
     Surface,
 }
 
@@ -612,27 +628,36 @@ pub enum ClosePlanLookup<'a> {
 /// Initial application decision for one exact item token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseDecision {
+    /// Approve closing this item immediately.
     Allow,
+    /// Reject closing this item and cancel the complete close plan.
     Veto,
+    /// Hold the close plan open and issue a deferred continuation token.
     Deferred,
 }
 
 /// Terminal application decision for one exact deferred continuation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeferredCloseDecision {
+    /// Approve closing this deferred item.
     Allow,
+    /// Veto closing this deferred item and cancel the complete close plan.
     Veto,
 }
 
 /// Current application decision recorded for one close-plan item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseItemDecisionState {
+    /// Awaiting the initial application decision for this item.
     Pending,
+    /// Initial decision deferred until the exact continuation token resolves.
     Deferred {
         /// Exact continuation required to finish this deferred decision.
         continuation: DeferredCloseToken,
     },
+    /// Application approved closing this item.
     Allowed,
+    /// Application vetoed closing this item.
     Vetoed,
 }
 

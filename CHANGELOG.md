@@ -39,6 +39,12 @@ During `0.x`, breaking changes may occur on minor versions.
     `winit` / `wgpu` / `web` (WebAssembly) runners, `eframe` callback support,
     configurable motion, `AccessKit` accessibility, keyboard navigation, custom
     tab chrome callbacks, and `serde` workspace persistence.
+  - Hardened `wgpu 30` desktop and browser presentation: `WGPU_BACKEND` /
+    `WGPU_ADAPTER_NAME` / `WGPU_POWER_PREF` overrides, software fallback adapter
+    retry, oversized surface clamping (`max_texture_dimension_2d`), low-latency
+    opaque swapchain defaults, uncaptured error & `NativeError::DeviceLost`
+    handling, non-secure context WebGL2 selection, first-frame WebGPU canvas
+    replacement fallback, and `webglcontextlost` recovery reporting.
 
 ### Notes
 

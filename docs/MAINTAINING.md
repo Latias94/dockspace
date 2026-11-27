@@ -33,11 +33,11 @@ does not justify another layer: inspect production code separately from tests.
 Use Rust's ordinary `module.rs` and `module/` layout so source navigation follows
 module ownership without `#[path]` aliases.
 
-The public entry points are `geometry`, `model`, `policy`, `close`, `runtime`,
-and the optional `motion` module. Keep raw protocols inside their owning module;
-do not preserve obsolete root paths with compatibility re-exports. Private
-protocol tests use the same internal paths as production code and do not require
-test-only public module declarations.
+The public entry points are `geometry`, `model`, `policy`, `close`, `host`,
+`runtime`, and the optional `motion` module. Keep raw protocols inside their
+owning module; do not preserve obsolete root paths with compatibility re-exports.
+Private protocol tests use the same internal paths as production code and do not
+require test-only public module declarations.
 
 | Area | Owner | Responsibilities |
 | --- | --- | --- |
@@ -47,6 +47,7 @@ test-only public module declarations.
 | Presentation | `dockspace/src/presentation/` | Layout projection, measurement manifests, compiled scenes, tab strips, exact hit geometry and output observation |
 | Platform lifecycle | `dockspace/src/platform/` | Provider authority, effects, observed coordinates, window bindings, focus and viewport coordination |
 | Atomic publication | `dockspace/src/engine/` | Reducer transactions, pending mutation progress, logical surface recovery, commit events and resource retention |
+| Host integration kit | `dockspace/src/host/` | Three-tier framework-neutral display lists, paint visitors, logical host driver and native multiview helpers |
 | Persistence | `dockspace/src/persistence/` | Workspace snapshots, item-key mapping, documents and window placement preferences |
 | Native pointer normalization | `egui_dockspace_native/src/pointer_event/` | Device enrollment, mouse button tails and scroll phases before core ingress |
 | Framework hit translation | `egui_dockspace_native/src/receiver.rs` | Match exact presented egui artifacts and independently resolve delivery/hover lanes |

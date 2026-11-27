@@ -54,9 +54,10 @@ pub struct WebOptions {
 /// Browser graphics selection for a complete-output host.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WebRenderer {
-    /// Try WebGPU, then WebGL2 if initialization fails, returns a software
-    /// fallback adapter, takes over five seconds, or cannot present the first
-    /// frame.
+    /// Use WebGL2 directly on non-secure origins; on HTTPS/localhost try WebGPU
+    /// first and fall back to WebGL2 (replacing the canvas if already claimed)
+    /// if initialization fails, takes over five seconds, loses its device before
+    /// the first frame, or cannot present the first frame.
     #[default]
     Auto,
     /// Use WebGL2 directly, including when the browser advertises WebGPU.
@@ -263,8 +264,9 @@ fn replace_canvas_in_dom(old: &HtmlCanvasElement) -> Option<HtmlCanvasElement> {
 /// submitting and presenting that exact output. Panes may float inside the
 /// canvas; additional viewports and browser windows are unsupported.
 ///
-/// `on_error` receives asynchronous initialization or frame failures before the
-/// event loop exits. Configure fonts and theme on `context` before starting.
+/// `on_error` receives asynchronous initialization, frame, or runtime device/WebGL
+/// context-loss failures (such as [`NativeError::DeviceLost`]) before the event
+/// loop exits. Configure fonts and theme on `context` before starting.
 ///
 /// # Errors
 ///

@@ -46,6 +46,7 @@ pub struct PanePaintRecord<'plan> {
 }
 
 impl PanePaintRecord<'_> {
+    /// Returns this pane's stable visual identity.
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::Pane(self.record.id()))
@@ -60,6 +61,7 @@ impl PanePaintRecord<'_> {
         }
     }
 
+    /// Returns the stable root owning this pane.
     #[must_use]
     pub const fn root(self) -> RootId {
         self.record.id().root
@@ -74,11 +76,13 @@ impl PanePaintRecord<'_> {
         }
     }
 
+    /// Returns the stable application item rendered inside this pane.
     #[must_use]
     pub const fn item(self) -> ItemId {
         self.record.item()
     }
 
+    /// Returns the semantic paint layer for this pane.
     #[must_use]
     pub const fn layer(self) -> DockspacePaintLayer {
         DockspacePaintLayer::from_core(self.record.layer())
@@ -187,6 +191,7 @@ impl<'plan> TabPaintRecord<'plan> {
         )
     }
 
+    /// Returns this tab's stable visual identity.
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::Tab(*self.record.id()))
@@ -202,16 +207,19 @@ impl<'plan> TabPaintRecord<'plan> {
         }))
     }
 
+    /// Returns the stable root owning this tab.
     #[must_use]
     pub const fn root(self) -> RootId {
         self.record.id().root
     }
 
+    /// Returns the direct tab key identifying this tab child.
     #[must_use]
     pub const fn key(self) -> TabKey {
         self.record.id().tab
     }
 
+    /// Returns the pane item when this is a pane tab, or `None` for a layout tab.
     #[must_use]
     pub const fn item(self) -> Option<ItemId> {
         self.key().item()
@@ -225,16 +233,19 @@ impl<'plan> TabPaintRecord<'plan> {
             .expect("compiled tabs retain their exact labels")
     }
 
+    /// Returns the unclipped tab header rectangle before strip scrolling clips it.
     #[must_use]
     pub const fn full_bounds(self) -> LogicalRect {
         self.record.full_bounds()
     }
 
+    /// Returns the visible portion of this tab clipped to the strip viewport.
     #[must_use]
     pub const fn visible_bounds(self) -> LogicalRect {
         self.record.visible_bounds()
     }
 
+    /// Returns the visible clipped rectangle for the tab's title text.
     #[must_use]
     pub const fn text_bounds(self) -> LogicalRect {
         self.record.text_bounds()
@@ -246,21 +257,25 @@ impl<'plan> TabPaintRecord<'plan> {
         self.record.text_layout_bounds()
     }
 
+    /// Returns the logical hit-testing rectangle for selecting or dragging this tab.
     #[must_use]
     pub const fn drag_bounds(self) -> LogicalRect {
         self.record.drag_hit().rect()
     }
 
+    /// Returns the visual rectangle for drawing this tab's close icon, when present.
     #[must_use]
     pub const fn close_visual_bounds(self) -> Option<LogicalRect> {
         self.record.close_visual_bounds()
     }
 
+    /// Returns the interactive hit-testing rectangle for this tab's close control, when present.
     #[must_use]
     pub const fn close_bounds(self) -> Option<LogicalRect> {
         self.record.close_bounds()
     }
 
+    /// Returns whether this tab is the active selection in its tab group.
     #[must_use]
     pub const fn selected(self) -> bool {
         self.selected
@@ -272,11 +287,13 @@ impl<'plan> TabPaintRecord<'plan> {
         self.operable
     }
 
+    /// Returns the zero-based visual position of this tab in its strip.
     #[must_use]
     pub const fn ordinal(self) -> usize {
         self.record.ordinal()
     }
 
+    /// Returns the semantic paint layer for this tab.
     #[must_use]
     pub const fn layer(self) -> DockspacePaintLayer {
         DockspacePaintLayer::from_core(self.record.layer())
@@ -302,11 +319,13 @@ pub struct TabStripMemberPaintRecord<'plan> {
 }
 
 impl<'plan> TabStripMemberPaintRecord<'plan> {
+    /// Returns this member tab's stable visual identity.
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::Tab(self.record.tab()))
     }
 
+    /// Returns the visual identity of the tab strip containing this member.
     #[must_use]
     pub const fn tab_bar_visual_id(self) -> DockspaceVisualId {
         let tab = self.record.tab();
@@ -316,11 +335,13 @@ impl<'plan> TabStripMemberPaintRecord<'plan> {
         }))
     }
 
+    /// Returns the direct tab key identifying this member.
     #[must_use]
     pub const fn key(self) -> TabKey {
         self.record.tab().tab
     }
 
+    /// Returns the pane item when this member is a pane tab, or `None` for a layout tab.
     #[must_use]
     pub const fn item(self) -> Option<ItemId> {
         self.key().item()
@@ -334,16 +355,19 @@ impl<'plan> TabStripMemberPaintRecord<'plan> {
             .expect("compiled members retain exact labels")
     }
 
+    /// Returns the zero-based visual position of this member in its strip.
     #[must_use]
     pub const fn ordinal(self) -> usize {
         self.record.ordinal()
     }
 
+    /// Returns the unclipped tab header rectangle before strip scrolling clips it.
     #[must_use]
     pub const fn full_bounds(self) -> LogicalRect {
         self.record.full_bounds()
     }
 
+    /// Returns how much of this member intersects the clipped tab-strip viewport.
     #[must_use]
     pub const fn visibility(self) -> TabStripMemberVisibility {
         match self.record.visibility() {
@@ -414,6 +438,7 @@ impl<'plan> TabBarPaintRecord<'plan> {
         self.output == plan.semantic_output()
     }
 
+    /// Returns this tab strip's stable visual identity.
     #[must_use]
     pub const fn visual_id(self) -> DockspaceVisualId {
         DockspaceVisualId(VisualIdentity::TabBar(*self.record.id()))
@@ -434,6 +459,7 @@ impl<'plan> TabBarPaintRecord<'plan> {
         DockspaceVisualId(VisualIdentity::Tabs(*self.record.id()))
     }
 
+    /// Returns the stable root owning this tab strip.
     #[must_use]
     pub const fn root(self) -> RootId {
         self.record.id().root
@@ -445,31 +471,37 @@ impl<'plan> TabBarPaintRecord<'plan> {
         self.selected
     }
 
+    /// Returns the full logical rectangle of this tab strip.
     #[must_use]
     pub const fn bounds(self) -> LogicalRect {
         self.record.bounds()
     }
 
+    /// Returns the inner scrollable viewport rectangle showing tabs.
     #[must_use]
     pub const fn viewport(self) -> LogicalRect {
         self.record.viewport()
     }
 
+    /// Returns the current horizontal scroll offset in logical points.
     #[must_use]
     pub const fn scroll_offset(self) -> f64 {
         self.record.scroll_offset()
     }
 
+    /// Returns the maximum horizontal scroll offset in logical points.
     #[must_use]
     pub const fn maximum_scroll_offset(self) -> f64 {
         self.record.maximum_scroll_offset()
     }
 
+    /// Returns tab keys that are completely outside the current scroll viewport.
     #[must_use]
     pub fn hidden_tabs(self) -> &'plan [TabKey] {
         self.record.hidden_tabs()
     }
 
+    /// Iterates every direct tab member in visual order, including clipped members.
     pub fn members(
         self,
     ) -> impl ExactSizeIterator<Item = TabStripMemberPaintRecord<'plan>> + 'plan {
@@ -483,6 +515,7 @@ impl<'plan> TabBarPaintRecord<'plan> {
             })
     }
 
+    /// Returns the dedicated leading whole-group drag grip rectangle, when shown.
     #[must_use]
     pub const fn group_grip_bounds(self) -> Option<LogicalRect> {
         self.record.group_grip_bounds()
@@ -540,11 +573,13 @@ impl<'plan> TabBarPaintRecord<'plan> {
         })
     }
 
+    /// Returns the effective tab-bar interaction policy for this strip.
     #[must_use]
     pub const fn interaction(self) -> TabBarInteraction {
         self.record.interaction()
     }
 
+    /// Returns the semantic paint layer for this tab strip.
     #[must_use]
     pub const fn layer(self) -> DockspacePaintLayer {
         DockspacePaintLayer::from_core(self.record.layer())

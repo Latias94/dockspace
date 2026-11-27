@@ -17,9 +17,14 @@ Keep those patches out of the official workspace.
 `dockspace` and `egui_dockspace` build for `wasm32-unknown-unknown`, including
 motion and optional layout serialization. The opt-in `egui_dockspace/web`
 feature provides a complete-output winit/WGPU host for one existing HTML canvas.
-It initializes the GPU asynchronously, prefers WebGPU and falls back to WebGL2
-when WebGPU is unavailable. A browser with one of these graphics backends and
-WebAssembly is required.
+It initializes the GPU asynchronously, skips WebGPU in non-secure contexts,
+prefers WebGPU on HTTPS/localhost, and falls back to WebGL2 (replacing the
+canvas when WebGPU already claimed its context) if initialization fails, times
+out after five seconds, loses its device before the first frame, or cannot
+present its first frame. Surfaces clamp to the device's `max_texture_dimension_2d`,
+and runtime GPU device loss or `webglcontextlost` events surface cleanly through
+`NativeError::DeviceLost`. A browser with WebGPU or WebGL2 and WebAssembly is
+required.
 
 The [browser workbench](../integration/egui-web-demo) reuses the desktop panes
 and docking controls. It supports local tabs, splits, contained floating groups

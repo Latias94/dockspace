@@ -72,10 +72,11 @@
 //! application-owned background tasks and return completed data to the UI thread.
 //!
 //! [small winit editor]: https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/winit.rs
-//! [host choices]: https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/README.md#host-choices
+//! [host choices]: https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/README.md#choosing-a-host-path
 //! [integration guide]: https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 pub mod drag_preview;
 pub mod drop_guide;

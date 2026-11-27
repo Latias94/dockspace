@@ -71,25 +71,51 @@ pub enum DockspaceEventKind {
     ///
     /// This does not mean a widget became active, nor that pane or native-window
     /// focus was observed. Selecting an already selected item can update MRU.
-    SelectionCommitted { tab: TabKey },
+    SelectionCommitted {
+        /// Selected direct tab child.
+        tab: TabKey,
+    },
     /// A real item's complete ancestor path was activated.
     ///
     /// This reports durable layout activation, independently of widget or native focus.
-    ItemActivated { item: ItemId },
+    ItemActivated {
+        /// Real item whose ancestor tab chain became active.
+        item: ItemId,
+    },
     /// One tab changed its index within its existing group.
-    TabReordered { tab: TabKey, from: usize, to: usize },
+    TabReordered {
+        /// Direct tab child that moved within its group.
+        tab: TabKey,
+        /// Previous zero-based index before the reorder.
+        from: usize,
+        /// Resulting zero-based index after the reorder.
+        to: usize,
+    },
     /// One previously closed item was opened.
-    ItemOpened { item: ItemId, root: RootId },
+    ItemOpened {
+        /// Newly opened real item.
+        item: ItemId,
+        /// Root into which the item was inserted.
+        root: RootId,
+    },
     /// An owned item changed its participation in the visible layout.
     ///
     /// Hiding and showing retain ownership and do not imply a content close.
-    ItemVisibilityChanged { item: ItemId, visible: bool },
+    ItemVisibilityChanged {
+        /// Item whose visibility toggled.
+        item: ItemId,
+        /// Resulting visibility state (`true` when visible).
+        visible: bool,
+    },
     /// Existing items changed docking placement or tab order.
     ///
     /// The roots can be equal when the payload moves inside one root.
     ItemsMoved {
+        /// Real items relocated by the committed move.
         items: Vec<ItemId>,
+        /// Root that previously owned the moved items.
         source_root: RootId,
+        /// Root that owns the moved items after the commit.
         target_root: RootId,
     },
     /// Content was installed as a surface's main or contained root.
@@ -97,22 +123,31 @@ pub enum DockspaceEventKind {
     /// `floating` is `None` for a main root. Native placement is reported only
     /// after the exact first-live presentation transfers content ownership.
     RootInstalled {
+        /// Installed root identity.
         root: RootId,
+        /// Logical surface hosting the installed root.
         surface: SurfaceId,
+        /// Contained floating identity, or `None` when installed as a main root.
         floating: Option<FloatingPresentationId>,
+        /// Real items present inside the installed root.
         items: Vec<ItemId>,
     },
     /// An existing root changed its presentation owner.
     ///
     /// Its topology identity is preserved. `floating` is `None` for a main root.
     RootRehomed {
+        /// Rehomed root identity.
         root: RootId,
+        /// Destination logical surface hosting the root.
         surface: SurfaceId,
+        /// Contained floating identity, or `None` when hosted as a main root.
         floating: Option<FloatingPresentationId>,
     },
     /// One contained presentation changed its bounds or stacking order.
     ContainedPresentationChanged {
+        /// Contained floating presentation that changed.
         floating: FloatingPresentationId,
+        /// Whether the presentation's logical bounds changed.
         bounds_changed: bool,
         /// Previous and resulting indices in the contained back-to-front roster.
         order: Option<(usize, usize)>,

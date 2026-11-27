@@ -7,6 +7,7 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://frankorz.com/dockspace/"
 readme = "README.md"
 keywords = ["docking", "winit", "gui", "windowing", "editor"]
 categories = ["gui"]

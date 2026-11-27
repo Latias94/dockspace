@@ -520,14 +520,18 @@ impl fmt::Debug for SurfacePaintPlan<'_> {
 
 /// One update's normal result before any pane content is encoded.
 pub enum SurfaceWork<'frame> {
+    /// Output capacity and measurements are ready; execute this paint plan.
     Ready(SurfacePaintPlan<'frame>),
+    /// Painting is deferred without failing semantic frame publication.
     Deferred(SurfaceWorkDeferred),
 }
 
 /// A surface can be deferred while semantic and terminal progress still publishes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceWorkDeferred {
+    /// Required surface or tab measurements have not yet been supplied.
     Unmeasured,
+    /// Earlier renderer outputs still occupy the bounded in-flight capacity.
     OutputCapacity,
 }
 
@@ -543,6 +547,7 @@ pub enum SurfaceMeasurementRefresh {
 }
 
 impl SurfaceMeasurementRefresh {
+    /// Returns `true` when the host may submit updated measurements for this surface.
     #[must_use]
     pub const fn is_allowed(self) -> bool {
         matches!(self, Self::Allowed)
@@ -550,6 +555,7 @@ impl SurfaceMeasurementRefresh {
 }
 
 impl<'frame> SurfaceWork<'frame> {
+    /// Extracts the [`SurfacePaintPlan`] when this work item is [`Self::Ready`].
     pub fn ready(self) -> Option<SurfacePaintPlan<'frame>> {
         match self {
             Self::Ready(plan) => Some(plan),
@@ -868,6 +874,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
         }
     }
 
+    /// Returns the logical surface rendered by this paint plan.
     #[must_use]
     pub const fn surface(&self) -> SurfaceId {
         self.surface
@@ -917,6 +924,7 @@ impl<'frame> SurfacePaintPlan<'frame> {
             .then(|| PreparedPaneFocusObservation::new(request, observation))
     }
 
+    /// Returns the surface's full logical bounds used to compile this plan.
     #[must_use]
     pub fn bounds(&self) -> LogicalRect {
         self.plan.bounds()

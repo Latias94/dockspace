@@ -7,10 +7,11 @@ rust-version.workspace = true
 authors.workspace = true
 license = "Apache-2.0"
 repository.workspace = true
+homepage = "https://frankorz.com/dockspace/"
 readme = "README.md"
 keywords = ["docking", "layout", "gui", "tabs", "editor"]
 categories = ["gui"]
-exclude = ["proptest-regressions/"]
+exclude = ["proptest-regressions/", "**/*.proptest-regressions"]
 
 [package.metadata.docs.rs]
 all-features = true

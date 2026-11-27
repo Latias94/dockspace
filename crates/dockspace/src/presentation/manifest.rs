@@ -401,6 +401,7 @@ impl TabStripMetrics {
         Ok(self)
     }
 
+    /// Returns application chrome width scrolling immediately after the last tab.
     #[must_use]
     pub const fn after_tabs_width(self) -> f64 {
         self.after_tabs_width
@@ -473,21 +474,25 @@ impl TabStripControlMetrics {
         self
     }
 
+    /// Returns the backward-scroll control measurement, when configured.
     #[must_use]
     pub const fn scroll_backward(self) -> Option<TabStripControlMetric> {
         self.scroll_backward
     }
 
+    /// Returns the forward-scroll control measurement, when configured.
     #[must_use]
     pub const fn scroll_forward(self) -> Option<TabStripControlMetric> {
         self.scroll_forward
     }
 
+    /// Returns the tab-list menu button measurement, when configured.
     #[must_use]
     pub const fn tab_list_menu(self) -> Option<TabStripControlMetric> {
         self.tab_list_menu
     }
 
+    /// Returns inter-control spacing in logical points.
     #[must_use]
     pub const fn spacing(self) -> f64 {
         self.spacing
@@ -503,9 +508,13 @@ impl TabStripControlMetrics {
 /// Whether a control consumes strip viewport space or overlays its edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabStripControlPlacement {
+    /// Reserves space before the scrollable tab viewport.
     ReservedLeading,
+    /// Reserves space after the scrollable tab viewport.
     ReservedTrailing,
+    /// Overlays the leading edge of the scrollable tab viewport.
     OverlayLeading,
+    /// Overlays the trailing edge of the scrollable tab viewport.
     OverlayTrailing,
 }
 
@@ -526,11 +535,13 @@ impl TabStripControlMetric {
         Ok(Self { extent, placement })
     }
 
+    /// Returns the control's width along the tab-strip axis in logical points.
     #[must_use]
     pub const fn extent(self) -> f64 {
         self.extent
     }
 
+    /// Returns how this control is positioned relative to the tab viewport.
     #[must_use]
     pub const fn placement(self) -> TabStripControlPlacement {
         self.placement
@@ -585,31 +596,37 @@ impl TabListMenuMetrics {
         })
     }
 
+    /// Returns the height of one menu row in logical points.
     #[must_use]
     pub const fn row_height(self) -> f64 {
         self.row_height
     }
 
+    /// Returns horizontal popup padding in logical points.
     #[must_use]
     pub const fn horizontal_padding(self) -> f64 {
         self.horizontal_padding
     }
 
+    /// Returns vertical popup padding in logical points.
     #[must_use]
     pub const fn vertical_padding(self) -> f64 {
         self.vertical_padding
     }
 
+    /// Returns vertical spacing between rows in logical points.
     #[must_use]
     pub const fn row_spacing(self) -> f64 {
         self.row_spacing
     }
 
+    /// Returns the maximum popup height in logical points before scrolling.
     #[must_use]
     pub const fn maximum_height(self) -> f64 {
         self.maximum_height
     }
 
+    /// Returns the scrollbar width reserved when the popup overflows.
     #[must_use]
     pub const fn scrollbar_extent(self) -> f64 {
         self.scrollbar_extent

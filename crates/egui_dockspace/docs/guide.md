@@ -9,7 +9,7 @@
 - [Committed lifecycle events](#committed-lifecycle-events)
 - [Feedback and focus](#feedback-and-focus)
 - [Motion](#motion), [styling](#styling) and [persistence](#persistence)
-- [Cargo features](../README.md#features)
+- [Cargo features](../README.md#cargo-features)
 
 `egui_dockspace` is the official-egui renderer for the renderer-neutral
 `dockspace` core. Its default product facade provides interactive docking for
@@ -316,7 +316,12 @@ reports an error for separate viewport or screenshot requests. Use a custom
 host when those capabilities are needed.
 
 The runner discards stale egui repaint messages and paces failed surface
-acquisitions. Scheduled hidden-window updates still process visibility and close commands,
+acquisitions. Desktop WGPU initialization respects `WGPU_BACKEND`,
+`WGPU_ADAPTER_NAME`, and `WGPU_POWER_PREF`, retries with a software fallback
+adapter if no hardware adapter is available, clamps oversized surfaces to the
+device's `max_texture_dimension_2d`, and exits cleanly with
+`NativeError::DeviceLost` if the graphics device is lost at runtime. Scheduled
+hidden-window updates still process visibility and close commands,
 but run only when requested and at most once every 250 ms. Native input and
 window restoration can wake the UI immediately.
 
@@ -330,7 +335,13 @@ On `wasm32-unknown-unknown`, `run_web` starts asynchronous GPU initialization an
 returns after installing event dispatch. Implement the same `NativeApp` callbacks
 as the desktop runner; the host owns rendering and exact output settlement.
 `WebOptions::new(canvas)` configures an existing HTML canvas and background color.
-The runner supports one canvas and contained floating groups.
+In `WebRenderer::Auto` mode, non-secure origins skip WebGPU and use WebGL2
+directly; HTTPS and localhost prefer WebGPU and fall back to WebGL2 (replacing
+the canvas element when WebGPU already claimed it) if initialization fails, times
+out after five seconds, loses its device before the first frame, or cannot
+present its first frame. Runtime GPU device loss and DOM `webglcontextlost`
+events are delivered through `on_error` as `NativeError::DeviceLost`. The runner
+supports one canvas and contained floating groups.
 
 The [browser workbench](../../../integration/egui-web-demo) reuses the desktop
 panes and motion toolbar. It observes `prefers-reduced-motion` and keeps manual
@@ -1214,7 +1225,7 @@ outside them.
 
 ## Persistence
 
-Enable `serde` for layout documents; see the [Cargo feature table](../README.md#features)
+Enable `serde` for layout documents; see the [Cargo feature table](../README.md#cargo-features)
 for the complete integration and backend options.
 
 Run the bounded editor layout example with:

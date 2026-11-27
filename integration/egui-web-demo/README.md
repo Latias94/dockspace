@@ -9,13 +9,17 @@ multiview are outside this demo's scope.
 [project homepage](https://frankorz.com/dockspace/).
 
 The `egui_dockspace/web` host owns the complete egui output and renderer
-settlement. Its WGPU initialization is asynchronous; it prefers WebGPU and
-falls back to WebGL2 if WebGPU initialization fails, returns a software
-fallback adapter, takes more than five seconds, or cannot present its first
-frame (replacing the canvas element when WebGPU has already claimed its
-context). Application panes and toolbar code are shared directly with the
-desktop example. The demo observes live `prefers-reduced-motion` changes;
-manual toolbar choices persist until another system preference change.
+settlement. Its WGPU initialization is asynchronous: on non-secure origins it
+selects WebGL2 directly; on HTTPS or localhost it prefers WebGPU (including
+software fallback adapters when no hardware adapter is exposed) and falls back
+to WebGL2 if WebGPU initialization fails, takes more than five seconds, loses
+its device before the first frame, or cannot present its first frame (replacing
+the canvas element when WebGPU has already claimed its context). Runtime GPU
+device loss and browser `webglcontextlost` events report a readable recovery
+error instead of leaving a frozen canvas. Application panes and toolbar code are
+shared directly with the desktop example. The demo observes live
+`prefers-reduced-motion` changes; manual toolbar choices persist until another
+system preference change.
 
 Startup shows Wasm download progress, followed by compilation and graphics
 initialization. The byte total comes from the built Wasm, so compressed transfers
@@ -63,8 +67,11 @@ floating-group retirement, splitters, focus and touch cancellation, retained edi
 tab-style and theme changes, intermediate and disabled motion, live
 reduced-motion changes, streamed download progress, startup stages, retry after
 initialization failure and native device scale two.
-They also cover stalled WebGPU requests, software fallback WebGPU adapters,
-late request completion after fallback, and explicit WebGL2 startup.
+They also cover non-secure contexts skipping WebGPU, stalled WebGPU requests,
+first-frame surface failure and pre-first-frame WebGPU device loss replacing
+the canvas for WebGL2, late request completion after fallback, runtime WebGL2
+context loss, hidden-tab slow-startup hint deferral, unhandled async
+rejections, and explicit WebGL2 startup.
 `?test=1` enables read-only geometry and state diagnostics emitted after exact
 renderer presentation; it adds no input or layout mutation endpoint. Ordinary
 demo loads omit those diagnostics.

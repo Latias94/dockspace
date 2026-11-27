@@ -1,3 +1,5 @@
+//! Validated renderer-neutral logical and physical geometry plus pane sizing constraints.
+
 use thiserror::Error;
 
 mod sizing;
