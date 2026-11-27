@@ -45,11 +45,21 @@ async function presentedPointer(page, position, down) {
 }
 
 async function startDrag(page, label, destination) {
-  const tab = (await state(page)).tabs.find(tab => tab.label === label);
-  const source = await point(page, tab.rect);
-  const before = (await state(page)).frames;
-  await page.mouse.move(source.x, source.y);
-  await expect.poll(async () => (await state(page)).frames).toBeGreaterThan(before);
+  let source;
+  await expect.poll(async () => {
+    const snapshot = await state(page);
+    const tab = snapshot.tabs.find(candidate => candidate.label === label);
+    if (!tab) return false;
+    const next = await point(page, tab.rect);
+    const before = snapshot.frames;
+    await page.mouse.move(next.x, next.y);
+    await expect.poll(async () => (await state(page)).frames).toBeGreaterThan(before);
+    const settled = (await state(page)).tabs.find(candidate => candidate.label === label);
+    if (!settled) return false;
+    const after = await point(page, settled.rect);
+    source = after;
+    return Math.abs(after.x - next.x) < 0.5 && Math.abs(after.y - next.y) < 0.5;
+  }).toBe(true);
   await page.mouse.down();
   await presentedPointer(page, source, true);
   await page.mouse.move((source.x + destination.x) / 2, (source.y + destination.y) / 2);

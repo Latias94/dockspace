@@ -329,6 +329,172 @@ test('hidden tabs defer the slow startup warning until visible', async ({ page }
   await expect(page.getByRole('link', { name: 'Try WebGL2' })).toBeVisible();
 });
 
+test('non-secure contexts skip WebGPU and start directly on WebGL2', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.webGpuRequests = 0;
+    Object.defineProperty(window, 'isSecureContext', {
+      configurable: true,
+      get: () => false,
+    });
+    Object.defineProperty(navigator, 'gpu', {
+      value: {
+        requestAdapter: () => {
+          window.webGpuRequests += 1;
+          return new Promise(() => {});
+        },
+      },
+    });
+  });
+  await page.goto('demo/egui/', { waitUntil: 'domcontentloaded' });
+  await expect(status(page)).toHaveAttribute('data-state', 'ready');
+  expect(await page.evaluate(() => window.webGpuRequests)).toBe(0);
+});
+
+test('a WebGPU device loss before first frame replaces the canvas and falls back to WebGL2', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    window.graphicsContexts = [];
+    document.addEventListener('DOMContentLoaded', () => {
+      const initial = document.getElementById('dockspace-canvas');
+      if (initial) initial.__initialCanvas = true;
+    });
+    const limits = {
+      maxTextureDimension1D: 8192,
+      maxTextureDimension2D: 8192,
+      maxTextureDimension3D: 2048,
+      maxTextureArrayLayers: 256,
+      maxBindGroups: 4,
+      maxBindGroupsPlusVertexBuffers: 24,
+      maxBindingsPerBindGroup: 1000,
+      maxDynamicUniformBuffersPerPipelineLayout: 8,
+      maxDynamicStorageBuffersPerPipelineLayout: 4,
+      maxSampledTexturesPerShaderStage: 16,
+      maxSamplersPerShaderStage: 16,
+      maxStorageBuffersPerShaderStage: 8,
+      maxStorageTexturesPerShaderStage: 4,
+      maxUniformBuffersPerShaderStage: 12,
+      maxUniformBufferBindingSize: 65536,
+      maxStorageBufferBindingSize: 134217728,
+      minUniformBufferOffsetAlignment: 256,
+      minStorageBufferOffsetAlignment: 256,
+      maxVertexBuffers: 8,
+      maxBufferSize: 268435456,
+      maxVertexAttributes: 16,
+      maxVertexBufferArrayStride: 2048,
+      maxInterStageShaderVariables: 16,
+      maxColorAttachments: 8,
+      maxColorAttachmentBytesPerSample: 32,
+      maxComputeWorkgroupStorageSize: 16384,
+      maxComputeInvocationsPerWorkgroup: 256,
+      maxComputeWorkgroupSizeX: 256,
+      maxComputeWorkgroupSizeY: 256,
+      maxComputeWorkgroupSizeZ: 64,
+      maxComputeWorkgroupsPerDimension: 65535,
+    };
+    const fakeQueue = {
+      writeBuffer() {},
+      writeTexture() {},
+      submit() {},
+      onSubmittedWorkDone: async () => {},
+    };
+    const fakeDevice = {
+      features: new Set(),
+      limits,
+      queue: fakeQueue,
+      lost: Promise.resolve({ reason: 'unknown', message: 'Simulated WebGPU device reset' }),
+      destroy() {},
+      pushErrorScope() {},
+      popErrorScope: async () => null,
+      createShaderModule: () => ({}),
+      createBindGroupLayout: () => ({}),
+      createPipelineLayout: () => ({}),
+      createRenderPipeline: () => ({}),
+      createSampler: () => ({}),
+      createBindGroup: () => ({}),
+      createTexture: () => ({ createView: () => ({}), destroy() {} }),
+      createBuffer: desc => {
+        const buf = new ArrayBuffer(Math.max(256, Number(desc?.size ?? 256)));
+        return {
+          getMappedRange: () => buf,
+          unmap() {},
+          destroy() {},
+        };
+      },
+      createCommandEncoder: () => ({
+        beginRenderPass: () => ({
+          setPipeline() {},
+          setBindGroup() {},
+          setVertexBuffer() {},
+          setIndexBuffer() {},
+          setViewport() {},
+          setScissorRect() {},
+          drawIndexed() {},
+          end() {},
+        }),
+        finish: () => ({}),
+      }),
+    };
+    Object.defineProperty(navigator, 'gpu', {
+      value: {
+        getPreferredCanvasFormat: () => 'bgra8unorm',
+        requestAdapter: async () => ({
+          features: new Set(),
+          limits,
+          info: { vendor: 'mock', architecture: 'mock', device: 'mock', description: 'mock' },
+          requestDevice: async () => fakeDevice,
+        }),
+      },
+    });
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+      window.graphicsContexts.push(type);
+      if (type === 'webgpu') {
+        this.__claimedWebGpu = true;
+        return {
+          configure() {},
+          unconfigure() {},
+          getCurrentTexture() {
+            return { createView: () => ({}) };
+          },
+        };
+      }
+      if (type === 'webgl2' && this.__claimedWebGpu) return null;
+      return getContext.call(this, type, ...args);
+    };
+  });
+  await page.goto('demo/egui/?test=1', { waitUntil: 'domcontentloaded' });
+  await expect(status(page)).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+  await expect(loading(page)).toBeHidden();
+  const result = await page.evaluate(() => ({
+    contexts: window.graphicsContexts,
+    stillInitialCanvas: Boolean(document.getElementById('dockspace-canvas')?.__initialCanvas),
+    stateAttr: Boolean(document.getElementById('dockspace-canvas')?.getAttribute('data-dockspace-state')),
+  }));
+  expect(result.contexts).toContain('webgpu');
+  expect(result.contexts).toContain('webgl2');
+  expect(result.stillInitialCanvas).toBe(false);
+  expect(result.stateAttr).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('a WebGL2 context loss triggers a readable recovery error instead of a frozen canvas', async ({ page }) => {
+  await page.goto('demo/egui/?renderer=webgl', { waitUntil: 'domcontentloaded' });
+  await expect(status(page)).toHaveAttribute('data-state', 'ready');
+  await expect(loading(page)).toBeHidden();
+  const prevented = await page.evaluate(() => {
+    const canvas = document.getElementById('dockspace-canvas');
+    const event = new Event('webglcontextlost', { cancelable: true });
+    canvas.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(prevented).toBe(true);
+  await expect(status(page)).toHaveAttribute('data-state', 'error');
+  await expect(loading(page)).toHaveAttribute('data-phase', 'error');
+  await expect(page.locator('#demo-loading-detail')).toContainText('WebGL2 context was lost');
+  await expect(page.getByRole('button', { name: 'Retry loading' })).toBeVisible();
+});
+
 test('explicit WebGL2 startup bypasses WebGPU requests', async ({ page }) => {
   await page.addInitScript(() => {
     window.webGpuRequests = 0;

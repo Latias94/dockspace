@@ -4,15 +4,18 @@ use std::{
     cell::{Cell, RefCell},
     pin::pin,
     rc::Rc,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use egui::Context;
 use egui_wgpu::wgpu;
 use futures_util::future::{Either, select};
 use gloo_timers::future::TimeoutFuture;
-use wasm_bindgen::JsCast;
-use web_sys::HtmlCanvasElement;
+use wasm_bindgen::{JsCast, closure::Closure};
+use web_sys::{Event, HtmlCanvasElement};
 use web_time::Instant;
 use winit::{
     application::ApplicationHandler,
@@ -77,36 +80,50 @@ enum InitOutcome {
     Failed(NativeError),
 }
 
+fn is_secure_browser_context() -> bool {
+    web_sys::window().is_some_and(|window| window.is_secure_context())
+}
+
 async fn initialize_renderer(
     display: OwnedDisplayHandle,
     window: Arc<Window>,
     clear_color: egui::Color32,
     renderer: WebRenderer,
+    generation: u64,
+    proxy: EventLoopProxy<UserEvent>,
 ) -> InitOutcome {
     if renderer == WebRenderer::Auto {
-        let canvas_claimed = Cell::new(false);
-        match initialize_backend(
-            display.clone(),
-            Arc::clone(&window),
-            clear_color,
-            wgpu::Backends::BROWSER_WEBGPU,
-            "WebGPU",
-            WEBGPU_INIT_TIMEOUT_SECONDS,
-            &canvas_claimed,
-        )
-        .await
-        {
-            Ok(renderer) => return InitOutcome::Ready(renderer),
-            Err(error) => {
-                if canvas_claimed.get() {
-                    web_sys::console::warn_1(
-                        &format!("{error}. Replacing canvas to fall back to WebGL2 cleanly.")
-                            .into(),
-                    );
-                    return InitOutcome::RetryWebGlOnFreshCanvas(error);
+        if is_secure_browser_context() {
+            let canvas_claimed = Cell::new(false);
+            match initialize_backend(
+                display.clone(),
+                Arc::clone(&window),
+                clear_color,
+                wgpu::Backends::BROWSER_WEBGPU,
+                "WebGPU",
+                WEBGPU_INIT_TIMEOUT_SECONDS,
+                &canvas_claimed,
+                generation,
+                proxy.clone(),
+            )
+            .await
+            {
+                Ok(renderer) => return InitOutcome::Ready(renderer),
+                Err(error) => {
+                    if canvas_claimed.get() {
+                        web_sys::console::warn_1(
+                            &format!("{error}. Replacing canvas to fall back to WebGL2 cleanly.")
+                                .into(),
+                        );
+                        return InitOutcome::RetryWebGlOnFreshCanvas(error);
+                    }
+                    web_sys::console::warn_1(&format!("{error}. Trying WebGL2 instead.").into());
                 }
-                web_sys::console::warn_1(&format!("{error}. Trying WebGL2 instead.").into());
             }
+        } else {
+            web_sys::console::info_1(
+                &"WebGPU requires a secure context (HTTPS or localhost). Using WebGL2.".into(),
+            );
         }
     }
     let canvas_claimed = Cell::new(false);
@@ -118,6 +135,8 @@ async fn initialize_renderer(
         "WebGL2",
         WEBGL_INIT_TIMEOUT_SECONDS,
         &canvas_claimed,
+        generation,
+        proxy,
     )
     .await
     {
@@ -126,6 +145,7 @@ async fn initialize_renderer(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn initialize_backend(
     display: OwnedDisplayHandle,
     window: Arc<Window>,
@@ -134,13 +154,18 @@ async fn initialize_backend(
     backend: &'static str,
     timeout_seconds: u32,
     canvas_claimed: &Cell<bool>,
+    generation: u64,
+    proxy: EventLoopProxy<UserEvent>,
 ) -> Result<WgpuRenderer, NativeError> {
-    let initialization = WgpuRenderer::new_with_backends_and_claim(
+    let initialization = WgpuRenderer::new_with_backends_and_hooks(
         display,
         window,
         clear_color,
         backends,
         |claimed| canvas_claimed.set(claimed),
+        move |reason| {
+            let _ = proxy.send_event(UserEvent::DeviceLost { generation, reason });
+        },
     );
     match select(
         pin!(initialization),
@@ -157,6 +182,40 @@ async fn initialize_backend(
             backend,
             timeout_seconds,
         }),
+    }
+}
+
+struct WebGlContextLostGuard {
+    canvas: HtmlCanvasElement,
+    closure: Closure<dyn FnMut(Event)>,
+}
+
+impl WebGlContextLostGuard {
+    fn attach(
+        canvas: HtmlCanvasElement,
+        generation: u64,
+        proxy: EventLoopProxy<UserEvent>,
+    ) -> Option<Self> {
+        let closure = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+            event.prevent_default();
+            let _ = proxy.send_event(UserEvent::DeviceLost {
+                generation,
+                reason: "browser WebGL2 context was lost".to_owned(),
+            });
+        });
+        canvas
+            .add_event_listener_with_callback("webglcontextlost", closure.as_ref().unchecked_ref())
+            .ok()?;
+        Some(Self { canvas, closure })
+    }
+}
+
+impl Drop for WebGlContextLostGuard {
+    fn drop(&mut self) {
+        let _ = self.canvas.remove_event_listener_with_callback(
+            "webglcontextlost",
+            self.closure.as_ref().unchecked_ref(),
+        );
     }
 }
 
@@ -210,6 +269,8 @@ pub fn run_web(
         app,
         on_error,
         window: None,
+        context_lost_guard: None,
+        generation: Arc::new(AtomicU64::new(0)),
         repaint: Repaint::default(),
         has_presented: false,
         initial_present_failures: 0,
@@ -220,6 +281,7 @@ pub fn run_web(
 enum UserEvent {
     Repaint(RepaintRequest),
     GpuReady,
+    DeviceLost { generation: u64, reason: String },
 }
 
 struct InitializingWindow {
@@ -250,6 +312,8 @@ struct Runner<A, E> {
     app: A,
     on_error: E,
     window: Option<WebWindow>,
+    context_lost_guard: Option<WebGlContextLostGuard>,
+    generation: Arc<AtomicU64>,
     repaint: Repaint,
     has_presented: bool,
     initial_present_failures: u8,
@@ -262,6 +326,12 @@ impl<A: NativeApp, E: FnMut(NativeError)> Runner<A, E> {
             self.repaint.request(Instant::now());
             return Ok(());
         }
+        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        self.context_lost_guard = WebGlContextLostGuard::attach(
+            self.options.canvas.clone(),
+            generation,
+            self.proxy.clone(),
+        );
         let window = Arc::new(
             event_loop.create_window(
                 WindowAttributes::default()
@@ -283,7 +353,15 @@ impl<A: NativeApp, E: FnMut(NativeError)> Runner<A, E> {
         let renderer = self.active_renderer;
         let proxy = self.proxy.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let outcome = initialize_renderer(display, window, clear_color, renderer).await;
+            let outcome = initialize_renderer(
+                display,
+                window,
+                clear_color,
+                renderer,
+                generation,
+                proxy.clone(),
+            )
+            .await;
             if let Some(completion) = completion.upgrade() {
                 completion.replace(Some(outcome));
                 let _ = proxy.send_event(UserEvent::GpuReady);
@@ -293,8 +371,9 @@ impl<A: NativeApp, E: FnMut(NativeError)> Runner<A, E> {
     }
 
     fn fallback_to_webgl(&mut self, event_loop: &ActiveEventLoop, original_error: NativeError) {
-        // Drop the existing window and surface first so event listeners and GPU
-        // resources detach before the canvas element is replaced in the DOM.
+        // Drop the existing listener, window, and surface first so event handlers
+        // and GPU resources detach before the canvas element is replaced in the DOM.
+        self.context_lost_guard = None;
         self.window = None;
         let Some(fresh_canvas) = replace_canvas_in_dom(&self.options.canvas) else {
             self.fail(event_loop, original_error);
@@ -322,6 +401,13 @@ impl<A: NativeApp, E: FnMut(NativeError)> Runner<A, E> {
                 if renderer.backend() == wgpu::Backend::Gl {
                     self.active_renderer = WebRenderer::WebGl;
                 }
+                if let Some(reason) = renderer.device_lost_reason() {
+                    let generation = self.generation.load(Ordering::Acquire);
+                    drop(renderer);
+                    drop(state);
+                    self.handle_device_lost(event_loop, generation, reason);
+                    return;
+                }
                 state.integration.set_max_texture_side(
                     renderer.device.limits().max_texture_dimension_2d as usize,
                 );
@@ -344,9 +430,34 @@ impl<A: NativeApp, E: FnMut(NativeError)> Runner<A, E> {
     }
 
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: NativeError) {
+        self.context_lost_guard = None;
         self.window = None;
         (self.on_error)(error);
         event_loop.exit();
+    }
+
+    fn handle_device_lost(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        generation: u64,
+        reason: String,
+    ) {
+        if generation != self.generation.load(Ordering::Acquire) {
+            return;
+        }
+        let backend = match self.active_renderer {
+            WebRenderer::Auto => "WebGPU",
+            WebRenderer::WebGl => "WebGL2",
+        };
+        let error = NativeError::DeviceLost { backend, reason };
+        if !self.has_presented && self.active_renderer == WebRenderer::Auto {
+            web_sys::console::warn_1(
+                &format!("{error}. Replacing canvas to fall back to WebGL2.").into(),
+            );
+            self.fallback_to_webgl(event_loop, error);
+        } else {
+            self.fail(event_loop, error);
+        }
     }
 
     fn handle_initial_present_failure(&mut self, event_loop: &ActiveEventLoop, reason: DropReason) {
@@ -375,8 +486,14 @@ impl<A: NativeApp, E: FnMut(NativeError)> Runner<A, E> {
         let render_result =
             state.render(event_loop, &self.context, &mut self.app, &mut self.repaint);
         let drop_reason = state.renderer.drop_reason;
+        let device_lost_reason = state.renderer.device_lost_reason();
         match render_result {
             Ok(control) => {
+                if let Some(reason) = device_lost_reason {
+                    let generation = self.generation.load(Ordering::Acquire);
+                    self.handle_device_lost(event_loop, generation, reason);
+                    return;
+                }
                 if drop_reason.is_none() {
                     self.has_presented = true;
                     self.initial_present_failures = 0;
@@ -389,7 +506,7 @@ impl<A: NativeApp, E: FnMut(NativeError)> Runner<A, E> {
                             // 0x0 or hidden still presents once layout settles.
                             self.repaint.request(Instant::now());
                         }
-                        DropReason::Validation => {
+                        DropReason::Validation | DropReason::DeviceLost => {
                             self.handle_initial_present_failure(event_loop, reason);
                             return;
                         }
@@ -474,6 +591,9 @@ impl<A: NativeApp, E: FnMut(NativeError)> ApplicationHandler<UserEvent> for Runn
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::GpuReady => self.finish_initialization(event_loop),
+            UserEvent::DeviceLost { generation, reason } => {
+                self.handle_device_lost(event_loop, generation, reason);
+            }
             UserEvent::Repaint(request) => {
                 if request.is_current(&self.context) {
                     self.repaint.request(request.deadline);
@@ -488,6 +608,7 @@ impl<A: NativeApp, E: FnMut(NativeError)> ApplicationHandler<UserEvent> for Runn
     }
 
     fn exiting(&mut self, _: &ActiveEventLoop) {
+        self.context_lost_guard = None;
         self.window = None;
     }
 }

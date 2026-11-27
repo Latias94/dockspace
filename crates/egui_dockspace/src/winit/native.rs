@@ -94,6 +94,7 @@ pub fn run_native(
 
 enum UserEvent {
     Repaint(RepaintRequest),
+    DeviceLost(String),
     #[cfg(feature = "accesskit")]
     AccessKit(egui_winit::accesskit_winit::Event),
 }
@@ -125,10 +126,14 @@ impl<A: NativeApp + ?Sized> Runner<'_, A> {
         // Accessibility must attach before the window has ever been shown.
         let window =
             Arc::new(event_loop.create_window(self.options.window.clone().with_visible(false))?);
+        let lost_proxy = self.proxy.clone();
         let renderer = pollster::block_on(WgpuRenderer::new(
             event_loop.owned_display_handle(),
             Arc::clone(&window),
             self.options.clear_color,
+            move |reason| {
+                let _ = lost_proxy.send_event(UserEvent::DeviceLost(reason));
+            },
         ))?;
         let mut integration = WinitIntegration::new(self.context.clone(), &window, event_loop);
         #[cfg(feature = "accesskit")]
@@ -169,10 +174,23 @@ impl<A: NativeApp + ?Sized> Runner<'_, A> {
 
     fn redraw(&mut self, event_loop: &ActiveEventLoop) {
         match self.render(event_loop) {
-            Ok(FrameControl::Exit) => event_loop.exit(),
+            Ok(FrameControl::Exit) => {
+                event_loop.exit();
+                return;
+            }
             Ok(FrameControl::Repaint) => self.repaint.request(Instant::now()),
             Ok(FrameControl::Continue) => {}
-            Err(error) => self.fail(event_loop, error),
+            Err(error) => {
+                self.fail(event_loop, error);
+                return;
+            }
+        }
+        if let Some(state) = &self.window
+            && let Some(reason) = state.renderer.device_lost_reason()
+        {
+            let backend = state.renderer.backend_name();
+            self.fail(event_loop, NativeError::DeviceLost { backend, reason });
+            return;
         }
         if self
             .window
@@ -250,6 +268,14 @@ impl<A: NativeApp + ?Sized> ApplicationHandler<UserEvent> for Runner<'_, A> {
                 if request.is_current(&self.context) {
                     self.repaint.request(request.deadline);
                 }
+            }
+            UserEvent::DeviceLost(reason) => {
+                let backend = self
+                    .window
+                    .as_ref()
+                    .map_or("WGPU", |state| state.renderer.backend_name());
+                self.fail(event_loop, NativeError::DeviceLost { backend, reason });
+                return;
             }
             #[cfg(feature = "accesskit")]
             UserEvent::AccessKit(event) => {

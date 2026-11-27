@@ -35,6 +35,12 @@ pub enum NativeError {
         backend: &'static str,
         reason: &'static str,
     },
+    /// The underlying WGPU device or WebGL context was lost and cannot continue rendering.
+    #[error("{backend} graphics device was lost: {reason}")]
+    DeviceLost {
+        backend: &'static str,
+        reason: String,
+    },
     /// The application's frame callback failed.
     #[error("native application failed: {0}")]
     Application(#[source] Box<dyn Error + Send + Sync>),

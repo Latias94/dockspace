@@ -52,7 +52,7 @@ futures-util = { version = "0.3", optional = true, default-features = false, fea
 gloo-timers = { version = "0.4", optional = true, features = ["futures"] }
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
-web-sys = { version = "0.3", optional = true, features = ["HtmlCanvasElement", "Node", "console"] }
+web-sys = { version = "0.3", optional = true, features = ["Event", "EventTarget", "HtmlCanvasElement", "Node", "Window", "console"] }
 
 [dev-dependencies]
 dockspace = { workspace = true, default-features = false }
