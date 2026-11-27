@@ -56,6 +56,7 @@ fn app_with_session(
         action_receipt: None,
         font_size: 13.0,
         density: DockDensity::Comfortable,
+        showcase: false,
         status: None,
         smoke: None,
         docking_smoke: None,
@@ -652,7 +653,7 @@ fn inventory_controls(
             events,
             ..Default::default()
         },
-        |ui| app.show_layout_controls(ui),
+        |ui| app.show_controls(ui),
     );
     output.textures_delta.clear();
     output

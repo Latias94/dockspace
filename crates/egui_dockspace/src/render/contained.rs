@@ -467,6 +467,12 @@ fn title_label<'a>(
             .resources
             .tab(item)
             .map_or("Missing pane", |resource| resource.title.as_str()),
+        TabLabel::Layout { title: "Tabs" } => context
+            .resources
+            .root_active_item(root.root())
+            .and_then(|item| context.resources.tab(item))
+            .filter(|resource| !resource.missing && !resource.title.is_empty())
+            .map_or("Tabs", |resource| resource.title.as_str()),
         TabLabel::Layout { title } => title,
     }
 }
@@ -557,7 +563,7 @@ mod tests {
                     .shapes
                     .iter()
                     .filter_map(|shape| match &shape.shape {
-                        Shape::Text(text) if text.galley.job.text == "Tabs" => {
+                        Shape::Text(text) if text.galley.job.text == "Inspector" => {
                             Some((shape.clip_rect, text))
                         }
                         _ => None,
@@ -579,6 +585,86 @@ mod tests {
                 );
                 output.textures_delta.clear();
             }
+        }
+    }
+
+    #[test]
+    fn unnamed_floating_tabs_uses_active_tab_title_while_named_and_split_keep_own_labels() {
+        use egui::accesskit::Role;
+
+        let cases = [
+            (
+                "unnamed-tabs",
+                DockspaceNode::tabs([ItemId::new(2)]),
+                "Inspector",
+            ),
+            (
+                "named-tabs",
+                DockspaceNode::tabs([ItemId::new(2)]).named("Inspector Tools"),
+                "Inspector Tools",
+            ),
+            (
+                "unnamed-split",
+                DockspaceNode::equal_split(
+                    crate::DockspaceAxis::Horizontal,
+                    [
+                        DockspaceNode::tabs([ItemId::new(2)]),
+                        DockspaceNode::tabs([ItemId::new(3)]),
+                    ],
+                )
+                .unwrap(),
+                "Split",
+            ),
+        ];
+
+        for (name, floating_root, expected_title) in cases {
+            let context = Context::default();
+            context.enable_accesskit();
+            let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+                SurfaceId::new(1),
+                DockspaceRootLayout::new(
+                    RootId::new(1),
+                    DockspaceNode::central_tabs([ItemId::new(1)]),
+                ),
+            )
+            .with_contained(DockspaceContainedLayout::new(
+                FloatingPresentationId::new(1),
+                DockspaceRootLayout::new(RootId::new(2), floating_root),
+                LogicalRect::new(160.0, 100.0, 320.0, 240.0).unwrap(),
+            ))])
+            .unwrap();
+            let mut dockspace = Dockspace::builder(name, layout).build().unwrap();
+            let mut panes = TitlePanes;
+            let mut output = None;
+            for _ in 0..2 {
+                let mut next = context.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(640.0, 480.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        dockspace
+                            .show_single_surface(SurfaceId::new(1), ui, &mut panes)
+                            .unwrap();
+                    },
+                );
+                next.textures_delta.clear();
+                output = Some(next);
+            }
+            let title_bars: Vec<_> = output
+                .unwrap()
+                .platform_output
+                .accesskit_update
+                .unwrap()
+                .nodes
+                .into_iter()
+                .filter_map(|(_, node)| {
+                    (node.role() == Role::TitleBar)
+                        .then(|| node.label().map(str::to_owned))
+                        .flatten()
+                })
+                .collect();
+            assert_eq!(title_bars, vec![expected_title.to_owned()], "case {name}");
         }
     }
 }

@@ -689,3 +689,155 @@ fn aborted_semantic_resize_does_not_disable_later_docking_motion() {
     assert_eq!(moving.splitters, 0);
     present(&mut session, output);
 }
+
+#[test]
+fn splitting_active_tab_horizontally_shares_non_overlapping_seam_with_survivor() {
+    use crate::model::{DockAnchor, DockEdge, DockFraction};
+
+    for edge in [DockEdge::Right, DockEdge::Left] {
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(ROOT, DockspaceNode::tabs([A, B])),
+        )])
+        .unwrap();
+        let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+        let mut frame = session.begin_host_frame().unwrap();
+        frame.select_item_current(B).unwrap();
+        frame
+            .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+            .unwrap();
+        frame.commit().unwrap();
+
+        let (before, output) = paint(&mut session, motion(0));
+        present(&mut session, output);
+        let prior_rect = before.panes[&B];
+
+        let mut frame = session.begin_host_frame().unwrap();
+        frame
+            .dock_item_current(
+                B,
+                DockPlacement::InnerEdge {
+                    anchor: DockAnchor::Item(A),
+                    edge,
+                    fraction: DockFraction::new(0.5).unwrap(),
+                },
+            )
+            .unwrap();
+        frame
+            .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+            .unwrap();
+        assert!(frame.commit().unwrap().workspace_changed());
+
+        let (start, output) = paint(&mut session, motion(1000));
+        present(&mut session, output);
+        assert_eq!(start.panes[&A], prior_rect);
+        assert_eq!(start.panes[&B].width(), 1.0);
+        assert!(session.surface_motion_is_active(SURFACE));
+
+        for now in [1025, 1050, 1100, 1150] {
+            let (sample, output) = paint(&mut session, motion(now));
+            present(&mut session, output);
+            let a = sample.panes[&A];
+            let b = sample.panes[&B];
+            assert!(a.width() > 0.0 && b.width() > 0.0, "edge={edge:?} t={now}");
+            let tolerance = if now >= 1050 { 0.0 } else { 1.0 };
+            match edge {
+                DockEdge::Right => assert!(
+                    a.max().x() <= b.x() + tolerance,
+                    "right split must not overlap: a={a:?}, b={b:?} at t={now}"
+                ),
+                DockEdge::Left => assert!(
+                    b.max().x() <= a.x() + tolerance,
+                    "left split must not overlap: a={a:?}, b={b:?} at t={now}"
+                ),
+                _ => unreachable!(),
+            }
+        }
+
+        let (end, output) = paint(&mut session, motion(1200));
+        present(&mut session, output);
+        assert!(end.partition);
+        assert_eq!(end.splitters, 1);
+        assert!(!session.surface_motion_is_active(SURFACE));
+    }
+}
+
+#[test]
+fn docking_floating_pane_into_main_split_glides_from_floating_bounds() {
+    use crate::model::{
+        DockAnchor, DockEdge, DockFraction, DockspaceContainedLayout, FloatingPresentationId,
+    };
+
+    let floating_root = RootId::new(2);
+    let floating_rect = LogicalRect::new(480.0, 120.0, 300.0, 220.0).unwrap();
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(ROOT, DockspaceNode::central_tabs([A])),
+    )
+    .with_contained(DockspaceContainedLayout::new(
+        FloatingPresentationId::new(1),
+        DockspaceRootLayout::new(floating_root, DockspaceNode::tabs([B])),
+        floating_rect,
+    ))])
+    .unwrap();
+    let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+    let (before, output) = paint(&mut session, motion(0));
+    present(&mut session, output);
+    let prior_floating_pane = before.panes[&B];
+
+    let mut frame = session.begin_host_frame().unwrap();
+    frame
+        .dock_item_current(
+            B,
+            DockPlacement::InnerEdge {
+                anchor: DockAnchor::Item(A),
+                edge: DockEdge::Right,
+                fraction: DockFraction::new(0.5).unwrap(),
+            },
+        )
+        .unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    assert!(frame.commit().unwrap().workspace_changed());
+
+    let (start, output) = paint(&mut session, motion(1000));
+    present(&mut session, output);
+    assert_eq!(start.panes[&B], prior_floating_pane);
+    assert!(session.surface_motion_is_active(SURFACE));
+
+    let (mid, output) = paint(&mut session, motion(1050));
+    present(&mut session, output);
+    assert_ne!(mid.panes[&B], prior_floating_pane);
+    assert!(mid.panes[&B].height() > prior_floating_pane.height());
+
+    let (end, output) = paint(&mut session, motion(1200));
+    present(&mut session, output);
+    assert!(end.partition);
+    assert!(!session.surface_motion_is_active(SURFACE));
+    assert!(end.panes[&B].height() > mid.panes[&B].height());
+}
+
+#[test]
+fn switching_tabs_inside_unchanged_group_stays_immediate() {
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(ROOT, DockspaceNode::tabs([A, B])),
+    )])
+    .unwrap();
+    let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+    let (_, output) = paint(&mut session, motion(0));
+    present(&mut session, output);
+
+    let mut frame = session.begin_host_frame().unwrap();
+    frame.select_item_current(B).unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    assert!(frame.commit().unwrap().workspace_changed());
+
+    let (switched, output) = paint(&mut session, motion(100));
+    present(&mut session, output);
+    assert!(switched.partition);
+    assert!(!session.surface_motion_is_active(SURFACE));
+}

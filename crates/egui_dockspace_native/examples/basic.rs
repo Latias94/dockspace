@@ -57,6 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         command_smoke.then(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     let smoke = std::env::args().any(|argument| argument == "--smoke");
     let docking_smoke = std::env::args().any(|argument| argument == "--docking-smoke");
+    let showcase = std::env::args().any(|argument| argument == "--showcase");
     // The finite journeys deliberately exercise their own initial geometry,
     // including an off-screen contained window for BringContainedIntoView.
     // The interactive example performs one initial fit after its real host
@@ -77,6 +78,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         // Exercise automatic native retirement without a persistent central area.
         editor_layout_with_inspector(false, SURFACE, false)
+    } else if showcase {
+        showcase_layout()
     } else {
         example_layout()
     };
@@ -143,6 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         action_receipt: None,
         font_size: 13.0,
         density: DockDensity::default(),
+        showcase,
         status: None,
         smoke: smoke.then(smoke::EditorSmoke::new),
         docking_smoke: docking_smoke.then(docking_smoke::DockingSmoke::new),
@@ -153,14 +157,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let options = eframe::NativeOptions {
         viewport: {
-            let viewport = egui::ViewportBuilder::default().with_inner_size([1280.0, 820.0]);
-            if docking_smoke
-                && std::env::var("EGUI_DOCKSPACE_DOCKING_CASE")
-                    .is_ok_and(|case| case.starts_with("native-"))
-            {
-                viewport.with_position([40.0, 80.0])
+            if showcase {
+                egui::ViewportBuilder::default()
+                    .with_inner_size([800.0, 560.0])
+                    .with_position([30.0, 90.0])
             } else {
-                viewport
+                let viewport = egui::ViewportBuilder::default().with_inner_size([1280.0, 820.0]);
+                if docking_smoke
+                    && std::env::var("EGUI_DOCKSPACE_DOCKING_CASE")
+                        .is_ok_and(|case| case.starts_with("native-"))
+                {
+                    viewport.with_position([40.0, 80.0])
+                } else {
+                    viewport
+                }
             }
         },
         native_host: Some(native_host),
@@ -170,7 +180,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Dockspace native editor",
         options,
         Box::new(move |creation| {
-            creation.egui_ctx.set_theme(egui::Theme::Light);
+            creation.egui_ctx.set_theme(if showcase {
+                egui::Theme::Dark
+            } else {
+                egui::Theme::Light
+            });
             if let Some(log) = &app.operation_log {
                 log.install(&creation.egui_ctx);
             }
@@ -204,6 +218,7 @@ struct NativeExampleApp {
     action_receipt: Option<NativeActionReceipt>,
     font_size: f32,
     density: DockDensity,
+    showcase: bool,
     status: Option<String>,
     smoke: Option<smoke::EditorSmoke>,
     docking_smoke: Option<docking_smoke::DockingSmoke>,
@@ -319,21 +334,6 @@ impl NativeExampleApp {
                         }
                     });
             });
-            let contained_root = inspector.filter(|location| location.is_contained());
-            let enabled = self.controls_available()
-                && !self.dockspace.arrangement_locked()
-                && root_presented
-                && contained_root.is_some();
-            if ui
-                .add_enabled(enabled, egui::Button::new("Open Inspector Window ↗"))
-                .on_disabled_hover_text(
-                    "Move the live contained Inspector and Preview group into an OS window.",
-                )
-                .clicked()
-                && let Some(location) = contained_root
-            {
-                self.request_inspector_window(location.root);
-            }
             if let Some(location) = inspector.filter(|location| location.is_native_child()) {
                 if ui
                     .add_enabled(
@@ -344,20 +344,44 @@ impl NativeExampleApp {
                 {
                     self.request_root_dock_back(location.root);
                 }
-            } else if !root_presented {
-                ui.label("Waiting for the root output to be presented…");
+            } else {
+                let contained_root = inspector.filter(|location| location.is_contained());
+                let enabled = self.controls_available()
+                    && !self.dockspace.arrangement_locked()
+                    && root_presented
+                    && contained_root.is_some();
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Open Inspector Window"))
+                    .on_disabled_hover_text(
+                        "Move the live contained Inspector and Preview group into an OS window.",
+                    )
+                    .clicked()
+                    && let Some(location) = contained_root
+                {
+                    self.request_inspector_window(location.root);
+                }
+                if !root_presented {
+                    ui.label("Waiting for the root output to be presented…");
+                }
             }
+            self.show_layout_bar_items(ui, inspector, root_presented);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let dark = ui.visuals().dark_mode;
+                if ui.selectable_label(dark, "Dark").clicked() {
+                    ui.ctx().set_theme(egui::Theme::Dark);
+                }
+                if ui.selectable_label(!dark, "Light").clicked() {
+                    ui.ctx().set_theme(egui::Theme::Light);
+                }
+            });
         });
-        self.show_layout_controls(ui);
         if self.action.is_pending() {
             self.show_pending_controls(ui);
         }
-        egui::CollapsingHeader::new("Window details").show(ui, |ui| {
-            self.show_capability_status(ui, inspector, root_presented);
-            self.show_presentation_state(ui, inspector, root_presented);
-        });
-        self.show_walkthrough(ui);
-        if let Some(status) = &self.status {
+        self.show_close_decisions(ui);
+        if !self.showcase
+            && let Some(status) = &self.status
+        {
             ui.small(format!("Last action: {status}"));
         }
     }
@@ -451,38 +475,36 @@ impl NativeExampleApp {
     }
 
     fn show_walkthrough(&self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("Help")
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.label(
-                    "Drag tabs to merge or split panes. Move the floating Inspector by its title grip.",
-                );
-                ui.label(
-                    "Open Inspector Window creates an OS window; Dock Inspector Back returns it. \
-                     Closing that window also returns its panes without losing edits.",
-                );
-                ui.label(
-                    "Use Pane inventory to reopen closed panes. Default layout restores the arrangement and keeps your data.",
-                );
-                ui.label(
-                    "Lock arrangement prevents layout changes while keeping pane selection and editing available.",
-                );
-                #[cfg(feature = "serde")]
-                ui.label(
-                    "Named presets last for this session and include native windows. Restoring a preset keeps pane data.",
-                );
-                ui.small(
-                    "Cross-window dragging depends on the platform. Use window commands when dragging is unavailable.",
-                );
-            });
+        ui.label(
+            "Drag tabs to merge or split panes. Move the floating Inspector by its title grip.",
+        );
+        ui.label(
+            "Open Inspector Window creates an OS window; Dock Inspector Back returns it. \
+             Closing that window also returns its panes without losing edits.",
+        );
+        ui.label(
+            "Use Pane inventory to reopen closed panes. Default layout restores the arrangement and keeps your data.",
+        );
+        ui.label(
+            "Lock arrangement prevents layout changes while keeping pane selection and editing available.",
+        );
+        #[cfg(feature = "serde")]
+        ui.label(
+            "Named presets last for this session and include native windows. Restoring a preset keeps pane data.",
+        );
+        ui.small(
+            "Cross-window dragging depends on the platform. Use window commands when dragging is unavailable.",
+        );
     }
 
     fn request_inspector_window(&mut self, root: RootId) {
-        self.request_native_window(
-            root,
+        let bounds = if self.showcase {
+            PhysicalRect::new(852.0, 114.0, 460.0, 420.0)
+        } else {
             PhysicalRect::new(760.0, 120.0, 440.0, 340.0)
-                .expect("the static child placement is valid"),
-        );
+        }
+        .expect("the static child placement is valid");
+        self.request_native_window(root, bounds);
     }
 
     fn request_native_window(&mut self, root: RootId, bounds: PhysicalRect) {
@@ -678,6 +700,39 @@ fn example_layout() -> DockspaceLayout {
     editor_layout(false)
 }
 
+fn showcase_layout() -> DockspaceLayout {
+    let center = DockspaceNode::split(
+        DockspaceAxis::Vertical,
+        [
+            (
+                DockspaceNode::central_tabs([EDITOR, HISTORY, PROFILER]),
+                0.72,
+            ),
+            (DockspaceNode::tabs([CONSOLE]), 0.28),
+        ],
+    )
+    .expect("the showcase editor and console split is valid");
+    let root = DockspaceNode::split(
+        DockspaceAxis::Horizontal,
+        [
+            (DockspaceNode::tabs([OUTLINE, ASSETS]), 0.26),
+            (center, 0.74),
+        ],
+    )
+    .expect("the showcase split is valid");
+    let inspector_tabs =
+        DockspaceNode::central_tabs_with_selection([PREVIEW, INSPECTOR], Some(INSPECTOR))
+            .expect("the Inspector starts selected");
+    let inspector = DockspaceContainedLayout::new(
+        INSPECTOR_FLOATING,
+        DockspaceRootLayout::new(INSPECTOR_ROOT, inspector_tabs),
+        LogicalRect::new(470.0, 110.0, 310.0, 330.0).expect("the showcase contained rect is valid"),
+    );
+    let surface = DockspaceSurfaceLayout::new(SURFACE, DockspaceRootLayout::new(MAIN_ROOT, root))
+        .with_contained(inspector);
+    DockspaceLayout::new([surface]).expect("the showcase surface is valid")
+}
+
 fn editor_layout(separate_assets: bool) -> DockspaceLayout {
     editor_layout_on_surface(separate_assets, SURFACE)
 }
@@ -778,14 +833,14 @@ impl ExamplePanes {
             text_editable: true,
             probe: None,
             panes: [
-                (OUTLINE, "pane/outline", "Outline", "Scene\n  Camera\n  Directional light\n  Player\n    Mesh\n    Controller"),
-                (EDITOR, "pane/document", "Document", "fn update(scene: &mut Scene) {\n    scene.player.translate([1.0, 0.0, 0.0]);\n}\n"),
+                (OUTLINE, "pane/outline", "Outline", "Scene\n  Camera [Perspective]\n  Directional Light\n  Player [Character]\n    Transform\n    MeshRenderer\n    Collider"),
+                (EDITOR, "pane/document", "Document", "// src/scene.rs\n\npub fn update(scene: &mut Scene, dt: f32) {\n    let speed = 4.5 * dt;\n    scene.player.translate([speed, 0.0, 0.0]);\n    scene.camera.track(&scene.player);\n    scene.sync_viewport();\n}\n"),
                 (PREVIEW, "pane/preview", "Preview", "Application-drawn scene"),
-                (INSPECTOR, "pane/inspector", "Inspector", "Object: Player\nPosition: [0, 0, 0]\nMesh: player.mesh\n"),
-                (CONSOLE, "pane/console", "Console", "Ready. Application log; scroll to inspect older messages."),
-                (HISTORY, "pane/history", "History", "Selected Player\nMoved Player\nChanged light intensity\nSaved scene"),
-                (PROFILER, "pane/profiler", "Profiler", "Illustrative frame samples — no live engine attached"),
-                (ASSETS, "pane/assets", "Assets", "scenes/main.scene\nmeshes/player.mesh\nmaterials/default.mat\ntextures/grid.png"),
+                (INSPECTOR, "pane/inspector", "Inspector", "Object:   Player\nLayer:    Characters\nPosition: [0.0, -60.0, 0.0]\nRotation: [0.0, 15.0, 0.0]\nMesh:     meshes/player.mesh\nMaterial: materials/default.mat\n"),
+                (CONSOLE, "pane/console", "Console", "Live workspace log (scroll to inspect earlier entries):"),
+                (HISTORY, "pane/history", "History", "Loaded scenes/main.scene\nSelected Player\nMoved Player to [0, -60, 0]\nUpdated directional light intensity\nSaved scene snapshot"),
+                (PROFILER, "pane/profiler", "Profiler", "Frame budget · 8.8 / 16.7 ms (60 FPS)"),
+                (ASSETS, "pane/assets", "Assets", "scenes/main.scene\nmeshes/player.mesh\nmaterials/default.mat\nshaders/grid.wgsl\ntextures/grid.png"),
             ]
             .into_iter()
             .map(|(item, key, title, text)| (item, ExamplePane {
@@ -816,7 +871,8 @@ fn paint_canvas(
     content: PaneResponse,
     probe: Option<&docking_smoke::EditorProbeHandle>,
 ) -> PaneResponse {
-    let controls = ui.horizontal(|ui| {
+    let controls = ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().slider_width = (ui.available_width() - 140.0).clamp(80.0, 128.0);
         let reset = ui.button("Reset view");
         if reset.clicked() {
             pane.pan = egui::Vec2::ZERO;
@@ -833,11 +889,32 @@ fn paint_canvas(
     if let Some(probe) = probe {
         probe.observe_canvas(ui, &response, pane.pan, &controls.inner.1, pane.zoom);
     }
+    let dark = ui.visuals().dark_mode;
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-    painter.rect_filled(rect, 0.0, ui.visuals().extreme_bg_color);
+    let canvas_fill = if dark {
+        egui::Color32::from_rgb(18, 21, 28)
+    } else {
+        egui::Color32::from_rgb(244, 246, 250)
+    };
+    painter.rect_filled(rect, 4.0, canvas_fill);
     let spacing = 32.0 * pane.zoom;
     let origin = rect.center() + pane.pan;
-    let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+    let minor = egui::Stroke::new(
+        1.0,
+        if dark {
+            egui::Color32::from_rgba_unmultiplied(148, 163, 184, 24)
+        } else {
+            egui::Color32::from_rgba_unmultiplied(100, 116, 139, 34)
+        },
+    );
+    let x_axis = egui::Stroke::new(
+        1.2,
+        egui::Color32::from_rgba_unmultiplied(248, 113, 113, if dark { 100 } else { 130 }),
+    );
+    let y_axis = egui::Stroke::new(
+        1.2,
+        egui::Color32::from_rgba_unmultiplied(74, 222, 128, if dark { 100 } else { 130 }),
+    );
     for index in -32..=32 {
         let offset = index as f32 * spacing;
         painter.line_segment(
@@ -845,23 +922,40 @@ fn paint_canvas(
                 egui::pos2(origin.x + offset, rect.top()),
                 egui::pos2(origin.x + offset, rect.bottom()),
             ],
-            stroke,
+            if index == 0 { y_axis } else { minor },
         );
         painter.line_segment(
             [
                 egui::pos2(rect.left(), origin.y + offset),
                 egui::pos2(rect.right(), origin.y + offset),
             ],
-            stroke,
+            if index == 0 { x_axis } else { minor },
         );
     }
-    painter.circle_filled(origin, 30.0 * pane.zoom, ui.visuals().selection.bg_fill);
+    let accent = egui::Color32::from_rgb(56, 152, 236);
+    painter.circle_stroke(
+        origin,
+        34.0 * pane.zoom,
+        egui::Stroke::new(2.0, accent.gamma_multiply(0.35)),
+    );
+    painter.circle_filled(origin, 28.0 * pane.zoom, accent);
     painter.text(
-        rect.center_bottom() - egui::vec2(0.0, 20.0),
+        origin,
+        egui::Align2::CENTER_CENTER,
+        "Player",
+        egui::FontId::proportional((13.0 * pane.zoom).clamp(10.0, 20.0)),
+        egui::Color32::WHITE,
+    );
+    painter.text(
+        rect.center_bottom() - egui::vec2(0.0, 16.0),
         egui::Align2::CENTER_BOTTOM,
         "Application canvas · drag to pan",
-        egui::FontId::proportional(14.0),
-        ui.visuals().text_color(),
+        egui::FontId::proportional(13.0),
+        if dark {
+            egui::Color32::from_rgb(148, 163, 184)
+        } else {
+            egui::Color32::from_rgb(71, 85, 105)
+        },
     );
     content
         .with_content(&controls.inner.0)
@@ -923,8 +1017,18 @@ impl PaneView for ExamplePanes {
                 .id_salt(("native-editor-log", item.get()))
                 .show(ui, |ui| {
                     let mut content = content.with_content_ids([ui.unique_id()]);
+                    let messages = [
+                        "[INFO ] Native host ready · Root surface presented",
+                        "[SCENE] Loaded scenes/main.scene (3 entities)",
+                        "[DOCK ] Floating Inspector group ready for native tear-off",
+                        "[GPU  ] Frame pacing steady at 60 FPS (8.8 ms)",
+                    ];
                     for line in 0..128 {
-                        let entry = ui.monospace(format!("[{line:03}] Scene update completed"));
+                        let entry = ui.monospace(format!(
+                            "10:42:{:02} {}",
+                            line % 60,
+                            messages[line % messages.len()]
+                        ));
                         content = content.with_content(&entry);
                     }
                     content
@@ -954,11 +1058,20 @@ impl PaneView for ExamplePanes {
             }
         } else {
             let id = pane_focus_id(item);
-            let editor = egui::TextEdit::multiline(&mut pane.text)
+            let dark = ui.visuals().dark_mode;
+            let mut rust_layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+                let job = highlight_native_rust(ui, buf.as_str(), wrap_width, dark);
+                ui.fonts_mut(|fonts| fonts.layout_job(job))
+            };
+            let mut editor = egui::TextEdit::multiline(&mut pane.text)
                 .id(id)
                 .interactive(self.text_editable)
+                .frame(egui::Frame::new().inner_margin(egui::Margin::same(8)))
                 .desired_width(f32::INFINITY)
                 .font(egui::TextStyle::Monospace);
+            if item == EDITOR {
+                editor = editor.layouter(&mut rust_layouter);
+            }
             let bounds = ui.available_rect_before_wrap();
             let response = egui_dockspace::with_pane_keyboard_input_at(
                 ui,
@@ -1025,4 +1138,122 @@ fn poll_receipt(
     };
     *receipt = None;
     Some(result)
+}
+
+fn highlight_native_rust(
+    ui: &egui::Ui,
+    text: &str,
+    wrap_width: f32,
+    dark: bool,
+) -> egui::text::LayoutJob {
+    use egui::Color32;
+
+    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    let (kw_col, ty_col, str_col, cmt_col, num_col, punct_col, plain_col) = if dark {
+        (
+            Color32::from_rgb(198, 160, 246),
+            Color32::from_rgb(125, 196, 228),
+            Color32::from_rgb(166, 218, 149),
+            Color32::from_rgb(110, 115, 141),
+            Color32::from_rgb(245, 169, 127),
+            Color32::from_rgb(147, 154, 183),
+            Color32::from_rgb(202, 211, 245),
+        )
+    } else {
+        (
+            Color32::from_rgb(136, 57, 239),
+            Color32::from_rgb(2, 132, 199),
+            Color32::from_rgb(21, 128, 61),
+            Color32::from_rgb(100, 116, 139),
+            Color32::from_rgb(194, 65, 12),
+            Color32::from_rgb(71, 85, 105),
+            Color32::from_rgb(30, 41, 59),
+        )
+    };
+    let mut job = egui::text::LayoutJob {
+        wrap: egui::text::TextWrapping {
+            max_width: wrap_width,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let push = |job: &mut egui::text::LayoutJob, slice: &str, color: Color32| {
+        if !slice.is_empty() {
+            job.append(
+                slice,
+                0.0,
+                egui::TextFormat {
+                    font_id: font.clone(),
+                    color,
+                    ..Default::default()
+                },
+            );
+        }
+    };
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let rest = &text[index..];
+        if rest.starts_with("//") {
+            let end = rest.find('\n').map_or(bytes.len(), |offset| index + offset);
+            push(&mut job, &text[index..end], cmt_col);
+            index = end;
+        } else if bytes[index] == b'"' {
+            let mut end = index + 1;
+            let mut escaped = false;
+            while end < bytes.len() {
+                let ch = bytes[end];
+                end += 1;
+                if escaped {
+                    escaped = false;
+                } else if ch == b'\\' {
+                    escaped = true;
+                } else if ch == b'"' {
+                    break;
+                }
+            }
+            push(&mut job, &text[index..end], str_col);
+            index = end;
+        } else if bytes[index].is_ascii_alphabetic() || bytes[index] == b'_' {
+            let mut end = index + 1;
+            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+                end += 1;
+            }
+            let ident = &text[index..end];
+            let color = match ident {
+                "fn" | "pub" | "let" | "mut" | "struct" | "impl" | "use" | "if" | "else"
+                | "for" | "in" | "match" | "return" | "const" | "self" | "true" | "false" => kw_col,
+                "f32" | "f64" | "usize" | "u32" | "i32" | "bool" | "str" | "Self" | "Some"
+                | "None" | "Option" | "Result" => ty_col,
+                _ if ident.as_bytes()[0].is_ascii_uppercase() => ty_col,
+                _ => plain_col,
+            };
+            push(&mut job, ident, color);
+            index = end;
+        } else if bytes[index].is_ascii_digit() {
+            let mut end = index + 1;
+            while end < bytes.len()
+                && (bytes[end].is_ascii_digit() || bytes[end] == b'.' || bytes[end] == b'_')
+            {
+                end += 1;
+            }
+            push(&mut job, &text[index..end], num_col);
+            index = end;
+        } else if bytes[index].is_ascii_whitespace() {
+            let mut end = index + 1;
+            while end < bytes.len() && bytes[end].is_ascii_whitespace() {
+                end += 1;
+            }
+            push(&mut job, &text[index..end], plain_col);
+            index = end;
+        } else {
+            let next = rest
+                .chars()
+                .next()
+                .map_or(bytes.len(), |ch| index + ch.len_utf8());
+            push(&mut job, &text[index..next], punct_col);
+            index = next;
+        }
+    }
+    job
 }

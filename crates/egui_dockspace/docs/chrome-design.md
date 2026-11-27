@@ -227,7 +227,7 @@ an affirmative result overlay. Pending native work is not a completed dock.
 ## Motion and platform adaptation
 
 Use the shared core motion engine and the existing defaults: structural changes
-use 200 ms EaseInOut; preview decoration uses 125 ms EaseOut. Do not add a second
+use 200 ms EaseOut; preview decoration uses 125 ms EaseOut. Do not add a second
 150 ms tab-reorder timeline. Direct drag, split/junction resize and contained
 resize follow the constrained pointer immediately, including release. Keyboard
 focus is immediate; spatial focus travel remains off by default.

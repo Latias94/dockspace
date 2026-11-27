@@ -50,7 +50,7 @@ fn float_and_redock(context: &Context, dockspace: &mut Dockspace) {
 }
 
 fn redock(context: &Context, dockspace: &mut Dockspace, floating: &FullOutput) {
-    let source = semantic_point(floating, Role::TitleBar, "Tabs");
+    let source = semantic_point(floating, Role::TitleBar, "First");
     frame(
         context,
         dockspace,

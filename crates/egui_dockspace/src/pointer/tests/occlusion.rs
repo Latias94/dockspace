@@ -150,7 +150,7 @@ fn button(pos: Pos2, pressed: bool) -> Event {
 #[test]
 fn covered_undeclared_content_does_not_block_foreground_floating_chrome() {
     for (role, label) in [
-        (Role::TitleBar, "Tabs"),
+        (Role::TitleBar, "Inspector"),
         (Role::Splitter, "Resize floating right edge"),
     ] {
         for (layer, blocked) in [

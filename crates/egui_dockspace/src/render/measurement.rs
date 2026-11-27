@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use dockspace::geometry::PaneSizing;
-use dockspace::model::{ItemId, SurfaceId, TabKey, TabLabel};
+use dockspace::model::{ItemId, RootId, SurfaceId, TabKey, TabLabel};
 use dockspace::policy::TabBarVisibility;
 use dockspace::runtime::{
     DockspaceHostFrame, DockspaceRuntimeError, DockspaceVisualId, SurfaceMeasurementAnswer,
@@ -59,6 +59,7 @@ pub(crate) struct PaintResources {
     #[cfg(feature = "native-render-support")]
     tab_visuals: OnceCell<HashMap<TabKey, DockspaceVisualId>>,
     tabs: HashMap<TabKey, TabPaintResource>,
+    root_active_items: HashMap<RootId, ItemId>,
     missing: BTreeSet<ItemId>,
 }
 
@@ -69,6 +70,7 @@ impl PaintResources {
         ui: &Ui,
         panes: &dyn PaneView,
     ) -> Result<(), DockspaceRuntimeError> {
+        self.root_active_items.clear();
         plan.visit_tab_resources(|_, key| {
             if let Some(label) = plan.tab_label(key) {
                 self.get_or_shape(key, label, ui, panes);
@@ -76,11 +78,15 @@ impl PaintResources {
         })?;
         plan.visit_surface_program(|step| {
             if let dockspace::runtime::SurfacePaintProgramStep::Operation {
+                root,
                 operation: dockspace::runtime::SurfacePaintProgramOperation::Pane(pane),
                 ..
             } = step
             {
                 self.get_or_shape(pane.item().into(), TabLabel::Item(pane.item()), ui, panes);
+                self.root_active_items
+                    .entry(root.root())
+                    .or_insert(pane.item());
             }
             Ok::<(), DockspaceRuntimeError>(())
         })
@@ -136,6 +142,10 @@ impl PaintResources {
 
     pub(crate) fn tab(&self, key: impl Into<TabKey>) -> Option<&TabPaintResource> {
         self.tabs.get(&key.into())
+    }
+
+    pub(crate) fn root_active_item(&self, root: RootId) -> Option<ItemId> {
+        self.root_active_items.get(&root).copied()
     }
 }
 

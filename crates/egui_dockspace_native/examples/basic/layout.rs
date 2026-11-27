@@ -35,37 +35,47 @@ impl NativeExampleApp {
             && self.dockspace.error_kind().is_none()
     }
 
-    pub(super) fn show_layout_controls(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            let committed_locked = self.dockspace.arrangement_locked();
-            let mut locked = committed_locked;
-            if ui
-                .add_enabled(
-                    self.controls_available(),
-                    egui::Checkbox::new(&mut locked, "Lock arrangement"),
-                )
-                .changed()
-            {
-                let request = self
-                    .dockspace
-                    .request_command(NativeCommand::SetArrangementLocked { locked });
-                self.begin_layout_action("Change arrangement lock", request);
-            }
-            if ui
-                .add_enabled(
-                    self.controls_available() && !committed_locked,
-                    egui::Button::new("Default layout"),
-                )
-                .clicked()
-            {
-                let request = self.request_default_layout();
-                self.begin_layout_action("Default layout", request);
-            }
+    pub(super) fn show_layout_bar_items(
+        &mut self,
+        ui: &mut egui::Ui,
+        inspector: Option<InspectorLocation>,
+        root_presented: bool,
+    ) {
+        let committed_locked = self.dockspace.arrangement_locked();
+        if ui
+            .add_enabled(
+                self.controls_available() && !committed_locked,
+                egui::Button::new("Default layout"),
+            )
+            .clicked()
+        {
+            let request = self.request_default_layout();
+            self.begin_layout_action("Default layout", request);
+        }
+        if !self.showcase {
             ui.menu_button("Pane inventory (8)", |ui| self.show_pane_inventory(ui));
-        });
-        #[cfg(feature = "serde")]
-        self.show_preset_controls(ui);
-        self.show_close_decisions(ui);
+            #[cfg(feature = "serde")]
+            ui.menu_button("Presets", |ui| self.show_preset_controls(ui));
+            ui.menu_button("Options", |ui| {
+                let mut locked = committed_locked;
+                if ui
+                    .add_enabled(
+                        self.controls_available(),
+                        egui::Checkbox::new(&mut locked, "Lock arrangement"),
+                    )
+                    .changed()
+                {
+                    let request = self
+                        .dockspace
+                        .request_command(NativeCommand::SetArrangementLocked { locked });
+                    self.begin_layout_action("Change arrangement lock", request);
+                }
+                ui.separator();
+                self.show_capability_status(ui, inspector, root_presented);
+                self.show_presentation_state(ui, inspector, root_presented);
+            });
+            ui.menu_button("Help", |ui| self.show_walkthrough(ui));
+        }
     }
 
     pub(super) fn all_root_profile(&self) -> bool {
@@ -436,7 +446,7 @@ impl NativeExampleApp {
         self.begin_layout_action("Reopen pane", request);
     }
 
-    fn show_close_decisions(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn show_close_decisions(&mut self, ui: &mut egui::Ui) {
         // This projection is used only for this UI pass. Core owns plans and tokens.
         let plans = self.dockspace.pending_content_close_plans();
         if plans.is_empty() {

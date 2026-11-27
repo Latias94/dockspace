@@ -6,7 +6,7 @@ use std::sync::Arc;
 use super::*;
 use crate::motion::{MotionFrame, RectMotion, Transition};
 use crate::presentation::layout::TrackWeightOverride;
-use crate::presentation::scene::{ContainedLayoutProjection, SurfacePlanScene};
+use crate::presentation::scene::{ContainedLayoutProjection, SurfacePlanScene, TabBarSceneId};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct LayoutMotionState {
@@ -171,7 +171,15 @@ impl DockEngine {
             || !target.resize_projection().is_empty()
             || has_composition(target)
             || prior.is_some_and(|scene| {
-                scene.plan().contained_projection().is_some()
+                scene
+                    .plan()
+                    .contained_projection()
+                    .is_some_and(|projection| {
+                        target
+                            .contained_records()
+                            .iter()
+                            .any(|contained| contained.root() == projection.root)
+                    })
                     || !scene.plan().resize_projection().is_empty()
                     || has_composition(scene.plan())
             }) {
@@ -191,8 +199,20 @@ impl DockEngine {
             contribution.next_motion = Some(Arc::clone(old));
             return Ok(contribution);
         }
-        let prior_panes =
-            std::cell::LazyCell::new(|| prior.map(presented_panes).unwrap_or_default());
+        let prior_snapshot =
+            std::cell::LazyCell::new(|| prior.map(presented_snapshot).unwrap_or_default());
+        let target_main_root = self
+            .workspace
+            .surface(surface)
+            .and_then(|presentation| presentation.main_root);
+        let target_tab_bars: BTreeMap<TabBarSceneId, (ItemId, LogicalRect)> = target
+            .pane_records()
+            .iter()
+            .filter_map(|pane| {
+                pane.containing_tab_bar()
+                    .map(|bar| (bar, (pane.id().item, pane.layout_bounds())))
+            })
+            .collect();
         let continuing = old.filter(|state| {
             state.coordinates == coordinates
                 && state.target.bounds() == target.bounds()
@@ -219,10 +239,8 @@ impl DockEngine {
                 })
                 .map(|track| track.motion)
                 .or_else(|| {
-                    prior_panes
-                        .get(&item)
-                        .filter(|(root, _)| *root == pane.id().root)
-                        .map(|(_, rect)| RectMotion::new(*rect))
+                    initial_pane_rect(pane, &prior_snapshot, &target_tab_bars, target_main_root)
+                        .map(RectMotion::new)
                 })
                 .unwrap_or_else(|| RectMotion::new(layout_bounds));
             motion.retarget(layout_bounds, transition, frame.now);
@@ -277,13 +295,162 @@ impl DockEngine {
     }
 }
 
-fn presented_panes(scene: &SurfacePlanScene) -> BTreeMap<ItemId, (RootId, LogicalRect)> {
-    scene
-        .plan()
-        .pane_records()
-        .iter()
-        .map(|pane| (pane.id().item, (pane.id().root, pane.layout_bounds())))
-        .collect()
+#[derive(Clone, Copy)]
+struct PriorPane {
+    root: RootId,
+    tab_bar: Option<TabBarSceneId>,
+    bounds: LogicalRect,
+    clip: LogicalRect,
+}
+
+#[derive(Default)]
+struct PriorMotionSnapshot {
+    panes: BTreeMap<ItemId, PriorPane>,
+    tab_bars: BTreeMap<TabBarSceneId, LogicalRect>,
+}
+
+fn presented_snapshot(scene: &SurfacePlanScene) -> PriorMotionSnapshot {
+    let mut snapshot = PriorMotionSnapshot::default();
+    for pane in scene.plan().pane_records() {
+        let bounds = pane.layout_bounds();
+        let tab_bar = pane.containing_tab_bar();
+        snapshot.panes.insert(
+            pane.id().item,
+            PriorPane {
+                root: pane.id().root,
+                tab_bar,
+                bounds,
+                clip: pane.clip(),
+            },
+        );
+        if let Some(bar) = tab_bar {
+            snapshot.tab_bars.insert(bar, bounds);
+        }
+    }
+    snapshot
+}
+
+fn initial_pane_rect(
+    pane: &crate::presentation::scene::PaneRecord,
+    prior: &PriorMotionSnapshot,
+    target_tab_bars: &BTreeMap<TabBarSceneId, (ItemId, LogicalRect)>,
+    target_main_root: Option<RootId>,
+) -> Option<LogicalRect> {
+    let item = pane.id().item;
+    let root = pane.id().root;
+    let layout_bounds = pane.layout_bounds();
+    let target_bar = pane.containing_tab_bar();
+
+    if let Some(&prior_pane) = prior.panes.get(&item) {
+        if prior_pane.root == root {
+            if let Some(prior_bar) = prior_pane.tab_bar
+                && target_bar != Some(prior_bar)
+                && let Some(&(survivor_item, survivor_target)) = target_tab_bars.get(&prior_bar)
+                && survivor_item != item
+                && survivor_target != prior_pane.bounds
+                && let Some(seam_start) =
+                    split_seam_start(prior_pane.bounds, survivor_target, layout_bounds)
+            {
+                return Some(seam_start);
+            }
+            return Some(prior_pane.bounds);
+        }
+        if Some(root) == target_main_root
+            && !target_bar.is_some_and(|bar| prior.tab_bars.contains_key(&bar))
+            && prior_pane.clip.width() > 0.0
+            && prior_pane.clip.height() > 0.0
+        {
+            return Some(prior_pane.clip);
+        }
+    }
+
+    // A newly revealed tab inside an existing tab group inherits that group's
+    // prior bounds so surviving siblings resize smoothly instead of snapping.
+    if let Some(bar) = target_bar
+        && let Some(&prior_bar_bounds) = prior.tab_bars.get(&bar)
+    {
+        return Some(prior_bar_bounds);
+    }
+
+    // A newly visible pane split horizontally off an existing tab group opens
+    // from the shared outer edge so neither pane overlaps the other's tab bar.
+    for (&bar, &prior_bar_bounds) in &prior.tab_bars {
+        if bar.root != root || Some(bar) == target_bar {
+            continue;
+        }
+        let Some(&(_, survivor_target)) = target_tab_bars.get(&bar) else {
+            continue;
+        };
+        if survivor_target == prior_bar_bounds {
+            continue;
+        }
+        if let Some(seam_start) =
+            horizontal_split_seam_start(prior_bar_bounds, survivor_target, layout_bounds)
+        {
+            return Some(seam_start);
+        }
+    }
+
+    None
+}
+
+fn horizontal_split_seam_start(
+    prior: LogicalRect,
+    survivor: LogicalRect,
+    split: LogicalRect,
+) -> Option<LogicalRect> {
+    const EPSILON: f64 = 1.0;
+    let same_vertical = (split.y() - prior.y()).abs() <= EPSILON
+        && (split.max().y() - prior.max().y()).abs() <= EPSILON
+        && (survivor.y() - prior.y()).abs() <= EPSILON
+        && (survivor.max().y() - prior.max().y()).abs() <= EPSILON;
+    if !same_vertical {
+        return None;
+    }
+    let seam_width = split.width().min(1.0);
+    if (survivor.x() - prior.x()).abs() <= EPSILON
+        && (split.max().x() - prior.max().x()).abs() <= EPSILON
+        && survivor.max().x() <= split.x() + EPSILON
+    {
+        return LogicalRect::new(
+            prior.max().x() - seam_width,
+            split.y(),
+            seam_width,
+            split.height(),
+        )
+        .ok();
+    }
+    if (split.x() - prior.x()).abs() <= EPSILON
+        && (survivor.max().x() - prior.max().x()).abs() <= EPSILON
+        && split.max().x() <= survivor.x() + EPSILON
+    {
+        return LogicalRect::new(prior.x(), split.y(), seam_width, split.height()).ok();
+    }
+    None
+}
+
+fn split_seam_start(
+    prior: LogicalRect,
+    survivor: LogicalRect,
+    split: LogicalRect,
+) -> Option<LogicalRect> {
+    if let Some(horizontal) = horizontal_split_seam_start(prior, survivor, split) {
+        return Some(horizontal);
+    }
+    const EPSILON: f64 = 1.0;
+    let same_horizontal = (split.x() - prior.x()).abs() <= EPSILON
+        && (split.max().x() - prior.max().x()).abs() <= EPSILON
+        && (survivor.x() - prior.x()).abs() <= EPSILON
+        && (survivor.max().x() - prior.max().x()).abs() <= EPSILON;
+    if same_horizontal
+        && ((survivor.y() <= split.y() && survivor.max().y() <= split.y() + EPSILON)
+            || (split.y() <= survivor.y() && split.max().y() <= survivor.y() + EPSILON))
+        && split.y() >= prior.y() - EPSILON
+        && split.max().y() <= prior.max().y() + EPSILON
+    {
+        return Some(split);
+    }
+    None
 }
 
 impl CoreHostFrame {

@@ -77,12 +77,12 @@ impl DropGuide {
     pub fn paint_cue(&self, ui: &Ui) {
         ui.painter().rect_stroke(
             self.cue_rect,
-            0.0,
+            CornerRadius::same(2),
             Stroke::new(1.0, self.cue_color),
             StrokeKind::Inside,
         );
         ui.painter()
-            .rect_filled(self.emphasis_rect, 0.0, self.cue_color);
+            .rect_filled(self.emphasis_rect, CornerRadius::same(1), self.cue_color);
     }
 }
 
@@ -133,7 +133,7 @@ pub(crate) fn describe_guide_button(
         rect,
         fill,
         stroke: Stroke::new(1.0, outline_color),
-        corner_radius: CornerRadius::same(4),
+        corner_radius: CornerRadius::same(6),
         cue_rect,
         emphasis_rect,
         cue_color,

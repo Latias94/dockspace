@@ -151,15 +151,21 @@ pub(crate) fn materialize_presentation_sample(
                                     .width()
                                     .maximum()
                                     .map_or(sampled_bounds.max().x(), |_| {
-                                        (sampled_bounds.x() + maximum.width())
-                                            .min(sampled_bounds.max().x())
+                                        cap_upper(
+                                            sampled_bounds.x(),
+                                            sampled_bounds.max().x(),
+                                            maximum.width(),
+                                        )
                                     }),
                                 sizing
                                     .height()
                                     .maximum()
                                     .map_or(sampled_bounds.max().y(), |_| {
-                                        (sampled_bounds.y() + maximum.height())
-                                            .min(sampled_bounds.max().y())
+                                        cap_upper(
+                                            sampled_bounds.y(),
+                                            sampled_bounds.max().y(),
+                                            maximum.height(),
+                                        )
                                     }),
                             )?,
                         )?;
@@ -291,6 +297,14 @@ pub(crate) fn materialize_presentation_sample(
         .finish_presentation_sample()
         .map_err(SceneCompilationError::from)?;
     Ok(sampled)
+}
+
+fn cap_upper(min: f64, max: f64, limit: f64) -> f64 {
+    let mut upper = (min + limit).min(max);
+    if upper - min > limit {
+        upper = upper.next_down().max(min);
+    }
+    upper
 }
 
 #[cfg(test)]

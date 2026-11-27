@@ -51,10 +51,10 @@ pub enum MotionMode {
 
 /// Runtime settings frozen by the host for one outer update.
 ///
-/// Defaults use a 200 ms tween for layout, a 125 ms tween for drop preview, and
-/// immediate pointer focus. Unknown system preferences allow motion by default;
-/// applications can choose a conservative fallback or disable motion entirely.
-/// An explicit reduced-motion preference always takes priority.
+/// Defaults use a 200 ms ease-out tween for layout, a 125 ms ease-out tween for
+/// drop preview, and immediate pointer focus. Unknown system preferences allow
+/// motion by default; applications can choose a conservative fallback or disable
+/// motion entirely. An explicit reduced-motion preference always takes priority.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MotionSettings {
     /// Global motion policy.
@@ -76,7 +76,7 @@ impl Default for MotionSettings {
             unknown_prefers_reduced_motion: false,
             layout: Transition::Tween {
                 duration: Duration::from_millis(200),
-                curve: Curve::EaseInOut,
+                curve: Curve::EaseOut,
             },
             drop_preview: Transition::Tween {
                 duration: Duration::from_millis(125),

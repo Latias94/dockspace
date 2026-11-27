@@ -23,15 +23,21 @@ use editor::{DemoPanes, apply_editor_commands, demo_layout, run_editor};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let physical = std::env::args().nth(1).as_deref() == Some("--physical-smoke");
-    let exercise = if physical {
+    let showcase = std::env::args().nth(1).as_deref() == Some("--showcase");
+    let exercise = if physical || showcase {
         if std::env::args().len() != 2 {
-            return Err("--physical-smoke runs alone; --exercise uses synthetic input".into());
+            return Err(
+                "--physical-smoke and --showcase run alone; --exercise uses synthetic input".into(),
+            );
         }
         None
     } else {
         exercise::Exercise::from_args()?
     };
     let context = editor::new_context();
+    if showcase {
+        context.set_theme(egui::Theme::Dark);
+    }
     if exercise.is_some() || physical {
         context.enable_accesskit();
     }
@@ -41,7 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_inner_size(backend::dpi::LogicalSize::new(1280.0, 820.0)),
         ..Default::default()
     };
-    let panes = DemoPanes::new();
+    let mut panes = DemoPanes::new();
+    panes.showcase = showcase;
     let physical_smoke = physical.then(|| physical_smoke::PhysicalSmoke::new(&panes));
     let mut app = Workbench {
         dockspace: Dockspace::builder("workbench", demo_layout())
