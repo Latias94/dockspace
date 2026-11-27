@@ -23,8 +23,18 @@ pub enum NativeError {
     Renderer(#[from] egui_wgpu::WgpuError),
     /// A browser graphics backend did not finish its asynchronous requests.
     #[cfg(all(feature = "web", target_arch = "wasm32"))]
-    #[error("{backend} renderer initialization timed out after 10 seconds")]
-    RendererTimeout { backend: &'static str },
+    #[error("{backend} renderer initialization timed out after {timeout_seconds} seconds")]
+    RendererTimeout {
+        backend: &'static str,
+        timeout_seconds: u32,
+    },
+    /// A browser graphics backend initialized but could not present its first frame.
+    #[cfg(all(feature = "web", target_arch = "wasm32"))]
+    #[error("{backend} renderer could not present its first frame ({reason})")]
+    InitialPresentationFailed {
+        backend: &'static str,
+        reason: &'static str,
+    },
     /// The application's frame callback failed.
     #[error("native application failed: {0}")]
     Application(#[source] Box<dyn Error + Send + Sync>),

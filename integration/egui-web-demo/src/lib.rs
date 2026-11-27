@@ -278,6 +278,14 @@ impl Workbench {
             "tabAccent": self.panes.tab_accent,
             "darkMode": frame.context.global_style().visuals.dark_mode,
         });
+        if !test.canvas.is_connected()
+            && let Some(fresh) = web_sys::window()
+                .and_then(|window| window.document())
+                .and_then(|document| document.get_element_by_id("dockspace-canvas"))
+                .and_then(|element| element.dyn_into::<web_sys::HtmlCanvasElement>().ok())
+        {
+            test.canvas = fresh;
+        }
         let _ = test
             .canvas
             .set_attribute("data-dockspace-state", &state.to_string());

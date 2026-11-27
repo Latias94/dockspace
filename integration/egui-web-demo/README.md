@@ -10,10 +10,12 @@ multiview are outside this demo's scope.
 
 The `egui_dockspace/web` host owns the complete egui output and renderer
 settlement. Its WGPU initialization is asynchronous; it prefers WebGPU and
-falls back to WebGL2 if WebGPU initialization fails or takes more than ten seconds.
-Application panes and toolbar code are shared directly
-with the desktop example. The demo observes live `prefers-reduced-motion`
-changes; manual toolbar choices persist until another system preference change.
+falls back to WebGL2 if WebGPU initialization fails, takes more than five
+seconds, or cannot present its first frame (replacing the canvas element when
+WebGPU has already claimed its context). Application panes and toolbar code are
+shared directly with the desktop example. The demo observes live
+`prefers-reduced-motion` changes; manual toolbar choices persist until another
+system preference change.
 
 Startup shows Wasm download progress, followed by compilation and graphics
 initialization. The byte total comes from the built Wasm, so compressed transfers

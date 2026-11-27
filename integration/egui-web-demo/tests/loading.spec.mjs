@@ -140,7 +140,7 @@ test('a stalled WebGPU request falls back to WebGL2 and ignores late completion'
   await page.clock.install();
   await page.goto('demo/egui/', { waitUntil: 'domcontentloaded' });
   await expect.poll(() => page.evaluate(() => typeof window.finishWebGpuRequest)).toBe('function');
-  await page.clock.fastForward(11_000);
+  await page.clock.fastForward(6_000);
   await expect(status(page)).toHaveAttribute('data-state', 'ready');
   await expect(loading(page)).toBeHidden();
   const contexts = await page.evaluate(() => window.graphicsContexts);
@@ -149,6 +149,184 @@ test('a stalled WebGPU request falls back to WebGL2 and ignores late completion'
   await page.evaluate(() => window.finishWebGpuRequest(null));
   await expect(status(page)).toHaveAttribute('data-state', 'ready');
   expect(errors).toEqual([]);
+});
+
+test('a WebGPU first-frame surface failure replaces the canvas and falls back to WebGL2', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    window.graphicsContexts = [];
+    window.webgpuConfigureAttempts = 0;
+    document.addEventListener('DOMContentLoaded', () => {
+      const initial = document.getElementById('dockspace-canvas');
+      if (initial) initial.__initialCanvas = true;
+    });
+    const limits = {
+      maxTextureDimension1D: 8192,
+      maxTextureDimension2D: 8192,
+      maxTextureDimension3D: 2048,
+      maxTextureArrayLayers: 256,
+      maxBindGroups: 4,
+      maxBindGroupsPlusVertexBuffers: 24,
+      maxBindingsPerBindGroup: 1000,
+      maxDynamicUniformBuffersPerPipelineLayout: 8,
+      maxDynamicStorageBuffersPerPipelineLayout: 4,
+      maxSampledTexturesPerShaderStage: 16,
+      maxSamplersPerShaderStage: 16,
+      maxStorageBuffersPerShaderStage: 8,
+      maxStorageTexturesPerShaderStage: 4,
+      maxUniformBuffersPerShaderStage: 12,
+      maxUniformBufferBindingSize: 65536,
+      maxStorageBufferBindingSize: 134217728,
+      minUniformBufferOffsetAlignment: 256,
+      minStorageBufferOffsetAlignment: 256,
+      maxVertexBuffers: 8,
+      maxBufferSize: 268435456,
+      maxVertexAttributes: 16,
+      maxVertexBufferArrayStride: 2048,
+      maxInterStageShaderVariables: 16,
+      maxColorAttachments: 8,
+      maxColorAttachmentBytesPerSample: 32,
+      maxComputeWorkgroupStorageSize: 16384,
+      maxComputeInvocationsPerWorkgroup: 256,
+      maxComputeWorkgroupSizeX: 256,
+      maxComputeWorkgroupSizeY: 256,
+      maxComputeWorkgroupSizeZ: 64,
+      maxComputeWorkgroupsPerDimension: 65535,
+    };
+    const fakeQueue = {
+      writeBuffer() {},
+      writeTexture() {},
+      submit() {},
+      onSubmittedWorkDone: async () => {},
+    };
+    const fakeDevice = {
+      features: new Set(),
+      limits,
+      queue: fakeQueue,
+      lost: new Promise(() => {}),
+      destroy() {},
+      pushErrorScope() {},
+      popErrorScope: async () => null,
+      createShaderModule: () => ({}),
+      createBindGroupLayout: () => ({}),
+      createPipelineLayout: () => ({}),
+      createRenderPipeline: () => ({}),
+      createSampler: () => ({}),
+      createBindGroup: () => ({}),
+      createTexture: () => ({ createView: () => ({}), destroy() {} }),
+      createBuffer: desc => {
+        const buf = new ArrayBuffer(Math.max(256, Number(desc?.size ?? 256)));
+        return {
+          getMappedRange: () => buf,
+          unmap() {},
+          destroy() {},
+        };
+      },
+      createCommandEncoder: () => ({
+        beginRenderPass: () => ({
+          setPipeline() {},
+          setBindGroup() {},
+          setVertexBuffer() {},
+          setIndexBuffer() {},
+          setViewport() {},
+          setScissorRect() {},
+          drawIndexed() {},
+          end() {},
+        }),
+        finish: () => ({}),
+      }),
+    };
+    Object.defineProperty(navigator, 'gpu', {
+      value: {
+        getPreferredCanvasFormat: () => 'bgra8unorm',
+        requestAdapter: async () => ({
+          features: new Set(),
+          limits,
+          info: { vendor: 'mock', architecture: 'mock', device: 'mock', description: 'mock' },
+          requestDevice: async () => fakeDevice,
+        }),
+      },
+    });
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+      window.graphicsContexts.push(type);
+      if (type === 'webgpu') {
+        this.__claimedWebGpu = true;
+        return {
+          configure() {
+            window.webgpuConfigureAttempts += 1;
+            throw new DOMException('Simulated WebGPU canvas configure failure');
+          },
+          unconfigure() {},
+          getCurrentTexture() {
+            throw new DOMException('Simulated WebGPU getCurrentTexture failure');
+          },
+        };
+      }
+      if (type === 'webgl2' && this.__claimedWebGpu) {
+        // Mirror HTML Canvas spec: once claimed by WebGPU, WebGL2 must return null.
+        return null;
+      }
+      return getContext.call(this, type, ...args);
+    };
+  });
+  await page.goto('demo/egui/?test=1', { waitUntil: 'domcontentloaded' });
+  await expect(status(page)).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+  await expect(loading(page)).toBeHidden();
+  const result = await page.evaluate(() => ({
+    contexts: window.graphicsContexts,
+    configureAttempts: window.webgpuConfigureAttempts,
+    stillInitialCanvas: Boolean(document.getElementById('dockspace-canvas')?.__initialCanvas),
+    stateAttr: Boolean(document.getElementById('dockspace-canvas')?.getAttribute('data-dockspace-state')),
+  }));
+  expect(result.contexts).toContain('webgpu');
+  expect(result.contexts).toContain('webgl2');
+  expect(result.configureAttempts).toBeGreaterThanOrEqual(3);
+  expect(result.stillInitialCanvas).toBe(false);
+  expect(result.stateAttr).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('an unhandled async rejection during graphics startup shows a readable error', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.requestAnimationFrame = () => 1;
+  });
+  await page.goto('demo/egui/', { waitUntil: 'domcontentloaded' });
+  await expect(loading(page)).toHaveAttribute('data-phase', 'graphics');
+  await page.evaluate(() => {
+    Promise.reject(new Error('Simulated asynchronous GPU failure'));
+  });
+  await expect(status(page)).toHaveAttribute('data-state', 'error');
+  await expect(loading(page)).toHaveAttribute('data-phase', 'error');
+  await expect(page.locator('#demo-loading-detail')).toContainText('Simulated asynchronous GPU failure');
+  await expect(page.getByRole('button', { name: 'Retry loading' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Try WebGL2' })).toBeVisible();
+});
+
+test('hidden tabs defer the slow startup warning until visible', async ({ page }) => {
+  await page.clock.install();
+  await page.addInitScript(() => {
+    let hidden = true;
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      get: () => hidden,
+    });
+    window.revealTab = () => {
+      hidden = false;
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    window.requestAnimationFrame = () => 1;
+  });
+  await page.goto('demo/egui/', { waitUntil: 'domcontentloaded' });
+  await expect(loading(page)).toHaveAttribute('data-phase', 'graphics');
+  await page.clock.fastForward(20_000);
+  await expect(page.locator('#demo-loading-hint')).toBeHidden();
+  await expect(page.getByRole('link', { name: 'Try WebGL2' })).toBeHidden();
+  await page.evaluate(() => window.revealTab());
+  await page.clock.fastForward(15_000);
+  await expect(page.locator('#demo-loading-hint')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Try WebGL2' })).toBeVisible();
 });
 
 test('explicit WebGL2 startup bypasses WebGPU requests', async ({ page }) => {

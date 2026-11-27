@@ -1,11 +1,17 @@
 //! Browser startup and asynchronous GPU initialization for a single canvas.
 
-use std::{cell::RefCell, pin::pin, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    pin::pin,
+    rc::Rc,
+    sync::Arc,
+};
 
 use egui::Context;
 use egui_wgpu::wgpu;
 use futures_util::future::{Either, select};
 use gloo_timers::future::TimeoutFuture;
+use wasm_bindgen::JsCast;
 use web_sys::HtmlCanvasElement;
 use web_time::Instant;
 use winit::{
@@ -19,9 +25,13 @@ use winit::{
 use super::{
     FrameControl, NativeApp, NativeError, WinitIntegration,
     frame::HostWindow,
-    renderer::WgpuRenderer,
+    renderer::{DropReason, WgpuRenderer},
     repaint::{Repaint, RepaintRequest},
 };
+
+const WEBGPU_INIT_TIMEOUT_SECONDS: u32 = 5;
+const WEBGL_INIT_TIMEOUT_SECONDS: u32 = 10;
+const MAX_INITIAL_PRESENT_FAILURES: u8 = 3;
 
 /// Configuration for one application-owned browser canvas.
 ///
@@ -41,7 +51,8 @@ pub struct WebOptions {
 /// Browser graphics selection for a complete-output host.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WebRenderer {
-    /// Try WebGPU, then WebGL2 if initialization fails or takes over ten seconds.
+    /// Try WebGPU, then WebGL2 if initialization fails, takes over five seconds,
+    /// or cannot present the first frame.
     #[default]
     Auto,
     /// Use WebGL2 directly, including when the browser advertises WebGPU.
@@ -60,29 +71,59 @@ impl WebOptions {
     }
 }
 
+enum InitOutcome {
+    Ready(WgpuRenderer),
+    RetryWebGlOnFreshCanvas(NativeError),
+    Failed(NativeError),
+}
+
 async fn initialize_renderer(
     display: OwnedDisplayHandle,
     window: Arc<Window>,
     clear_color: egui::Color32,
     renderer: WebRenderer,
-) -> Result<WgpuRenderer, NativeError> {
+) -> InitOutcome {
     if renderer == WebRenderer::Auto {
+        let canvas_claimed = Cell::new(false);
         match initialize_backend(
             display.clone(),
             Arc::clone(&window),
             clear_color,
             wgpu::Backends::BROWSER_WEBGPU,
             "WebGPU",
+            WEBGPU_INIT_TIMEOUT_SECONDS,
+            &canvas_claimed,
         )
         .await
         {
-            Ok(renderer) => return Ok(renderer),
+            Ok(renderer) => return InitOutcome::Ready(renderer),
             Err(error) => {
-                web_sys::console::warn_1(&format!("{error}. Trying WebGL2 instead.").into())
+                if canvas_claimed.get() {
+                    web_sys::console::warn_1(
+                        &format!("{error}. Replacing canvas to fall back to WebGL2 cleanly.")
+                            .into(),
+                    );
+                    return InitOutcome::RetryWebGlOnFreshCanvas(error);
+                }
+                web_sys::console::warn_1(&format!("{error}. Trying WebGL2 instead.").into());
             }
         }
     }
-    initialize_backend(display, window, clear_color, wgpu::Backends::GL, "WebGL2").await
+    let canvas_claimed = Cell::new(false);
+    match initialize_backend(
+        display,
+        window,
+        clear_color,
+        wgpu::Backends::GL,
+        "WebGL2",
+        WEBGL_INIT_TIMEOUT_SECONDS,
+        &canvas_claimed,
+    )
+    .await
+    {
+        Ok(renderer) => InitOutcome::Ready(renderer),
+        Err(error) => InitOutcome::Failed(error),
+    }
 }
 
 async fn initialize_backend(
@@ -91,16 +132,42 @@ async fn initialize_backend(
     clear_color: egui::Color32,
     backends: wgpu::Backends,
     backend: &'static str,
+    timeout_seconds: u32,
+    canvas_claimed: &Cell<bool>,
 ) -> Result<WgpuRenderer, NativeError> {
-    let initialization = WgpuRenderer::new_with_backends(display, window, clear_color, backends);
-    match select(pin!(initialization), pin!(TimeoutFuture::new(10_000))).await {
+    let initialization = WgpuRenderer::new_with_backends_and_claim(
+        display,
+        window,
+        clear_color,
+        backends,
+        |claimed| canvas_claimed.set(claimed),
+    );
+    match select(
+        pin!(initialization),
+        pin!(TimeoutFuture::new(timeout_seconds * 1_000)),
+    )
+    .await
+    {
         Either::Left((result, _)) => {
             let renderer = result?;
             web_sys::console::info_1(&format!("Dockspace renderer initialized: {backend}").into());
             Ok(renderer)
         }
-        Either::Right(((), _)) => Err(NativeError::RendererTimeout { backend }),
+        Either::Right(((), _)) => Err(NativeError::RendererTimeout {
+            backend,
+            timeout_seconds,
+        }),
     }
+}
+
+fn replace_canvas_in_dom(old: &HtmlCanvasElement) -> Option<HtmlCanvasElement> {
+    let parent = old.parent_node()?;
+    let cloned = old.clone_node_with_deep(true).ok()?;
+    let fresh = cloned.dyn_into::<HtmlCanvasElement>().ok()?;
+    let _ = fresh.remove_attribute("width");
+    let _ = fresh.remove_attribute("height");
+    parent.replace_child(&fresh, old).ok()?;
+    Some(fresh)
 }
 
 /// Starts a complete-output application in one browser canvas.
@@ -134,14 +201,18 @@ pub fn run_web(
             let _ = repaint_proxy.send_event(UserEvent::Repaint(request));
         }
     });
+    let active_renderer = options.renderer;
     event_loop.spawn_app(Runner {
         proxy,
         context,
         options,
+        active_renderer,
         app,
         on_error,
         window: None,
         repaint: Repaint::default(),
+        has_presented: false,
+        initial_present_failures: 0,
     });
     Ok(())
 }
@@ -154,7 +225,7 @@ enum UserEvent {
 struct InitializingWindow {
     integration: WinitIntegration,
     window: Arc<Window>,
-    result: Rc<RefCell<Option<Result<WgpuRenderer, NativeError>>>>,
+    result: Rc<RefCell<Option<InitOutcome>>>,
 }
 
 enum WebWindow {
@@ -175,10 +246,13 @@ struct Runner<A, E> {
     proxy: EventLoopProxy<UserEvent>,
     context: Context,
     options: WebOptions,
+    active_renderer: WebRenderer,
     app: A,
     on_error: E,
     window: Option<WebWindow>,
     repaint: Repaint,
+    has_presented: bool,
+    initial_present_failures: u8,
 }
 
 impl<A: NativeApp, E: FnMut(NativeError)> Runner<A, E> {
@@ -206,16 +280,32 @@ impl<A: NativeApp, E: FnMut(NativeError)> Runner<A, E> {
         }));
         let display = event_loop.owned_display_handle();
         let clear_color = self.options.clear_color;
-        let renderer = self.options.renderer;
+        let renderer = self.active_renderer;
         let proxy = self.proxy.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let renderer = initialize_renderer(display, window, clear_color, renderer).await;
+            let outcome = initialize_renderer(display, window, clear_color, renderer).await;
             if let Some(completion) = completion.upgrade() {
-                completion.replace(Some(renderer));
+                completion.replace(Some(outcome));
                 let _ = proxy.send_event(UserEvent::GpuReady);
             }
         });
         Ok(())
+    }
+
+    fn fallback_to_webgl(&mut self, event_loop: &ActiveEventLoop, original_error: NativeError) {
+        // Drop the existing window and surface first so event listeners and GPU
+        // resources detach before the canvas element is replaced in the DOM.
+        self.window = None;
+        let Some(fresh_canvas) = replace_canvas_in_dom(&self.options.canvas) else {
+            self.fail(event_loop, original_error);
+            return;
+        };
+        self.options.canvas = fresh_canvas;
+        self.active_renderer = WebRenderer::WebGl;
+        self.initial_present_failures = 0;
+        if let Err(error) = self.open(event_loop) {
+            self.fail(event_loop, error);
+        }
     }
 
     fn finish_initialization(&mut self, event_loop: &ActiveEventLoop) {
@@ -226,9 +316,12 @@ impl<A: NativeApp, E: FnMut(NativeError)> Runner<A, E> {
             self.window = Some(state);
             return;
         };
-        let result = state.result.borrow_mut().take();
-        match result {
-            Some(Ok(renderer)) => {
+        let outcome = state.result.borrow_mut().take();
+        match outcome {
+            Some(InitOutcome::Ready(renderer)) => {
+                if renderer.backend() == wgpu::Backend::Gl {
+                    self.active_renderer = WebRenderer::WebGl;
+                }
                 state.integration.set_max_texture_side(
                     renderer.device.limits().max_texture_dimension_2d as usize,
                 );
@@ -237,27 +330,88 @@ impl<A: NativeApp, E: FnMut(NativeError)> Runner<A, E> {
                     integration: state.integration,
                     window: state.window,
                 }));
+                self.initial_present_failures = 0;
                 self.repaint.resume();
                 self.repaint.request(Instant::now());
             }
-            Some(Err(error)) => self.fail(event_loop, error),
+            Some(InitOutcome::RetryWebGlOnFreshCanvas(error)) => {
+                drop(state);
+                self.fallback_to_webgl(event_loop, error);
+            }
+            Some(InitOutcome::Failed(error)) => self.fail(event_loop, error),
             None => self.window = Some(WebWindow::Initializing(state)),
         }
     }
 
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: NativeError) {
+        self.window = None;
         (self.on_error)(error);
         event_loop.exit();
+    }
+
+    fn handle_initial_present_failure(&mut self, event_loop: &ActiveEventLoop, reason: DropReason) {
+        let backend = match self.active_renderer {
+            WebRenderer::Auto => "WebGPU",
+            WebRenderer::WebGl => "WebGL2",
+        };
+        let error = NativeError::InitialPresentationFailed {
+            backend,
+            reason: reason.description(),
+        };
+        if self.active_renderer == WebRenderer::Auto {
+            web_sys::console::warn_1(
+                &format!("{error}. Replacing canvas to fall back to WebGL2.").into(),
+            );
+            self.fallback_to_webgl(event_loop, error);
+        } else {
+            self.fail(event_loop, error);
+        }
     }
 
     fn redraw(&mut self, event_loop: &ActiveEventLoop) {
         let Some(WebWindow::Ready(state)) = &mut self.window else {
             return;
         };
-        match state.render(event_loop, &self.context, &mut self.app, &mut self.repaint) {
-            Ok(FrameControl::Continue) => {}
-            Ok(FrameControl::Repaint) => self.repaint.request(Instant::now()),
-            Ok(FrameControl::Exit) => event_loop.exit(),
+        let render_result =
+            state.render(event_loop, &self.context, &mut self.app, &mut self.repaint);
+        let drop_reason = state.renderer.drop_reason;
+        match render_result {
+            Ok(control) => {
+                if drop_reason.is_none() {
+                    self.has_presented = true;
+                    self.initial_present_failures = 0;
+                } else if !self.has_presented
+                    && let Some(reason) = drop_reason
+                {
+                    match reason {
+                        DropReason::ZeroSized | DropReason::Occluded => {
+                            // Keep a paced startup check alive so a canvas that starts
+                            // 0x0 or hidden still presents once layout settles.
+                            self.repaint.request(Instant::now());
+                        }
+                        DropReason::Validation => {
+                            self.handle_initial_present_failure(event_loop, reason);
+                            return;
+                        }
+                        DropReason::Lost
+                        | DropReason::RecreationFailed
+                        | DropReason::Outdated
+                        | DropReason::TimedOut => {
+                            self.initial_present_failures =
+                                self.initial_present_failures.saturating_add(1);
+                            if self.initial_present_failures >= MAX_INITIAL_PRESENT_FAILURES {
+                                self.handle_initial_present_failure(event_loop, reason);
+                                return;
+                            }
+                        }
+                    }
+                }
+                match control {
+                    FrameControl::Continue => {}
+                    FrameControl::Repaint => self.repaint.request(Instant::now()),
+                    FrameControl::Exit => event_loop.exit(),
+                }
+            }
             Err(error) => self.fail(event_loop, error),
         }
     }

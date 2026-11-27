@@ -549,6 +549,7 @@ dependencies = [
  "gloo-timers",
  "pollster",
  "thiserror 2.0.21",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",

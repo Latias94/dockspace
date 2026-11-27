@@ -9,7 +9,6 @@ const progress = document.getElementById('demo-loading-progress');
 const hint = document.getElementById('demo-loading-hint');
 const retry = document.getElementById('demo-retry');
 const webgl = document.getElementById('demo-webgl');
-const canvas = document.getElementById('dockspace-canvas');
 const fullscreen = document.getElementById('demo-fullscreen');
 const build = document.querySelector('meta[name="dockspace-build"]').content;
 const pkg = new URL(`./pkg/${build}/`, import.meta.url);
@@ -29,7 +28,7 @@ if (document.fullscreenEnabled) {
       } else {
         await document.documentElement.requestFullscreen();
       }
-      canvas.focus({ preventScroll: true });
+      document.getElementById('dockspace-canvas')?.focus({ preventScroll: true });
     } catch (error) {
       console.error('Fullscreen could not be opened.', error);
     }
@@ -40,6 +39,69 @@ if (document.fullscreenEnabled) {
 }
 
 let slowTimer;
+
+function isSettled() {
+  return status.dataset.state === 'ready' || status.dataset.state === 'error';
+}
+
+function scheduleSlowHint(phase) {
+  clearTimeout(slowTimer);
+  if (isSettled() || document.hidden) return;
+  slowTimer = setTimeout(() => {
+    if (isSettled() || document.hidden) return;
+    hint.textContent = phase === 'graphics'
+      ? 'Graphics startup is taking longer than usual. Try WebGL2, or check graphics acceleration in your browser settings.'
+      : phase === 'download' || phase === 'bootstrap'
+      ? 'This is taking longer than usual. Check your connection, or try loading again.'
+      : 'This is taking longer than usual. You can keep waiting, or try loading again.';
+    hint.hidden = false;
+    retry.hidden = false;
+    webgl.hidden = phase !== 'graphics' || usingWebgl;
+  }, 15_000);
+}
+
+function onVisibilityChange() {
+  if (isSettled()) return;
+  if (document.hidden) {
+    clearTimeout(slowTimer);
+  } else if (hint.hidden) {
+    scheduleSlowHint(loading.dataset.phase);
+  }
+}
+
+document.addEventListener('visibilitychange', onVisibilityChange);
+
+function describeError(error) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === 'string' && error) return error;
+  return String(error ?? 'Unknown error');
+}
+
+function failStartup(error) {
+  if (isSettled()) return;
+  status.textContent = `The workbench could not start: ${describeError(error)}`;
+  status.dataset.state = 'error';
+  observeStatus();
+}
+
+function onStartupError(event) {
+  if (isSettled()) return;
+  failStartup(event.error ?? event.message ?? 'Unexpected browser error');
+}
+
+function onStartupRejection(event) {
+  if (isSettled()) return;
+  failStartup(event.reason ?? 'Unhandled promise rejection');
+}
+
+window.addEventListener('error', onStartupError);
+window.addEventListener('unhandledrejection', onStartupRejection);
+
+function cleanupStartupListeners() {
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+  window.removeEventListener('error', onStartupError);
+  window.removeEventListener('unhandledrejection', onStartupRejection);
+}
 
 function setPhase(phase, label, description) {
   loading.dataset.phase = phase;
@@ -53,26 +115,18 @@ function setPhase(phase, label, description) {
     if (step.dataset.step === phase) step.setAttribute('aria-current', 'step');
     else step.removeAttribute('aria-current');
   }
-  clearTimeout(slowTimer);
-  slowTimer = setTimeout(() => {
-    hint.textContent = phase === 'graphics'
-      ? 'Graphics startup is taking longer than usual. Try WebGL2, or check graphics acceleration in your browser settings.'
-      : phase === 'download' || phase === 'bootstrap'
-      ? 'This is taking longer than usual. Check your connection, or try loading again.'
-      : 'This is taking longer than usual. You can keep waiting, or try loading again.';
-    hint.hidden = false;
-    retry.hidden = false;
-    webgl.hidden = phase !== 'graphics' || usingWebgl;
-  }, 15_000);
+  scheduleSlowHint(phase);
 }
 
 function observeStatus() {
   if (status.dataset.state === 'ready') {
     clearTimeout(slowTimer);
+    cleanupStartupListeners();
     loading.hidden = true;
     stage.setAttribute('aria-busy', 'false');
   } else if (status.dataset.state === 'error') {
     clearTimeout(slowTimer);
+    cleanupStartupListeners();
     if (loading.dataset.phase === 'graphics' && !usingWebgl) webgl.hidden = false;
     loading.hidden = false;
     loading.dataset.phase = 'error';

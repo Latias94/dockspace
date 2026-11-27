@@ -50,6 +50,8 @@ impl DropReason {
 
 pub(super) struct WgpuRenderer {
     pub(super) drop_reason: Option<DropReason>,
+    #[cfg(all(feature = "web", target_arch = "wasm32"))]
+    backend: wgpu::Backend,
     clear_color: wgpu::Color,
     instance: wgpu::Instance,
     surface: Option<wgpu::Surface<'static>>,
@@ -61,9 +63,61 @@ pub(super) struct WgpuRenderer {
     pub(super) pending_textures: egui::TexturesDelta,
 }
 
+fn required_limits_candidates(
+    backend: wgpu::Backend,
+    adapter_limits: &wgpu::Limits,
+) -> Vec<wgpu::Limits> {
+    let downlevel = wgpu::Limits::downlevel_webgl2_defaults()
+        .using_resolution(adapter_limits.clone())
+        .using_alignment(adapter_limits.clone());
+    if backend == wgpu::Backend::Gl {
+        return vec![downlevel];
+    }
+    let primary = wgpu::Limits::default()
+        .using_resolution(adapter_limits.clone())
+        .using_alignment(adapter_limits.clone());
+    vec![primary, downlevel]
+}
+
+fn clamped_surface_size(
+    size: winit::dpi::PhysicalSize<u32>,
+    max_texture_dimension_2d: u32,
+) -> Option<(u32, u32)> {
+    if size.width == 0 || size.height == 0 {
+        return None;
+    }
+    let limit = max_texture_dimension_2d.max(1);
+    Some((size.width.min(limit), size.height.min(limit)))
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn effective_screen_descriptor(
+    physical_size: winit::dpi::PhysicalSize<u32>,
+    clamped_size: (u32, u32),
+    pixels_per_point: f32,
+) -> egui_wgpu::ScreenDescriptor {
+    let effective_ppp =
+        if clamped_size.0 == physical_size.width && clamped_size.1 == physical_size.height {
+            pixels_per_point
+        } else {
+            let scale_x = clamped_size.0 as f32 / physical_size.width.max(1) as f32;
+            let scale_y = clamped_size.1 as f32 / physical_size.height.max(1) as f32;
+            (pixels_per_point * scale_x.min(scale_y)).max(f32::EPSILON)
+        };
+    egui_wgpu::ScreenDescriptor {
+        size_in_pixels: [clamped_size.0, clamped_size.1],
+        pixels_per_point: effective_ppp,
+    }
+}
+
 impl WgpuRenderer {
     pub(super) fn needs_another_frame(&self) -> bool {
         self.drop_reason.is_none() && self.needs_reconfigure
+    }
+
+    #[cfg(all(feature = "web", target_arch = "wasm32"))]
+    pub(super) const fn backend(&self) -> wgpu::Backend {
+        self.backend
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -75,11 +129,22 @@ impl WgpuRenderer {
         Self::new_with_backends(display, window, clear_color, wgpu::Backends::all()).await
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) async fn new_with_backends(
         display: OwnedDisplayHandle,
         window: Arc<Window>,
         clear_color: egui::Color32,
         backends: wgpu::Backends,
+    ) -> Result<Self, egui_wgpu::WgpuError> {
+        Self::new_with_backends_and_claim(display, window, clear_color, backends, |_| {}).await
+    }
+
+    pub(super) async fn new_with_backends_and_claim(
+        display: OwnedDisplayHandle,
+        window: Arc<Window>,
+        clear_color: egui::Color32,
+        backends: wgpu::Backends,
+        mut on_canvas_claim: impl FnMut(bool),
     ) -> Result<Self, egui_wgpu::WgpuError> {
         let mut descriptor = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display));
         descriptor.backends = backends;
@@ -90,6 +155,7 @@ impl WgpuRenderer {
         // succeed before claiming it; WebGL needs its canvas to select an adapter.
         #[cfg(target_arch = "wasm32")]
         let surface = if backends.contains(wgpu::Backends::GL) {
+            on_canvas_claim(true);
             Some(instance.create_surface(Arc::clone(&window))?)
         } else {
             None
@@ -101,25 +167,42 @@ impl WgpuRenderer {
             })
             .await?;
         let adapter_info = adapter.get_info();
-        let limits = if adapter_info.backend == wgpu::Backend::Gl {
-            wgpu::Limits::downlevel_webgl2_defaults()
-        } else {
-            wgpu::Limits::default()
+        let adapter_limits = adapter.limits();
+        let mut candidates = required_limits_candidates(adapter_info.backend, &adapter_limits)
+            .into_iter()
+            .peekable();
+        let (device, queue) = loop {
+            let required_limits = candidates
+                .next()
+                .expect("at least one required_limits candidate");
+            match adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("dockspace device"),
+                    required_limits,
+                    ..Default::default()
+                })
+                .await
+            {
+                Ok(pair) => break pair,
+                Err(_) if candidates.peek().is_some() => continue,
+                Err(error) => return Err(error.into()),
+            }
         };
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("dockspace device"),
-                required_limits: limits.using_resolution(adapter.limits()),
-                ..Default::default()
-            })
-            .await?;
         let surface = match surface {
             Some(surface) => surface,
-            None => instance.create_surface(Arc::clone(&window))?,
+            None => {
+                on_canvas_claim(true);
+                instance.create_surface(Arc::clone(&window))?
+            }
         };
+        let max_dim = device.limits().max_texture_dimension_2d.max(1);
         let size = window.inner_size();
+        let (width, height) = (
+            size.width.max(1).min(max_dim),
+            size.height.max(1).min(max_dim),
+        );
         let mut config = surface
-            .get_default_config(&adapter, size.width.max(1), size.height.max(1))
+            .get_default_config(&adapter, width, height)
             .ok_or(egui_wgpu::WgpuError::NoSurfaceFormatsAvailable)?;
         config.format =
             egui_wgpu::preferred_framebuffer_format(&surface.get_capabilities(&adapter).formats)?;
@@ -131,6 +214,8 @@ impl WgpuRenderer {
         );
         let [r, g, b, a] = egui::Rgba::from(clear_color).to_array();
         Ok(Self {
+            #[cfg(all(feature = "web", target_arch = "wasm32"))]
+            backend: adapter_info.backend,
             clear_color: wgpu::Color {
                 r: f64::from(r),
                 g: f64::from(g),
@@ -169,10 +254,11 @@ impl WgpuRenderer {
     ) -> SurfacePresentationResult {
         self.drop_reason = None;
         let size = window.inner_size();
-        if size.width == 0 || size.height == 0 {
+        let max_dim = self.device.limits().max_texture_dimension_2d;
+        let Some((width, height)) = clamped_surface_size(size, max_dim) else {
             self.drop_reason = Some(DropReason::ZeroSized);
             return SurfacePresentationResult::Dropped;
-        }
+        };
         if self.surface.is_none() {
             match self.instance.create_surface(Arc::clone(window)) {
                 Ok(surface) => self.surface = Some(surface),
@@ -188,12 +274,9 @@ impl WgpuRenderer {
             .surface
             .as_ref()
             .expect("the surface was created above");
-        if self.needs_reconfigure
-            || self.config.width != size.width
-            || self.config.height != size.height
-        {
-            self.config.width = size.width;
-            self.config.height = size.height;
+        if self.needs_reconfigure || self.config.width != width || self.config.height != height {
+            self.config.width = width;
+            self.config.height = height;
             surface.configure(&self.device, &self.config);
             self.needs_reconfigure = false;
         }
@@ -237,10 +320,8 @@ impl WgpuRenderer {
                     .update_texture(&self.device, &self.queue, id, &image_delta);
             }
         }
-        let screen_descriptor = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [size.width, size.height],
-            pixels_per_point,
-        };
+        let screen_descriptor =
+            effective_screen_descriptor(size, (width, height), pixels_per_point);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -300,8 +381,12 @@ impl Drop for WgpuRenderer {
 
 #[cfg(test)]
 mod tests {
-    use super::DropReason;
+    use super::{
+        DropReason, clamped_surface_size, effective_screen_descriptor, required_limits_candidates,
+    };
+    use egui_wgpu::wgpu;
     use std::time::Duration;
+    use winit::dpi::PhysicalSize;
 
     #[test]
     fn failed_surface_recreation_keeps_the_runner_wakeable() {
@@ -323,5 +408,52 @@ mod tests {
             DropReason::TimedOut.retry_delay(),
             Duration::from_millis(16)
         );
+    }
+
+    #[test]
+    fn clamped_surface_size_rejects_zero_and_caps_oversized_dimensions() {
+        assert_eq!(clamped_surface_size(PhysicalSize::new(0, 800), 4096), None);
+        assert_eq!(clamped_surface_size(PhysicalSize::new(800, 0), 4096), None);
+        assert_eq!(
+            clamped_surface_size(PhysicalSize::new(1920, 1080), 4096),
+            Some((1920, 1080))
+        );
+        assert_eq!(
+            clamped_surface_size(PhysicalSize::new(5120, 2880), 4096),
+            Some((4096, 2880))
+        );
+    }
+
+    #[test]
+    fn effective_screen_descriptor_preserves_unclamped_and_scales_clamped_frames() {
+        let normal = effective_screen_descriptor(PhysicalSize::new(1600, 900), (1600, 900), 2.0);
+        assert_eq!(normal.size_in_pixels, [1600, 900]);
+        assert!((normal.pixels_per_point - 2.0).abs() < f32::EPSILON);
+
+        let clamped = effective_screen_descriptor(PhysicalSize::new(8192, 4096), (4096, 4096), 2.0);
+        assert_eq!(clamped.size_in_pixels, [4096, 4096]);
+        assert!((clamped.pixels_per_point - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn required_limits_candidates_use_alignment_and_offer_downlevel_webgpu_fallback() {
+        let mut adapter_limits = wgpu::Limits::downlevel_webgl2_defaults();
+        adapter_limits.max_texture_dimension_2d = 4096;
+        adapter_limits.min_uniform_buffer_offset_alignment = 512;
+
+        let gl_candidates = required_limits_candidates(wgpu::Backend::Gl, &adapter_limits);
+        assert_eq!(gl_candidates.len(), 1);
+        assert_eq!(gl_candidates[0].max_texture_dimension_2d, 4096);
+        assert_eq!(gl_candidates[0].min_uniform_buffer_offset_alignment, 512);
+
+        let webgpu_candidates =
+            required_limits_candidates(wgpu::Backend::BrowserWebGpu, &adapter_limits);
+        assert_eq!(webgpu_candidates.len(), 2);
+        assert_eq!(
+            webgpu_candidates[0].min_uniform_buffer_offset_alignment,
+            512
+        );
+        assert_eq!(webgpu_candidates[1].max_texture_dimension_2d, 4096);
+        assert_eq!(webgpu_candidates[1].max_storage_buffers_per_shader_stage, 0);
     }
 }
