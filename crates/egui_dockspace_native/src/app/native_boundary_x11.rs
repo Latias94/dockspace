@@ -785,19 +785,25 @@ fn drive_pointer_lineage(
             .stationary_recorded_sample_count_for_test();
         facts.pointer_phase = PointerPhase::First;
     }
+    let window_id = u64::from(window).to_string();
+    let press_x = press[0].to_string();
+    let press_y = press[1].to_string();
+    let hover_x = hover[0].to_string();
+    let hover_y = hover[1].to_string();
     xdotool(&[
         "windowactivate",
         "--sync",
-        &u64::from(window).to_string(),
+        &window_id,
         "mousemove",
-        &press[0].to_string(),
-        &press[1].to_string(),
-        "mousedown",
-        "1",
-        "mousemove",
-        &hover[0].to_string(),
-        &hover[1].to_string(),
+        "--sync",
+        &press_x,
+        &press_y,
     ])?;
+    xdotool(&["mousedown", "1"])?;
+    wait_until(deadline, "the real primary press on Root", || {
+        lock_state(&host.facts).pointer_press.is_some()
+    })?;
+    xdotool(&["mousemove", "--sync", &hover_x, &hover_y])?;
     wait_until(
         deadline,
         "the real P1 query T1 retained on the GUI thread",
@@ -813,7 +819,12 @@ fn drive_pointer_lineage(
         let facts = lock_state(&host.facts);
         (facts.root_motion, facts.root_motion_callbacks)
     };
-    xdotool(&["mousemove", &moved[0].to_string(), &moved[1].to_string()])?;
+    xdotool(&[
+        "mousemove",
+        "--sync",
+        &moved[0].to_string(),
+        &moved[1].to_string(),
+    ])?;
     let updated = wait_until(
         deadline,
         "C2 committed while original T1 remains retained",

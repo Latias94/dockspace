@@ -189,7 +189,7 @@ fn compile_window_facts(
     } else {
         NativeWindowClientGeometry::Size(content_size)
     };
-    Ok(compile_native_window_facts(NativeWindowFactsSample {
+    let mut facts = compile_native_window_facts(NativeWindowFactsSample {
         client: Some(client),
         outer_bounds: snapshot.outer_rect.map(physical_rect).transpose()?,
         native_scale: Some(native_scale_factor),
@@ -198,7 +198,16 @@ fn compile_window_facts(
         minimized: snapshot.minimized,
     })
     .with_local_readiness(local_readiness(snapshot))
-    .with_input(input_state(snapshot.input_state), None))
+    .with_input(input_state(snapshot.input_state), None);
+    // eframe's native host seam reports `window.is_visible()` on X11 and macOS
+    // while querying `window.is_minimized()` only on Windows (Wayland reports
+    // `visible: None`). Match `WindowPreparation`'s visibility contract so
+    // macOS and X11 windows complete native bring-up and desktop routing while
+    // Wayland's `(None, None)` stays unknown.
+    if snapshot.visible == Some(true) && snapshot.minimized.is_none() {
+        facts = facts.with_presentation(NativeWindowPresentationState::Visible);
+    }
+    Ok(facts)
 }
 
 fn local_readiness(snapshot: SnapshotParts) -> NativeLocalReadiness {
@@ -347,15 +356,22 @@ mod tests {
     }
 
     #[test]
-    fn visible_without_a_minimized_observation_keeps_local_readiness() {
+    fn visible_without_a_minimized_observation_reports_visible_while_missing_visibility_stays_unknown()
+     {
         let mut snapshot = parts();
         snapshot.minimized = None;
-        let facts = compile_window_facts(snapshot).expect("partial visibility compiles");
+        let visible_facts = compile_window_facts(snapshot).expect("partial visibility compiles");
+        assert_eq!(
+            visible_facts.observed_presentation(),
+            Some(NativeWindowPresentationState::Visible)
+        );
 
         snapshot.visible = None;
+        let unknown_facts = compile_window_facts(snapshot).expect("missing visibility compiles");
+        assert_eq!(unknown_facts.observed_presentation(), None);
         assert_eq!(
-            facts,
-            compile_window_facts(snapshot).expect("missing visibility compiles")
+            visible_facts,
+            unknown_facts.with_presentation(NativeWindowPresentationState::Visible)
         );
     }
 
