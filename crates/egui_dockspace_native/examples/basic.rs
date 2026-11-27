@@ -1013,11 +1013,12 @@ impl PaneView for ExamplePanes {
         } else if item == CONSOLE {
             let description = ui.label(&pane.text);
             content = content.with_content(&description);
+            let mut inner_ids = Vec::with_capacity(129);
             let log = egui::ScrollArea::vertical()
                 .id_salt(("native-editor-log", item.get()))
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    let mut content = content.with_content_ids([ui.unique_id()]);
+                    inner_ids.push(ui.unique_id());
                     let messages = [
                         "[INFO ] Native host ready · Root surface presented",
                         "[SCENE] Loaded scenes/main.scene (3 entities)",
@@ -1030,23 +1031,15 @@ impl PaneView for ExamplePanes {
                             line % 60,
                             messages[line % messages.len()]
                         ));
-                        content = content.with_content(&entry);
+                        inner_ids.push(entry.id);
                     }
-                    content
                 });
-            content = log.inner;
             if let Some(probe) = &self.probe {
                 probe.observe_scroll(ui, log.id, log.state.clamped_offset().y);
             }
-            // Only declare scroll controls actually registered in this pass.
-            for id in [log.id.with("area"), log.id.with(1_usize)] {
-                if ui
-                    .ctx()
-                    .viewport(|viewport| viewport.this_pass.widgets.get(id).is_some())
-                {
-                    content = content.with_content_ids([id]);
-                }
-            }
+            content = content
+                .with_scroll_area(ui, &log)
+                .with_content_ids(inner_ids);
         } else if item == PROFILER {
             let description = ui.label(&pane.text);
             content = content.with_content(&description);

@@ -115,6 +115,8 @@ pub(crate) fn paint_pane(
         child.set_opacity(0.0);
     }
     child.set_clip_rect(clip);
+    let child_id = child.unique_id();
+    let child_layer = child.layer_id();
     let mut paint_audit = context.paint_audit.take();
     let painter = child.painter().clone();
     // Keep ownership outside the callback so an unwind releases the append
@@ -240,7 +242,10 @@ pub(crate) fn paint_pane(
                 && pane_rect.is_finite()
                 && pane_rect.is_positive()
             {
-                for widget_id in pane_response.content_widgets() {
+                for widget_id in pane_response
+                    .content_widgets()
+                    .chain(pane_response.internal_container_widgets())
+                {
                     let Some(widget) = child_ui
                         .ctx()
                         .viewport(|viewport| viewport.this_pass.widgets.get(widget_id).copied())
@@ -270,6 +275,28 @@ pub(crate) fn paint_pane(
         audit.check_append(&painter, paint_contents);
     } else {
         paint_contents();
+    }
+    if let Some(receiver) = pane_receiver
+        && pane_rect.is_finite()
+        && pane_rect.is_positive()
+        && let Some(widget) = context
+            .ui
+            .ctx()
+            .viewport(|viewport| viewport.this_pass.widgets.get(child_id).copied())
+        && widget.enabled
+        && widget.layer_id == child_layer
+        && !widget.sense.interactive()
+        && widget.interact_rect.is_finite()
+        && widget.interact_rect.is_positive()
+        && pane_rect.contains_rect(widget.interact_rect)
+    {
+        context.receivers.push(ProductReceiverBinding {
+            interact_rect: widget.interact_rect,
+            interactive: false,
+            widget_id: widget.id,
+            layer_id: widget.layer_id,
+            receiver,
+        });
     }
     context.paint_audit = paint_audit;
 }

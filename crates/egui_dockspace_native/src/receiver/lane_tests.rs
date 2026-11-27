@@ -356,3 +356,201 @@ fn real_splitter_hit_padding_keeps_click_occlusion_separate_from_resize_delivery
         }
     }
 }
+
+#[test]
+fn scroll_area_pane_clears_native_hover_over_text_and_empty_space_while_undeclared_buttons_block() {
+    struct ConsolePane {
+        include_undeclared_button: bool,
+        button_center: Option<egui::Pos2>,
+    }
+    impl egui_dockspace::PaneView for ConsolePane {
+        fn title(&self, item: ItemId) -> Option<egui::WidgetText> {
+            Some(
+                if item == ItemId::new(1) {
+                    "Document"
+                } else {
+                    "Console"
+                }
+                .into(),
+            )
+        }
+        fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> egui_dockspace::PaneResponse {
+            if item != ItemId::new(2) {
+                return egui_dockspace::PaneResponse::default();
+            }
+            let mut content = egui_dockspace::PaneResponse::default();
+            let description = ui.label("Live workspace log (scroll to inspect earlier entries):");
+            content = content.with_content(&description);
+            let mut inner_ids = Vec::new();
+            let log = egui::ScrollArea::vertical()
+                .id_salt(("native-editor-log", item.get()))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    inner_ids.push(ui.unique_id());
+                    if self.include_undeclared_button {
+                        let button = ui.button("Undeclared button");
+                        self.button_center = Some(button.rect.center());
+                    }
+                    let messages = [
+                        "[INFO ] Native host ready · Root surface presented",
+                        "[SCENE] Loaded scenes/main.scene (3 entities)",
+                        "[DOCK ] Floating Inspector group ready for native tear-off",
+                        "[GPU  ] Frame pacing steady at 60 FPS (8.8 ms)",
+                    ];
+                    for line in 0..128 {
+                        let entry = ui.monospace(format!(
+                            "10:42:{:02} {}",
+                            line % 60,
+                            messages[line % messages.len()]
+                        ));
+                        inner_ids.push(entry.id);
+                    }
+                });
+            content
+                .with_scroll_area(ui, &log)
+                .with_content_ids(inner_ids)
+        }
+    }
+
+    let node = DockspaceNode::split(
+        DockspaceAxis::Vertical,
+        [
+            (DockspaceNode::central_tabs([ItemId::new(1)]), 0.74),
+            (DockspaceNode::tabs([ItemId::new(2)]), 0.26),
+        ],
+    )
+    .unwrap();
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(RootId::new(1), node),
+    )])
+    .unwrap();
+    let mut session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        Default::default(),
+        DockStyle::default().presentation_config().unwrap(),
+    )
+    .unwrap();
+    session
+        .enable_managed_native_host(NativePointerRoster::Exact(Vec::new()))
+        .unwrap();
+    session
+        .configure_managed_native_capabilities(crate::capabilities::capabilities_for_backend(
+            eframe::NativeWindowingBackend::Wayland,
+        ))
+        .unwrap();
+    session
+        .register_native_root(SURFACE, HostWindowToken::new(1))
+        .unwrap();
+    let binding = idle(&mut session).native_bindings()[0];
+    let bounds = PhysicalRect::new(0.0, 0.0, 1280.0, 820.0).unwrap();
+    session
+        .report_managed_native_snapshot(
+            [(
+                binding,
+                NativeWindowFacts::live()
+                    .with_content_bounds(bounds)
+                    .with_outer_bounds(bounds)
+                    .with_native_scale_factor(ScaleFactor::new(1.0).unwrap())
+                    .with_presentation_scale_factor(ScaleFactor::new(1.0).unwrap())
+                    .with_input(NativeWindowInputState::ReceivesInput, None)
+                    .with_presentation(NativeWindowPresentationState::Visible),
+            )],
+            NativeWorkAreaRoster::Unknown,
+        )
+        .unwrap();
+    idle(&mut session);
+    let context = egui::Context::default();
+    let mut store = NativeReceiverStore::default();
+    let bridge = Arc::new(NativeHostBridge::new(NativeViewportMap::default()));
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 820.0));
+    let mut panes = ConsolePane {
+        include_undeclared_button: true,
+        button_center: None,
+    };
+    for _ in 0..3 {
+        let mut painted = None;
+        let mut output = None;
+        context
+            .run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    let mut frame = NativeHostFrame::new_with_input(
+                        session
+                            .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+                            .unwrap(),
+                        Default::default(),
+                        Arc::clone(&bridge),
+                        &mut store,
+                        None,
+                    );
+                    frame
+                        .frame
+                        .measure_surface(
+                            SURFACE,
+                            UniformSurfaceMetrics::new(
+                                LogicalRect::new(0.0, 0.0, 1280.0, 820.0).unwrap(),
+                                LogicalSize::new(32.0, 24.0).unwrap(),
+                                80.0,
+                            )
+                            .unwrap(),
+                        )
+                        .unwrap();
+                    let mut paint = frame
+                        .paint_surface(
+                            egui::Id::unique("scroll-area-hover-clearance"),
+                            SURFACE,
+                            ui,
+                            &mut panes,
+                            &DockStyle::default(),
+                        )
+                        .unwrap();
+                    assert!(paint.confirm_into(&mut frame.frame).unwrap());
+                    frame
+                        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+                        .unwrap();
+                    output = frame.commit().unwrap().take_painted_outputs().pop();
+                    painted = Some(paint);
+                },
+            )
+            .drop_without_applying_deltas();
+        let paint = painted.unwrap();
+        let output = output.unwrap();
+        super::test_support::present_completed_output(
+            &mut store, &context, 1.0, binding, &output, &paint,
+        )
+        .unwrap();
+        session
+            .report_surface_presentation(output, SurfacePresentationResult::Presented)
+            .unwrap();
+        let report = idle(&mut session);
+        store.commit_presentations(report.surface_presentation_commits());
+    }
+
+    let entry = &store.presented[&SURFACE][0];
+    // Both empty auto_shrink=false area and scroll-area log content clear hover.
+    for pt in [egui::pos2(768.0, 729.0), egui::pos2(400.0, 729.0)] {
+        let hit = entry.hit_authority.hit_test(pt).unwrap();
+        assert!(
+            hit.contains_pointer()
+                .is_some_and(|id| entry.has_hit_identity(id)),
+            "pt={pt:?} contains_pointer must be recognized: {hit:?}"
+        );
+        for lane in [hit.click(), hit.drag()].into_iter().flatten() {
+            assert!(
+                entry.has_hit_identity(lane),
+                "pt={pt:?} active lane must be recognized: {lane:?}"
+            );
+        }
+    }
+    // An undeclared interactive button inside the ScrollArea still blocks via its click lane.
+    let button_pt = panes.button_center.expect("button painted");
+    let hit = entry.hit_authority.hit_test(button_pt).unwrap();
+    assert!(
+        hit.click().is_some_and(|id| !entry.has_hit_identity(id)),
+        "undeclared button inside ScrollArea must still block click/hover lanes: {hit:?}"
+    );
+}

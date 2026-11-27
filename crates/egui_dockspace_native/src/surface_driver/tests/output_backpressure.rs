@@ -555,6 +555,7 @@ struct ExpandingRosterTextApp {
     host: Arc<DelayedTerminalHost>,
     calls: Arc<AtomicUsize>,
     activated: bool,
+    settled_passes: usize,
     expanded: bool,
     recovered_passes: usize,
     started: Instant,
@@ -580,13 +581,24 @@ impl eframe::App for ExpandingRosterTextApp {
         });
         if text_input && !self.expanded {
             let probe = lock(&self.host.probe);
-            assert!(probe.native_text_seen && probe.holding && !probe.released);
-            assert_eq!(probe.buffered.len(), 1, "only one real output is withheld");
-            assert_eq!(probe.text_input_token, Some(token));
-            assert!(matches!(
-                probe.text_input_admission,
-                Some(eframe::NativeOutputInputAdmission::Proceed)
-            ));
+            assert!(
+                probe.native_text_seen && probe.holding && !probe.released,
+                "admitted text must arrive while the withheld output is still held: {probe:?}; pending={:?}",
+                self.app.pending_work()
+            );
+            assert_eq!(
+                probe.buffered.len(),
+                1,
+                "only one real output is withheld: {probe:?}"
+            );
+            assert_eq!(probe.text_input_token, Some(token), "{probe:?}");
+            assert!(
+                matches!(
+                    probe.text_input_admission,
+                    Some(eframe::NativeOutputInputAdmission::Proceed)
+                ),
+                "{probe:?}"
+            );
             assert!(!self.app.is_surface_presented(SurfaceId::new(2)));
             self.expanded = true;
         }
@@ -663,9 +675,17 @@ impl eframe::App for ExpandingRosterTextApp {
                 self.activated = true;
                 ui.ctx().request_repaint_after(Duration::from_millis(50));
                 return;
-            } else if ui.input(|input| input.focused) {
-                probe.hold_token = Some(token);
-                probe.calls_at_hold = after;
+            } else if ui.input(|input| input.focused) && self.app.is_quiescent() {
+                self.settled_passes += 1;
+                // Let initial activation/pane-focus observations settle so the
+                // held pass does not request an idle follow-up repaint that
+                // would occupy the second output slot before `xdotool key a`.
+                if self.settled_passes >= 2 {
+                    probe.hold_token = Some(token);
+                    probe.calls_at_hold = after;
+                }
+            } else {
+                self.settled_passes = 0;
             }
         }
         if probe.hold_token.is_none() {
@@ -751,6 +771,7 @@ fn real_eframe_output_capacity_preserves_text_when_the_root_roster_expands_after
                 host,
                 calls,
                 activated: false,
+                settled_passes: 0,
                 expanded: false,
                 recovered_passes: 0,
                 started: Instant::now(),

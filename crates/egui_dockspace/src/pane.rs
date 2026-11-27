@@ -27,6 +27,7 @@ use crate::{
 pub struct PaneResponse {
     first: Option<Id>,
     additional: Vec<Id>,
+    internal_containers: Vec<Id>,
 }
 
 impl PaneResponse {
@@ -61,16 +62,60 @@ impl PaneResponse {
     /// # }
     /// ```
     #[must_use]
-    pub fn with_scroll_area<R>(self, ui: &Ui, output: &ScrollAreaOutput<R>) -> Self {
-        let registered = ui.ctx().viewport(|viewport| {
-            [
+    pub fn with_scroll_area<R>(mut self, ui: &Ui, output: &ScrollAreaOutput<R>) -> Self {
+        let mut controls = [None; 3];
+        let mut containers = Vec::new();
+        ui.ctx().viewport(|viewport| {
+            controls = [
                 output.id.with("area"),
                 output.id.with(0_usize),
                 output.id.with(1_usize),
             ]
-            .map(|id| viewport.this_pass.widgets.get(id).map(|_| id))
+            .map(|id| viewport.this_pass.widgets.get(id).map(|_| id));
+            // `ScrollArea::show` wraps `add_contents` in a `UiKind::ScrollArea`
+            // child `Ui` and an internal `Frame::NONE` whose `allocate_space`
+            // `Sense::hover()` widget is inserted after inner controls and
+            // discarded by `.inner`. Track those non-interactive scroll wrappers
+            // separately from public `content_widgets()` so native hover clearance
+            // over declared content is not blocked by egui's own scroll container,
+            // while undeclared interactive controls inside still block.
+            let layer = ui.layer_id();
+            let parent = ui.unique_id();
+            let matches_scroll_content = |widget: &egui::WidgetRect| {
+                !widget.sense.interactive()
+                    && (widget.rect.size() - output.content_size).length_sq() <= 1.0
+                    && output
+                        .inner_rect
+                        .expand(1.0)
+                        .contains_rect(widget.interact_rect)
+            };
+            let mut scroll_containers = Vec::new();
+            for widget in viewport.this_pass.widgets.get_layer(layer) {
+                if widget.parent_id == parent && matches_scroll_content(widget) {
+                    scroll_containers.push((widget.id, widget.rect));
+                    containers.push(widget.id);
+                }
+            }
+            for (container_id, container_rect) in scroll_containers {
+                let mut frame_wrapper_found = false;
+                let mut children = Vec::new();
+                for widget in viewport.this_pass.widgets.get_layer(layer) {
+                    if widget.parent_id == container_id && !widget.sense.interactive() {
+                        if matches_scroll_content(widget) {
+                            frame_wrapper_found = true;
+                        }
+                        if container_rect.expand(1.0).contains_rect(widget.rect) {
+                            children.push(widget.id);
+                        }
+                    }
+                }
+                if frame_wrapper_found {
+                    containers.extend(children);
+                }
+            }
         });
-        self.with_content_ids(registered.into_iter().flatten())
+        self.internal_containers.extend(containers);
+        self.with_content_ids(controls.into_iter().flatten())
     }
 
     /// Declares the exact IDs of additional ordinary content registrations.
@@ -101,6 +146,10 @@ impl PaneResponse {
         self.first
             .into_iter()
             .chain(self.additional.iter().copied())
+    }
+
+    pub(crate) fn internal_container_widgets(&self) -> impl Iterator<Item = Id> + '_ {
+        self.internal_containers.iter().copied()
     }
 }
 
