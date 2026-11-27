@@ -151,6 +151,71 @@ test('a stalled WebGPU request falls back to WebGL2 and ignores late completion'
   expect(errors).toEqual([]);
 });
 
+test('a software fallback WebGPU adapter falls back to WebGL2 without claiming the canvas', async ({ page }) => {
+  const errors = [];
+  const warnings = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => {
+    if (message.type() === 'warning') warnings.push(message.text());
+  });
+  await page.addInitScript(() => {
+    window.webGpuAdapterOptions = [];
+    window.webGpuDeviceRequests = 0;
+    window.graphicsContexts = [];
+    document.addEventListener('DOMContentLoaded', () => {
+      const initial = document.getElementById('dockspace-canvas');
+      if (initial) initial.__initialCanvas = true;
+    });
+    Object.defineProperty(navigator, 'gpu', {
+      value: {
+        getPreferredCanvasFormat: () => 'bgra8unorm',
+        requestAdapter: async options => {
+          window.webGpuAdapterOptions.push(options ?? {});
+          return {
+            features: new Set(),
+            limits: {},
+            info: {
+              vendor: 'google',
+              architecture: 'swiftshader',
+              device: '',
+              description: '',
+              isFallbackAdapter: true,
+            },
+            requestDevice: async () => {
+              window.webGpuDeviceRequests += 1;
+              throw new Error('Software fallback WebGPU adapter must not request a device');
+            },
+          };
+        },
+      },
+    });
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+      window.graphicsContexts.push(type);
+      return getContext.call(this, type, ...args);
+    };
+  });
+  await page.goto('demo/egui/?test=1', { waitUntil: 'domcontentloaded' });
+  await expect(status(page)).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+  await expect(loading(page)).toBeHidden();
+  const result = await page.evaluate(() => ({
+    adapterOptions: window.webGpuAdapterOptions,
+    deviceRequests: window.webGpuDeviceRequests,
+    contexts: window.graphicsContexts,
+    stillInitialCanvas: Boolean(document.getElementById('dockspace-canvas')?.__initialCanvas),
+    stateAttr: Boolean(document.getElementById('dockspace-canvas')?.getAttribute('data-dockspace-state')),
+  }));
+  expect(result.adapterOptions).toHaveLength(1);
+  expect(Boolean(result.adapterOptions[0]?.forceFallbackAdapter)).toBe(false);
+  expect(result.deviceRequests).toBe(0);
+  expect(result.contexts).toContain('webgl2');
+  expect(result.contexts).not.toContain('webgpu');
+  expect(result.stillInitialCanvas).toBe(true);
+  expect(result.stateAttr).toBe(true);
+  expect(warnings.some(text => text.includes('software fallback adapter'))).toBe(true);
+  expect(errors).toEqual([]);
+});
+
 test('a WebGPU first-frame surface failure replaces the canvas and falls back to WebGL2', async ({ page }) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));

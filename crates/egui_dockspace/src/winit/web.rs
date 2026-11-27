@@ -28,7 +28,7 @@ use winit::{
 use super::{
     FrameControl, NativeApp, NativeError, WinitIntegration,
     frame::HostWindow,
-    renderer::{DropReason, WgpuRenderer},
+    renderer::{DropReason, RendererInitError, WgpuRenderer},
     repaint::{Repaint, RepaintRequest},
 };
 
@@ -54,8 +54,9 @@ pub struct WebOptions {
 /// Browser graphics selection for a complete-output host.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WebRenderer {
-    /// Try WebGPU, then WebGL2 if initialization fails, takes over five seconds,
-    /// or cannot present the first frame.
+    /// Try WebGPU, then WebGL2 if initialization fails, returns a software
+    /// fallback adapter, takes over five seconds, or cannot present the first
+    /// frame.
     #[default]
     Auto,
     /// Use WebGL2 directly, including when the browser advertises WebGPU.
@@ -80,6 +81,11 @@ enum InitOutcome {
     Failed(NativeError),
 }
 
+enum BackendInitError {
+    SoftwareFallbackWebGpu,
+    Native(NativeError),
+}
+
 fn is_secure_browser_context() -> bool {
     web_sys::window().is_some_and(|window| window.is_secure_context())
 }
@@ -102,6 +108,7 @@ async fn initialize_renderer(
                 wgpu::Backends::BROWSER_WEBGPU,
                 "WebGPU",
                 WEBGPU_INIT_TIMEOUT_SECONDS,
+                true,
                 &canvas_claimed,
                 generation,
                 proxy.clone(),
@@ -109,7 +116,13 @@ async fn initialize_renderer(
             .await
             {
                 Ok(renderer) => return InitOutcome::Ready(renderer),
-                Err(error) => {
+                Err(BackendInitError::SoftwareFallbackWebGpu) => {
+                    web_sys::console::warn_1(
+                        &"WebGPU returned a software fallback adapter. Trying WebGL2 instead."
+                            .into(),
+                    );
+                }
+                Err(BackendInitError::Native(error)) => {
                     if canvas_claimed.get() {
                         web_sys::console::warn_1(
                             &format!("{error}. Replacing canvas to fall back to WebGL2 cleanly.")
@@ -134,6 +147,7 @@ async fn initialize_renderer(
         wgpu::Backends::GL,
         "WebGL2",
         WEBGL_INIT_TIMEOUT_SECONDS,
+        false,
         &canvas_claimed,
         generation,
         proxy,
@@ -141,7 +155,10 @@ async fn initialize_renderer(
     .await
     {
         Ok(renderer) => InitOutcome::Ready(renderer),
-        Err(error) => InitOutcome::Failed(error),
+        Err(BackendInitError::Native(error)) => InitOutcome::Failed(error),
+        Err(BackendInitError::SoftwareFallbackWebGpu) => {
+            unreachable!("WebGL2 never rejects software WebGPU adapters")
+        }
     }
 }
 
@@ -153,15 +170,17 @@ async fn initialize_backend(
     backends: wgpu::Backends,
     backend: &'static str,
     timeout_seconds: u32,
+    reject_software_webgpu: bool,
     canvas_claimed: &Cell<bool>,
     generation: u64,
     proxy: EventLoopProxy<UserEvent>,
-) -> Result<WgpuRenderer, NativeError> {
+) -> Result<WgpuRenderer, BackendInitError> {
     let initialization = WgpuRenderer::new_with_backends_and_hooks(
         display,
         window,
         clear_color,
         backends,
+        reject_software_webgpu,
         |claimed| canvas_claimed.set(claimed),
         move |reason| {
             let _ = proxy.send_event(UserEvent::DeviceLost { generation, reason });
@@ -173,15 +192,20 @@ async fn initialize_backend(
     )
     .await
     {
-        Either::Left((result, _)) => {
-            let renderer = result?;
+        Either::Left((Ok(renderer), _)) => {
             web_sys::console::info_1(&format!("Dockspace renderer initialized: {backend}").into());
             Ok(renderer)
         }
-        Either::Right(((), _)) => Err(NativeError::RendererTimeout {
+        Either::Left((Err(RendererInitError::SoftwareFallbackWebGpu), _)) => {
+            Err(BackendInitError::SoftwareFallbackWebGpu)
+        }
+        Either::Left((Err(RendererInitError::Wgpu(error)), _)) => {
+            Err(BackendInitError::Native(error.into()))
+        }
+        Either::Right(((), _)) => Err(BackendInitError::Native(NativeError::RendererTimeout {
             backend,
             timeout_seconds,
-        }),
+        })),
     }
 }
 

@@ -118,6 +118,14 @@ impl Drop for RendererQueueGuard<'_> {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(super) enum RendererInitError {
+    #[error("WebGPU returned a software fallback adapter")]
+    SoftwareFallbackWebGpu,
+    #[error(transparent)]
+    Wgpu(#[from] egui_wgpu::WgpuError),
+}
+
 // Fields are ordered in strict reverse dependency order so GPU resources tear
 // down cleanly: egui renderer -> surface -> queue -> device -> adapter -> instance.
 pub(super) struct WgpuRenderer {
@@ -134,6 +142,11 @@ pub(super) struct WgpuRenderer {
     pub(super) device: wgpu::Device,
     _adapter: wgpu::Adapter,
     instance: wgpu::Instance,
+}
+
+fn is_software_fallback_webgpu_adapter(adapter_info: &wgpu::AdapterInfo) -> bool {
+    adapter_info.backend == wgpu::Backend::BrowserWebGpu
+        && adapter_info.device_type == wgpu::DeviceType::Cpu
 }
 
 fn required_limits_candidates(
@@ -234,6 +247,7 @@ fn log_gpu_diagnostic(is_error: bool, message: &str) {
 async fn request_best_adapter(
     instance: &wgpu::Instance,
     compatible_surface: Option<&wgpu::Surface<'_>>,
+    allow_fallback_adapter: bool,
 ) -> Result<wgpu::Adapter, egui_wgpu::WgpuError> {
     #[cfg(not(target_arch = "wasm32"))]
     if let Ok(adapter) = wgpu::util::initialize_adapter_from_env(instance, compatible_surface).await
@@ -252,7 +266,7 @@ async fn request_best_adapter(
         .await
     {
         Ok(adapter) => Ok(adapter),
-        Err(primary_error) => instance
+        Err(primary_error) if allow_fallback_adapter => instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference,
                 compatible_surface,
@@ -261,6 +275,7 @@ async fn request_best_adapter(
             })
             .await
             .map_err(|_| primary_error.into()),
+        Err(primary_error) => Err(primary_error.into()),
     }
 }
 
@@ -296,15 +311,23 @@ impl WgpuRenderer {
     ) -> Result<Self, egui_wgpu::WgpuError> {
         let backends =
             wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY | wgpu::Backends::GL);
-        Self::new_with_backends_and_hooks(
+        match Self::new_with_backends_and_hooks(
             display,
             window,
             clear_color,
             backends,
+            false,
             |_| {},
             on_device_lost,
         )
         .await
+        {
+            Ok(renderer) => Ok(renderer),
+            Err(RendererInitError::Wgpu(error)) => Err(error),
+            Err(RendererInitError::SoftwareFallbackWebGpu) => {
+                unreachable!("desktop renderer never rejects software WebGPU adapters")
+            }
+        }
     }
 
     #[cfg(all(test, target_os = "linux", feature = "x11"))]
@@ -314,18 +337,35 @@ impl WgpuRenderer {
         clear_color: egui::Color32,
         backends: wgpu::Backends,
     ) -> Result<Self, egui_wgpu::WgpuError> {
-        Self::new_with_backends_and_hooks(display, window, clear_color, backends, |_| {}, |_| {})
-            .await
+        match Self::new_with_backends_and_hooks(
+            display,
+            window,
+            clear_color,
+            backends,
+            false,
+            |_| {},
+            |_| {},
+        )
+        .await
+        {
+            Ok(renderer) => Ok(renderer),
+            Err(RendererInitError::Wgpu(error)) => Err(error),
+            Err(RendererInitError::SoftwareFallbackWebGpu) => {
+                unreachable!("desktop renderer never rejects software WebGPU adapters")
+            }
+        }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn new_with_backends_and_hooks(
         display: OwnedDisplayHandle,
         window: Arc<Window>,
         clear_color: egui::Color32,
         backends: wgpu::Backends,
+        reject_software_webgpu: bool,
         mut on_canvas_claim: impl FnMut(bool),
         on_device_lost: impl Fn(String) + Send + Sync + 'static,
-    ) -> Result<Self, egui_wgpu::WgpuError> {
+    ) -> Result<Self, RendererInitError> {
         let descriptor = wgpu::InstanceDescriptor {
             backends,
             flags: wgpu::InstanceFlags::from_build_config().with_env(),
@@ -335,18 +375,30 @@ impl WgpuRenderer {
         };
         let instance = wgpu::Instance::new(descriptor);
         #[cfg(not(target_arch = "wasm32"))]
-        let surface = Some(instance.create_surface(Arc::clone(&window))?);
+        let surface = Some(
+            instance
+                .create_surface(Arc::clone(&window))
+                .map_err(egui_wgpu::WgpuError::from)?,
+        );
         // A browser canvas cannot change context type. WebGPU requests must
         // succeed before claiming it; WebGL needs its canvas to select an adapter.
         #[cfg(target_arch = "wasm32")]
         let surface = if backends.contains(wgpu::Backends::GL) {
             on_canvas_claim(true);
-            Some(instance.create_surface(Arc::clone(&window))?)
+            Some(
+                instance
+                    .create_surface(Arc::clone(&window))
+                    .map_err(egui_wgpu::WgpuError::from)?,
+            )
         } else {
             None
         };
-        let adapter = request_best_adapter(&instance, surface.as_ref()).await?;
+        let adapter =
+            request_best_adapter(&instance, surface.as_ref(), !reject_software_webgpu).await?;
         let adapter_info = adapter.get_info();
+        if reject_software_webgpu && is_software_fallback_webgpu_adapter(&adapter_info) {
+            return Err(RendererInitError::SoftwareFallbackWebGpu);
+        }
         let adapter_limits = adapter.limits();
         let memory_hints = if cfg!(target_arch = "wasm32") {
             wgpu::MemoryHints::MemoryUsage
@@ -372,7 +424,7 @@ impl WgpuRenderer {
             {
                 Ok(pair) => break pair,
                 Err(_) if candidates.peek().is_some() => continue,
-                Err(error) => return Err(error.into()),
+                Err(error) => return Err(egui_wgpu::WgpuError::from(error).into()),
             }
         };
         let health = Arc::new(DeviceHealth::default());
@@ -410,7 +462,9 @@ impl WgpuRenderer {
             Some(surface) => surface,
             None => {
                 on_canvas_claim(true);
-                instance.create_surface(Arc::clone(&window))?
+                instance
+                    .create_surface(Arc::clone(&window))
+                    .map_err(egui_wgpu::WgpuError::from)?
             }
         };
         let max_dim = device.limits().max_texture_dimension_2d.max(1);
@@ -636,7 +690,8 @@ impl Drop for WgpuRenderer {
 mod tests {
     use super::{
         DeviceHealth, DropReason, clamped_surface_size, effective_screen_descriptor,
-        preferred_frame_latency, required_limits_candidates, select_opaque_alpha_mode,
+        is_software_fallback_webgpu_adapter, preferred_frame_latency, required_limits_candidates,
+        select_opaque_alpha_mode,
     };
     use egui_wgpu::wgpu;
     use std::time::Duration;
@@ -738,5 +793,44 @@ mod tests {
         health.record_device_lost(wgpu::DeviceLostReason::Unknown, "TDR reset".to_owned());
         assert!(health.is_lost());
         assert_eq!(health.lost_reason().as_deref(), Some("TDR reset"));
+    }
+
+    #[test]
+    fn software_fallback_webgpu_detection_only_rejects_cpu_browser_webgpu_adapters() {
+        let adapter = |backend, device_type| wgpu::AdapterInfo {
+            name: String::new(),
+            vendor: 0,
+            device: 0,
+            device_type,
+            device_pci_bus_id: String::new(),
+            driver: String::new(),
+            driver_info: String::new(),
+            backend,
+            subgroup_min_size: 0,
+            subgroup_max_size: 0,
+            transient_saves_memory: None,
+            limit_bucket: None,
+        };
+
+        assert!(is_software_fallback_webgpu_adapter(&adapter(
+            wgpu::Backend::BrowserWebGpu,
+            wgpu::DeviceType::Cpu,
+        )));
+        assert!(!is_software_fallback_webgpu_adapter(&adapter(
+            wgpu::Backend::BrowserWebGpu,
+            wgpu::DeviceType::Other,
+        )));
+        assert!(!is_software_fallback_webgpu_adapter(&adapter(
+            wgpu::Backend::BrowserWebGpu,
+            wgpu::DeviceType::DiscreteGpu,
+        )));
+        assert!(!is_software_fallback_webgpu_adapter(&adapter(
+            wgpu::Backend::Gl,
+            wgpu::DeviceType::Cpu,
+        )));
+        assert!(!is_software_fallback_webgpu_adapter(&adapter(
+            wgpu::Backend::Vulkan,
+            wgpu::DeviceType::Cpu,
+        )));
     }
 }
