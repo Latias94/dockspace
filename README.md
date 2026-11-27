@@ -1,113 +1,179 @@
 # <img src="site/icon.svg" width="48" height="48" alt=""> Dockspace
 
-Docking layouts for Rust editor UIs, independent of the UI framework.
+**A renderer-neutral docking engine for Rust editor UIs** — with official `egui` adapters and a three-tier integration kit for any immediate-mode or retained-mode UI framework.
 
-Dockspace manages tabs, split layouts, floating groups, docking interactions and
-close decisions. Your application owns pane content; your host owns rendering,
-input and OS windows. Use the renderer-neutral core with a custom engine, or
-start with the egui adapter.
+[Live Web Demo](https://frankorz.com/dockspace/demo/egui/) ·
+[Homepage](https://frankorz.com/dockspace/) ·
+[Examples](docs/EXAMPLES.md) ·
+[Documentation](docs/README.md) ·
+[Changelog](CHANGELOG.md)
 
-**Pre-release:** the crates are not published yet, and the API may change.
-Rust 1.95 or later is required. The egui adapter targets egui 0.37.
-
-## Try it
-
-Open the [browser workbench](https://frankorz.com/dockspace/demo/egui/) to try
-docking and configurable motion in one canvas. The
-[project homepage](https://frankorz.com/dockspace/) and
-[local build instructions](integration/egui-web-demo) are also available.
-
-Run the interactive editor using official egui, winit and WGPU:
-
-```sh
-cargo run -p egui_dockspace --example workbench --features wgpu --locked
-```
-
-Drag tabs to merge or split panes, resize splitters, and move the floating
-Inspector. Edit a document, close it, then use **Restore layout** to reopen it
-with its application data intact. This example uses one OS window and needs no
-engine or dependency fork.
+`Rust 1.95+ (MSRV)` · `#![forbid(unsafe_code)]` · `WebAssembly ready` · `egui 0.37` · `Pre-release`
 
 ![Dockspace native multiview: tabs dock between two OS windows with motion enabled](screenshots/docking.gif)
 
-The recording uses the experimental [native multiview editor](docs/EXAMPLES.md#experimental-native-windows)
-with motion enabled. Tabs dock in both directions, and the empty child window
-retires after its final tab returns.
+*Shown above: the experimental [native multiview editor](docs/EXAMPLES.md#experimental-native-windows) docking tabs across two OS windows with motion enabled. For single-window desktop and WebAssembly apps, [`egui_dockspace`](crates/egui_dockspace) runs directly on official `egui` with no forks.*
 
-For a small terminal-only introduction to the core, or to try the third-party UI
-framework integration kit (`dockspace::host`):
+---
+
+## Why Dockspace?
+
+- **Truly UI-framework-neutral (`dockspace::host`)** — The core has zero GUI, async runtime, or event-loop dependencies, forbids `unsafe`, and builds for `wasm32`. It ships a three-tier integration kit (`SurfaceDisplayList`, `SurfaceProgramVisitor`, `LogicalHost`, `NativeReportDigest`) already proven across four distinct UI paradigms: **`egui`**, **`Open GPUI`**, **`winit + softbuffer`**, and **`ratatui`**.
+- **Composable `Pane` / `Tabs` / `Split` / `Grid` layouts** — Nest an entire layout inside a single named tab, keep bare panes without forced tab bars, and resize shared `Grid` row/column tracks or multi-arm splitter junctions atomically with explicit min/max sizing constraints.
+- **Application-owned content & deferred close approval** — Layouts reference panes by stable `ItemId`. Your application keeps all documents and widget state across moves, hides, and restores, and can approve, veto, or hold a deferred close token while saving asynchronously.
+- **Deterministic presentation & fail-closed input** — Two-step presentation settlement and explicit occlusion proofs (`PointerClearance`) prevent clicks through modals or stale geometry, paired with interruptible spring/tween `motion` that honors `prefers-reduced-motion`.
+- **First-class multiview & persistence protocols** — Core-owned OS-window lifecycles, recovery, and Dock Back semantics alongside optional `serde` layout documents completely decoupled from application pane data.
+
+---
+
+## Try It in 30 Seconds
+
+Try the **[browser workbench](https://frankorz.com/dockspace/demo/egui/)** with zero setup, or run any host locally:
 
 ```sh
-cargo run -p dockspace --example layout_commands --locked
-cargo run -p dockspace --example custom_ui_host --locked
+# Official egui desktop workbench (single OS window, winit + WGPU, no fork)
+cargo run -p egui_dockspace --example workbench --features wgpu --locked
+
+# Interactive third-party TUI workbench built exclusively on `dockspace::host` + ratatui
 cargo run --manifest-path integration/ratatui-demo/Cargo.toml --locked
+
+# Zero-dependency custom UI host example (both retained display-list and immediate visitor)
+cargo run -p dockspace --example custom_ui_host --locked
 ```
 
-[All examples and run commands](docs/EXAMPLES.md)
+Browse [docs/EXAMPLES.md](docs/EXAMPLES.md) for all runnable examples (shared grids, background save, workspace persistence, software winit multiview, and WebAssembly).
 
-## Choose an integration
+---
 
-| You want to… | Start here | Host requirements |
-| --- | --- | --- |
-| Add docking to a custom engine or third-party UI framework | [`dockspace::host`](crates/dockspace) | Three-tier kit (`SurfaceDisplayList`, `SurfaceProgramVisitor`, `LogicalHost`, `NativeReportDigest`); see [Ratatui demo](integration/ratatui-demo/README.md) |
-| Connect a winit-based UI framework | [`dockspace_winit`](crates/dockspace_winit) | Shared input/repaint helpers and optional native window integration; keep your UI and renderer |
-| Reuse your own native platform backend | [`dockspace::runtime`](crates/dockspace/docs/guide.md) | Low-level native protocol and resource registry using your framework's IDs; no winit or UI dependency |
-| Use egui in one OS window or browser canvas | [`egui_dockspace`](crates/egui_dockspace) | Own the complete egui run and final output for drag docking |
-| Experiment with multiple native windows | [`egui_dockspace_native`](crates/egui_dockspace_native) | Use the pinned eframe/winit forks; platform support varies |
+## Quickstart
 
-An ordinary `eframe::App::ui` callback supports rendering, selection, close,
-menus and keyboard resizing. Drag docking and pane-focus confirmation need the
-complete-output host shown above. [Host choices](crates/egui_dockspace#host-choices)
-explain the difference before you integrate.
+Until `0.1.0` is published on crates.io, depend on a local checkout (path dependencies below):
 
-## What you can build
-
-- Composable `Pane` / `Tabs` / `Split` / `Grid` layouts with named layout tabs, shared Grid tracks, splitter junctions and central panes.
-- Drag docking with center/edge guides, tab reordering, horizontal wheel scrolling and overflow menus.
-- Floating groups within a surface, with move, resize and Dock Back actions.
-- Application-controlled close decisions, including background saving.
-- Hide and restore panes without losing their tab positions or split proportions.
-- Saved layouts with stable pane keys, restored independently of pane data.
-- Custom pane drawing, minimum/maximum sizes, styling, focus and docking policies.
-
-The experimental native adapter adds OS-window creation, recovery and shared
-Root-window layouts. Physical cross-window docking has finite Linux X11 and macOS
-coverage. Physical drag-out to create a window, Windows cross-window input and
-arbitrary mixed-monitor DPI need further validation. See
-[platform support](docs/PLATFORM_SUPPORT.md) before choosing a native integration.
-
-## Use from source
-
-Clone this repository and use path dependencies until the first release. Adjust
-the paths to your checkout:
+### Option A — Use with `egui` (`egui_dockspace`)
 
 ```toml
 [dependencies]
 dockspace = { path = "../dockspace/crates/dockspace" }
-# For egui applications:
-egui_dockspace = { path = "../dockspace/crates/egui_dockspace" }
+egui_dockspace = { path = "../dockspace/crates/egui_dockspace", features = ["wgpu"] }
+egui = "0.37"
 ```
 
-Motion is enabled by default in the egui adapter. Use `MotionMode::Off` at
-runtime or `default-features = false` to omit it;
-[configuration examples](crates/egui_dockspace/README.md#configure-motion) cover
-per-effect duration, curves and reduced motion. Enable `serde` for layout
-persistence. Pane data and file storage stay in your application.
+Keep pane data in your own struct and implement `PaneView`:
 
-## Learn more
+```rust
+use egui_dockspace::{ItemId, PaneResponse, PaneView};
 
-- [Examples](docs/EXAMPLES.md): choose a runnable starting point.
-- [Core overview](crates/dockspace/README.md) and [engine host guide](crates/dockspace/docs/guide.md).
-- [egui overview](crates/egui_dockspace/README.md) and [integration guide](crates/egui_dockspace/docs/guide.md).
-- [GPUI adapter and workbench](integration/gpui-harness/README.md): embed retained application views and run the native demo.
-- [Ratatui terminal workbench](integration/ratatui-demo/README.md): interactive third-party TUI adapter built exclusively on `dockspace::host`.
-- [Documentation index](docs/README.md): platform limits, adapter testing and architecture decisions.
-- [Changelog](CHANGELOG.md): release notes, license breakdown and fork compatibility notes.
-- [AI integration skill](skills/dockspace-integration/SKILL.md): guidance for docking, custom hosts and native multiview. Copy its folder into your agent's skills directory (`~/.codex/skills/` for Codex) and invoke `$dockspace-integration`.
-- [Contributing](CONTRIBUTING.md): repository layout and development checks.
+struct Documents {
+    text: String,
+}
+
+impl PaneView for Documents {
+    fn title(&self, _item: ItemId) -> Option<egui::WidgetText> {
+        Some("Document".into())
+    }
+
+    fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> PaneResponse {
+        let id = egui::Id::unique(("editor", item));
+        let editor = ui.add(egui::TextEdit::multiline(&mut self.text).id(id));
+        PaneResponse::from(&editor)
+    }
+}
+```
+
+Pass your `Documents` registry to `egui_dockspace::winit::run_native` (for full drag docking) or `Dockspace::show_single_surface` (inside an existing `eframe::App::ui`). See [crates/egui_dockspace/README.md](crates/egui_dockspace/README.md) and [examples/winit.rs](crates/egui_dockspace/examples/winit.rs).
+
+### Option B — Integrate Any Rust UI Framework (`dockspace::host`)
+
+```toml
+[dependencies]
+dockspace = { path = "../dockspace/crates/dockspace" }
+```
+
+Use `LogicalHost` to compile each frame into an owned `'static` `SurfaceDisplayList` (ideal for retained UIs like `iced`, `slint`, `dioxus`, `gpui`, or deferred GPU queues) or stream directly through `SurfaceProgramVisitor` (ideal for immediate-mode engines):
+
+```rust
+use dockspace::geometry::LogicalRect;
+use dockspace::host::{
+    LogicalHost, LogicalPaintOutcome, LogicalPointerEvent, PointerClearance,
+    SurfaceDisplayStep, SurfaceMetrics,
+};
+use dockspace::model::{
+    DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout,
+    ItemId, RootId, SurfaceId,
+};
+use dockspace::policy::DockPolicy;
+use dockspace::runtime::{SurfacePointerButton, SurfacePresentationResult};
+
+let surface = SurfaceId::new(1);
+let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+    surface,
+    DockspaceRootLayout::new(
+        RootId::new(1),
+        DockspaceNode::tabs([ItemId::new(1), ItemId::new(2)]),
+    ),
+)])?;
+let mut host = LogicalHost::from_layout(layout, DockPolicy::default())?;
+let mut metrics = SurfaceMetrics::new(LogicalRect::new(0.0, 0.0, 800.0, 600.0)?);
+
+// 1. Measure and compile an owned `'static` display list (or call `paint_with_visitor`).
+if let LogicalPaintOutcome::Ready { payload, presentation, .. } =
+    host.paint_display_list(surface, &mut metrics)?
+{
+    for step in payload.steps() {
+        if let SurfaceDisplayStep::Pane(pane) = step {
+            // Render your widget for `pane.item` inside `pane.content_geometry`.
+        }
+    }
+    // 2. Report actual renderer presentation so hit authority settles atomically.
+    host.finish_presentation(presentation, SurfacePresentationResult::Presented)?;
+}
+
+// 3. Forward pointer and wheel events with explicit framework occlusion clearance.
+host.submit_pointer(LogicalPointerEvent::pressed(
+    surface,
+    pos,
+    SurfacePointerButton::Primary,
+    PointerClearance::Unobstructed,
+))?;
+```
+
+See [crates/dockspace/README.md](crates/dockspace/README.md), [examples/custom_ui_host.rs](crates/dockspace/examples/custom_ui_host.rs), and the full interactive [Ratatui terminal workbench](integration/ratatui-demo/README.md).
+
+---
+
+## Crates & Ecosystem
+
+| Crate / Example | Role | Status | License |
+| --- | --- | --- | --- |
+| [`dockspace`](crates/dockspace) | Core engine, `dockspace::host` integration kit, optional `motion` & `serde` | Registry release (`0.1.0`) | Apache-2.0 |
+| [`dockspace_winit`](crates/dockspace_winit) | Shared `winit 0.30` mouse, coordinate, repaint & optional `native` helpers | Registry release (`0.1.0`) | MIT OR Apache-2.0 |
+| [`egui_dockspace`](crates/egui_dockspace) | Official `egui 0.37` adapter (`winit` / `wgpu` / `web` / `eframe` / `accesskit`) | Registry release (`0.1.0`) | MIT OR Apache-2.0 |
+| [`egui_dockspace_native`](crates/egui_dockspace_native) | Experimental multi-OS-window egui adapter (pinned `egui`/`winit` forks) | Git / `[patch.crates-io]` | MIT OR Apache-2.0 |
+| [`integration/ratatui-demo`](integration/ratatui-demo/README.md) | Third-party TUI reference adapter on `dockspace::host` + `TestBackend` tests | Reference example | MIT OR Apache-2.0 |
+| [`integration/gpui-harness`](integration/gpui-harness/README.md) | Retained-view GPUI workbench & native multiview harness (`Open GPUI`) | Reference harness | MIT OR Apache-2.0 |
+
+---
+
+## Host Capabilities & Platform Limits
+
+| Host path | Drag docking & guides | Focus confirmation | Multi-OS windows | Requires forks? |
+| --- | --- | --- | --- | --- |
+| `egui_dockspace` (`wgpu` / `web` / complete-output) | Full (single window or browser canvas) | Yes | Contained floats only | No |
+| `egui_dockspace` (`eframe::App::ui` callback) | Selection, close, menus & keyboard resize | No | No | No |
+| `dockspace::host` / `dockspace_winit` (custom UI) | Full (logical or native via host) | Host-supplied | Optional (`Tier 3` / `native`) | No |
+| `egui_dockspace_native` (experimental) | Local + finite Linux X11 / macOS cross-window | Yes | Yes (X11 / macOS; Wayland local-only) | Yes (`Latias94/egui`, `Latias94/winit`) |
+
+Physical drag-out to create a new OS window, Windows cross-window pointer input, and arbitrary mixed-monitor DPI remain under active validation. Read [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) before adopting native multiview, and see [docs/MAINTAINING.md](docs/MAINTAINING.md#experimental-native-adapter-and-fork-distribution-policy) for the fork distribution policy.
+
+---
+
+## Learn More
+
+- **Guides**: [Core host guide](crates/dockspace/docs/guide.md) · [egui integration guide](crates/egui_dockspace/docs/guide.md) · [Adapter testing](docs/ADAPTER_TESTING.md) · [Documentation index](docs/README.md)
+- **Feature configuration**: `motion` is enabled by default (`MotionMode::Off` or `default-features = false` disables it); enable `serde` for layout persistence.
+- **AI coding skill**: [skills/dockspace-integration/SKILL.md](skills/dockspace-integration/SKILL.md) provides host-selection and contract checklists for AI coding assistants.
+- **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md) · [MAINTAINING.md](docs/MAINTAINING.md) · [CHANGELOG.md](CHANGELOG.md)
 
 ## License
 
-`dockspace` uses Apache-2.0. `dockspace_winit`, `egui_dockspace` and the experimental
-native adapter use MIT OR Apache-2.0. [Third-party sources](THIRD_PARTY.md) records
-prior art and fixture provenance.
+`dockspace` is licensed under **Apache-2.0**. `dockspace_winit`, `egui_dockspace`, and `egui_dockspace_native` are dual-licensed under **MIT OR Apache-2.0**. See [THIRD_PARTY.md](THIRD_PARTY.md) for prior art and fixture attribution.
