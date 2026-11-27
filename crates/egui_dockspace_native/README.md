@@ -177,8 +177,27 @@ request focus; submit `SelectItem` separately when needed. Entirely hidden roots
 keep their native windows until an explicit host lifecycle action changes them.
 
 This crate uses the separate [fork workspace](../../integration/egui-fork-workspace/Cargo.toml).
-Do not patch the official adapter workspace to run it. Current dependency pins
-are maintained in that manifest and lockfile.
+Do not patch the official adapter workspace to run it. To use
+`egui_dockspace_native` in an external application while retaining compatibility
+with crates.io `egui` ecosystem widgets, add the matching immutable fork tags to
+your root workspace `Cargo.toml`:
+
+```toml
+[patch.crates-io]
+ecolor = { git = "https://github.com/Latias94/egui", tag = "v0.37.0-dockspace.1" }
+eframe = { git = "https://github.com/Latias94/egui", tag = "v0.37.0-dockspace.1" }
+egui = { git = "https://github.com/Latias94/egui", tag = "v0.37.0-dockspace.1" }
+egui-wgpu = { git = "https://github.com/Latias94/egui", tag = "v0.37.0-dockspace.1" }
+egui-winit = { git = "https://github.com/Latias94/egui", tag = "v0.37.0-dockspace.1" }
+egui_glow = { git = "https://github.com/Latias94/egui", tag = "v0.37.0-dockspace.1" }
+emath = { git = "https://github.com/Latias94/egui", tag = "v0.37.0-dockspace.1" }
+epaint = { git = "https://github.com/Latias94/egui", tag = "v0.37.0-dockspace.1" }
+# Matches `Latias94/egui`'s internal winit rev (tagged `v0.30.13-dockspace.1`) so Cargo unifies winit.
+winit = { git = "https://github.com/Latias94/winit.git", rev = "c45a0701cd6ffa6c223491dfda35d667bf8dc4f4" }
+```
+
+See [fork distribution policy](../../docs/MAINTAINING.md#experimental-native-adapter-and-fork-distribution-policy)
+for versioning and upgrade expectations.
 
 Use `NativeDockspaceApp::with_input` with the same `egui_dockspace::DockInputConfig`
 as the official adapter. It controls hold-to-enable/disable docking and the
