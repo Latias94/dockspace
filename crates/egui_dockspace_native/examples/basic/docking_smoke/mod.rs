@@ -335,7 +335,7 @@ impl MergeSmoke {
         }
         assert!(
             self.started.elapsed() < Duration::from_secs(15),
-            "actual editor docking failed; view={:?}",
+            "actual editor docking failed; view={:?}; target_content={:?}; center_guides={:?}; primary_down={}; wayland_guide_sent={}",
             app.dockspace.with_view(|view| {
                 [self.source, self.target, EDITOR].map(|id| {
                     let item = view.item(id).unwrap();
@@ -350,6 +350,11 @@ impl MergeSmoke {
                     )
                 })
             }),
+            app.dockspace
+                .with_panes(|panes| panes.panes[&self.target].content),
+            tabs.lock().unwrap().root().center_guides,
+            context.input(|input| input.pointer.primary_down()),
+            self.wayland_guide_sent,
         );
         let ready = app.dockspace.is_surface_presented(SURFACE)
             && app.dockspace.is_quiescent()

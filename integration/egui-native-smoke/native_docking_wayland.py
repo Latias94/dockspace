@@ -78,6 +78,8 @@ def run_case(binary: Path, case: str, artifacts: Path) -> None:
     tab_drags = merges = 0
     resized: list[str] = []
     left_and_returned = False
+    target_entered_at: float | None = None
+    stuck_captured = False
     try:
         pointer = WaylandPointer()
         with (directory / "stdout.log").open("x") as log:
@@ -88,6 +90,20 @@ def run_case(binary: Path, case: str, artifacts: Path) -> None:
                 except queue.Empty:
                     if pending is not None and stage == "hover" and not held:
                         pointer.move(*pending[1])
+                    elif (
+                        pending is not None
+                        and stage == "target"
+                        and held
+                        and not stuck_captured
+                        and target_entered_at is not None
+                        and time.monotonic() - target_entered_at >= 3.0
+                    ):
+                        subprocess.run(
+                            ["grim", str(directory / "target-stuck.png")],
+                            check=False,
+                            timeout=3,
+                        )
+                        stuck_captured = True
                     continue
                 if line is None:
                     eof_seen = True
@@ -155,6 +171,7 @@ def run_case(binary: Path, case: str, artifacts: Path) -> None:
                         stage = ""
                     else:
                         stage = "target"
+                        target_entered_at = time.monotonic()
                 elif line.startswith("editor-wayland-target:"):
                     if pending is None or pending[0] != "tab" or stage != "target" or not held:
                         raise RuntimeError("the actual center guide must belong to the held tab")
@@ -176,6 +193,9 @@ def run_case(binary: Path, case: str, artifacts: Path) -> None:
                 elif line.startswith("editor-docking-complete:"):
                     completed = True
             if not eof_seen:
+                subprocess.run(
+                    ["grim", str(directory / "failure.png")], check=False, timeout=3,
+                )
                 raise RuntimeError(f"native Wayland docking timed out for {case}")
             status = process.wait(timeout=3)
             failed |= "\tfatal\t" in event_log.read_text()
