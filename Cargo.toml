@@ -16,6 +16,7 @@ exclude = [
     "integration/egui-fork-product-harness",
     "integration/egui-web-demo",
     "integration/gpui-harness",
+    "integration/ratatui-demo",
     "repo-ref/egui",
     "repo-ref/egui-release",
 ]
@@ -37,14 +38,14 @@ codegen-units = 1
 blake3 = "1.8.3"
 dockspace = { version = "0.1.0", path = "crates/dockspace", default-features = false }
 dockspace_winit = { version = "0.1.0", path = "crates/dockspace_winit", default-features = false }
-egui = { version = "=0.37.0", default-features = false }
-eframe = { version = "=0.37.0", default-features = false }
+egui = { version = "0.37.0", default-features = false }
+eframe = { version = "0.37.0", default-features = false }
 proptest = "1.9.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 slotmap = "1.1.1"
 thiserror = "2.0.18"
-winit = { version = "=0.30.13", default-features = false }
+winit = { version = "0.30.13", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

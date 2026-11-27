@@ -8,6 +8,11 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
+keywords = ["docking", "winit", "gui", "windowing", "editor"]
+categories = ["gui"]
+
+[package.metadata.docs.rs]
+features = ["native"]
 
 [features]
 default = ["rwh_06", "x11", "wayland", "wayland-csd-adwaita"]

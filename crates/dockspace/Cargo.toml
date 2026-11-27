@@ -8,6 +8,12 @@ authors.workspace = true
 license = "Apache-2.0"
 repository.workspace = true
 readme = "README.md"
+keywords = ["docking", "layout", "gui", "tabs", "editor"]
+categories = ["gui"]
+exclude = ["proptest-regressions/"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [features]
 default = ["motion"]
