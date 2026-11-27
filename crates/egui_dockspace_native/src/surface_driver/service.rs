@@ -79,8 +79,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
         }
         loop {
             let before = budget.remaining_records();
-            let pending_output = self.coordinator.has_pending_output_prefix();
             let effect = self.coordinator.try_report_pending_effect_results()?;
+            self.coordinator.discard_inert_keyboard_controls(budget)?;
+            let pending_output = self.coordinator.has_pending_output_prefix();
             let quiescence = token.is_none_or(|token| token.viewport_id() == ViewportId::ROOT)
                 && self.coordinator.try_report_retirement_quiescence()?;
             let reduced = self

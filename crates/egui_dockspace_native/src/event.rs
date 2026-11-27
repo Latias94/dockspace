@@ -88,13 +88,16 @@ impl NativeKeyboardControlRecord {
         else {
             return None;
         };
+        if event.state != winit::event::ElementState::Pressed {
+            return None;
+        }
         Some(Self {
             ordinal: callback.ordinal().get(),
             window_id: callback.window_id(),
             viewport_id: callback.viewport_id(),
             binding: viewports.binding_for_event(callback.window_id(), callback.viewport_id())?,
             key: egui_winit::key_from_winit_key_event(event)?,
-            pressed: event.state == winit::event::ElementState::Pressed,
+            pressed: true,
         })
     }
 

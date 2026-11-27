@@ -47,6 +47,68 @@ impl NativeCoordinator {
         }
     }
 
+    fn keyboard_control_cancels_active_gesture(
+        &self,
+        record: crate::event::NativeKeyboardControlRecord,
+    ) -> Option<dockspace::runtime::NativePointerId> {
+        let binding = record.binding();
+        let modifiers = self
+            .bridge
+            .with_viewports(|routes| routes.modifiers(binding.window()));
+        (record.pressed()
+            && self.input.cancel_matches(
+                record.key(),
+                crate::pointer_event::egui_modifiers(modifiers),
+            )
+            && self.current_window_route_for_binding(binding).is_some()
+            && self
+                .bridge
+                .with_viewports(|routes| record.is_current(routes)))
+        .then(|| {
+            self.session
+                .native_pointer_gesture_source()
+                .map(|(pointer, _)| pointer)
+        })
+        .flatten()
+    }
+
+    /// Discards leading keyboard controls that cannot cancel any committed gesture,
+    /// avoiding empty host-frame commits during ordinary application typing.
+    pub(crate) fn discard_inert_keyboard_controls(
+        &mut self,
+        budget: &mut NativeInputBudget,
+    ) -> Result<bool, NativeRuntimeError> {
+        self.bridge.admission_dispatch();
+        self.finish_stationary_observation();
+        let mut discarded = false;
+        while !budget.is_exhausted()
+            && !self.bridge.callback_boundary_pending()
+            && !self.session.has_pending_native_input()
+            && matches!(
+                self.bridge.admission_dispatch(),
+                NativeDispatch::Replay { .. }
+            )
+        {
+            let Some(NativeCallbackHead::KeyboardControl(record, _)) = self.bridge.next_callback()
+            else {
+                break;
+            };
+            if self
+                .keyboard_control_cancels_active_gesture(record)
+                .is_some()
+            {
+                break;
+            }
+            debug_assert_ne!(record.ordinal(), 0, "native control ordinals are non-zero");
+            if !self.bridge.discard_inert_keyboard_control(record) {
+                return Err(NativeHostProtocolError::WindowEventAcknowledgementMismatch.into());
+            }
+            budget.complete_unsequenced_records(1);
+            discarded = true;
+        }
+        Ok(discarded)
+    }
+
     fn reduce_keyboard_control(
         &mut self,
         record: crate::event::NativeKeyboardControlRecord,
@@ -58,21 +120,7 @@ impl NativeCoordinator {
             PointerEventMetadata,
         };
 
-        let binding = record.binding();
-        let modifiers = self
-            .bridge
-            .with_viewports(|routes| routes.modifiers(binding.window()));
-        if record.pressed()
-            && self.input.cancel_matches(
-                record.key(),
-                crate::pointer_event::egui_modifiers(modifiers),
-            )
-            && self.current_window_route_for_binding(binding).is_some()
-            && self
-                .bridge
-                .with_viewports(|routes| record.is_current(routes))
-            && let Some((pointer, _)) = self.session.native_pointer_gesture_source()
-        {
+        if let Some(pointer) = self.keyboard_control_cancels_active_gesture(record) {
             // Keyboard delivery is not a pointer position or capture fact.
             // The exact committed owner selects the existing stream; no
             // native position, receiver, or release is manufactured.

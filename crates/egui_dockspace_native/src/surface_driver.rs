@@ -891,8 +891,9 @@ impl<P: PaneView> NativeRuntimeState<P> {
             self.abandon_unfinalized_output_passes(&context)?;
             self.coordinator
                 .stage_stationary_observation(&context, token, budget);
-            let output_prefix_pending = self.coordinator.has_pending_output_prefix();
             let pending_effect_reported = self.coordinator.try_report_pending_effect_results()?;
+            self.coordinator.discard_inert_keyboard_controls(budget)?;
+            let output_prefix_pending = self.coordinator.has_pending_output_prefix();
             let quiescence_recorded = surface == self.root_surface
                 && self.coordinator.try_report_retirement_quiescence()?;
             let reduced_callback = self

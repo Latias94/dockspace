@@ -1062,3 +1062,112 @@ fn fatal_quarantine_recovery_commits_close_before_exit_errors() {
         "fatal recovery exits only after the committed close command survives the output"
     );
 }
+
+#[test]
+fn inert_keyboard_controls_drain_without_empty_host_frame_commits() {
+    use crate::event::NativeKeyboardControlRecord;
+    use crate::mailbox::HostRecord;
+
+    let mut state = test_state();
+    let context = egui::Context::default();
+    let clock = dockspace::runtime::NativeMonotonicClock::new(|| std::time::Duration::ZERO);
+    let mut initial_budget = NativeInputBudget::new(&clock);
+    assert!(
+        state
+            .service_pending_prefixes(&context, None, &mut initial_budget)
+            .unwrap()
+    );
+    let binding = state
+        .coordinator
+        .session()
+        .native_window_bindings()
+        .next()
+        .and_then(|window| {
+            state
+                .coordinator
+                .session()
+                .native_surface_bindings_for_window(window)
+                .next()
+        })
+        .expect("root registration commits one native surface binding");
+    let window = winit::window::WindowId::from(91);
+    state
+        .coordinator
+        .bind_viewport(ViewportId::ROOT, window, binding)
+        .unwrap();
+
+    let reports_seen = Arc::new(AtomicUsize::new(0));
+    state.coordinator.observe_reports_for_test({
+        let reports_seen = Arc::clone(&reports_seen);
+        move |_| {
+            reports_seen.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+
+    let bridge = state.coordinator.dispatch_bridge();
+    for (ordinal, key, pressed) in [
+        (1, egui::Key::A, true),
+        (2, egui::Key::A, false),
+        (3, egui::Key::Escape, true),
+    ] {
+        bridge.push_record(HostRecord::KeyboardControl(
+            NativeKeyboardControlRecord::for_test(
+                ordinal,
+                window,
+                Some(ViewportId::ROOT),
+                binding,
+                key,
+                pressed,
+            ),
+        ));
+    }
+
+    let mut budget = NativeInputBudget::new(&clock);
+    assert!(
+        state
+            .service_pending_prefixes(&context, None, &mut budget)
+            .unwrap(),
+        "ordinary typing and idle cancel keys drain within one service turn"
+    );
+    assert_eq!(
+        reports_seen.load(Ordering::SeqCst),
+        0,
+        "inert keyboard controls must not commit empty host frames"
+    );
+    assert!(!state.coordinator.has_pending_callback_records());
+    assert!(!bridge.callback_boundary_pending());
+    assert_eq!(budget.remaining_records(), 256 - 3);
+
+    for ordinal in 4..=(4 + 259) {
+        bridge.push_record(HostRecord::KeyboardControl(
+            NativeKeyboardControlRecord::for_test(
+                ordinal,
+                window,
+                Some(ViewportId::ROOT),
+                binding,
+                egui::Key::A,
+                true,
+            ),
+        ));
+    }
+    let mut first = NativeInputBudget::new(&clock);
+    assert!(
+        !state
+            .service_pending_prefixes(&context, None, &mut first)
+            .unwrap(),
+        "more than one budget slice of inert keyboard controls must still yield"
+    );
+    assert!(first.is_exhausted());
+    assert_eq!(reports_seen.load(Ordering::SeqCst), 0);
+    assert!(state.coordinator.has_pending_callback_records());
+
+    let mut second = NativeInputBudget::new(&clock);
+    assert!(
+        state
+            .service_pending_prefixes(&context, None, &mut second)
+            .unwrap()
+    );
+    assert_eq!(second.remaining_records(), 256 - 4);
+    assert_eq!(reports_seen.load(Ordering::SeqCst), 0);
+    assert!(!state.coordinator.has_pending_callback_records());
+}

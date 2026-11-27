@@ -693,6 +693,21 @@ impl NativeHostBridge {
         matches
     }
 
+    pub(crate) fn discard_inert_keyboard_control(
+        &self,
+        expected: NativeKeyboardControlRecord,
+    ) -> bool {
+        let mut records = self.lock();
+        let matches = matches!(
+            records.front_dispatch_record(),
+            Some(HostRecord::KeyboardControl(record)) if *record == expected
+        );
+        if matches {
+            records.transfer_front_record();
+        }
+        matches
+    }
+
     pub(crate) fn acknowledge_global_focus(&self, expected: NativeGlobalFocusRecord) -> bool {
         let mut records = self.lock();
         let matches = matches!(
