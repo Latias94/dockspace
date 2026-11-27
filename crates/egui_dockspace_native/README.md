@@ -1,20 +1,27 @@
 # egui_dockspace_native
 
-Experimental native-window hosting for `egui_dockspace`.
+**Experimental multi-OS-window native adapter for `egui_dockspace`** — connects Dockspace's multi-surface protocol to pinned `eframe` / `winit` forks for child OS windows, cross-window docking, and per-window presentation settlement.
 
-This unpublished adapter connects Dockspace to pinned eframe/winit forks. It
+[Official Single-Window Adapter](../egui_dockspace/README.md) ·
+[Platform Matrix](../../docs/PLATFORM_SUPPORT.md) ·
+[Fork Policy](../../docs/MAINTAINING.md#experimental-native-adapter-and-fork-distribution-policy) ·
+[Native Qualification](../../integration/egui-native-smoke/README.md) ·
+[Changelog](../../CHANGELOG.md)
+
+`Rust 1.95+ (MSRV)` · `Experimental / Git-only` · `Pinned Latias94/egui & Latias94/winit forks` · `MIT OR Apache-2.0`
+
+> **Single OS window or official crates.io `egui`?** Start with [`egui_dockspace`](../egui_dockspace/README.md) instead — it requires zero forks and supports full drag docking, contained floats, and WebAssembly.
+
+This unpublished adapter connects Dockspace to pinned `eframe`/`winit` forks. It
 adds native window creation and recovery, per-window output reporting and
 multiview input integration. The core remains the sole docking-state owner;
 your application owns pane content.
 
 The default `motion` feature uses the same core pane geometry and egui decoration
 tracks as the official adapter. Same-root survivor reflow uses the shared 200 ms
-tween; pointer-driven resizing remains immediate. New and removed panes do not
+`EaseOut` tween; pointer-driven resizing remains immediate. New and removed panes do not
 use entry or exit snapshots. Native window movement, including the solar-system
 example, follows its own application clock and the desktop compositor.
-
-For one OS window using official egui, start with
-[`egui_dockspace`](../egui_dockspace) and its complete-output editor instead.
 
 ## Run the editor
 

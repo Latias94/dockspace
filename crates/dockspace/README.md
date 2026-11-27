@@ -1,139 +1,170 @@
 # dockspace
 
-A renderer-neutral docking library for Rust editor UIs.
+**A renderer-neutral docking engine for Rust editor UIs** — composable layouts, deterministic presentation settlement, optional interruptible motion, and a three-tier `dockspace::host` integration kit for any immediate-mode or retained-mode UI framework.
 
-Compose bare panes, tab groups, nested splits, shared-track grids and floating
-presentations while keeping pane content in your application. A tab can contain
-a complete layout. Dockspace handles layout, docking decisions,
-interaction state, close approval and optional layout persistence. The host
-supplies measurements, drawing, input, frame scheduling and OS resources.
+[Live Web Demo](https://frankorz.com/dockspace/demo/egui/) ·
+[Homepage](https://frankorz.com/dockspace/) ·
+[Host Guide](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/docs/guide.md) ·
+[Examples](https://github.com/Latias94/dockspace/blob/main/docs/EXAMPLES.md) ·
+[Changelog](https://github.com/Latias94/dockspace/blob/main/CHANGELOG.md)
 
-**Pre-release:** use a path dependency from this checkout. Rust 1.95 or later is
-required. Default features include no renderer or async runtime.
+`Rust 1.95+ (MSRV)` · `#![forbid(unsafe_code)]` · `Zero GUI or async deps` · `WebAssembly ready` · `Pre-release`
 
-## Start with a layout
+![Dockspace workbench](https://raw.githubusercontent.com/Latias94/dockspace/main/screenshots/workbench.gif)
+
+---
+
+## Why `dockspace`?
+
+- **Pure, framework-neutral core** — Zero GUI, windowing, GPU, or async-runtime dependencies, `#![forbid(unsafe_code)]`, and `wasm32`-ready. Already drives four distinct UI paradigms: **`egui`**, **`Open GPUI`**, **`winit + softbuffer`**, and **`ratatui`**.
+- **Composable `Pane` / `Tabs` / `Split` / `Grid` + floating roots** — Nest a full layout inside a single named tab, keep bare panes without forced tab bars, and resize shared `Grid` tracks or multi-arm splitter junctions atomically with per-pane `PaneSizing` bounds.
+- **Application-owned content & deferred close** — Layouts reference panes by stable `ItemId`; your application owns all documents and widget state across moves, hides, and restores, and resolves close requests immediately or asynchronously with deferred decision tokens.
+- **Deterministic frames & fail-closed input** — Atomic two-step presentation settlement (`Presented` / `Dropped`) and explicit occlusion clearance (`PointerClearance`) prevent clicks through modals or stale geometry, paired with optional interruptible `motion`.
+- **Optional persistence & native multiview protocols** — Core-owned multi-surface and OS-window lifecycle protocols alongside `serde` JSON layout documents decoupled from pane data.
+
+> Building an `egui` app? Start directly with [`egui_dockspace`](https://github.com/Latias94/dockspace/tree/main/crates/egui_dockspace). Building a custom `winit` host? Pair this crate with [`dockspace_winit`](https://github.com/Latias94/dockspace/tree/main/crates/dockspace_winit).
+
+---
+
+## Quickstart (`dockspace::host`)
+
+Until `0.1.0` is published on crates.io, depend on a local checkout:
+
+```toml
+[dependencies]
+dockspace = { path = "../dockspace/crates/dockspace" }
+```
+
+Use `LogicalHost` to compile each frame into an owned `'static` `SurfaceDisplayList` (ideal for retained UIs like `iced`, `slint`, `dioxus`, `gpui`, or deferred GPU queues) or stream directly through `SurfaceProgramVisitor` (ideal for immediate-mode engines):
 
 ```rust
+use dockspace::geometry::{LogicalPoint, LogicalRect};
+use dockspace::host::{
+    LogicalHost, LogicalPaintOutcome, LogicalPointerEvent, PointerClearance,
+    SurfaceDisplayStep, SurfaceMetrics,
+};
 use dockspace::model::{
     DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout,
     ItemId, RootId, SurfaceId,
 };
 use dockspace::policy::DockPolicy;
-use dockspace::runtime::DockspaceSession;
+use dockspace::runtime::{SurfacePointerButton, SurfacePresentationResult};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let surface = SurfaceId::new(1);
     let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
-        SurfaceId::new(1),
+        surface,
         DockspaceRootLayout::new(
             RootId::new(1),
             DockspaceNode::central_tabs([ItemId::new(1), ItemId::new(2)]),
         ),
     )])?;
-    let session = DockspaceSession::from_layout(layout, DockPolicy::default())?;
-    assert!(session.view().item(ItemId::new(1)).is_some());
+    let mut host = LogicalHost::from_layout(layout, DockPolicy::default())?;
+    let mut metrics = SurfaceMetrics::new(LogicalRect::new(0.0, 0.0, 800.0, 600.0)?);
+
+    // 1. Measure and compile an owned `'static` display list (or call `paint_with_visitor`).
+    if let LogicalPaintOutcome::Ready { payload, presentation, .. } =
+        host.paint_display_list(surface, &mut metrics)?
+    {
+        for step in payload.steps() {
+            if let SurfaceDisplayStep::Pane(pane) = step {
+                // Render your widget for `pane.item` inside `pane.content_geometry`.
+                let _ = (pane.item, pane.content_geometry);
+            }
+        }
+        // 2. Report actual renderer presentation so hit authority settles atomically.
+        host.finish_presentation(presentation, SurfacePresentationResult::Presented)?;
+    }
+
+    // 3. Forward pointer & wheel events with explicit framework occlusion clearance.
+    host.submit_pointer(LogicalPointerEvent::pressed(
+        surface,
+        LogicalPoint::new(120.0, 14.0)?,
+        SurfacePointerButton::Primary,
+        PointerClearance::Unobstructed,
+    ))?;
     Ok(())
 }
 ```
 
-Run the [layout commands example](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/examples/layout_commands.rs) from the
-repository root to select, open and move panes and inspect committed results:
+---
 
-```sh
-cargo run -p dockspace --example layout_commands --locked
-```
+## Three-Tier Integration Kit (`dockspace::host`)
 
-The [composition guide](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/docs/guide.md#composable-layouts) covers named layout
-tabs, active versus owned content, shared Grid tracks and constrained resizing.
+Choose the lowest tier that fits your framework:
 
-## Connect your host
+- **Tier 1 — Surface Rendering (`SurfaceDisplayList`, `SurfaceProgramVisitor`, `SurfaceMetrics`)**: compile a paint plan into an owned `'static` display list for retained UIs and deferred GPU queues, or implement only the chrome methods you draw on `SurfaceProgramVisitor`.
+- **Tier 2 — Logical Host (`LogicalHost`, `LogicalPointerEvent`, `PointerClearance`)**: single-window and multi-surface logical hosting with two-step presentation settlement (`LogicalPresentationToken` → `finish_presentation`), independent click/drag/scroll lane resolution, and fail-closed pointer routing.
+- **Tier 3 — Native Multiview (`NativeReportDigest`, `NativeWindowRetirementState`, `NativeWindows`)**: shared native-window report synchronization, deduplicated window repaints, and exact quiescence tracking.
 
-Start with `dockspace::host` for the fastest path into any Rust UI framework
-(immediate-mode or retained-mode):
-
-- **Tier 1 (`SurfaceDisplayList` / `SurfaceProgramVisitor` / `SurfaceMetrics`)**:
-  compile a paint plan into an owned `'static` display list for retained UIs and
-  deferred GPU queues, or implement only the chrome methods you draw on
-  `SurfaceProgramVisitor`.
-- **Tier 2 (`LogicalHost` / `LogicalPointerEvent` / `PointerClearance`)**:
-  single-window and multi-surface logical hosting with two-step presentation
-  settlement (`LogicalPresentationToken` → `finish_presentation`), independent
-  click/drag/scroll lane resolution, and fail-closed pointer routing.
-- **Tier 3 (`NativeReportDigest` / `NativeWindowRetirementState` / `NativeWindows`)**:
-  shared native-multiview report synchronization, deduplicated window repaints,
-  and exact quiescence tracking.
-
-Run the zero-dependency [custom UI host example](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/examples/custom_ui_host.rs) to
-see both retained display-list and immediate visitor integration in ~230 lines,
-or explore the interactive [Ratatui terminal workbench](https://github.com/Latias94/dockspace/tree/main/integration/ratatui-demo) built exclusively on `dockspace::host`:
-
-```sh
-cargo run -p dockspace --example custom_ui_host --locked
-cargo run --manifest-path integration/ratatui-demo/Cargo.toml --locked
-```
-
-For direct access to the complete low-level protocol, use `model`, `policy`,
-and `runtime::DockspaceSession`:
+For direct access to the complete low-level protocol, use `model`, `policy`, and `runtime::DockspaceSession`:
 
 1. Begin a host frame and submit ordered input and application commands.
-2. Supply logical measurements and execute the returned surface program into
-   your renderer or an owned display list.
+2. Supply logical measurements and execute the returned surface program into your renderer or an owned display list.
 3. Confirm complete program acceptance, then commit the frame.
-4. Report whether the exact output was presented or dropped. Accept that report
-   in a later committed frame before routing input against it.
+4. Report whether the exact output was `Presented` or `Dropped`; accept that report in a later committed frame before routing input against it.
 
-A logical surface is a layout/input area; it need not be an OS window. Multiple
-surfaces can share a host. Native window effects are explicit requests for the
-host to execute and report, rather than hidden calls to an event loop.
+A logical surface is a layout/input area rather than a forced OS window. Multiple surfaces can share one host, and native window effects are explicit host requests rather than hidden calls into an event loop.
 
-The [independent engine-host example](https://github.com/Latias94/dockspace/blob/main/integration/dockspace-host-harness/examples/engine_host.rs)
-implements the complete recording-renderer path without egui:
+---
+
+## Runnable Examples
+
+From the repository root:
 
 ```sh
+# Layout commands: select, open, move panes and inspect committed outcomes
+cargo run -p dockspace --example layout_commands --locked
+
+# Zero-dependency custom UI host (~230 lines, both retained display list and immediate visitor)
+cargo run -p dockspace --example custom_ui_host --locked
+
+# Interactive third-party TUI workbench built exclusively on `dockspace::host` + ratatui
+cargo run --manifest-path integration/ratatui-demo/Cargo.toml --locked
+
+# Complete low-level recording-renderer host without egui
 cargo run --manifest-path integration/dockspace-host-harness/Cargo.toml --example engine_host --locked
 ```
 
-Read the [host guide](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/docs/guide.md) for input, output ownership, native lifecycle,
-close decisions and persistence contracts, and the
-[adapter testing guide](https://github.com/Latias94/dockspace/blob/main/docs/ADAPTER_TESTING.md) for reusable host scenarios.
+See the [composition guide](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/docs/guide.md#composable-layouts), the [host guide](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/docs/guide.md), and the [adapter testing guide](https://github.com/Latias94/dockspace/blob/main/docs/ADAPTER_TESTING.md) for full contracts and reusable conformance scenarios.
 
-## Customize
+---
 
-- Keep pane data in your own registry, keyed by `ItemId`.
-- Configure move/close restrictions, compatibility and arrangement locking with
-  `DockPolicy`; configure geometry and interaction timing with
-  `DockPresentationConfig`. Use `set_allow_root_resize_axis` to restrict internal
-  resizing to either axis for a complete root, independently of its floating
-  window border.
-- Layout weights, docking fractions and logical geometry use `f64` throughout
-  the core and persistence. Convert to your renderer's coordinate type at the
-  adapter boundary.
-- Resolve close requests immediately or retain a deferred token while saving.
-- Use `frame.set_item_visibility_current(item, false)` to hide an open pane and
-  `true` to restore it. Hidden panes keep their tab order, split proportions and
-  window ownership; close removes their layout slot. Query `is_visible()` on an
-  item view or `visible_items()` on its tabs view. Showing does not request focus.
-- Enable `serde` to save and restore layouts with stable pane keys. The
-  application chooses storage and serializes its own pane data.
-- The default `motion` feature provides interruptible presentation geometry.
-  Custom hosts supply a monotonic clock and request frames while motion is
-  active. Use `MotionMode::Off` for immediate geometry, omit `set_motion` for a
-  static host, or disable default features to omit motion support. The
-  [motion guide](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/docs/guide.md#motion) explains timing, reduced motion and retained
-  UI integration.
+## Core Capabilities & Customization
 
-## Features
+- **Application-owned registry**: keep pane data in your own struct keyed by `ItemId`.
+- **Policy & presentation geometry**: configure move/close rules, compatibility, and arrangement locking with `DockPolicy` (including `set_allow_root_resize_axis` per root independently of floating borders); tune chrome geometry and interaction timing with `DockPresentationConfig` and per-pane `PaneSizing` bounds.
+- **Precision**: layout weights, docking fractions, and logical geometry use `f64` throughout core and persistence; convert to your renderer's coordinate type at the adapter boundary.
+- **Visibility vs. close**: `frame.set_item_visibility_current(item, false)` hides an open pane while preserving its tab order, split proportions, and window ownership (`is_visible()` / `visible_items()`; showing does not request focus). Closing removes the slot after application approval (immediate or via deferred token).
+- **Layout persistence (`serde`)**: save and restore JSON layout documents with stable external pane keys and optional native placement preferences; file storage and pane content stay application-owned.
+- **Interruptible motion (`motion`, default)**: supplies `EaseOut` 200 ms reflow by default from a host-provided monotonic clock. Disable at runtime with `MotionMode::Off`, omit `set_motion` for static hosts, or compile without it via `default-features = false` ([motion guide](https://github.com/Latias94/dockspace/blob/main/crates/dockspace/docs/guide.md#motion)).
+
+---
+
+## Companion Crates
+
+| Crate | Role | License |
+| --- | --- | --- |
+| `dockspace` *(this crate)* | Renderer-neutral core engine and `dockspace::host` integration kit | Apache-2.0 |
+| [`dockspace_winit`](https://github.com/Latias94/dockspace/tree/main/crates/dockspace_winit) | Shared `winit 0.30` mouse, coordinate, repaint & optional `native` helpers | MIT OR Apache-2.0 |
+| [`egui_dockspace`](https://github.com/Latias94/dockspace/tree/main/crates/egui_dockspace) | Official `egui 0.37` adapter (`winit` / `wgpu` / `web` / `eframe` / `accesskit`) | MIT OR Apache-2.0 |
+| [`egui_dockspace_native`](https://github.com/Latias94/dockspace/tree/main/crates/egui_dockspace_native) | Experimental multi-OS-window `egui` adapter *(Git / pinned forks)* | MIT OR Apache-2.0 |
+
+---
+
+## Cargo Features
 
 | Feature | Purpose |
 | --- | --- |
-| `motion` (default) | Interruptible presentation geometry with a host-supplied clock; no renderer or platform dependency |
+| `motion` *(default)* | Interruptible presentation geometry with a host-supplied monotonic clock; no renderer or platform dependency |
 | `serde` | JSON layout documents with stable pane keys and optional native placement preferences |
 
-With `default-features = false`, the core retains static docking, layouts and
-native lifecycle without motion or persistence dependencies.
+With `default-features = false`, the core retains static docking, composable layouts, close decisions, and native lifecycle protocols with zero motion or serialization dependencies.
 
-[Examples](https://github.com/Latias94/dockspace/blob/main/docs/EXAMPLES.md) · [Platform support](https://github.com/Latias94/dockspace/blob/main/docs/PLATFORM_SUPPORT.md)
-· [Repository](https://github.com/Latias94/dockspace)
+[Examples](https://github.com/Latias94/dockspace/blob/main/docs/EXAMPLES.md) ·
+[Platform support](https://github.com/Latias94/dockspace/blob/main/docs/PLATFORM_SUPPORT.md) ·
+[Repository](https://github.com/Latias94/dockspace)
 
 ## License
 
-Apache-2.0. See [third-party sources](https://github.com/Latias94/dockspace/blob/main/THIRD_PARTY.md) for attribution.
+Apache-2.0. See [THIRD_PARTY.md](https://github.com/Latias94/dockspace/blob/main/THIRD_PARTY.md) for attribution.
