@@ -193,9 +193,11 @@ pub struct TabsRecord {
     id: TabBarSceneId,
     bounds: LogicalRect,
     content_bounds: LogicalRect,
+    content_layout_bounds: LogicalRect,
     clip: LogicalRect,
     layer: SceneLayerKey,
     active_ancestry: Option<usize>,
+    empty_central: bool,
 }
 
 impl TabsRecord {
@@ -210,10 +212,23 @@ impl TabsRecord {
             id,
             bounds,
             content_bounds,
+            content_layout_bounds: content_bounds,
             clip: bounds,
             layer,
             active_ancestry,
+            empty_central: false,
         }
+    }
+    pub(crate) const fn with_content_layout_bounds(
+        mut self,
+        content_layout_bounds: LogicalRect,
+    ) -> Self {
+        self.content_layout_bounds = content_layout_bounds;
+        self
+    }
+    pub(crate) const fn with_empty_central(mut self) -> Self {
+        self.empty_central = true;
+        self
     }
     /// Returns this exact container identity, shared by its optional header.
     #[must_use]
@@ -229,6 +244,16 @@ impl TabsRecord {
     #[must_use]
     pub const fn content_bounds(&self) -> LogicalRect {
         self.content_bounds
+    }
+    /// Returns the unclipped content allocation below this container's header.
+    #[must_use]
+    pub const fn content_layout_bounds(&self) -> LogicalRect {
+        self.content_layout_bounds
+    }
+    /// Returns whether this container is a root's empty central area with no visible tabs.
+    #[must_use]
+    pub const fn is_empty_central(&self) -> bool {
+        self.empty_central
     }
     /// Returns the exact container clip.
     #[must_use]

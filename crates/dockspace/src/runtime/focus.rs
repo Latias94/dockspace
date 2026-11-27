@@ -16,6 +16,25 @@ pub use crate::platform::focus::HostFocusState as DockspaceHostFocus;
 use super::{DockspaceHostFrame, DockspaceRuntimeError, DockspaceSession};
 
 impl DockspaceSession {
+    /// Returns the currently observed focused pane across the workspace.
+    ///
+    /// Selection, pending focus requests, and restoration history do not establish
+    /// this value. Workspace, external, none, and unknown focus return `None`.
+    #[must_use]
+    pub const fn focused_pane(&self) -> Option<ItemId> {
+        self.engine.viewport_focus().current_focused_pane()
+    }
+
+    /// Returns the currently observed focused pane on one logical surface.
+    ///
+    /// Selection, pending focus requests, and restoration history do not establish
+    /// this value. Workspace, external, unknown, and other-surface focus return
+    /// `None`.
+    #[must_use]
+    pub const fn focused_pane_on(&self, surface: SurfaceId) -> Option<ItemId> {
+        self.engine.viewport_focus().current_pane_focus(surface)
+    }
+
     /// Returns an admitted pane-focus request without reserving renderer output.
     ///
     /// Only an intent admitted at a successful commit is observable. The request

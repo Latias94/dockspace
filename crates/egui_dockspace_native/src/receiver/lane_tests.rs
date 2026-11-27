@@ -554,3 +554,172 @@ fn scroll_area_pane_clears_native_hover_over_text_and_empty_space_while_undeclar
         "undeclared button inside ScrollArea must still block click/hover lanes: {hit:?}"
     );
 }
+
+#[test]
+fn empty_central_placeholder_declared_content_clears_native_hover_while_undeclared_blocks() {
+    struct PlaceholderPanes {
+        declared_center: Option<egui::Pos2>,
+        undeclared_center: Option<egui::Pos2>,
+    }
+
+    impl egui_dockspace::PaneView for PlaceholderPanes {
+        fn title(&self, item: ItemId) -> Option<egui::WidgetText> {
+            Some(format!("Pane {}", item.get()).into())
+        }
+
+        fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> egui_dockspace::PaneResponse {
+            egui_dockspace::PaneResponse::from(&ui.label(format!("Pane {}", item.get())))
+        }
+
+        fn empty_central_ui(
+            &mut self,
+            _root: RootId,
+            ui: &mut egui::Ui,
+        ) -> egui_dockspace::PaneResponse {
+            let declared = ui.button("New File");
+            self.declared_center = Some(declared.rect.center());
+            let undeclared = ui.button("Undeclared Overlay");
+            self.undeclared_center = Some(undeclared.rect.center());
+            egui_dockspace::PaneResponse::from(&declared)
+        }
+    }
+
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([])),
+    )])
+    .unwrap();
+    let style = DockStyle::default();
+    let mut session = DockspaceSession::from_layout_with_presentation_config(
+        layout,
+        Default::default(),
+        style.presentation_config().unwrap(),
+    )
+    .unwrap();
+    session
+        .enable_managed_native_host(NativePointerRoster::Exact(Vec::new()))
+        .unwrap();
+    session
+        .configure_managed_native_capabilities(crate::capabilities::capabilities_for_backend(
+            eframe::NativeWindowingBackend::Wayland,
+        ))
+        .unwrap();
+    session
+        .register_native_root(SURFACE, HostWindowToken::new(1))
+        .unwrap();
+    let binding = idle(&mut session).native_bindings()[0];
+    let bounds = PhysicalRect::new(0.0, 0.0, 640.0, 400.0).unwrap();
+    session
+        .report_managed_native_snapshot(
+            [(
+                binding,
+                NativeWindowFacts::live()
+                    .with_content_bounds(bounds)
+                    .with_outer_bounds(bounds)
+                    .with_native_scale_factor(ScaleFactor::new(1.0).unwrap())
+                    .with_presentation_scale_factor(ScaleFactor::new(1.0).unwrap())
+                    .with_input(NativeWindowInputState::ReceivesInput, None)
+                    .with_presentation(NativeWindowPresentationState::Visible),
+            )],
+            NativeWorkAreaRoster::Unknown,
+        )
+        .unwrap();
+    idle(&mut session);
+    let mut store = NativeReceiverStore::default();
+    let context = egui::Context::default();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 400.0));
+    let bridge = Arc::new(NativeHostBridge::new(NativeViewportMap::default()));
+    let mut panes = PlaceholderPanes {
+        declared_center: None,
+        undeclared_center: None,
+    };
+    for _ in 0..3 {
+        let mut painted = None;
+        let mut output = None;
+        context
+            .run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    let mut frame = NativeHostFrame::new_with_input(
+                        session
+                            .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+                            .unwrap(),
+                        Default::default(),
+                        Arc::clone(&bridge),
+                        &mut store,
+                        None,
+                    );
+                    frame
+                        .frame
+                        .measure_surface(
+                            SURFACE,
+                            UniformSurfaceMetrics::new(
+                                LogicalRect::new(0.0, 0.0, 640.0, 400.0).unwrap(),
+                                LogicalSize::new(32.0, 24.0).unwrap(),
+                                80.0,
+                            )
+                            .unwrap(),
+                        )
+                        .unwrap();
+                    let mut paint = frame
+                        .paint_surface(
+                            egui::Id::unique("empty-central-hover-clearance"),
+                            SURFACE,
+                            ui,
+                            &mut panes,
+                            &style,
+                        )
+                        .unwrap();
+                    assert!(paint.confirm_into(&mut frame.frame).unwrap());
+                    frame
+                        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+                        .unwrap();
+                    output = frame.commit().unwrap().take_painted_outputs().pop();
+                    painted = Some(paint);
+                },
+            )
+            .drop_without_applying_deltas();
+        let paint = painted.unwrap();
+        let output = output.unwrap();
+        super::test_support::present_completed_output(
+            &mut store, &context, 1.0, binding, &output, &paint,
+        )
+        .unwrap();
+        session
+            .report_surface_presentation(output, SurfacePresentationResult::Presented)
+            .unwrap();
+        let report = idle(&mut session);
+        store.commit_presentations(report.surface_presentation_commits());
+    }
+
+    let entry = &store.presented[&SURFACE][0];
+    let declared_pt = panes.declared_center.expect("declared button painted");
+    let declared_hit = entry.hit_authority.hit_test(declared_pt).unwrap();
+    assert!(
+        declared_hit
+            .contains_pointer()
+            .is_some_and(|id| entry.has_hit_identity(id)),
+        "declared empty-central button must clear native hover: {declared_hit:?}"
+    );
+    let background_hit = entry
+        .hit_authority
+        .hit_test(egui::pos2(500.0, 300.0))
+        .unwrap();
+    assert!(
+        background_hit
+            .contains_pointer()
+            .is_some_and(|id| entry.has_hit_identity(id)),
+        "empty-central background must clear native hover: {background_hit:?}"
+    );
+    let undeclared_pt = panes.undeclared_center.expect("undeclared button painted");
+    let undeclared_hit = entry.hit_authority.hit_test(undeclared_pt).unwrap();
+    assert!(
+        undeclared_hit
+            .click()
+            .is_some_and(|id| !entry.has_hit_identity(id)),
+        "undeclared empty-central button must still block fail-closed: {undeclared_hit:?}"
+    );
+}

@@ -100,6 +100,25 @@ impl Dockspace {
         self.session.view()
     }
 
+    /// Returns the currently observed focused pane across the workspace.
+    ///
+    /// Selection, pending focus requests, and restoration history do not establish
+    /// this value. Workspace, external, none, and unknown focus return `None`.
+    #[must_use]
+    pub const fn focused_pane(&self) -> Option<ItemId> {
+        self.session.focused_pane()
+    }
+
+    /// Returns the currently observed focused pane on one logical surface.
+    ///
+    /// Selection, pending focus requests, and restoration history do not establish
+    /// this value. Workspace, external, unknown, and other-surface focus return
+    /// `None`.
+    #[must_use]
+    pub const fn focused_pane_on(&self, surface: SurfaceId) -> Option<ItemId> {
+        self.session.focused_pane_on(surface)
+    }
+
     /// Returns the durable workspace version.
     #[must_use]
     pub const fn version(&self) -> WorkspaceVersion {

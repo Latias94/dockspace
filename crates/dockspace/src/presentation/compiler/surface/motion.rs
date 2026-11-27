@@ -197,6 +197,7 @@ pub(crate) fn materialize_presentation_sample(
                             tabs_record.layer(),
                             fraction,
                             tab_strip_states,
+                            tabs_record.is_empty_central(),
                             false,
                             presentation_menu_anchor,
                             None,

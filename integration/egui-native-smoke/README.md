@@ -199,6 +199,7 @@ is needed. Each run owns its compositor, runtime directory and seat devices:
 ```sh
 python3 integration/egui-native-smoke/with_sway.py --timeout 90 --seat-helper integration/egui-fork-workspace/target/debug/wayland_seat -- python3 integration/egui-native-smoke/editor_docking_wayland.py target/debug/examples/workbench
 python3 integration/egui-native-smoke/with_sway.py --timeout 90 --seat-helper integration/egui-fork-workspace/target/debug/wayland_seat -- python3 integration/egui-native-smoke/editor_docking_wayland.py target/debug/examples/workbench --change-scale
+python3 integration/egui-native-smoke/with_sway.py --timeout 90 --output-mode 2400x1800 --scale 1.5 --seat-helper integration/egui-fork-workspace/target/debug/wayland_seat -- python3 integration/egui-native-smoke/editor_docking_wayland.py target/debug/examples/workbench --expect-initial-scale 1.5 --target-scale 1.25 --target-mode 2000x1500
 ```
 
 The driver requires the application's exact owned `xdg_shell` toplevel and
@@ -219,12 +220,15 @@ insertion, actual scroll movement, all eight original panes and unchanged
 unrelated text. Content input must leave the docking version unchanged.
 
 `--change-scale` changes the real headless output from 1600 × 1200 at scale 1 to
-3200 × 2400 at scale 2. The application must observe the new client scale while
-preserving logical client size, UI zoom and docking state. Subsequent text and
-wheel coordinates use that actual client scale. Fractional and mixed-monitor
-DPI are separate qualification work. Each run retains compositor/app logs,
-window/output inventories and screenshots in its printed artifact directories;
-use `--artifacts` on each driver to choose them explicitly.
+3200 × 2400 at scale 2. Passing `--output-mode 2400x1800 --scale 1.5` to
+`with_sway.py` together with `--expect-initial-scale 1.5 --target-scale 1.25 --target-mode 2000x1500`
+runs docking and divider drags at fractional scale 1.5, then switches live to
+fractional scale 1.25 before text and wheel input. The application must observe
+each client scale while preserving logical client size, UI zoom and docking
+state. Mixed-monitor DPI and non-wlroots CSD compositors remain separate
+qualification work. Each run retains compositor/app logs, window/output
+inventories and screenshots in its printed artifact directories; use `--artifacts`
+on each driver to choose them explicitly.
 
 This profile qualifies the official local/contained host, not native multiview.
 

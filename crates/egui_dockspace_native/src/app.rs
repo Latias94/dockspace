@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, Weak};
 
 use dockspace::model::{
-    DockAnchor, DockspaceActionRejection, DockspaceLayout, DockspaceView, PreparedTab,
+    DockAnchor, DockspaceActionRejection, DockspaceLayout, DockspaceView, ItemId, PreparedTab,
     PreparedTabsGroup, SurfaceId, TabKey,
 };
 use dockspace::runtime::DockspaceClosePlan;
@@ -395,6 +395,25 @@ impl<P: PaneView + Send + 'static> NativeDockspaceApp<P> {
     pub fn with_view<R>(&self, inspect: impl FnOnce(DockspaceView<'_>) -> R) -> R {
         let state = lock_state(&self.state);
         inspect(state.view())
+    }
+
+    /// Returns the currently observed focused pane across the workspace.
+    ///
+    /// Selection, pending focus requests, and restoration history do not establish
+    /// this value. Workspace, external, none, and unknown focus return `None`.
+    #[must_use]
+    pub fn focused_pane(&self) -> Option<ItemId> {
+        lock_state(&self.state).focused_pane()
+    }
+
+    /// Returns the currently observed focused pane on one logical surface.
+    ///
+    /// Selection, pending focus requests, and restoration history do not establish
+    /// this value. Workspace, external, unknown, and other-surface focus return
+    /// `None`.
+    #[must_use]
+    pub fn focused_pane_on(&self, surface: SurfaceId) -> Option<ItemId> {
+        lock_state(&self.state).focused_pane_on(surface)
     }
 
     /// Captures one direct tab from the published session under the runtime lock.

@@ -46,11 +46,25 @@ pub(super) struct PhysicalSmoke {
 }
 
 struct ScaleChange {
-    previous: f32,
+    target: f32,
     logical_size: egui::Vec2,
     zoom: f32,
     version: WorkspaceVersion,
     weights: [u64; 2],
+}
+
+fn configured_target_scale(current: f32) -> Option<f32> {
+    if std::env::var("DOCKSPACE_PHYSICAL_SCALE_CHANGE").as_deref() != Ok("1") {
+        return None;
+    }
+    match std::env::var("DOCKSPACE_PHYSICAL_TARGET_SCALE") {
+        Ok(raw) => raw
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|scale| scale.is_finite() && *scale > 0.0),
+        Err(_) => Some(current * 2.0),
+    }
 }
 
 impl PhysicalSmoke {
@@ -230,14 +244,16 @@ impl PhysicalSmoke {
                     );
                 }
                 Phase::Scale => {
+                    let target = configured_target_scale(scale)
+                        .ok_or_else(|| "invalid DOCKSPACE_PHYSICAL_TARGET_SCALE".to_owned())?;
                     self.scale_change = Some(ScaleChange {
-                        previous: scale,
+                        target,
                         logical_size: frame.context.viewport_rect().size(),
                         zoom: frame.context.zoom_factor(),
                         version: dock.version(),
                         weights: top_weights(dock),
                     });
-                    eprintln!("workbench-scale-change: {scale} {}", scale * 2.0);
+                    eprintln!("workbench-scale-change: {scale} {target}");
                 }
                 Phase::Edit => {
                     let Some(edit) = panes.panes[&EDITOR].editor else {
@@ -366,7 +382,7 @@ impl PhysicalSmoke {
                 if dock.version() != before.version || top_weights(dock) != before.weights {
                     return Err("physical output scaling changed the docking layout".into());
                 }
-                if (scale - before.previous * 2.0).abs() < 0.001
+                if (scale - before.target).abs() < 0.01
                     && !self.primary_down
                     && !dock.has_active_gesture()
                 {

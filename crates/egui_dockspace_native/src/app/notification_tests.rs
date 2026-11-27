@@ -158,9 +158,13 @@ fn notification_context_captures_committed_persistence_without_an_application_cy
     .unwrap()
     .with_notification_handler(move |notification, runtime| {
         if notification.layout_change().is_some() {
+            assert_eq!(runtime.focused_pane(), None);
+            assert_eq!(runtime.focused_pane_on(SurfaceId::new(1)), None);
             sender.send(runtime.save_document_json().unwrap()).unwrap();
         }
     });
+    assert_eq!(app.focused_pane(), None);
+    assert_eq!(app.focused_pane_on(SurfaceId::new(1)), None);
     with_state(&app.state, |state| open(state, ItemId::new(2)));
     let bytes = receiver.try_recv().unwrap();
     let restored =

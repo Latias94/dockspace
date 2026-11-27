@@ -1731,3 +1731,289 @@ fn rich_drag_ghost_preserves_span_colors() {
         }));
     }
 }
+
+#[test]
+fn focused_pane_queries_track_observed_content_focus_and_clear_on_external_focus() {
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(
+            RootId::new(1),
+            DockspaceNode::split(
+                dockspace::model::DockspaceAxis::Horizontal,
+                [
+                    (DockspaceNode::tabs([ItemId::new(1)]), 0.5),
+                    (DockspaceNode::tabs([ItemId::new(2)]), 0.5),
+                ],
+            )
+            .unwrap(),
+        ),
+    )])
+    .unwrap();
+    let context = egui::Context::default();
+    let mut dockspace = Dockspace::builder("focused-pane-top-level", layout)
+        .build()
+        .unwrap();
+    let mut panes = Panes {
+        titles: vec!["Left".into(), "Right".into()],
+        text: String::new(),
+        focused_tabs: Vec::new(),
+        customize_menu: None,
+        menu_actions: Vec::new(),
+    };
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 360.0));
+    let run = |dockspace: &mut Dockspace, panes: &mut Panes| {
+        let (output, _response) = dockspace
+            .run_single_surface(
+                &context,
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    focused: true,
+                    ..Default::default()
+                },
+                SURFACE,
+                panes,
+            )
+            .expect("surface updates");
+        let (mut full_output, receipt) = output.into_parts();
+        receipt.report(SurfacePresentationResult::Presented);
+        full_output.textures_delta.clear();
+    };
+    run(&mut dockspace, &mut panes);
+    assert_eq!(dockspace.focused_pane(), None);
+    assert_eq!(dockspace.focused_pane_on(SURFACE), None);
+
+    for item in [ItemId::new(1), ItemId::new(2)] {
+        let target = panes.focus_target(item).unwrap();
+        context.memory_mut(|memory| memory.request_focus(target));
+        for _ in 0..3 {
+            run(&mut dockspace, &mut panes);
+        }
+        assert_eq!(dockspace.focused_pane(), Some(item));
+        assert_eq!(dockspace.focused_pane_on(SURFACE), Some(item));
+        assert_eq!(dockspace.focused_pane_on(SurfaceId::new(99)), None);
+    }
+
+    context.memory_mut(|memory| memory.request_focus(egui::Id::unique("outside-toolbar-input")));
+    for _ in 0..3 {
+        run(&mut dockspace, &mut panes);
+    }
+    assert_eq!(dockspace.focused_pane(), None);
+    assert_eq!(dockspace.focused_pane_on(SURFACE), None);
+}
+
+#[test]
+fn empty_central_ui_renders_placeholder_handles_clicks_clears_docking_and_reappears_when_hidden() {
+    struct PlaceholderPanes {
+        empty_calls: Vec<RootId>,
+        button_rect: Option<egui::Rect>,
+        clicked: usize,
+        sidebar_tab_label: &'static str,
+    }
+
+    impl PaneView for PlaceholderPanes {
+        fn title(&self, item: ItemId) -> Option<egui::WidgetText> {
+            match item.get() {
+                1 => Some(self.sidebar_tab_label.into()),
+                2 => Some("Untitled".into()),
+                _ => None,
+            }
+        }
+
+        fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> PaneResponse {
+            PaneResponse::from(&ui.label(format!("Pane {}", item.get())))
+        }
+
+        fn empty_central_ui(&mut self, root: RootId, ui: &mut egui::Ui) -> PaneResponse {
+            self.empty_calls.push(root);
+            let label = ui.label("No open documents");
+            let button = ui.button("New Document");
+            self.button_rect = Some(button.rect);
+            if button.clicked() {
+                self.clicked += 1;
+            }
+            PaneResponse::default()
+                .with_content(&label)
+                .with_content(&button)
+        }
+    }
+
+    let root = RootId::new(1);
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        SURFACE,
+        DockspaceRootLayout::new(
+            root,
+            DockspaceNode::split(
+                dockspace::model::DockspaceAxis::Horizontal,
+                [
+                    (DockspaceNode::tabs([ItemId::new(1)]), 0.3),
+                    (DockspaceNode::central_tabs([]), 0.7),
+                ],
+            )
+            .unwrap(),
+        ),
+    )])
+    .unwrap();
+    let context = egui::Context::default();
+    context.enable_accesskit();
+    let mut dockspace = Dockspace::builder("empty-central-placeholder", layout)
+        .build()
+        .unwrap();
+    let mut panes = PlaceholderPanes {
+        empty_calls: Vec::new(),
+        button_rect: None,
+        clicked: 0,
+        sidebar_tab_label: "Outline",
+    };
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(720.0, 420.0));
+    let run = |dockspace: &mut Dockspace, panes: &mut PlaceholderPanes, events: Vec<Event>| {
+        let (output, _response) = dockspace
+            .run_single_surface(
+                &context,
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                SURFACE,
+                panes,
+            )
+            .expect("surface updates");
+        let (mut full_output, receipt) = output.into_parts();
+        receipt.report(SurfacePresentationResult::Presented);
+        full_output.textures_delta.clear();
+        full_output
+    };
+
+    let mut output = run(&mut dockspace, &mut panes, Vec::new());
+    for _ in 0..3 {
+        output = run(&mut dockspace, &mut panes, Vec::new());
+    }
+    assert!(
+        !panes.empty_calls.is_empty() && panes.empty_calls.iter().all(|called| *called == root),
+        "empty_central_ui must be invoked with the empty central root"
+    );
+    assert!(
+        texts(&output)
+            .iter()
+            .any(|(_, text)| text.galley.job.text == "No open documents"),
+        "placeholder text must be painted inside the empty central container"
+    );
+
+    // Clicking the button inside empty_central_ui works normally.
+    let button_center = panes
+        .button_rect
+        .expect("placeholder button painted")
+        .center();
+    run(
+        &mut dockspace,
+        &mut panes,
+        vec![
+            Event::PointerMoved(button_center),
+            Event::PointerButton {
+                pos: button_center,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    run(
+        &mut dockspace,
+        &mut panes,
+        vec![Event::PointerButton {
+            pos: button_center,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    assert_eq!(panes.clicked, 1, "placeholder button must receive clicks");
+
+    // Dragging a tab from the sidebar over the declared placeholder button still shows
+    // the empty central center drop guide and docks into the central area.
+    let outline_pos = texts(&output)
+        .into_iter()
+        .find(|(_, text)| text.galley.job.text == "Outline")
+        .expect("Outline tab painted")
+        .1
+        .visual_bounding_rect()
+        .center();
+    run(
+        &mut dockspace,
+        &mut panes,
+        vec![
+            Event::PointerMoved(outline_pos),
+            Event::PointerButton {
+                pos: outline_pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    run(
+        &mut dockspace,
+        &mut panes,
+        vec![Event::PointerMoved(outline_pos + vec2(12.0, 8.0))],
+    );
+    let hover_output = run(
+        &mut dockspace,
+        &mut panes,
+        vec![Event::PointerMoved(button_center)],
+    );
+    let center_guide = nodes(&hover_output)
+        .into_iter()
+        .find(|(_, node)| node.label() == Some("Dockspace center drop guide"))
+        .and_then(|(_, node)| node.bounds())
+        .map(|b| egui::pos2(((b.x0 + b.x1) * 0.5) as f32, ((b.y0 + b.y1) * 0.5) as f32))
+        .expect("hovering over declared placeholder content must reveal the center drop guide");
+    run(
+        &mut dockspace,
+        &mut panes,
+        vec![Event::PointerMoved(center_guide)],
+    );
+    run(
+        &mut dockspace,
+        &mut panes,
+        vec![Event::PointerButton {
+            pos: center_guide,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    panes.empty_calls.clear();
+    for _ in 0..3 {
+        run(&mut dockspace, &mut panes, Vec::new());
+    }
+    assert!(
+        panes.empty_calls.is_empty(),
+        "empty_central_ui must stop running once the central area holds a visible tab"
+    );
+
+    // Closing the only central item leaves the empty central container and brings
+    // empty_central_ui back.
+    let close = dockspace
+        .request_close_item_current(ItemId::new(1))
+        .expect("close request submits");
+    let crate::DockspaceCloseRequestStatus::Requested(request) = close.status() else {
+        panic!("expected a pending close plan, got {:?}", close.status());
+    };
+    let plan = request.plan();
+    let decision = &plan.items()[0];
+    let _ = dockspace
+        .resolve_close(
+            plan.request(),
+            decision.token(),
+            dockspace::close::CloseDecision::Allow,
+        )
+        .expect("allowing the central close succeeds");
+    for _ in 0..3 {
+        run(&mut dockspace, &mut panes, Vec::new());
+    }
+    assert!(
+        !panes.empty_calls.is_empty(),
+        "empty_central_ui must reappear once the central area is empty again"
+    );
+}

@@ -775,6 +775,7 @@ fn compile_root(
                     layer,
                     fraction,
                     tab_strip_states,
+                    root_record.central == Some(*node),
                     root_record.node == *node && root_record.central == Some(*node),
                     presentation_menu_tabs == Some(*node),
                     outer_guides,

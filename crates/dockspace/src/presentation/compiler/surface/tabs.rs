@@ -138,6 +138,7 @@ pub(super) fn compile_tabs_leaf(
     layer: SceneLayerKey,
     fraction: DockFraction,
     tab_strip_states: &TabStripStateStore,
+    central_node: bool,
     root_central: bool,
     presentation_menu_anchor: bool,
     outer_guides: Option<GuideEdgeGeometry>,
@@ -168,10 +169,12 @@ pub(super) fn compile_tabs_leaf(
         tab_height,
         content_top.filter(|_| resolved_policy.visibility() == TabBarVisibility::Visible),
     )?;
-    ready.push_tabs_record(
-        TabsRecord::new(bar_id, bounds, content, layer, active_ancestry),
-        selected,
-    );
+    let mut tabs_record = TabsRecord::new(bar_id, bounds, content, layer, active_ancestry)
+        .with_content_layout_bounds(content_allocation);
+    if central_node && items.is_empty() {
+        tabs_record = tabs_record.with_empty_central();
+    }
+    ready.push_tabs_record(tabs_record, selected);
     ready.push_surface_program_root_operation(SurfaceProgramRootOperation::Tabs(bar_id))?;
     if rect_has_area(tab_bar) {
         compile_tab_strip(

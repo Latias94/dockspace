@@ -107,6 +107,19 @@ impl TabsPaintRecord<'_> {
     pub const fn content_bounds(self) -> LogicalRect {
         self.record.content_bounds()
     }
+    /// Returns the unclipped layout allocation and visible clip for this container's content slot.
+    #[must_use]
+    pub const fn content_geometry(self) -> PaneContentGeometry {
+        PaneContentGeometry {
+            layout_bounds: self.record.content_layout_bounds(),
+            clip: self.record.content_bounds(),
+        }
+    }
+    /// Returns whether this container is a root's empty central area with no visible tabs.
+    #[must_use]
+    pub const fn is_empty_central(self) -> bool {
+        self.record.is_empty_central()
+    }
     /// Returns the exact container clip.
     #[must_use]
     pub const fn clip(self) -> LogicalRect {

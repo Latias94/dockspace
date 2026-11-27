@@ -38,7 +38,8 @@ pub(crate) fn paint_tabs(
     visual_context: RootVisualContext,
     paint: SurfacePaintDisposition,
 ) {
-    if let Some(receiver) = context.plan.receiver_for_tabs(tabs)
+    let tabs_receiver = context.plan.receiver_for_tabs(tabs);
+    if let Some(receiver) = tabs_receiver
         && let Some(bounds) = egui_rect(receiver.bounds())
     {
         let id = context.ui.make_persistent_id((
@@ -62,6 +63,140 @@ pub(crate) fn paint_tabs(
             0.0,
             visual_context.pane_fill(context.visuals.workspace_fill),
         );
+    if tabs.is_empty_central() {
+        paint_empty_central(context, tabs, tabs_receiver);
+    }
+}
+
+fn paint_empty_central(
+    context: &mut RenderContext<'_, '_, '_>,
+    tabs: TabsPaintRecord<'_>,
+    tabs_receiver: Option<dockspace::runtime::DockspaceReceiverDescriptor>,
+) {
+    let geometry = tabs.content_geometry();
+    let Some(content_clip) = egui_rect(geometry.clip()) else {
+        return;
+    };
+    if !content_clip.is_positive() {
+        return;
+    }
+    let clip = context.ui.clip_rect().intersect(content_clip);
+    if !clip.is_positive() {
+        return;
+    }
+    let Some(content_rect) = egui_rect(geometry.layout_bounds()).and_then(inset_ui_rect) else {
+        return;
+    };
+    let mut child = context.ui.new_child(
+        UiBuilder::new()
+            .scope_id(
+                context
+                    .instance_id
+                    .with(("empty-central-content", tabs.visual_id())),
+            )
+            .max_rect(content_rect)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    child.set_clip_rect(clip);
+    let child_id = child.unique_id();
+    let child_layer = child.layer_id();
+    let mut paint_audit = context.paint_audit.take();
+    let painter = child.painter().clone();
+    let mut child = Some(child);
+    let mut paint_contents = || {
+        let child_ui = child
+            .as_mut()
+            .expect("the empty-central child is still open");
+        let response = context.panes.empty_central_ui(tabs.root(), child_ui);
+        register_content_widgets(
+            context,
+            child_ui,
+            tabs_receiver,
+            content_clip,
+            child_layer,
+            &response,
+        );
+        drop(child.take());
+    };
+    if let Some(audit) = paint_audit.as_mut() {
+        audit.check_append(&painter, paint_contents);
+    } else {
+        paint_contents();
+    }
+    register_child_container_receiver(context, tabs_receiver, content_clip, child_id, child_layer);
+    context.paint_audit = paint_audit;
+}
+
+fn register_content_widgets(
+    context: &mut RenderContext<'_, '_, '_>,
+    child_ui: &Ui,
+    receiver: Option<dockspace::runtime::DockspaceReceiverDescriptor>,
+    bounds: egui::Rect,
+    child_layer: egui::LayerId,
+    pane_response: &crate::PaneResponse,
+) {
+    let Some(receiver) = receiver else {
+        return;
+    };
+    if !bounds.is_finite() || !bounds.is_positive() {
+        return;
+    }
+    for widget_id in pane_response
+        .content_widgets()
+        .chain(pane_response.internal_container_widgets())
+    {
+        let Some(widget) = child_ui
+            .ctx()
+            .viewport(|viewport| viewport.this_pass.widgets.get(widget_id).copied())
+        else {
+            continue;
+        };
+        if widget.enabled
+            && widget.layer_id == child_layer
+            && widget.interact_rect.is_finite()
+            && widget.interact_rect.is_positive()
+            && bounds.contains_rect(widget.interact_rect)
+        {
+            context.receivers.push(ProductReceiverBinding {
+                interact_rect: widget.interact_rect,
+                interactive: widget.sense.interactive(),
+                widget_id: widget.id,
+                layer_id: widget.layer_id,
+                receiver,
+            });
+        }
+    }
+}
+
+fn register_child_container_receiver(
+    context: &mut RenderContext<'_, '_, '_>,
+    receiver: Option<dockspace::runtime::DockspaceReceiverDescriptor>,
+    bounds: egui::Rect,
+    child_id: Id,
+    child_layer: egui::LayerId,
+) {
+    if let Some(receiver) = receiver
+        && bounds.is_finite()
+        && bounds.is_positive()
+        && let Some(widget) = context
+            .ui
+            .ctx()
+            .viewport(|viewport| viewport.this_pass.widgets.get(child_id).copied())
+        && widget.enabled
+        && widget.layer_id == child_layer
+        && !widget.sense.interactive()
+        && widget.interact_rect.is_finite()
+        && widget.interact_rect.is_positive()
+        && bounds.contains_rect(widget.interact_rect)
+    {
+        context.receivers.push(ProductReceiverBinding {
+            interact_rect: widget.interact_rect,
+            interactive: false,
+            widget_id: widget.id,
+            layer_id: widget.layer_id,
+            receiver,
+        });
+    }
 }
 
 pub(crate) fn paint_pane(
@@ -238,36 +373,14 @@ pub(crate) fn paint_pane(
             if let Some(replay) = replay {
                 replay.finish(context, child_ui, clip);
             }
-            if let Some(receiver) = pane_receiver
-                && pane_rect.is_finite()
-                && pane_rect.is_positive()
-            {
-                for widget_id in pane_response
-                    .content_widgets()
-                    .chain(pane_response.internal_container_widgets())
-                {
-                    let Some(widget) = child_ui
-                        .ctx()
-                        .viewport(|viewport| viewport.this_pass.widgets.get(widget_id).copied())
-                    else {
-                        continue;
-                    };
-                    if widget.enabled
-                        && widget.layer_id == child_ui.layer_id()
-                        && widget.interact_rect.is_finite()
-                        && widget.interact_rect.is_positive()
-                        && pane_rect.contains_rect(widget.interact_rect)
-                    {
-                        context.receivers.push(ProductReceiverBinding {
-                            interact_rect: widget.interact_rect,
-                            interactive: widget.sense.interactive(),
-                            widget_id: widget.id,
-                            layer_id: widget.layer_id,
-                            receiver,
-                        });
-                    }
-                }
-            }
+            register_content_widgets(
+                context,
+                child_ui,
+                pane_receiver,
+                pane_rect,
+                child_layer,
+                &pane_response,
+            );
         }
         drop(child.take());
     };
@@ -276,28 +389,7 @@ pub(crate) fn paint_pane(
     } else {
         paint_contents();
     }
-    if let Some(receiver) = pane_receiver
-        && pane_rect.is_finite()
-        && pane_rect.is_positive()
-        && let Some(widget) = context
-            .ui
-            .ctx()
-            .viewport(|viewport| viewport.this_pass.widgets.get(child_id).copied())
-        && widget.enabled
-        && widget.layer_id == child_layer
-        && !widget.sense.interactive()
-        && widget.interact_rect.is_finite()
-        && widget.interact_rect.is_positive()
-        && pane_rect.contains_rect(widget.interact_rect)
-    {
-        context.receivers.push(ProductReceiverBinding {
-            interact_rect: widget.interact_rect,
-            interactive: false,
-            widget_id: widget.id,
-            layer_id: widget.layer_id,
-            receiver,
-        });
-    }
+    register_child_container_receiver(context, pane_receiver, pane_rect, child_id, child_layer);
     context.paint_audit = paint_audit;
 }
 

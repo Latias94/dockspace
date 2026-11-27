@@ -1,6 +1,6 @@
 //! Application-owned pane rendering contract.
 
-use dockspace::model::ItemId;
+use dockspace::model::{ItemId, RootId};
 use egui::scroll_area::ScrollAreaOutput;
 use egui::{Context, Id, Response, Ui, WidgetText};
 
@@ -369,6 +369,25 @@ pub trait PaneView {
     /// arbitrary widget tree or native receiver.
     fn ui(&mut self, item: ItemId, ui: &mut Ui) -> PaneResponse;
 
+    /// Renders optional placeholder content inside a root's empty central area.
+    ///
+    /// Called when `root`'s designated central container is empty (for example,
+    /// `DockspaceNode::central_tabs([])`, or after all tabs in the central
+    /// group have been closed or moved out). The supplied `Ui` is clipped to
+    /// the central container's content bounds and follows the same synchronous,
+    /// append-only painting contract as [`Self::ui`].
+    ///
+    /// Return ordinary content registrations through [`PaneResponse`] so
+    /// docking hover and drop guides stay clear over the placeholder while
+    /// controls inside it remain interactive. Queue workspace commands such as
+    /// `open_item_current(..., DockPlacement::Center(DockAnchor::Central(root)))`
+    /// and apply them after the docking update returns.
+    ///
+    /// The default renders nothing, leaving the workspace background fill.
+    fn empty_central_ui(&mut self, _root: RootId, _ui: &mut Ui) -> PaneResponse {
+        PaneResponse::default()
+    }
+
     /// Returns the stable egui focus identity registered by `item`'s pane UI.
     ///
     /// The adapter uses this identity to request or surrender focus, and to keep
@@ -442,6 +461,10 @@ impl<T: PaneView + ?Sized> PaneView for Box<T> {
 
     fn ui(&mut self, item: ItemId, ui: &mut Ui) -> PaneResponse {
         (**self).ui(item, ui)
+    }
+
+    fn empty_central_ui(&mut self, root: RootId, ui: &mut Ui) -> PaneResponse {
+        (**self).empty_central_ui(root, ui)
     }
 
     fn layout_tab_title(&self, key: TabKey, default_title: &str) -> WidgetText {
@@ -584,6 +607,11 @@ mod tests {
                 PaneResponse::from(&ui.label(self.title))
             }
 
+            fn empty_central_ui(&mut self, _root: RootId, ui: &mut Ui) -> PaneResponse {
+                self.paints.set(self.paints.get() + 10);
+                PaneResponse::from(&ui.label("Empty central"))
+            }
+
             fn focus_state(&self, _item: ItemId, _context: &Context) -> PaneFocusState {
                 PaneFocusState::Focused
             }
@@ -628,8 +656,10 @@ mod tests {
         let mut output = context.run_ui(egui::RawInput::default(), |ui| {
             let response = provider.ui(item, ui);
             assert_eq!(response.content_widgets().count(), 1);
+            let empty = provider.empty_central_ui(RootId::new(1), ui);
+            assert_eq!(empty.content_widgets().count(), 1);
         });
         output.textures_delta.clear();
-        assert!(paints.get() > 0);
+        assert!(paints.get() >= 11);
     }
 }

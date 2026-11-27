@@ -101,12 +101,14 @@ class WaylandPointer:
             raise RuntimeError("the finite Wayland profile requires one headless output")
         output = outputs[0]
         rect, client = window["rect"], window["window_rect"]
-        sx = round(rect["x"] + client["x"] + x / self.client_scale)
-        sy = round(rect["y"] + client["y"] + y / self.client_scale)
         extent = output["rect"]
         if extent["x"] != 0 or extent["y"] != 0:
             raise RuntimeError("the finite headless profile requires output origin 0,0")
-        self.send(f'move {sx} {sy} {extent["width"]} {extent["height"]}')
+        # Preserve sub-pixel logical precision for fractional output scales.
+        precision = 256
+        sx = max(0, round((rect["x"] + client["x"] + x / self.client_scale) * precision))
+        sy = max(0, round((rect["y"] + client["y"] + y / self.client_scale) * precision))
+        self.send(f'move {sx} {sy} {extent["width"] * precision} {extent["height"] * precision}')
 
     def press(self) -> None:
         self.send("down")
@@ -123,24 +125,54 @@ def main() -> None:
     parser.add_argument("binary", type=Path)
     parser.add_argument("--artifacts", type=Path)
     parser.add_argument("--change-scale", action="store_true")
+    parser.add_argument("--expect-initial-scale", type=float)
+    parser.add_argument("--target-scale", type=float)
+    parser.add_argument("--target-mode")
     arguments = parser.parse_args()
     if os.environ.get("DISPLAY") or not os.environ.get("WAYLAND_DISPLAY") or not os.environ.get("SWAYSOCK"):
         parser.error("use with_sway.py with an isolated Wayland session and no DISPLAY")
+    target_scale = arguments.target_scale
+    if arguments.change_scale and target_scale is None:
+        target_scale = 2.0
+    if target_scale is not None and target_scale <= 0:
+        parser.error("--target-scale must be positive")
+    if arguments.expect_initial_scale is not None and arguments.expect_initial_scale <= 0:
+        parser.error("--expect-initial-scale must be positive")
+    target_mode = arguments.target_mode
+    if target_scale is not None and target_mode is None:
+        target_mode = f"{round(1600 * target_scale)}x{round(1200 * target_scale)}"
     artifacts = arguments.artifacts or Path(tempfile.mkdtemp(prefix="dockspace-wayland-editor-"))
     artifacts.mkdir(parents=True, exist_ok=True)
     print(f"Wayland editor artifacts: {artifacts.resolve()}", flush=True)
     (artifacts / "compositor.json").write_text(json.dumps(query("get_version"), indent=2))
     (artifacts / "outputs.json").write_text(json.dumps(query("get_outputs"), indent=2))
     binary = arguments.binary.resolve(strict=True)
-    run_workbench(binary, artifacts, change_scale=arguments.change_scale)
+    run_workbench(
+        binary,
+        artifacts,
+        expect_initial_scale=arguments.expect_initial_scale,
+        target_scale=target_scale,
+        target_mode=target_mode,
+    )
     print("editor-wayland: PASS; native xdg-shell, real seat input and exact workbench assertions", flush=True)
 
 
-def run_workbench(binary: Path, artifacts: Path, *, change_scale: bool) -> None:
+def run_workbench(
+    binary: Path,
+    artifacts: Path,
+    *,
+    expect_initial_scale: float | None,
+    target_scale: float | None,
+    target_mode: str | None,
+) -> None:
+    change_scale = target_scale is not None
+    env = os.environ | {"DOCKSPACE_PHYSICAL_SCALE_CHANGE": "1" if change_scale else "0"}
+    if target_scale is not None:
+        env["DOCKSPACE_PHYSICAL_TARGET_SCALE"] = f"{target_scale:g}"
     process = subprocess.Popen(
         [str(binary), "--physical-smoke"], stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, bufsize=1,
-        env=os.environ | {"DOCKSPACE_PHYSICAL_SCALE_CHANGE": "1" if change_scale else "0"},
+        env=env,
     )
     assert process.stdout is not None
     lines: queue.Queue[str | None] = queue.Queue()
@@ -180,6 +212,10 @@ def run_workbench(binary: Path, artifacts: Path, *, change_scale: bool) -> None:
                 values = line.split(":", 1)[-1].split()
                 if line.startswith("workbench-physical-ready:"):
                     pointer.client_scale = float(values[2])
+                    if expect_initial_scale is not None and abs(pointer.client_scale - expect_initial_scale) > 0.01:
+                        raise RuntimeError(
+                            f"expected initial client scale {expect_initial_scale:g}, got {pointer.client_scale}"
+                        )
                     pointer.activate(process.pid)
                     (artifacts / "window.json").write_text(json.dumps(pointer.window(), indent=2))
                 elif line.startswith("workbench-pointer:"):
@@ -202,8 +238,8 @@ def run_workbench(binary: Path, artifacts: Path, *, change_scale: bool) -> None:
                     source, target = pending_drag
                     pending_drag = None
                     for step in range(1, 13):
-                        pointer.move(*(round(a + (b - a) * step / 12)
-                                          for a, b in zip(source, target)))
+                        pointer.move(*(a + (b - a) * step / 12
+                                       for a, b in zip(source, target)))
                         time.sleep(0.025)
                     if actions[-1] == "resize":
                         pointer.release()
@@ -218,12 +254,16 @@ def run_workbench(binary: Path, artifacts: Path, *, change_scale: bool) -> None:
                     pointer.release()
                     held = False
                 elif line.startswith("workbench-scale-change:"):
-                    if not change_scale or held:
+                    if not change_scale or held or target_scale is None or target_mode is None:
                         raise RuntimeError("unexpected compositor scale change")
-                    sway("output HEADLESS-1 mode 3200x2400 scale 2", os.environ)
+                    sway(f"output HEADLESS-1 mode {target_mode} scale {target_scale:g}", os.environ)
                 elif line.startswith("workbench-scale-verified:"):
                     outputs = query("get_outputs")
-                    if not change_scale or not any(item.get("scale") == 2 for item in outputs):
+                    if (
+                        not change_scale
+                        or target_scale is None
+                        or not any(abs(float(item.get("scale", 0)) - target_scale) < 0.01 for item in outputs)
+                    ):
                         raise RuntimeError("the compositor did not confirm the real output scale")
                     pointer.client_scale = float(values[0])
                     (artifacts / "scaled-outputs.json").write_text(json.dumps(outputs, indent=2))

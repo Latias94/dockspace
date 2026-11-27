@@ -50,19 +50,28 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=240)
     parser.add_argument("--artifacts", type=Path)
     parser.add_argument("--seat-helper", type=Path, required=True)
+    parser.add_argument("--output-mode", default="1600x1200")
+    parser.add_argument("--scale", type=float, default=1.0)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
-    if not command or not math.isfinite(args.timeout) or args.timeout <= 0:
-        parser.error("provide a command after -- and a positive finite timeout")
+    if (
+        not command
+        or not math.isfinite(args.timeout)
+        or args.timeout <= 0
+        or not math.isfinite(args.scale)
+        or args.scale <= 0
+    ):
+        parser.error("provide a command after --, a positive finite timeout, and a positive finite scale")
     if sys.platform != "linux" or os.geteuid() == 0:
         parser.error("run on Linux as an unprivileged user; headless Sway does not need root")
+    output_config = f"output HEADLESS-1 mode {args.output_mode} scale {args.scale:g}"
     artifacts = args.artifacts or Path(tempfile.mkdtemp(prefix="dockspace-wayland-"))
     artifacts.mkdir(parents=True, exist_ok=True)
     configuration = artifacts / "sway.conf"
     configuration.write_text(
         "xwayland disable\n"
-        "output HEADLESS-1 mode 1600x1200 scale 1\n"
+        f"{output_config}\n"
         "seat seat0 fallback true\n"
         "default_border none\n"
         "default_floating_border none\n"
@@ -106,7 +115,7 @@ def main() -> int:
                 if len(ipc) == len(displays) == 1:
                     environment.update(SWAYSOCK=str(ipc[0]), WAYLAND_DISPLAY=displays[0].name)
                     try:
-                        sway("output HEADLESS-1 mode 1600x1200 scale 1", environment)
+                        sway(output_config, environment)
                         break
                     except (OSError, subprocess.SubprocessError):
                         pass

@@ -173,9 +173,13 @@ XWayland disabled. Real virtual-seat input merges two tabs, retires the containe
 Inspector root, resizes a divider, types into Editor and scrolls Console. A second
 run changes the real output scale from 1 to 2, preserves logical client size,
 UI zoom and docking state, then repeats content input at the new client scale.
+A third run starts at fractional output scale 1.5 (`2400 × 1800`) for docking
+and divider drags, changes live to fractional scale 1.25 (`2000 × 1500`),
+verifies preserved logical size, zoom and layout, and repeats text and scroll
+input at 1.25.
 See the [Wayland qualification commands](../integration/egui-native-smoke/README.md#run-physical-input-on-wayland).
-These software-rendered, single-output checks do not qualify native multiview,
-mixed-monitor DPI or fractional output scaling.
+These software-rendered, single-output Sway checks do not qualify native
+multiview, GNOME/KDE CSD compositors, or mixed-monitor DPI.
 
 The fork-backed `egui_dockspace_native` adapter uses `NativeLocalReadiness` to
 admit work in a live, configured client's coordinate system. `Ready` permits

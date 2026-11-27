@@ -209,6 +209,17 @@ jobs:
             python3 integration/egui-native-smoke/editor_docking_wayland.py \
             target/debug/examples/workbench --change-scale --artifacts "$QUALIFICATION_LOG_DIR/wayland-scale/editor" \
             2>&1 | tee "$QUALIFICATION_LOG_DIR/wayland-scale.log"
+      - name: Exercise fractional output scaling (1.5x to 1.25x)
+        run: |
+          python3 integration/egui-native-smoke/with_sway.py --timeout 90 \
+            --output-mode 2400x1800 --scale 1.5 \
+            --artifacts "$QUALIFICATION_LOG_DIR/wayland-fractional" \
+            --seat-helper integration/egui-fork-workspace/target/debug/wayland_seat -- \
+            python3 integration/egui-native-smoke/editor_docking_wayland.py \
+            target/debug/examples/workbench \
+            --expect-initial-scale 1.5 --target-scale 1.25 --target-mode 2000x1500 \
+            --artifacts "$QUALIFICATION_LOG_DIR/wayland-fractional/editor" \
+            2>&1 | tee "$QUALIFICATION_LOG_DIR/wayland-fractional.log"
       - name: Exercise seven native local docking journeys
         timeout-minutes: 5
         run: |

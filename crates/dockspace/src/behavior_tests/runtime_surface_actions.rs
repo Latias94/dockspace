@@ -1573,6 +1573,8 @@ fn surface_focus_request_stays_pending_until_an_exact_focused_observation() {
     not_focused_frame
         .commit()
         .expect("not-focused observation commits");
+    assert_eq!(session.focused_pane(), None);
+    assert_eq!(session.focused_pane_on(SURFACE), None);
 
     let mut focused_frame = session
         .begin_host_frame()
@@ -1596,6 +1598,9 @@ fn surface_focus_request_stays_pending_until_an_exact_focused_observation() {
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .expect("the focused surface is retained");
     focused_frame.commit().expect("focused observation commits");
+    assert_eq!(session.focused_pane(), Some(SECOND));
+    assert_eq!(session.focused_pane_on(SURFACE), Some(SECOND));
+    assert_eq!(session.focused_pane_on(SurfaceId::new(999)), None);
 
     let mut settled = session
         .begin_host_frame()

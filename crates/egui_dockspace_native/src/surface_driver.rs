@@ -555,6 +555,14 @@ impl<P: PaneView> NativeRuntimeState<P> {
         self.coordinator.session().view()
     }
 
+    pub(crate) fn focused_pane(&self) -> Option<dockspace::model::ItemId> {
+        self.coordinator.session().focused_pane()
+    }
+
+    pub(crate) fn focused_pane_on(&self, surface: SurfaceId) -> Option<dockspace::model::ItemId> {
+        self.coordinator.session().focused_pane_on(surface)
+    }
+
     pub(crate) const fn panes(&self) -> &P {
         &self.panes
     }

@@ -1800,6 +1800,15 @@ impl ViewportFocusCoordinator {
         })
     }
 
+    /// Returns the current pane across the workspace, without consulting history.
+    #[must_use]
+    pub const fn current_focused_pane(&self) -> Option<ItemId> {
+        match self.current_focus() {
+            Some(CurrentUiFocus::Pane { item, .. }) => Some(item),
+            _ => None,
+        }
+    }
+
     /// Returns the current pane on this surface, without consulting its history.
     #[must_use]
     pub const fn current_pane_focus(&self, surface: SurfaceId) -> Option<ItemId> {
