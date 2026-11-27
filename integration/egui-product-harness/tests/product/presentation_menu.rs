@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn menu_floated_root_stays_floating_when_released_away_from_docking_guides() {
-    for (layout, root_label) in [(layout(), "Tabs"), (split_layout(), "Split")] {
+    for (layout, root_label) in [(layout(), "First"), (split_layout(), "Split")] {
         let context = Context::default();
         context.enable_accesskit();
         let mut dockspace = Dockspace::builder("menu-float-empty-floor-drag", layout)

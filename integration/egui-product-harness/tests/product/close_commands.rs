@@ -291,8 +291,8 @@ fn contained_group_close_waits_for_application_approval_for_every_activation() {
                 assert_eq!(location.contained(), Some(FLOATING), "{name}");
             }
         };
-        let (close, _) = accesskit_node(&stable.output, Role::Button, "Close floating Tabs");
-        let point = node_center(&stable.output, Role::Button, "Close floating Tabs");
+        let (close, _) = accesskit_node(&stable.output, Role::Button, "Close floating Second");
+        let point = node_center(&stable.output, Role::Button, "Close floating Second");
         let activated = match activation {
             Activation::Pointer => {
                 let _ = run_frame(

@@ -81,6 +81,7 @@ enum Phase {
     Activate,
     Retain,
     Resume,
+    Done,
 }
 
 impl eframe::App for RetainApp {
@@ -158,6 +159,7 @@ impl eframe::App for RetainApp {
                             );
                         });
                         assert_eq!(self.save_values, ["bX"]);
+                        self.phase = Phase::Done;
                         self.skipped.fetch_add(1, Ordering::SeqCst);
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -165,7 +167,9 @@ impl eframe::App for RetainApp {
                 _ => {}
             }
         }
-        ui.ctx().request_repaint_after(Duration::from_millis(5));
+        if self.phase != Phase::Done {
+            ui.ctx().request_repaint_after(Duration::from_millis(5));
+        }
     }
 }
 
