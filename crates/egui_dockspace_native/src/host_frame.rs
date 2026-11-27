@@ -42,7 +42,10 @@ pub(crate) fn retain_window_input_state(
     binding: dockspace::runtime::NativeSurfaceBinding,
     panes: &dyn PaneView,
 ) {
-    if !session.is_current_native_binding(binding) {
+    if !session
+        .native_window_bindings()
+        .any(|window| window == binding.window())
+    {
         return;
     }
     // The retained output owns every committed region of the window.

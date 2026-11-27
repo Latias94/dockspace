@@ -84,15 +84,15 @@ fn minimized_surface_keeps_editor_focus_without_presented_receiver_authority() {
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
     let registration = registration.commit().unwrap();
-    let window = registration
+    let initial_root = registration
         .inputs()
         .iter()
         .find_map(|outcome| match outcome {
             HostInputOutcome::NativeSurfaceRegistered { binding } => Some(*binding),
             _ => None,
         })
-        .unwrap()
-        .window();
+        .unwrap();
+    let window = initial_root.window();
     let bounds = PhysicalRect::new(0.0, 0.0, 640.0, 480.0).unwrap();
     let scale = ScaleFactor::new(1.0).unwrap();
     let facts = NativeWindowFacts::live()
@@ -304,6 +304,10 @@ fn minimized_surface_keeps_editor_focus_without_presented_receiver_authority() {
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
     let skipped = skipped.suspend();
+    assert!(
+        !session.is_current_native_binding(initial_root),
+        "shared-window placement rebinding supersedes the initial root surface generation while keeping its physical window live"
+    );
     for pass in 0..2 {
         context
             .run_ui(egui::RawInput::default(), |_| {
@@ -311,7 +315,13 @@ fn minimized_surface_keeps_editor_focus_without_presented_receiver_authority() {
                     &session,
                     &context,
                     egui::Id::unique("minimized-workspace"),
-                    root_binding,
+                    // Pass both the original physical-window route tag and the
+                    // current placement binding across the two skipped passes.
+                    if pass == 0 {
+                        initial_root
+                    } else {
+                        root_binding
+                    },
                     &editor,
                 );
                 assert!(
