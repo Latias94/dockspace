@@ -268,15 +268,13 @@ impl NativeHostHandler for DelayedTerminalHost {
                 "the test retains a bounded suffix"
             );
             probe.holding = true;
-            let token = terminal.token();
             probe.buffered.push(terminal);
             if send_expansion_key {
                 // Queue the real key before another idle repaint can consume
                 // the one output slot left by this held renderer terminal.
                 drop(probe);
-                let window = u64::from(token.window_id()).to_string();
                 let result = Command::new("xdotool")
-                    .args(["windowactivate", "--sync", &window, "key", "a"])
+                    .args(["key", "a"])
                     .output()
                     .expect("the X11 roster expansion regression requires xdotool");
                 assert!(result.status.success(), "{result:?}");
@@ -556,6 +554,7 @@ struct ExpandingRosterTextApp {
     app: NativeDockspaceApp<EditorPanes>,
     host: Arc<DelayedTerminalHost>,
     calls: Arc<AtomicUsize>,
+    activated: bool,
     expanded: bool,
     recovered_passes: usize,
     started: Instant,
@@ -651,10 +650,27 @@ impl eframe::App for ExpandingRosterTextApp {
                 .app
                 .with_panes(|panes| ui.memory(|memory| memory.focused()) == Some(panes.target))
         {
-            probe.hold_token = Some(token);
-            probe.calls_at_hold = after;
+            if !self.activated {
+                // Activate before arming the hold so FocusIn/Expose redraws
+                // settle before we hold the only free output slot.
+                drop(probe);
+                let window = u64::from(token.window_id()).to_string();
+                let result = Command::new("xdotool")
+                    .args(["windowactivate", "--sync", &window])
+                    .output()
+                    .expect("the X11 roster expansion regression requires xdotool");
+                assert!(result.status.success(), "{result:?}");
+                self.activated = true;
+                ui.ctx().request_repaint_after(Duration::from_millis(50));
+                return;
+            } else if ui.input(|input| input.focused) {
+                probe.hold_token = Some(token);
+                probe.calls_at_hold = after;
+            }
         }
-        if probe.hold_token.is_none() || probe.released {
+        if probe.hold_token.is_none() {
+            ui.ctx().request_repaint_after(Duration::from_millis(50));
+        } else if probe.released {
             ui.ctx().request_repaint_after(Duration::from_millis(5));
         }
     }
@@ -734,6 +750,7 @@ fn real_eframe_output_capacity_preserves_text_when_the_root_roster_expands_after
                 app,
                 host,
                 calls,
+                activated: false,
                 expanded: false,
                 recovered_passes: 0,
                 started: Instant::now(),

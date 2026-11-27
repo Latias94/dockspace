@@ -1015,6 +1015,7 @@ impl PaneView for ExamplePanes {
             content = content.with_content(&description);
             let log = egui::ScrollArea::vertical()
                 .id_salt(("native-editor-log", item.get()))
+                .auto_shrink([false, false])
                 .show(ui, |ui| {
                     let mut content = content.with_content_ids([ui.unique_id()]);
                     let messages = [
