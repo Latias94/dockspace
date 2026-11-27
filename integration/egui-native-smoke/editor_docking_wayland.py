@@ -167,6 +167,8 @@ def run_workbench(
 ) -> None:
     change_scale = target_scale is not None
     env = os.environ | {"DOCKSPACE_PHYSICAL_SCALE_CHANGE": "1" if change_scale else "0"}
+    if expect_initial_scale is not None:
+        env["DOCKSPACE_PHYSICAL_INITIAL_SCALE"] = f"{expect_initial_scale:g}"
     if target_scale is not None:
         env["DOCKSPACE_PHYSICAL_TARGET_SCALE"] = f"{target_scale:g}"
     process = subprocess.Popen(

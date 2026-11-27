@@ -53,6 +53,13 @@ struct ScaleChange {
     weights: [u64; 2],
 }
 
+fn configured_initial_scale() -> Option<f32> {
+    std::env::var("DOCKSPACE_PHYSICAL_INITIAL_SCALE")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<f32>().ok())
+        .filter(|scale| scale.is_finite() && *scale > 0.0)
+}
+
 fn configured_target_scale(current: f32) -> Option<f32> {
     if std::env::var("DOCKSPACE_PHYSICAL_SCALE_CHANGE").as_deref() != Ok("1") {
         return None;
@@ -142,6 +149,13 @@ impl PhysicalSmoke {
         if frame.presentation != SurfacePresentationResult::Presented {
             return Ok(false);
         }
+        if self.frames == 0 {
+            // Wayland maps the surface and sends wl_surface::enter /
+            // wp_fractional_scale_v1::preferred_scale only after the first
+            // buffer is attached. Start the startup settle window here rather
+            // than before WGPU initialization.
+            self.ready_at = Instant::now() + Duration::from_millis(250);
+        }
         self.frames += 1;
         let owns_all = self
             .original
@@ -189,6 +203,12 @@ impl PhysicalSmoke {
         let scale = frame.context.pixels_per_point();
         if !self.announced {
             if Instant::now() < self.ready_at || self.primary_down || dock.has_active_gesture() {
+                return Ok(false);
+            }
+            if self.phase == Phase::Preview
+                && let Some(expected_initial) = configured_initial_scale()
+                && (scale - expected_initial).abs() >= 0.01
+            {
                 return Ok(false);
             }
             self.baseline = self.releases;
