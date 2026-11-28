@@ -280,8 +280,9 @@ egui = "0.37"
 ```
 
 - `winit` exposes `egui_dockspace::winit::WinitIntegration` for an existing
-  event loop and renderer. Feed window events, take input, run Dockspace, and
-  handle platform output. Your renderer settles the returned output receipt.
+  event loop and renderer (see the [custom winit example](../examples/custom_winit.rs)).
+  Feed window events, take input, run Dockspace, and handle platform output.
+  Your renderer settles the returned output receipt.
 - `wgpu` includes `winit` and exposes `run_native`, `NativeApp` and `NativeOptions`.
   Implement `NativeApp::update` by returning the `DockspaceOutput` from
   `run_single_surface`. The runner owns the window loop, renderer and exact
@@ -1228,16 +1229,18 @@ outside them.
 Enable `serde` for layout documents; see the [Cargo feature table](../README.md#cargo-features)
 for the complete integration and backend options.
 
-Run the bounded editor layout example with:
+Run the draggable editor persistence example with:
 
 ```sh
-cargo run -p egui_dockspace --example workspace_persistence --features example-app,serde --locked -- my-layout.json
+cargo run -p egui_dockspace --example workspace_persistence --features wgpu,serde --locked -- my-layout.json
 ```
 
-It has eight application-owned panes, text/scroll content and a small drawn
-scene. Its closed inventory, immutable default and at most eight user presets
-remain in application memory. The current layout loads from the supplied JSON
-file at startup and saves before closing or through **Save layout file**.
+It runs on the complete-output `wgpu` host with eight application-owned panes,
+text/scroll content and a small drawn scene. Its closed inventory, immutable
+default and at most eight user presets remain in application memory. The current
+layout loads from the supplied JSON file at startup, debounced autosaves on
+`mutation.notification().document_changed()`, and saves before closing or
+through **Save layout file**.
 A failed close-time save keeps the window open with a visible error and an
 explicit **Exit without saving** option. An unreadable
 or invalid existing document is preserved until an explicit save. File writes
@@ -1246,7 +1249,6 @@ after successful encoding and writing. Layout locking uses `DockPolicy` authorit
 reset/apply/reopen controls require an explicit unlock, while normal pane use
 continues. Saved layouts contain docking state and stable keys, not pane data.
 The example resolves current presentation identities after a preset restore.
-Unmodified eframe still reports presented-output drag docking unavailable.
 `Dockspace::reset_layout(default_layout)` applies an ordinary application-owned
 layout through the same core transaction without enabling serde. The example's
 Default button uses this path; named user snapshots use document restore.

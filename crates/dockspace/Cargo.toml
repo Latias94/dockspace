@@ -33,5 +33,10 @@ proptest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[[example]]
+name = "persistence"
+required-features = ["serde"]
+test = true
+
 [lints]
 workspace = true

@@ -67,8 +67,10 @@ jobs:
       - name: Run workspace tests
         run: >-
           cargo nextest run --workspace --all-features --all-targets --locked
-      - name: Run core layout example
-        run: cargo run --package dockspace --example layout_commands --locked
+      - name: Run core layout and persistence examples
+        run: |
+          cargo run --package dockspace --example layout_commands --locked
+          cargo run --package dockspace --example persistence --features serde --locked
       - name: Run documentation tests
         run: cargo test --doc --workspace --all-features --locked
 

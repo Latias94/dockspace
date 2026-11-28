@@ -116,6 +116,9 @@ From the repository root:
 # Layout commands: select, open, move panes and inspect committed outcomes
 cargo run -p dockspace --example layout_commands --locked
 
+# Core JSON layout persistence: stable external keys, cold-start restore & key validation
+cargo run -p dockspace --example persistence --features serde --locked
+
 # Zero-dependency custom UI host (~230 lines, both retained display list and immediate visitor)
 cargo run -p dockspace --example custom_ui_host --locked
 

@@ -48,7 +48,7 @@ In the workbench: drag tabs onto panes to merge or split, resize dividers, hold 
 | --- | --- | --- |
 | Built-in `wgpu` runner (desktop) | Full drag docking, guides, contained floats & focus confirmation in one OS window | `egui_dockspace::winit::run_native` ([`examples/winit.rs`](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/winit.rs)) |
 | Browser canvas (`web`) | Full drag docking and contained floats inside an HTML canvas | `egui_dockspace::winit::run_web` ([`integration/egui-web-demo`](https://github.com/Latias94/dockspace/tree/main/integration/egui-web-demo)) |
-| Custom complete-output host | Full drag docking with your own `winit` event loop or GPU renderer | `Dockspace::run_single_surface_with_ui` ([host guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#complete-output-hosts)) |
+| Custom complete-output host | Full drag docking with your own `winit` event loop or GPU renderer | `WinitIntegration` + `Dockspace::run_single_surface_with_ui` ([`examples/custom_winit.rs`](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/custom_winit.rs) · [host guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#complete-output-hosts)) |
 | Ordinary `eframe::App::ui` callback | Rendering, tab selection, close approval, menus & keyboard resize *(no drag docking or focus confirmation)* | `Dockspace::show_single_surface` ([`examples/basic.rs`](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/basic.rs)) |
 | Multi-OS-window native host (experimental) | Child OS windows, cross-window drag & OS recovery *(requires pinned `egui`/`winit` forks)* | [`egui_dockspace_native`](https://github.com/Latias94/dockspace/tree/main/crates/egui_dockspace_native) · [platform matrix](https://github.com/Latias94/dockspace/blob/main/docs/PLATFORM_SUPPORT.md) |
 
@@ -218,17 +218,19 @@ Enable the `serde` feature to save and restore layouts via `save_document_json` 
 
 ## Examples
 
-Run any example from the repository root (`workbench`, `winit`, and `shared_grid` use the complete-output `wgpu` runner for full drag docking; the remaining examples focus on application workflows via `eframe`):
+Run any example from the repository root (`workbench`, `winit`, `custom_winit`, `ide_workflows`, `shared_grid`, and `workspace_persistence` use the complete-output `wgpu` path for full drag docking; the remaining examples focus on `eframe::App::ui` callback workflows):
 
 | Example | What it demonstrates | Run command |
 | --- | --- | --- |
 | [Workbench](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/workbench.rs) | Complete editor with custom tabs, sizing demo, motion & themes | `cargo run -p egui_dockspace --example workbench --features wgpu --locked` |
 | [Minimal winit editor](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/winit.rs) | 96-line complete-output single-window editor | `cargo run -p egui_dockspace --example winit --features wgpu --locked` |
+| [Custom winit + WGPU](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/custom_winit.rs) | Caller-owned `winit` loop (`WinitIntegration`) + `wgpu 30` + backpressure deferral | `cargo run -p egui_dockspace --example custom_winit --features wgpu --locked` |
+| [IDE workflows](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/ide_workflows.rs) | Dynamic `+` tabs, Hide/Show View menu, `AutoHideSingle`, `Ctrl+Tab`, `DragAndDrop` & event log | `cargo run -p egui_dockspace --example ide_workflows --features wgpu --locked` |
 | [Shared grid](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/shared_grid.rs) | Shared `Grid` row/column tracks & nested layout tabs | `cargo run -p egui_dockspace --example shared_grid --features wgpu --locked` |
+| [Workspace persistence](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/workspace_persistence.rs) | Draggable JSON layout autosave, presets & closed-pane recovery | `cargo run -p egui_dockspace --example workspace_persistence --features wgpu,serde --locked` |
 | [Basic panes](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/basic.rs) | Ordinary `eframe::App::ui` callback integration | `cargo run -p egui_dockspace --example basic --features example-app --locked` |
-| [Composable layouts](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/composable.rs) | Named nested layouts and bare panes | `cargo run -p egui_dockspace --example composable --features example-app --locked` |
-| [Background save](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/background_save.rs) | Deferred close tokens & async save veto/approval | `cargo run -p egui_dockspace --example background_save --features example-app --locked` |
-| [Workspace persistence](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/workspace_persistence.rs) | JSON layout presets, autosave & missing-pane recovery | `cargo run -p egui_dockspace --example workspace_persistence --features example-app,serde --locked` |
+| [Composable layouts](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/composable.rs) | Named nested layouts and bare panes (`eframe`) | `cargo run -p egui_dockspace --example composable --features example-app --locked` |
+| [Background save](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/examples/background_save.rs) | Deferred close tokens & async save veto/approval (`eframe`) | `cargo run -p egui_dockspace --example background_save --features example-app --locked` |
 
 For browser deployment, follow [integration/egui-web-demo](https://github.com/Latias94/dockspace/tree/main/integration/egui-web-demo) and the [browser startup guide](https://github.com/Latias94/dockspace/blob/main/crates/egui_dockspace/docs/guide.md#browser-startup-and-preferences).
 

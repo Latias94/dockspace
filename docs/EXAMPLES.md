@@ -8,6 +8,7 @@ need a desktop session and a working graphics backend.
 | Goal | Example | What it demonstrates |
 | --- | --- | --- |
 | Learn the renderer-neutral core | [Layout commands](../crates/dockspace/examples/layout_commands.rs) | Create a layout, select/open/move panes and inspect committed results; no window |
+| Persist core layouts as JSON | [Core persistence](../crates/dockspace/examples/persistence.rs) | Stable external keys, `from_persistent_layout`, `save_document_json`, cold-start restore and key validation; no window |
 | Integrate your own UI framework | [Custom UI host](../crates/dockspace/examples/custom_ui_host.rs) | `dockspace::host` three-tier kit: owned `SurfaceDisplayList`, typed `SurfaceProgramVisitor`, `LogicalHost`, fail-closed `PointerClearance`; no window |
 | Integrate a third-party TUI framework | [Ratatui terminal workbench](../integration/ratatui-demo/README.md) | Complete interactive `ratatui` + `crossterm` adapter built exclusively on `dockspace::host` with `TestBackend` visual + mouse integration tests |
 | Integrate a custom renderer | [Engine host](../integration/dockspace-host-harness/examples/engine_host.rs) | Measure, record and settle output for two logical surfaces; low-level `runtime` recording renderer |
@@ -16,11 +17,13 @@ need a desktop session and a working graphics backend.
 | Try full docking with official egui | [Workbench](../crates/egui_dockspace/examples/workbench.rs) | Drag docking, splitters, contained Inspector, themes and retained document data |
 | Try docking in a browser | [Web workbench](../integration/egui-web-demo) | The same panes and configurable motion in one WebAssembly canvas |
 | Start a small winit editor | [Winit editor](../crates/egui_dockspace/examples/winit.rs) | Application panes with the optional complete-output runner; no custom event-loop code |
+| Bring your own `winit` + `wgpu` loop | [Custom winit](../crates/egui_dockspace/examples/custom_winit.rs) | Direct `WinitIntegration`, caller-owned `ApplicationHandler` + `wgpu 30` renderer, backpressure deferral and close confirmation |
+| Build real IDE workflows | [IDE workflows](../crates/egui_dockspace/examples/ide_workflows.rs) | Dynamic `+` tabs, Hide/Show View menu, `AutoHideSingle`, protected panes, `Ctrl+Tab`, `DragAndDrop` + file drops, and lifecycle events |
 | Resize shared Grid tracks | [Shared grid](../crates/egui_dockspace/examples/shared_grid.rs) | Shared row/column dividers, intersection dragging, bare cells and a nested layout tab |
+| Save and restore editor layouts | [Workspace persistence](../crates/egui_dockspace/examples/workspace_persistence.rs) | Draggable `wgpu` editor with JSON autosave, named presets, closed-pane inventory and layout locking |
 | Explore named layout tabs | [Composable](../crates/egui_dockspace/examples/composable.rs) | Nested selection and content activation through an ordinary eframe callback |
 | Start from an eframe callback | [Basic](../crates/egui_dockspace/examples/basic.rs) | Pane rendering, close decisions and theme/font/density controls; callback capabilities |
 | Save before closing a tab | [Background save](../crates/egui_dockspace/examples/background_save.rs) | Background worker, exact deferred token, failure recovery and stale completion |
-| Save and restore editor layouts | [Workspace persistence](../crates/egui_dockspace/examples/workspace_persistence.rs) | JSON file across launches, presets, closed-pane inventory and layout locking |
 | Explore native OS windows | [Native editor](../crates/egui_dockspace_native/examples/basic.rs) | Experimental multiview, window recovery, policy/style commands and optional presets |
 | Exercise moving OS windows | [Solar system](../crates/egui_dockspace_native/examples/solar_system.rs) | Three orbiting child windows, pause, recovery and recreation |
 | Try another UI framework | [GPUI workbench](../integration/gpui-harness/README.md) | Retained GPUI views and single-window docking using a local open-gpui checkout |
@@ -36,6 +39,7 @@ full drag path.
 
 ```sh
 cargo run -p dockspace --example layout_commands --locked
+cargo run -p dockspace --example persistence --features serde --locked
 cargo run -p dockspace --example custom_ui_host --locked
 cargo run --manifest-path integration/ratatui-demo/Cargo.toml --locked -- --smoke
 cargo run --manifest-path integration/dockspace-host-harness/Cargo.toml --example engine_host --locked
@@ -102,38 +106,32 @@ window to float it. A tab bar's dotted grip moves its tab group; a floating
 window's dotted title grip moves or docks the entire window, including internal
 splits. These gestures also work with **Custom tabs** disabled.
 
-For shared-track resizing and composed layout tabs in a complete-output host:
+For shared-track resizing, custom `winit` event loops, IDE workflows, and draggable layout persistence on the complete-output `wgpu` host:
 
 ```sh
 cargo run -p egui_dockspace --example shared_grid --features wgpu --locked
+cargo run -p egui_dockspace --example custom_winit --features wgpu --locked
+cargo run -p egui_dockspace --example ide_workflows --features wgpu --locked
+cargo run -p egui_dockspace --example workspace_persistence --features wgpu,serde --locked
 ```
 
-Columns resize across all rows, rows across all columns, and their intersection
-controls both axes. Bare cells have no implicit tab bar; **Layout actions →
-Active Panes** exposes their scoped commands. Nested layout and Grid transitions
-currently settle immediately; flat Tabs/Split layouts retain configured motion.
+In **shared_grid**, columns resize across all rows, rows across all columns, and their intersection controls both axes. Bare cells have no implicit tab bar; **Layout actions → Active Panes** exposes their scoped commands. Nested layout and Grid transitions currently settle immediately; flat Tabs/Split layouts retain configured motion.
 
-Smaller eframe examples:
+In **custom_winit**, the application owns its `winit` `ApplicationHandler` and `wgpu 30` renderer directly via `WinitIntegration`, settling `DockspaceOutput::into_parts()` receipts, preserving deferred input on `OutputBackpressure`, and confirming window close with `ViewportCommand::CancelClose`.
+
+In **ide_workflows**, click **`+`** in any tab bar to open new dynamic documents, toggle pane visibility in **View**, test `AutoHideSingle`, protected `DockItemRule` panes, `PreferCentral` / `Compress`, `Ctrl+Tab` cycling and `DockingActivation` in **Policy / Input**, drag Asset chips or OS files into documents without triggering docking, and watch committed `DockspaceEventKind` entries in **Activity Log**.
+
+In **workspace_persistence**, drag tabs or resize splitters, save a named layout, close/reopen panes, lock the arrangement, and restore the default. Presets live in application memory; pane content is stored separately from layout documents. The current layout loads from `dockspace-layout.json` and debounced autosaves on `document_changed()` or before closing. A failed save keeps the window open with an explicit choice to exit without saving. Pass a different file after `--`, for example `-- my-layout.json`. A document which fails to load is preserved until an explicit save.
+
+Smaller `eframe::App::ui` callback examples (teaching application workflows without complete-output drag docking):
 
 ```sh
 cargo run -p egui_dockspace --example basic --features example-app --locked
 cargo run -p egui_dockspace --example background_save --features example-app --locked
-cargo run -p egui_dockspace --example workspace_persistence --features example-app,serde --locked
 cargo run -p egui_dockspace --example composable --features example-app --locked
 ```
 
-In **background_save**, edit the document and close its tab. The application
-freezes editing, saves a new copy in the system temporary directory, then allows
-the original close. Failure keeps the pane open. The status strip shows the
-destination; the example does not overwrite an existing file.
-
-In **workspace_persistence**, save a named layout, close/reopen panes, lock the
-arrangement, and restore the default. Presets live in application memory; pane
-content is stored separately from layout documents. The current layout loads
-from `dockspace-layout.json` and saves before closing or through **Save layout file**.
-A failed save keeps the window open with an explicit choice to exit without saving.
-Pass a different file after `--`, for example `-- my-layout.json`. A document
-which fails to load is preserved until an explicit save.
+In **background_save**, edit the document and close its tab. The application freezes editing, saves a new copy in the system temporary directory, then allows the original close. Failure keeps the pane open. The status strip shows the destination; the example does not overwrite an existing file.
 
 ## Experimental native windows
 

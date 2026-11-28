@@ -27,9 +27,9 @@ During `0.x`, breaking changes may occur on minor versions.
       affine `LogicalPresentationToken` settlement.
     - Tier 3: `NativeReportDigest`, `NativeWindowRetirementState`, and curated
       native-window registry re-exports.
-  - Runnable zero-dependency `custom_ui_host` example and standalone
-    `integration/ratatui-demo` third-party TUI reference adapter with `TestBackend`
-    visual + mouse tests.
+  - Runnable zero-dependency `custom_ui_host` and `persistence` (`serde`)
+    examples plus the standalone `integration/ratatui-demo` third-party TUI
+    reference adapter with `TestBackend` visual + mouse tests.
 - **`dockspace_winit` (`0.1.0`, MIT OR Apache-2.0)**:
   - Shared `SurfaceCoordinates`, `MouseInput`, and `RepaintScheduler` helpers for
     winit `0.30` hosts, plus optional `native` (`native-windows` / `native-geometry`)
@@ -45,6 +45,10 @@ During `0.x`, breaking changes may occur on minor versions.
     opaque swapchain defaults, uncaptured error & `NativeError::DeviceLost`
     handling, non-secure context WebGL2 selection, first-frame WebGPU canvas
     replacement fallback, and `webglcontextlost` recovery reporting.
+  - Runnable complete-output `wgpu` examples covering minimal editors (`winit`),
+    full workbench (`workbench`), caller-owned `WinitIntegration` event loops
+    (`custom_winit`), IDE workflows (`ide_workflows`), shared grids
+    (`shared_grid`), and draggable JSON persistence (`workspace_persistence`).
 
 ### Notes
 

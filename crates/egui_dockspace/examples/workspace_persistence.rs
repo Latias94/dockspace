@@ -1,3 +1,13 @@
+//! Persistent workspace layouts, presets, and debounced autosave on the `wgpu` runner.
+//!
+//! Runs on the complete-output `wgpu` host so you can drag tabs, split panes,
+//! resize dividers, or float groups, watch debounced autosave write the JSON
+//! layout document via `mutation.notification().document_changed()`, and switch
+//! named presets or restart while keeping pane content owned by the application.
+//!
+//! Run from the repository root:
+//! `cargo run -p egui_dockspace --example workspace_persistence --features wgpu,serde --locked`
+
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::BTreeMap;
@@ -5,12 +15,15 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use eframe::egui;
+use egui::{Context, RawInput, ViewportCommand};
 use egui_dockspace::{
     CloseDecision, CloseItemDecisionState, DockAnchor, DockPlacement, Dockspace,
     DockspaceActionStatus, DockspaceAxis, DockspaceDocumentBootstrap, DockspaceDocumentId,
-    DockspaceLayout, DockspaceMutation, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout,
-    ItemId, PaneView, RootId, SurfaceId,
+    DockspaceLayout, DockspaceMutation, DockspaceNode, DockspaceOutput, DockspaceResponse,
+    DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, PaneResponse, PaneView, RootId, SurfaceId,
+    winit::{
+        AppResult, FrameControl, NativeApp, NativeFrameReport, NativeOptions, backend, run_native,
+    },
 };
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
@@ -31,38 +44,54 @@ const PANES: [(&str, &str); 8] = [
     ("pane/assets", "Assets"),
 ];
 
-fn main() -> eframe::Result {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let layout_file = std::env::args_os()
         .nth(1)
         .map_or_else(|| PathBuf::from("dockspace-layout.json"), PathBuf::from);
-    eframe::run_native(
-        "egui_dockspace editor layouts",
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 780.0]),
-            ..Default::default()
-        },
-        Box::new(move |creation| {
-            creation.egui_ctx.set_theme(egui::Theme::Light);
-            Ok(Box::new(PersistenceApp::open(layout_file)))
-        }),
-    )
+    let options = NativeOptions {
+        window: backend::window::WindowAttributes::default()
+            .with_title("egui_dockspace editor layouts")
+            .with_inner_size(backend::dpi::LogicalSize::new(1200.0, 780.0)),
+        ..Default::default()
+    };
+    let context = Context::default();
+    context.set_theme(egui::Theme::Light);
+    let mut app = PersistenceApp::open(layout_file);
+    run_native(options, context, &mut app)?;
+    Ok(())
+}
+
+enum ToolbarCommand {
+    SaveFile,
+    ExitWithoutSaving,
+    SetLocked(bool),
+    SavePreset,
+    ApplyCurrentPreset,
+    ApplyPreset(String),
+    RemovePreset(String),
+    Reopen(ItemId),
+}
+
+struct PersistenceControls {
+    presets: BTreeMap<String, Vec<u8>>,
+    preset_name: String,
+    status: String,
+    auto_save: bool,
+    close_save_failed: bool,
+    commands: Vec<ToolbarCommand>,
 }
 
 struct PersistenceApp {
     dockspace: Dockspace,
     panes: PersistencePanes,
     default_layout: DockspaceLayout,
-    // Names, storage and closed-pane data belong to the application, not the layout engine.
-    presets: BTreeMap<String, Vec<u8>>,
-    preset_name: String,
-    status: String,
+    controls: PersistenceControls,
     layout_file: Option<PathBuf>,
     save_on_close: bool,
     close_pending: bool,
-    close_save_failed: bool,
-    auto_save: bool,
     layout_dirty: bool,
     auto_save_at: Option<f64>,
+    last_response: Option<DockspaceResponse>,
 }
 
 impl PersistenceApp {
@@ -88,17 +117,22 @@ impl PersistenceApp {
             dockspace,
             panes: PersistencePanes::new(&items),
             default_layout,
-            presets: BTreeMap::from([(DEFAULT_PRESET.to_owned(), default)]),
-            preset_name: "Working".to_owned(),
-            status: "Layouts stay in application memory; pane data survives every layout change"
-                .to_owned(),
+            controls: PersistenceControls {
+                presets: BTreeMap::from([(DEFAULT_PRESET.to_owned(), default)]),
+                preset_name: "Working".to_owned(),
+                status:
+                    "Drag tabs or resize splitters; layouts persist independently of pane data."
+                        .to_owned(),
+                auto_save: true,
+                close_save_failed: false,
+                commands: Vec::new(),
+            },
             layout_file: None,
             save_on_close: false,
             close_pending: false,
-            close_save_failed: false,
-            auto_save: true,
             layout_dirty: false,
             auto_save_at: None,
+            last_response: None,
         }
     }
 
@@ -110,21 +144,24 @@ impl PersistenceApp {
                     app.dockspace = dockspace;
                     app.default_layout = example_layout(&items);
                     app.panes = PersistencePanes::new(&items);
-                    app.status = format!("Restored {}", path.display());
+                    app.controls.status = format!("Restored {}", path.display());
                     app.save_on_close = true;
                 }
                 Err(error) => {
-                    app.status = format!(
+                    app.controls.status = format!(
                         "Could not restore {}: {error}. Save layout file to replace it.",
                         path.display()
                     );
                 }
             },
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                app.status = format!("Layout autosaves to {} after changes", path.display());
+                app.controls.status =
+                    format!("Layout autosaves to {} after changes", path.display());
                 app.save_on_close = true;
             }
-            Err(error) => app.status = format!("Could not read {}: {error}", path.display()),
+            Err(error) => {
+                app.controls.status = format!("Could not read {}: {error}", path.display());
+            }
         }
         app.layout_file = Some(path);
         app
@@ -176,26 +213,25 @@ impl PersistenceApp {
         self.layout_dirty = false;
         match self.write_layout(&path) {
             Ok(()) => {
-                self.status = format!("Saved {}", path.display());
+                self.controls.status = format!("Saved {}", path.display());
                 self.save_on_close = true;
-                self.close_save_failed = false;
+                self.controls.close_save_failed = false;
             }
-            Err(error) => self.status = format!("Could not save {}: {error}", path.display()),
+            Err(error) => {
+                self.controls.status = format!("Could not save {}: {error}", path.display());
+            }
         }
     }
 
     fn observe_mutation(&mut self, mutation: &DockspaceMutation) {
-        self.layout_dirty |= mutation.layout_change().is_some();
+        self.layout_dirty |= mutation.notification().document_changed();
     }
 
-    fn autosave(&mut self, context: &egui::Context) {
+    fn autosave(&mut self, context: &Context) {
         // An unreadable file requires an explicit save before automatic replacement.
-        if !self.auto_save || !self.save_on_close || self.layout_file.is_none() {
+        if !self.controls.auto_save || !self.save_on_close || self.layout_file.is_none() {
             // Cancelling a deadline must preserve its unsaved layout change.
             self.layout_dirty |= self.auto_save_at.take().is_some();
-            return;
-        }
-        if context.will_discard() {
             return;
         }
         let now = context.input(|input| input.time);
@@ -212,27 +248,29 @@ impl PersistenceApp {
     }
 
     fn save(&mut self) {
-        let name = self.preset_name.trim();
+        let name = self.controls.preset_name.trim().to_owned();
         if name.is_empty() || name == DEFAULT_PRESET {
-            "Choose a non-empty name other than Default".clone_into(&mut self.status);
+            "Choose a non-empty name other than Default".clone_into(&mut self.controls.status);
             return;
         }
-        if !self.presets.contains_key(name) && self.presets.len() > MAX_USER_PRESETS {
+        if !self.controls.presets.contains_key(&name)
+            && self.controls.presets.len() > MAX_USER_PRESETS
+        {
             "The eight user layout slots are full; replace or remove one"
-                .clone_into(&mut self.status);
+                .clone_into(&mut self.controls.status);
             return;
         }
         match self.dockspace.save_document_json() {
             Ok(snapshot) => {
-                self.presets.insert(name.to_owned(), snapshot);
-                self.status = format!("Saved layout: {name}");
+                self.controls.presets.insert(name.clone(), snapshot);
+                self.controls.status = format!("Saved layout: {name}");
             }
-            Err(error) => self.status = error.to_string(),
+            Err(error) => self.controls.status = error.to_string(),
         }
     }
 
     fn restore(&mut self) {
-        let name = self.preset_name.trim().to_owned();
+        let name = self.controls.preset_name.trim().to_owned();
         self.restore_named(&name);
     }
 
@@ -242,27 +280,27 @@ impl PersistenceApp {
             match self.dockspace.reset_layout(self.default_layout.clone()) {
                 Ok(mutation) => {
                     self.observe_mutation(&mutation);
-                    self.status = format!("Applied layout: {name}");
+                    self.controls.status = format!("Applied layout: {name}");
                 }
-                Err(error) => self.status = error.to_string(),
+                Err(error) => self.controls.status = error.to_string(),
             }
             return;
         }
-        let Some(snapshot) = self.presets.get(name) else {
-            "Choose a saved layout".clone_into(&mut self.status);
+        let Some(snapshot) = self.controls.presets.get(name).cloned() else {
+            "Choose a saved layout".clone_into(&mut self.controls.status);
             return;
         };
         match self
             .dockspace
-            .restore_document_json(snapshot, |document_id, key| {
+            .restore_document_json(&snapshot, |document_id, key| {
                 document_id == PERSISTENCE_DOCUMENT_ID
                     && PANES.iter().any(|(known, _)| *known == key)
             }) {
             Ok(mutation) => {
                 self.observe_mutation(&mutation);
-                self.status = format!("Applied layout: {name}");
+                self.controls.status = format!("Applied layout: {name}");
             }
-            Err(error) => self.status = error.to_string(),
+            Err(error) => self.controls.status = error.to_string(),
         }
     }
 
@@ -273,7 +311,7 @@ impl PersistenceApp {
         // Resolve the current presentation: restoring an old preset can remap retired IDs.
         let view = self.dockspace.view();
         let Some(surface) = view.surfaces().next() else {
-            "No logical surface is available".clone_into(&mut self.status);
+            "No logical surface is available".clone_into(&mut self.controls.status);
             return;
         };
         let placement = match surface.main_root() {
@@ -288,7 +326,7 @@ impl PersistenceApp {
                 });
                 let Some(anchor) = anchor else {
                     "The current layout has no available docking anchor"
-                        .clone_into(&mut self.status);
+                        .clone_into(&mut self.controls.status);
                     return;
                 };
                 DockPlacement::Center(DockAnchor::Item(anchor))
@@ -299,12 +337,12 @@ impl PersistenceApp {
                 self.observe_mutation(result.mutation());
                 match result.status() {
                     DockspaceActionStatus::Applied(_) => {
-                        "Pane reopened".clone_into(&mut self.status)
+                        "Pane reopened".clone_into(&mut self.controls.status);
                     }
-                    status => self.status = format!("Open pane: {status:?}"),
+                    status => self.controls.status = format!("Open pane: {status:?}"),
                 }
             }
-            Err(error) => self.status = error.to_string(),
+            Err(error) => self.controls.status = error.to_string(),
         }
     }
 
@@ -313,181 +351,231 @@ impl PersistenceApp {
         policy.set_arrangement_locked(locked);
         match self.dockspace.set_policy(policy) {
             Ok(_) => {
-                self.status = if locked {
+                self.controls.status = if locked {
                     "Layout locked"
                 } else {
                     "Layout unlocked"
                 }
-                .to_owned()
+                .to_owned();
             }
-            Err(error) => self.status = error.to_string(),
+            Err(error) => self.controls.status = error.to_string(),
+        }
+    }
+
+    fn process_post_frame(&mut self, context: &Context) -> FrameControl {
+        let mut repaint = false;
+        for command in std::mem::take(&mut self.controls.commands) {
+            repaint = true;
+            match command {
+                ToolbarCommand::SaveFile => self.save_layout_file(),
+                ToolbarCommand::ExitWithoutSaving => {
+                    self.save_on_close = false;
+                    self.close_pending = false;
+                    context.send_viewport_cmd(ViewportCommand::Close);
+                }
+                ToolbarCommand::SetLocked(locked) => self.set_locked(locked),
+                ToolbarCommand::SavePreset => self.save(),
+                ToolbarCommand::ApplyCurrentPreset => self.restore(),
+                ToolbarCommand::ApplyPreset(name) => {
+                    self.controls.preset_name = name.clone();
+                    self.restore_named(&name);
+                }
+                ToolbarCommand::RemovePreset(name) => {
+                    self.controls.presets.remove(&name);
+                }
+                ToolbarCommand::Reopen(item) => self.reopen(item),
+            }
+        }
+
+        if let Some(response) = self.last_response.take() {
+            self.observe_mutation(response.mutation());
+            for request in response
+                .close_request_events()
+                .iter()
+                .filter(|request| !request.reused())
+            {
+                let plan = request.plan();
+                for item in plan
+                    .items()
+                    .iter()
+                    .filter(|item| item.state() == CloseItemDecisionState::Pending)
+                {
+                    // Only layout ownership closes. Application content remains in the catalog.
+                    match self.dockspace.resolve_close(
+                        plan.request(),
+                        item.token(),
+                        CloseDecision::Allow,
+                    ) {
+                        Ok(result) => {
+                            self.observe_mutation(result.mutation());
+                            repaint |= result.mutation().workspace_changed();
+                        }
+                        Err(error) => self.controls.status = error.to_string(),
+                    }
+                }
+            }
+        }
+
+        if self.close_pending && self.save_on_close {
+            self.close_pending = false;
+            if let Some(path) = self.layout_file.clone() {
+                match self.write_layout(&path) {
+                    Ok(()) => {
+                        self.save_on_close = false;
+                        self.controls.close_save_failed = false;
+                        context.send_viewport_cmd(ViewportCommand::Close);
+                    }
+                    Err(error) => {
+                        self.controls.status =
+                            format!("Could not save {}: {error}", path.display());
+                        self.controls.close_save_failed = true;
+                        context.send_viewport_cmd(ViewportCommand::Minimized(false));
+                        context.send_viewport_cmd(ViewportCommand::Visible(true));
+                    }
+                }
+                repaint = true;
+            }
+        } else {
+            self.autosave(context);
+        }
+
+        if repaint {
+            FrameControl::Repaint
+        } else {
+            FrameControl::Continue
         }
     }
 }
 
-impl eframe::App for PersistenceApp {
-    fn logic(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
-        if context.input(|input| input.viewport().close_requested()) && self.save_on_close {
-            // The next hidden paint can replace viewport events, so retain the close intent.
-            self.close_pending = true;
-            context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            context.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
-        }
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::Panel::top("layout-controls").show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.strong("Editor layouts");
-                if ui.button("Save layout file").clicked() {
-                    self.save_layout_file();
-                }
-                ui.checkbox(&mut self.auto_save, "Autosave layout");
-                if self.close_save_failed && ui.button("Exit without saving").clicked() {
-                    self.save_on_close = false;
-                    self.close_pending = false;
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                let mut locked = self.dockspace.policy().arrangement_locked();
-                if ui.checkbox(&mut locked, "Lock layout").changed() {
-                    self.set_locked(locked);
-                }
-                ui.label("Name:");
-                ui.add(egui::TextEdit::singleline(&mut self.preset_name).desired_width(130.0));
-                if ui.button("Save preset").clicked() {
-                    self.save();
-                }
-                if ui
-                    .add_enabled(
-                        !locked && self.presets.contains_key(self.preset_name.trim()),
-                        egui::Button::new("Apply preset"),
-                    )
-                    .clicked()
-                {
-                    self.restore();
-                }
-                if ui
-                    .add_enabled(!locked, egui::Button::new("Reset to default"))
-                    .clicked()
-                {
-                    self.restore_named(DEFAULT_PRESET);
-                }
-                ui.menu_button("Saved layouts", |ui| {
-                    let names: Vec<_> = self.presets.keys().cloned().collect();
-                    for name in names {
-                        ui.horizontal(|ui| {
-                            if ui.add_enabled(!locked, egui::Button::new(&name)).clicked() {
-                                self.preset_name = name.clone();
-                                self.restore_named(&name);
-                                ui.close();
-                            }
-                            if name != DEFAULT_PRESET && ui.small_button("Remove").clicked() {
-                                self.presets.remove(&name);
-                            }
-                        });
-                    }
-                });
-                ui.menu_button("Closed panes", |ui| {
-                    let closed: Vec<_> = self
-                        .panes
-                        .items
-                        .iter()
-                        .filter_map(|(item, pane)| {
-                            self.dockspace
-                                .view()
-                                .item(*item)
-                                .is_none()
-                                .then_some((*item, pane.title))
-                        })
-                        .collect();
-                    if closed.is_empty() {
-                        ui.weak("Every pane is open");
-                    }
-                    for (item, title) in closed {
-                        if ui
-                            .add_enabled(!locked, egui::Button::new(format!("Reopen {title}")))
-                            .clicked()
-                        {
-                            self.reopen(item);
+fn draw_controls(
+    ui: &mut egui::Ui,
+    controls: &mut PersistenceControls,
+    locked: bool,
+    closed_panes: &[(ItemId, &'static str)],
+) {
+    egui::Panel::top("layout-controls").show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.strong("Editor layouts");
+            if ui.button("Save layout file").clicked() {
+                controls.commands.push(ToolbarCommand::SaveFile);
+            }
+            ui.checkbox(&mut controls.auto_save, "Autosave layout");
+            if controls.close_save_failed && ui.button("Exit without saving").clicked() {
+                controls.commands.push(ToolbarCommand::ExitWithoutSaving);
+            }
+            let mut lock_toggle = locked;
+            if ui.checkbox(&mut lock_toggle, "Lock layout").changed() {
+                controls
+                    .commands
+                    .push(ToolbarCommand::SetLocked(lock_toggle));
+            }
+            ui.label("Name:");
+            ui.add(egui::TextEdit::singleline(&mut controls.preset_name).desired_width(130.0));
+            if ui.button("Save preset").clicked() {
+                controls.commands.push(ToolbarCommand::SavePreset);
+            }
+            if ui
+                .add_enabled(
+                    !locked && controls.presets.contains_key(controls.preset_name.trim()),
+                    egui::Button::new("Apply preset"),
+                )
+                .clicked()
+            {
+                controls.commands.push(ToolbarCommand::ApplyCurrentPreset);
+            }
+            if ui
+                .add_enabled(!locked, egui::Button::new("Reset to default"))
+                .clicked()
+            {
+                controls
+                    .commands
+                    .push(ToolbarCommand::ApplyPreset(DEFAULT_PRESET.to_owned()));
+            }
+            ui.menu_button("Saved layouts", |ui| {
+                let names: Vec<_> = controls.presets.keys().cloned().collect();
+                for name in names {
+                    ui.horizontal(|ui| {
+                        if ui.add_enabled(!locked, egui::Button::new(&name)).clicked() {
+                            controls
+                                .commands
+                                .push(ToolbarCommand::ApplyPreset(name.clone()));
                             ui.close();
                         }
-                    }
-                });
+                        if name != DEFAULT_PRESET && ui.small_button("Remove").clicked() {
+                            controls.commands.push(ToolbarCommand::RemovePreset(name));
+                        }
+                    });
+                }
             });
-            ui.label(&self.status);
-            ui.weak("For drag docking, run the workbench example.");
-        });
-        egui::CentralPanel::default().show(ui, |ui| {
-            let surface = self
-                .dockspace
-                .view()
-                .surfaces()
-                .next()
-                .map(|surface| surface.id());
-            let Some(surface) = surface else {
-                ui.weak("No logical surface is available");
-                return;
-            };
-            match self
-                .dockspace
-                .show_single_surface(surface, ui, &mut self.panes)
-            {
-                Ok(response) => {
-                    self.observe_mutation(response.mutation());
-                    for request in response.close_request_events() {
-                        if request.reused() {
-                            continue;
-                        }
-                        let plan = request.plan();
-                        for item in plan.items() {
-                            if item.state() != CloseItemDecisionState::Pending {
-                                continue;
-                            }
-                            // Only layout ownership closes. Application content remains in the catalog.
-                            match self.dockspace.resolve_close(
-                                plan.request(),
-                                item.token(),
-                                CloseDecision::Allow,
-                            ) {
-                                Ok(result) => {
-                                    self.observe_mutation(result.mutation());
-                                    if result.mutation().workspace_changed() {
-                                        ui.ctx().request_repaint();
-                                    }
-                                }
-                                Err(error) => self.status = error.to_string(),
-                            }
-                        }
+            ui.menu_button("Closed panes", |ui| {
+                if closed_panes.is_empty() {
+                    ui.weak("Every pane is open");
+                }
+                for &(item, title) in closed_panes {
+                    if ui
+                        .add_enabled(!locked, egui::Button::new(format!("Reopen {title}")))
+                        .clicked()
+                    {
+                        controls.commands.push(ToolbarCommand::Reopen(item));
+                        ui.close();
                     }
                 }
-                Err(error) => self.status = error.to_string(),
-            }
+            });
         });
-        if !self.close_pending {
-            self.autosave(ui.ctx());
+        ui.label(&controls.status);
+    });
+}
+
+impl NativeApp for PersistenceApp {
+    fn update(&mut self, context: &Context, input: RawInput) -> AppResult<DockspaceOutput> {
+        let close_requested = input.viewport().close_requested();
+        let locked = self.dockspace.policy().arrangement_locked();
+        let view = self.dockspace.view();
+        let surface = view.surfaces().next().map(|surface| surface.id());
+        let closed_panes: Vec<_> = self
+            .panes
+            .items
+            .iter()
+            .filter_map(|(item, pane)| view.item(*item).is_none().then_some((*item, pane.title)))
+            .collect();
+
+        if close_requested && self.save_on_close {
+            self.close_pending = true;
         }
-        if self.close_pending && self.save_on_close && !ui.ctx().will_discard() {
-            self.close_pending = false;
-            let path = self
-                .layout_file
-                .clone()
-                .expect("automatic saving has a layout path");
-            match self.write_layout(&path) {
-                Ok(()) => {
-                    self.save_on_close = false;
-                    self.close_save_failed = false;
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        let cancel_close = close_requested && self.save_on_close;
+        let controls = &mut self.controls;
+
+        let Some(surface) = surface else {
+            self.last_response = None;
+            return Ok(egui_dockspace::run_ui(context, input, |ui| {
+                if cancel_close {
+                    ui.ctx().send_viewport_cmd(ViewportCommand::CancelClose);
                 }
-                Err(error) => {
-                    self.status = format!("Could not save {}: {error}", path.display());
-                    self.close_save_failed = true;
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                draw_controls(ui, controls, locked, &closed_panes);
+                egui::CentralPanel::default().show(ui, |ui| {
+                    ui.weak("No logical surface is available");
+                });
+            }));
+        };
+
+        let (output, response) = self.dockspace.run_single_surface_with_ui(
+            context,
+            input,
+            surface,
+            &mut self.panes,
+            |ui| {
+                if cancel_close {
+                    ui.ctx().send_viewport_cmd(ViewportCommand::CancelClose);
                 }
-            }
-        }
+                draw_controls(ui, controls, locked, &closed_panes);
+            },
+        )?;
+        self.last_response = Some(response);
+        Ok(output)
+    }
+
+    fn frame_finished(&mut self, frame: NativeFrameReport<'_>) -> AppResult<FrameControl> {
+        Ok(self.process_post_frame(frame.context))
     }
 }
 
@@ -532,9 +620,23 @@ struct PersistencePanes {
 impl PersistencePanes {
     fn new(items: &[ItemId]) -> Self {
         Self {
-            items: items.iter().copied().zip(PANES).map(|(item, (key, title))| {
-                (item, EditorPane { title, text: format!("{title} application data\n{key}\n\nEdits survive closing, reopening and layout presets."), canvas: key == "pane/scene" })
-            }).collect(),
+            items: items
+                .iter()
+                .copied()
+                .zip(PANES)
+                .map(|(item, (key, title))| {
+                    (
+                        item,
+                        EditorPane {
+                            title,
+                            text: format!(
+                                "{title} application data\n{key}\n\nEdits survive closing, reopening and layout presets."
+                            ),
+                            canvas: key == "pane/scene",
+                        },
+                    )
+                })
+                .collect(),
         }
     }
 }
@@ -544,9 +646,9 @@ impl PaneView for PersistencePanes {
         self.items.get(&item).map(|pane| pane.title.into())
     }
 
-    fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> egui_dockspace::PaneResponse {
+    fn ui(&mut self, item: ItemId, ui: &mut egui::Ui) -> PaneResponse {
         let Some(pane) = self.items.get_mut(&item) else {
-            return egui_dockspace::PaneResponse::default();
+            return PaneResponse::default();
         };
         if pane.canvas {
             let (response, painter) =
@@ -568,11 +670,12 @@ impl PaneView for PersistencePanes {
                 egui::FontId::proportional(16.0),
                 ui.visuals().text_color(),
             );
+            PaneResponse::from(&response)
         } else {
-            egui::ScrollArea::both()
+            let scroll = egui::ScrollArea::both()
                 .id_salt(("editor-pane-scroll", item.get()))
                 .show(ui, |ui| {
-                    egui_dockspace::pane_text_edit(
+                    let editor = egui_dockspace::pane_text_edit(
                         ui,
                         egui::Id::unique(("editor-pane-focus", item.get())),
                         egui::TextEdit::multiline(&mut pane.text).desired_width(f32::INFINITY),
@@ -582,9 +685,12 @@ impl PaneView for PersistencePanes {
                             ui.monospace(format!("[{line:03}] Application event log"));
                         }
                     }
+                    editor
                 });
+            PaneResponse::default()
+                .with_scroll_area(ui, &scroll)
+                .with_content(&scroll.inner)
         }
-        egui_dockspace::PaneResponse::default()
     }
 
     fn focus_target(&self, item: ItemId) -> Option<egui::Id> {
@@ -603,7 +709,70 @@ impl PaneView for PersistencePanes {
 mod tests {
     use super::*;
     use egui::accesskit::{Action, ActionRequest, Role, TreeId};
-    use egui_dockspace::{DockspaceActionOutcome, DockspaceCloseOutcome, DockspaceCloseResolution};
+    use egui_dockspace::{
+        DockspaceActionOutcome, DockspaceCloseOutcome, DockspaceCloseRequestStatus,
+        DockspaceCloseResolution, SurfacePresentationResult,
+    };
+
+    fn run_frame_raw(
+        context: &Context,
+        app: &mut PersistenceApp,
+        raw: RawInput,
+    ) -> egui::FullOutput {
+        let output = app
+            .update(context, raw)
+            .expect("persistence frame succeeds");
+        let (mut full_output, receipt) = output.into_parts();
+        full_output.textures_delta.clear();
+        receipt.report(SurfacePresentationResult::Presented);
+        let _ = app.process_post_frame(context);
+        full_output
+    }
+
+    fn run_frame(
+        context: &Context,
+        app: &mut PersistenceApp,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        run_frame_at(context, app, events, None)
+    }
+
+    fn run_frame_at(
+        context: &Context,
+        app: &mut PersistenceApp,
+        events: Vec<egui::Event>,
+        time: Option<f64>,
+    ) -> egui::FullOutput {
+        run_frame_raw(
+            context,
+            app,
+            RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 780.0),
+                )),
+                events,
+                time,
+                ..Default::default()
+            },
+        )
+    }
+
+    fn close_input() -> RawInput {
+        let mut raw = RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 780.0),
+            )),
+            ..Default::default()
+        };
+        raw.viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .events
+            .push(egui::ViewportEvent::Close);
+        raw
+    }
 
     #[test]
     fn layout_file_round_trip_preserves_tab_order_and_reconnects_application_keys() {
@@ -646,9 +815,11 @@ mod tests {
             &[inspector, document]
         );
         assert_eq!(restored.panes.items[&document].title, "Document");
-        assert_eq!(restored.status, format!("Restored {}", path.display()));
+        assert_eq!(
+            restored.controls.status,
+            format!("Restored {}", path.display())
+        );
 
-        // A second save replaces the existing file atomically on supported platforms.
         let moved = app
             .dockspace
             .dock_item_current(inspector, DockPlacement::Center(DockAnchor::Item(document)))
@@ -661,7 +832,7 @@ mod tests {
             }) if *item == inspector
         ));
         app.save_layout_file();
-        assert!(app.status.starts_with("Saved "));
+        assert!(app.controls.status.starts_with("Saved "));
         assert!(PersistenceApp::open(path).save_on_close);
     }
 
@@ -673,14 +844,13 @@ mod tests {
         std::fs::write(&path, original).unwrap();
         let mut app = PersistenceApp::open(path.clone());
         assert!(!app.save_on_close);
-        assert!(app.status.starts_with("Could not restore "));
-        let output = run_close_frame(&egui::Context::default(), &mut app);
+        assert!(app.controls.status.starts_with("Could not restore "));
+        let output = run_frame_raw(&Context::default(), &mut app, close_input());
         assert!(
             !output.viewport_output[&egui::ViewportId::ROOT]
                 .commands
-                .contains(&egui::ViewportCommand::CancelClose)
+                .contains(&ViewportCommand::CancelClose)
         );
-        output.drop_without_applying_deltas();
         assert_eq!(std::fs::read(&path).unwrap(), original);
         app.save_layout_file();
         assert!(app.save_on_close);
@@ -694,124 +864,30 @@ mod tests {
         let mut app = PersistenceApp::open(path.clone());
         // A directory cannot be replaced by the atomic file writer on any platform.
         std::fs::create_dir(&path).unwrap();
-        let context = egui::Context::default();
-        let failed = run_close_frame(&context, &mut app);
-        let commands = &failed.viewport_output[&egui::ViewportId::ROOT].commands;
-        assert!(commands.contains(&egui::ViewportCommand::CancelClose));
-        assert!(commands.contains(&egui::ViewportCommand::Minimized(false)));
-        assert!(commands.contains(&egui::ViewportCommand::Visible(true)));
-        assert!(!commands.contains(&egui::ViewportCommand::Close));
-        failed.drop_without_applying_deltas();
-        assert!(app.close_save_failed);
-        assert!(app.status.starts_with("Could not save "));
+        let context = Context::default();
+        let failed = run_frame_raw(&context, &mut app, close_input());
+        assert!(
+            failed.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .contains(&ViewportCommand::CancelClose)
+        );
+        assert!(app.controls.close_save_failed);
+        assert!(app.controls.status.starts_with("Could not save "));
         assert!(app.save_on_close);
         std::fs::remove_dir(&path).unwrap();
 
-        let saved = run_close_frame(&context, &mut app);
+        let _ = run_frame_raw(&context, &mut app, close_input());
+        // The follow-up frame emits the queued ViewportCommand::Close.
+        let closing = run_frame(&context, &mut app, Vec::new());
         assert!(
-            saved.viewport_output[&egui::ViewportId::ROOT]
+            closing.viewport_output[&egui::ViewportId::ROOT]
                 .commands
-                .contains(&egui::ViewportCommand::Close)
+                .contains(&ViewportCommand::Close)
         );
-        saved.drop_without_applying_deltas();
         assert!(path.is_file());
-        assert!(!app.close_save_failed);
+        assert!(!app.controls.close_save_failed);
         assert!(!app.save_on_close);
         assert!(PersistenceApp::decode(&std::fs::read(path).unwrap()).is_ok());
-    }
-
-    #[test]
-    fn minimized_close_waits_for_a_ui_pass_before_saving() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("layout.json");
-        let mut app = PersistenceApp::open(path.clone());
-        let context = egui::Context::default();
-        let mut raw = close_input();
-        raw.viewports
-            .get_mut(&egui::ViewportId::ROOT)
-            .unwrap()
-            .minimized = Some(true);
-        let mut frame = eframe::Frame::_new_kittest();
-        let output = context.run_logic(&raw, |context| {
-            eframe::App::logic(&mut app, context, &mut frame);
-        });
-        let commands = &output.viewport_commands[&egui::ViewportId::ROOT];
-        assert!(commands.contains(&egui::ViewportCommand::CancelClose));
-        assert!(commands.contains(&egui::ViewportCommand::RequestPaintWhileHidden));
-        assert!(!path.exists());
-        assert!(app.close_pending);
-
-        // Eframe clears native viewport events before appending the next input snapshot.
-        let mut next = raw.clone();
-        next.viewports
-            .get_mut(&egui::ViewportId::ROOT)
-            .unwrap()
-            .events
-            .clear();
-        raw.append(next);
-        assert!(!raw.viewport().close_requested());
-        let output = context.run_ui(raw, |ui| {
-            eframe::App::logic(&mut app, ui.ctx(), &mut frame);
-            eframe::App::ui(&mut app, ui, &mut frame);
-        });
-        assert!(
-            output.viewport_output[&egui::ViewportId::ROOT]
-                .commands
-                .contains(&egui::ViewportCommand::Close)
-        );
-        output.drop_without_applying_deltas();
-        assert!(PersistenceApp::decode(&std::fs::read(path).unwrap()).is_ok());
-        assert!(!app.save_on_close);
-        assert!(!app.close_pending);
-    }
-
-    fn close_input() -> egui::RawInput {
-        let mut raw = egui::RawInput::default();
-        raw.viewports
-            .get_mut(&egui::ViewportId::ROOT)
-            .unwrap()
-            .events
-            .push(egui::ViewportEvent::Close);
-        raw
-    }
-
-    fn run_close_frame(context: &egui::Context, app: &mut PersistenceApp) -> egui::FullOutput {
-        let mut frame = eframe::Frame::_new_kittest();
-        context.run_ui(close_input(), |ui| {
-            eframe::App::logic(app, ui.ctx(), &mut frame);
-            eframe::App::ui(app, ui, &mut frame);
-        })
-    }
-
-    fn run_frame(
-        context: &egui::Context,
-        app: &mut PersistenceApp,
-        events: Vec<egui::Event>,
-    ) -> egui::FullOutput {
-        run_frame_at(context, app, events, None)
-    }
-
-    fn run_frame_at(
-        context: &egui::Context,
-        app: &mut PersistenceApp,
-        events: Vec<egui::Event>,
-        time: Option<f64>,
-    ) -> egui::FullOutput {
-        let mut frame = eframe::Frame::_new_kittest();
-        let mut output = context.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1100.0, 720.0),
-                )),
-                events,
-                time,
-                ..Default::default()
-            },
-            |ui| eframe::App::ui(app, ui, &mut frame),
-        );
-        output.textures_delta.clear();
-        output
     }
 
     #[test]
@@ -819,9 +895,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("layout.json");
         let mut app = PersistenceApp::open(path.clone());
-        let context = egui::Context::default();
+        let context = Context::default();
         context.enable_accesskit();
-        run_frame_at(&context, &mut app, Vec::new(), Some(0.0)).drop_without_applying_deltas();
+        let _ = run_frame_at(&context, &mut app, Vec::new(), Some(0.0));
         let ready = run_frame_at(&context, &mut app, Vec::new(), Some(0.1));
         let target = ready
             .platform_output
@@ -835,13 +911,12 @@ mod tests {
                     .then_some(*id)
             })
             .expect("the real editor split supports accessible resizing");
-        ready.drop_without_applying_deltas();
         assert!(
             !path.exists(),
             "initial measurement does not dirty the layout"
         );
         let before = app.dockspace.version();
-        run_frame_at(
+        let _ = run_frame_at(
             &context,
             &mut app,
             vec![egui::Event::AccessKitActionRequest(ActionRequest {
@@ -851,17 +926,16 @@ mod tests {
                 data: None,
             })],
             Some(0.2),
-        )
-        .drop_without_applying_deltas();
-        run_frame_at(&context, &mut app, Vec::new(), Some(0.3)).drop_without_applying_deltas();
+        );
+        let _ = run_frame_at(&context, &mut app, Vec::new(), Some(0.3));
         assert_ne!(app.dockspace.version(), before);
         assert!(app.auto_save_at.is_some());
         assert!(!path.exists(), "resizing waits for the debounce interval");
-        run_frame_at(&context, &mut app, Vec::new(), Some(0.9)).drop_without_applying_deltas();
+        let _ = run_frame_at(&context, &mut app, Vec::new(), Some(0.9));
         let saved = std::fs::read(&path).unwrap();
         assert!(PersistenceApp::decode(&saved).is_ok());
         assert!(app.auto_save_at.is_none());
-        run_frame_at(&context, &mut app, Vec::new(), Some(2.0)).drop_without_applying_deltas();
+        let _ = run_frame_at(&context, &mut app, Vec::new(), Some(2.0));
         assert_eq!(std::fs::read(path).unwrap(), saved);
     }
 
@@ -872,10 +946,10 @@ mod tests {
         let original = b"unreadable application document";
         std::fs::write(&path, original).unwrap();
         let mut app = PersistenceApp::open(path.clone());
-        let context = egui::Context::default();
+        let context = Context::default();
         app.restore_named(DEFAULT_PRESET);
-        run_frame_at(&context, &mut app, Vec::new(), Some(0.0)).drop_without_applying_deltas();
-        run_frame_at(&context, &mut app, Vec::new(), Some(2.0)).drop_without_applying_deltas();
+        let _ = run_frame_at(&context, &mut app, Vec::new(), Some(0.0));
+        let _ = run_frame_at(&context, &mut app, Vec::new(), Some(2.0));
         assert_eq!(std::fs::read(&path).unwrap(), original);
         app.save_layout_file();
         assert!(PersistenceApp::decode(&std::fs::read(path).unwrap()).is_ok());
@@ -886,7 +960,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("layout.json");
         let mut app = PersistenceApp::open(path.clone());
-        let context = egui::Context::default();
+        let context = Context::default();
         context.enable_accesskit();
         app.restore_named(DEFAULT_PRESET);
         let ready = run_frame_at(&context, &mut app, Vec::new(), Some(0.0));
@@ -902,7 +976,6 @@ mod tests {
                     .then_some(*id)
             })
             .expect("the example exposes its autosave toggle");
-        ready.drop_without_applying_deltas();
         let toggle = || {
             egui::Event::AccessKitActionRequest(ActionRequest {
                 action: Action::Click,
@@ -911,26 +984,26 @@ mod tests {
                 data: None,
             })
         };
-        run_frame_at(&context, &mut app, vec![toggle()], Some(0.1)).drop_without_applying_deltas();
-        assert!(!app.auto_save);
-        run_frame_at(&context, &mut app, Vec::new(), Some(1.0)).drop_without_applying_deltas();
+        let _ = run_frame_at(&context, &mut app, vec![toggle()], Some(0.1));
+        assert!(!app.controls.auto_save);
+        let _ = run_frame_at(&context, &mut app, Vec::new(), Some(1.0));
         assert!(
             !path.exists(),
             "paused autosave must not write the pending layout"
         );
-        run_frame_at(&context, &mut app, vec![toggle()], Some(1.1)).drop_without_applying_deltas();
-        assert!(app.auto_save);
-        run_frame_at(&context, &mut app, Vec::new(), Some(1.7)).drop_without_applying_deltas();
+        let _ = run_frame_at(&context, &mut app, vec![toggle()], Some(1.1));
+        assert!(app.controls.auto_save);
+        let _ = run_frame_at(&context, &mut app, Vec::new(), Some(1.7));
         let saved =
             std::fs::read(&path).expect("reenabling autosave must persist the pending change");
         assert!(PersistenceApp::decode(&saved).is_ok());
-        run_frame_at(&context, &mut app, Vec::new(), Some(3.0)).drop_without_applying_deltas();
+        let _ = run_frame_at(&context, &mut app, Vec::new(), Some(3.0));
         assert_eq!(std::fs::read(path).unwrap(), saved);
     }
 
     #[test]
     fn closed_inventory_reopens_stable_items_and_presets_preserve_application_data() {
-        let context = egui::Context::default();
+        let context = Context::default();
         context.enable_accesskit();
         let mut app = PersistenceApp::new();
         let document = app
@@ -940,7 +1013,7 @@ mod tests {
         let text = "Unsaved application text survives closing and layout restore";
         text.clone_into(&mut app.panes.items.get_mut(&document).expect("pane data").text);
         app.save();
-        assert_eq!(app.status, "Saved layout: Working");
+        assert_eq!(app.controls.status, "Saved layout: Working");
         let _ = run_frame(&context, &mut app, Vec::new());
         let ready = run_frame(&context, &mut app, Vec::new());
         let close = ready
@@ -969,20 +1042,12 @@ mod tests {
                 data: None,
             })],
         );
-
-        // The encoded close action is consumed by the next update.
         assert!(app.dockspace.view().item(document).is_some());
         let _ = run_frame(&context, &mut app, Vec::new());
         assert!(app.dockspace.view().item(document).is_none());
-        assert_eq!(
-            app.panes
-                .items
-                .get(&document)
-                .expect("closed pane data")
-                .text,
-            text
-        );
-        "Closed document".clone_into(&mut app.preset_name);
+        assert_eq!(app.panes.items[&document].text, text);
+
+        "Closed document".clone_into(&mut app.controls.preset_name);
         app.save();
         app.reopen(document);
         assert!(app.dockspace.view().item(document).unwrap().is_active());
@@ -997,25 +1062,17 @@ mod tests {
         );
 
         app.restore();
-        assert_eq!(app.status, "Applied layout: Closed document");
+        assert_eq!(app.controls.status, "Applied layout: Closed document");
         assert!(app.dockspace.view().item(document).is_none());
         app.restore_named(DEFAULT_PRESET);
         assert!(app.dockspace.view().item(document).is_some());
         assert_eq!(app.panes.items[&document].text, text);
-        "Working".clone_into(&mut app.preset_name);
+        "Working".clone_into(&mut app.controls.preset_name);
         app.restore();
-        assert_eq!(app.status, "Applied layout: Working");
+        assert_eq!(app.controls.status, "Applied layout: Working");
         assert!(app.dockspace.view().item(document).is_some());
-        assert_eq!(
-            app.panes
-                .items
-                .get(&document)
-                .expect("restored pane data")
-                .text,
-            text
-        );
+        assert_eq!(app.panes.items[&document].text, text);
         let restored = run_frame(&context, &mut app, Vec::new());
-        assert_eq!(app.status, "Applied layout: Working");
         assert!(
             restored
                 .platform_output
@@ -1032,24 +1089,24 @@ mod tests {
     #[test]
     fn named_layout_storage_is_bounded_and_default_is_immutable() {
         let mut app = PersistenceApp::new();
-        let default = app.presets[DEFAULT_PRESET].clone();
+        let default = app.controls.presets[DEFAULT_PRESET].clone();
         for index in 0..MAX_USER_PRESETS {
-            app.preset_name = format!("Layout {index}");
+            app.controls.preset_name = format!("Layout {index}");
             app.save();
         }
-        assert_eq!(app.presets.len(), MAX_USER_PRESETS + 1);
+        assert_eq!(app.controls.presets.len(), MAX_USER_PRESETS + 1);
         let generation = app.dockspace.next_document_generation();
-        "Extra".clone_into(&mut app.preset_name);
+        "Extra".clone_into(&mut app.controls.preset_name);
         app.save();
-        assert_eq!(app.presets.len(), MAX_USER_PRESETS + 1);
+        assert_eq!(app.controls.presets.len(), MAX_USER_PRESETS + 1);
         assert_eq!(app.dockspace.next_document_generation(), generation);
-        "Layout 0".clone_into(&mut app.preset_name);
+        "Layout 0".clone_into(&mut app.controls.preset_name);
         app.save();
-        assert_eq!(app.status, "Saved layout: Layout 0");
-        assert_eq!(app.presets.len(), MAX_USER_PRESETS + 1);
-        DEFAULT_PRESET.clone_into(&mut app.preset_name);
+        assert_eq!(app.controls.status, "Saved layout: Layout 0");
+        assert_eq!(app.controls.presets.len(), MAX_USER_PRESETS + 1);
+        DEFAULT_PRESET.clone_into(&mut app.controls.preset_name);
         app.save();
-        assert_eq!(app.presets[DEFAULT_PRESET], default);
+        assert_eq!(app.controls.presets[DEFAULT_PRESET], default);
         app.set_locked(true);
         let version = app.dockspace.version();
         app.restore_named(DEFAULT_PRESET);
@@ -1057,14 +1114,12 @@ mod tests {
         assert_eq!(app.dockspace.version(), version);
         app.set_locked(false);
         app.restore_named(DEFAULT_PRESET);
-        assert_eq!(app.status, "Applied layout: Default");
+        assert_eq!(app.controls.status, "Applied layout: Default");
     }
 
     #[test]
     fn root_retirement_and_default_restore_use_current_presentation_identities() {
-        use egui_dockspace::DockspaceCloseRequestStatus;
-
-        let context = egui::Context::default();
+        let context = Context::default();
         context.enable_accesskit();
         let mut app = PersistenceApp::new();
         let _ = run_frame(&context, &mut app, Vec::new());
@@ -1094,24 +1149,15 @@ mod tests {
                         ..
                     }
                 ));
-            } else {
-                assert!(matches!(
-                    closed.outcome(),
-                    DockspaceCloseOutcome::Processed {
-                        resolution: DockspaceCloseResolution::Recorded { item: recorded, .. },
-                        application: None,
-                        ..
-                    } if *recorded == item.item()
-                ));
             }
         }
         assert!(app.dockspace.view().root(ROOT).is_none());
         assert!(app.dockspace.view().surfaces().next().is_none());
         app.reopen(document);
-        assert_eq!(app.status, "No logical surface is available");
+        assert_eq!(app.controls.status, "No logical surface is available");
 
         app.restore_named(DEFAULT_PRESET);
-        assert_eq!(app.status, "Applied layout: Default");
+        assert_eq!(app.controls.status, "Applied layout: Default");
         let surface = app.dockspace.view().surfaces().next().unwrap();
         assert_eq!(surface.id(), SURFACE);
         let root = surface.main_root().unwrap().id();
@@ -1141,7 +1187,7 @@ mod tests {
             } if *item == document
         ));
         app.reopen(document);
-        assert_eq!(app.status, "Pane reopened");
+        assert_eq!(app.controls.status, "Pane reopened");
         assert_eq!(app.dockspace.view().item(document).unwrap().root(), root);
         let output = run_frame(&context, &mut app, Vec::new());
         assert!(

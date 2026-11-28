@@ -72,6 +72,16 @@ required-features = ["wgpu"]
 test = false
 
 [[example]]
+name = "custom_winit"
+required-features = ["wgpu"]
+test = true
+
+[[example]]
+name = "ide_workflows"
+required-features = ["wgpu"]
+test = true
+
+[[example]]
 name = "basic"
 required-features = ["example-app"]
 test = true
@@ -93,7 +103,7 @@ test = true
 
 [[example]]
 name = "workspace_persistence"
-required-features = ["example-app", "serde"]
+required-features = ["wgpu", "serde"]
 test = true
 
 [lints]
